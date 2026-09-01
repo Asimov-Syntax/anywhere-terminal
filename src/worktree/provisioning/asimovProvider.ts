@@ -22,6 +22,7 @@ import {
   entriesFor,
   full,
   ids,
+  modelFromDraft,
   newBudget,
   newDraft,
   type OpenedProviderFile,
@@ -195,12 +196,8 @@ async function fromOpened(
     }
   }
 
-  return {
-    entries: draft.entries,
-    setup: draft.setup,
-    ports: draft.ports,
-    providers: PROVIDERS,
-    excluded: [],
-    problems: draft.problems,
-  };
+  // `providers` is the one field this reader owns: `readAsimovProvisioning` is
+  // WT-012.1's single-source entry point and still answers for itself, while the
+  // adapter's copy is replaced by the dispatcher.
+  return { ...modelFromDraft(draft), providers: PROVIDERS };
 }

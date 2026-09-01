@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  addSetup,
   contained,
+  emitted,
   entriesFor,
   ids,
   MAX_MODEL_ROWS,
@@ -12,6 +14,7 @@ import {
   type ProviderDeps,
   problem,
   refusal,
+  scanNames,
 } from "./providerKit";
 
 const ROOT = "/repo";
@@ -268,9 +271,14 @@ describe("one read, two accounts", () => {
     // Reported, not silently dropped: the shown list must not differ from the
     // list that would be copied.
     expect(draft.entries).toEqual([]);
+    // The two say different things now, and they are different things. `a/*.env`
+    // was read and found too large; `b/*.env` was never read at all, because the
+    // account was already spent when its turn came (round-1 F005). The old
+    // wording said the second directory was too large to scan, which was untrue
+    // of a directory holding one file that nothing ever looked at.
     expect(draft.problems.map((p) => p.detail)).toEqual([
       "`a/*.env` names a directory too large to scan; it is not offered.",
-      "`b/*.env` names a directory too large to scan; it is not offered.",
+      "`b/*.env` is past the scan budget; it is not offered.",
     ]);
   });
 
@@ -297,5 +305,89 @@ describe("one read, two accounts", () => {
 
   it("a fresh budget starts empty", () => {
     expect(newBudget()).toEqual({ rows: 0, scanned: 0, capped: false });
+  });
+});
+
+describe("[round-1 F002] the cap lives where rows are appended", () => {
+  // 1_2 wrote "every append is charged, so the count cannot drift from the
+  // collections it claims to bound" — and then charged without ever refusing.
+  // A caller that forgot `full()` was unbounded, which is exactly what the VS
+  // Code task loop did. Enforcing at the append is what makes the comment true.
+  it("refuses a setup step once the model is full, however the caller loops", () => {
+    const draft = newDraft(ORCA, newBudget());
+
+    let taken = 0;
+    for (let i = 0; i < MAX_MODEL_ROWS + 50; i += 1) {
+      if (addSetup(draft, { id: `s${i}`, kind: "shell", script: "echo", source: ORCA.file })) {
+        taken += 1;
+      }
+    }
+
+    expect(taken).toBeLessThan(MAX_MODEL_ROWS);
+    expect(draft.setup.length).toBeLessThan(MAX_MODEL_ROWS);
+    expect(emitted(draft)).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    // Refused, and said so — a shorter list than the repository asked for is
+    // never allowed to be a silent one.
+    expect(draft.problems.map((x) => x.reason)).toContain("malformed");
+  });
+
+  it("would not pass if the append merely counted", () => {
+    // The mutant this kills: `addSetup` incrementing the budget and pushing
+    // anyway. Without this the suite above could be satisfied by a caller-side
+    // check that a future caller forgets, which is the defect being fixed.
+    const draft = newDraft(ORCA, newBudget());
+    for (let i = 0; i < MAX_MODEL_ROWS + 5; i += 1) {
+      addSetup(draft, { id: `s${i}`, kind: "shell", script: "echo", source: ORCA.file });
+    }
+
+    expect(draft.setup.length + draft.problems.length).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+  });
+});
+
+describe("[round-1 F005] an exhausted scan account reads nothing more", () => {
+  it("does not pull a name when the account is already spent", async () => {
+    const budget = newBudget();
+    budget.scanned = MAX_SCAN;
+    let pulled = 0;
+    const listing = (async function* () {
+      pulled += 1;
+      yield "a.txt";
+    })();
+
+    const scanned = await scanNames(listing, budget);
+
+    // `for await` asks for a name and only then checks the room, so every later
+    // glob read one more name than the bound allows. D9 says MAX_SCAN, and a
+    // bound that admits one extra read per declaration is a different bound.
+    expect(pulled).toBe(0);
+    expect(scanned.names).toEqual([]);
+    expect(scanned.truncated).toBe(true);
+  });
+
+  it("does not enumerate a directory it has no room to take", async () => {
+    // The syscall is the cost, so the check has to come before it. Returning a
+    // truncated result after the read has already happened bounds the array and
+    // not the work.
+    let listed = 0;
+    const deps = fs({ files: { [`${ROOT}/${ORCA.file}`]: "" }, dirs: { "/repo/big": ["n0.env"] } });
+    const counting: ProviderDeps = {
+      ...deps,
+      readdir: async (dirPath) => {
+        listed += 1;
+        return deps.readdir(dirPath) as Promise<readonly string[]>;
+      },
+    };
+    const opened = await openProviderFile(counting, ROOT, ORCA);
+    if (opened.kind !== "text") {
+      throw new Error(`expected the file to open, got ${opened.kind}`);
+    }
+    const budget = newBudget();
+    budget.scanned = MAX_SCAN;
+    const draft = newDraft(ORCA, budget);
+
+    await entriesFor(["big/*.env"], "copy", ROOT, opened.root, counting, ids(), draft);
+
+    expect(listed).toBe(0);
+    expect(draft.entries).toEqual([]);
   });
 });

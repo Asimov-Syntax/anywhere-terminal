@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newBudget, type ProviderDeps } from "./providerKit";
+import { MAX_MODEL_ROWS, newBudget, type ProviderDeps } from "./providerKit";
 import { VSCODE_TASKS_FILE, vscodeTasksAdapter } from "./vscodeTasksProvider";
 
 const ROOT = "/repo";
@@ -181,5 +181,23 @@ describe("what it cannot supply, it names — and still offers", () => {
 
     expect(model?.setup).toEqual([]);
     expect(model?.problems.map((p) => p.reason)).toEqual(["malformed"]);
+  });
+});
+
+describe("[round-1 F002] a task file cannot outgrow the model cap", () => {
+  it("stops at the cap however many steps the repository declares", async () => {
+    const many = Array.from({ length: 250 }, (_, i) =>
+      onCreate(`"label": "t${i}", "type": "shell", "command": "echo ${i}"`),
+    );
+    const model = await read(tasksFile(...many));
+
+    expect(model).not.toBeNull();
+    const rows = (model?.setup.length ?? 0) + (model?.entries.length ?? 0) + (model?.problems.length ?? 0);
+    // The bound protects the postMessage and the DOM, so it is the total that
+    // matters — a checked-in file must not be able to choose how big the
+    // message the webview receives is.
+    expect(rows).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(model?.setup.length).toBeLessThan(250);
+    expect(model?.problems.map((x) => x.reason)).toContain("malformed");
   });
 });

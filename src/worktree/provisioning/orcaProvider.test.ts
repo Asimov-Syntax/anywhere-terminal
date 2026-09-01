@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ORCA_INCLUDE_FILE, ORCA_PROVIDER_FILES, ORCA_YAML_FILE, orcaAdapter } from "./orcaProvider";
-import { newBudget, type ProviderDeps } from "./providerKit";
+import { MAX_MODEL_ROWS, newBudget, type ProviderDeps } from "./providerKit";
 
 const ROOT = "/repo";
 
@@ -237,5 +237,24 @@ describe("a file that is present and wrong is named, never thrown", () => {
 
     expect(model?.setup).toEqual([]);
     expect(model?.problems.map((p) => p.detail)).toEqual(["`scripts.setup` must be a script."]);
+  });
+});
+
+describe("[round-1 F002] the setup step is charged like every other row", () => {
+  it("is refused when shared-directory expansion already filled the model", async () => {
+    const budget = newBudget();
+    budget.rows = MAX_MODEL_ROWS;
+    const deps = fs({
+      files: {
+        [`${ROOT}/${ORCA_YAML_FILE}`]:
+          "worktree:\n  sharedDirectories: [node_modules]\nscripts:\n  setup: pnpm install\n",
+      },
+    });
+
+    const model = await orcaAdapter.read(deps, ROOT, budget);
+
+    // One row past a cap already reached is still past it, and this is the
+    // append that had no check in front of it.
+    expect(model?.setup).toEqual([]);
   });
 });

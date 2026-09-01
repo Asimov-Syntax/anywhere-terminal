@@ -11,10 +11,12 @@
 
 import { type ParseError, parse as parseJsonc } from "jsonc-parser";
 import type { ProvisionModel } from "../../types/messages";
+import { posixShellQuote } from "../../utils/posixShellQuote";
 import {
   addSetup,
   type Draft,
   ids,
+  modelFromDraft,
   newDraft,
   openProviderFile,
   type ProviderAdapter,
@@ -39,9 +41,6 @@ const TASKS: ProviderContext = { id: "vscodeTasks", file: VSCODE_TASKS_FILE };
  * escaping and reopening is the one rendering nothing escapes — `;`, `$(id)`,
  * a newline and a space all become literal.
  */
-function quoted(word: string): string {
-  return `'${word.split("'").join(`'\\''`)}'`;
-}
 
 /**
  * A task's command line, on the terms the task declared.
@@ -61,7 +60,7 @@ function scriptFor(entry: Record<string, unknown>, label: string, draft: Draft):
     report(draft, label, problem(TASKS, "malformed", `${label} declares no command.`));
     return null;
   }
-  const head = entry.type === "shell" ? command : quoted(command);
+  const head = entry.type === "shell" ? command : posixShellQuote(command);
   const declared = entry.args;
   if (declared === undefined) {
     return head;
@@ -86,7 +85,7 @@ function scriptFor(entry: Record<string, unknown>, label: string, draft: Draft):
     }
     // Always quoted, in both task kinds: an argument is one word to VS Code, and
     // it stays one word here.
-    words.push(quoted(value));
+    words.push(posixShellQuote(value));
   }
   return words.length === 0 ? head : `${head} ${words.join(" ")}`;
 }
@@ -118,7 +117,11 @@ export const vscodeTasksAdapter: ProviderAdapter = {
 
   async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null> {
     const opened = await openProviderFile(deps, repoRoot, TASKS);
-    if (opened.kind === "absent") {
+    if (opened.kind === "absent" || (opened.kind === "problem" && opened.at === "root")) {
+      // Root failure is neither presence nor absence, and the dispatcher reads
+      // any model as detection — so answering with one elected this adapter for
+      // a checkout whose task file was never opened (.reviews/round-1.md F003).
+      // The other two adapters already answer `null` here.
       return null;
     }
     const nextId = ids();
@@ -128,7 +131,7 @@ export const vscodeTasksAdapter: ProviderAdapter = {
       // Present and refused — reported, never read as "this repository declared
       // nothing".
       report(draft, `\`${VSCODE_TASKS_FILE}\``, opened.problem);
-      return model(draft);
+      return modelFromDraft(draft);
     }
 
     const errors: ParseError[] = [];
@@ -145,21 +148,21 @@ export const vscodeTasksAdapter: ProviderAdapter = {
         `\`${VSCODE_TASKS_FILE}\``,
         problem(TASKS, "malformed", `\`${VSCODE_TASKS_FILE}\` is not valid JSON with comments.`),
       );
-      return model(draft);
+      return modelFromDraft(draft);
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       if (parsed !== undefined) {
         report(draft, `\`${VSCODE_TASKS_FILE}\``, problem(TASKS, "malformed", "The file is not a mapping of keys."));
       }
-      return model(draft);
+      return modelFromDraft(draft);
     }
     const declared = (parsed as Record<string, unknown>).tasks;
     if (declared === undefined) {
-      return model(draft);
+      return modelFromDraft(draft);
     }
     if (!Array.isArray(declared)) {
       report(draft, "`tasks`", problem(TASKS, "malformed", "`tasks` must be a list."));
-      return model(draft);
+      return modelFromDraft(draft);
     }
 
     // File order, so the section lists the steps in the order the repository
@@ -185,19 +188,12 @@ export const vscodeTasksAdapter: ProviderAdapter = {
         continue;
       }
       reportUnsubstituted(entry, label, script, draft);
-      addSetup(draft, { id: nextId(), kind: "shell", script, source: VSCODE_TASKS_FILE });
+      if (!addSetup(draft, { id: nextId(), kind: "shell", script, source: VSCODE_TASKS_FILE })) {
+        // Refused, so the rest are too: the budget is model-wide and one honest
+        // message beats one per remaining task.
+        break;
+      }
     }
-    return model(draft);
+    return modelFromDraft(draft);
   },
 };
-
-function model(draft: Draft): ProvisionModel {
-  return {
-    entries: draft.entries,
-    setup: draft.setup,
-    ports: draft.ports,
-    providers: [],
-    excluded: [],
-    problems: draft.problems,
-  };
-}

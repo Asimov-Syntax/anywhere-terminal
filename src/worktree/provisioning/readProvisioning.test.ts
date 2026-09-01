@@ -229,3 +229,21 @@ describe("[D9] one budget, and nothing spent on a source that did not win", () =
     expect(seen).toBeLessThanOrEqual(MAX_SCAN + 1);
   });
 });
+
+describe("[round-1 F003] a checkout that will not resolve elects nobody", () => {
+  it("does not activate the last adapter in the order when the root fails", async () => {
+    const deps: ProviderDeps = {
+      ...fs({}),
+      realpath: async () => {
+        throw Object.assign(new Error("ELOOP"), { code: "ELOOP" });
+      },
+    };
+    const model = await readProvisioning(deps, ROOT);
+
+    // Root failure is neither presence nor absence. Asimov and orca already
+    // answer `null` for it; the tasks adapter answered with a model, and the
+    // dispatcher reads any model as detection — so an unresolvable checkout
+    // named `.vscode/tasks.json` active with no file ever opened.
+    expect(model.providers).toEqual([]);
+  });
+});

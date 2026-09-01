@@ -18,6 +18,7 @@ import {
   type Draft,
   entriesFor,
   ids,
+  modelFromDraft,
   newDraft,
   openProviderFile,
   type ProviderAdapter,
@@ -190,13 +191,6 @@ export const orcaAdapter: ProviderAdapter = {
     if (!present) {
       return null;
     }
-    return {
-      entries: draft.entries,
-      setup: draft.setup,
-      ports: draft.ports,
-      providers: [],
-      excluded: [],
-      problems: draft.problems,
-    };
+    return modelFromDraft(draft);
   },
 };

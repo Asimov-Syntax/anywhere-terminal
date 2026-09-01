@@ -1329,6 +1329,24 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
     expect(host.querySelectorAll(".wt-bring-switch")).toHaveLength(1);
     expect(host.querySelector(".wt-bring-empty")?.hasAttribute("hidden")).toBe(false);
   });
+
+  it("gives the buttons accessible names that differ", () => {
+    const { host } = withProviders([
+      { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+      ORCA,
+      { id: "vscodeTasks", files: [".vscode/tasks.json"], active: false },
+    ]);
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>(".wt-bring-switch-take")];
+    const names = buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
+
+    // Visually the file list sits beside the button and answers "which one".
+    // To a screen reader walking the controls it is not part of the name, so
+    // every choice announced itself identically.
+    expect(names).toHaveLength(2);
+    expect(new Set(names).size).toBe(2);
+    expect(names[0]).toContain("orca.yaml");
+    expect(names[1]).toContain(".vscode/tasks.json");
+  });
 });
 
 describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () => {

@@ -117,3 +117,21 @@
   - **Plan**:
     1. Create `src/worktree/provisioning/readOnly.test.ts` reading the sources of `providerKit.ts`, `asimovProvider.ts`, `orcaProvider.ts`, `vscodeTasksProvider.ts` and `readProvisioning.ts` and asserting none imports `node:child_process`, `node:worker_threads`, or a write, rename, unlink or rmdir member of `node:fs`.
     2. In `src/worktree/provisioning/readOnly.test.ts`, assert the check is not vacuous by running the same matcher over a fixture string containing each forbidden import and observing it match.
+
+## 4. Round 1 remediation
+
+- [x] 4_1 Close every accepted round-1 finding — verified: pnpm exec vitest run 'src/worktree/provisioning/providerKit.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_5
+  - **Refs**: .reviews/round-1.md#{f001, f002, f003, f004, f005, f006, f007}
+  - **Acceptance**:
+    - Outcome: Every accepted round-1 finding has a failing witness that the fix turns green
+    - Verify: unit src/worktree/provisioning/providerKit.test.ts
+  - **Plan**:
+    1. F001 — in `src/providers/WorktreeHost.ts`, stop deleting the switch ceiling when a read rejects; the dialog's sequence only increases, so a retry already outranks it. Witness in `src/providers/WorktreeHost.actions.test.ts`: a rejected later switch followed by a replayed earlier one publishes nothing.
+    2. F002 and F005 together — in `src/worktree/provisioning/providerKit.ts`, move capacity enforcement into the append API so no caller can charge without being refused, and return before iterating a listing once the scan account is empty. Witnesses in `src/worktree/provisioning/providerKit.test.ts`.
+    3. F002 — stop the task loop in `src/worktree/provisioning/vscodeTasksProvider.ts` and the setup append in `src/worktree/provisioning/orcaProvider.ts` at the cap. Witnesses in `src/worktree/provisioning/vscodeTasksProvider.test.ts` and `src/worktree/provisioning/orcaProvider.test.ts`: a file of 250 declared steps yields at most `MAX_MODEL_ROWS` rows.
+    4. F003 — in `src/worktree/provisioning/vscodeTasksProvider.ts`, return `null` for a root-level problem as the other two adapters do. Witness in `src/worktree/provisioning/readProvisioning.test.ts`: a failing root elects no provider.
+    5. F004 — replace `quoted()` in `src/worktree/provisioning/vscodeTasksProvider.ts` with `posixShellQuote` from `src/utils/posixShellQuote.ts`; the existing rendering assertions stay untouched and unchanged output is the proof.
+    6. F007 — add `modelFromDraft` to `src/worktree/provisioning/providerKit.ts` and consume it from `src/worktree/provisioning/asimovProvider.ts`, `src/worktree/provisioning/orcaProvider.ts` and `src/worktree/provisioning/vscodeTasksProvider.ts`.
+    7. F006 — in `src/webview/worktree/WorktreeCreateDialog.ts`, name each switch button by its provider's files. Witness in `src/webview/worktree/WorktreeCreateDialog.test.ts`.
+  - **Boundary**: remediation only — no new `D#`, no new invariant owner, and no change to any accepted Acceptance

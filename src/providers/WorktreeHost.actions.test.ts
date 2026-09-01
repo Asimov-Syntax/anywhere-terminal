@@ -3255,6 +3255,48 @@ describe("[D5] a switch is a new request with its own identity", () => {
     h.dispose();
   });
 
+  it("[round-1 F001] refuses a replayed earlier switch after a later one failed", async () => {
+    // The ceiling is monotonic until the opening retires. Releasing it when a
+    // read rejects re-admits every sequence below the one already seen, and the
+    // dialog's own sequence only ever increases — so nothing needed the
+    // release, and a delayed or replayed message could publish a choice the
+    // user had already moved on from (D5).
+    let orcaReads = 0;
+    const h = await opened(async (_main, prefer) => {
+      if (prefer === undefined) {
+        return OFFERED;
+      }
+      if (prefer === "asimov") {
+        throw new Error("unreadable");
+      }
+      orcaReads += 1;
+      if (orcaReads === 1) {
+        // Still in flight when the later switch fails.
+        await new Promise<void>(() => {});
+      }
+      return forProvider(prefer);
+    });
+    const before = offersIn(h.view).length;
+
+    for (const [seq, provider] of [
+      [1, "orca"],
+      [2, "asimov"],
+      [1, "orca"],
+    ] as const) {
+      h.host.handleMessage(h.view, {
+        type: "worktreeProvisionSwitch",
+        repoId: REPO,
+        opening: 1,
+        switch: seq,
+        provider,
+      });
+      await settle();
+    }
+
+    expect(offersIn(h.view)).toHaveLength(before);
+    h.dispose();
+  });
+
   it("does not carry one dialog's ceiling into the next", async () => {
     // The sequence is per opening. Keyed by surface and repo alone, a dialog
     // that reached switch 5 would leave the next dialog's first switch refused.

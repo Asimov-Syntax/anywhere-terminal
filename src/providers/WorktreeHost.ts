@@ -2213,14 +2213,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               model: offer.model,
             });
           })
-          // The section is not the create. A source that will not resolve leaves
-          // the form exactly as it was, and releases the sequence so the user
-          // can try another one.
-          .catch(() => {
-            if (provisionSwitch.get(slot) === mine) {
-              provisionSwitch.delete(slot);
-            }
-          });
+          // The section is not the create: a source that will not resolve leaves
+          // the form exactly as it was.
+          //
+          // The ceiling is NOT released. It looked like housekeeping — the read
+          // failed, so let the user try again — and it re-admitted every
+          // sequence below the one already seen: switch 1 pending, switch 2
+          // fails and clears the slot, and a delayed or replayed switch 1 then
+          // passes the guard above and publishes a choice the user had moved on
+          // from. Nothing needed the release either, because the dialog mints
+          // `switch` strictly increasing, so a retry already outranks whatever
+          // is held here. The map is swept by `retireOpening`, which is what
+          // bounds it (.reviews/round-1.md F001).
+          .catch(() => {});
         return;
       }
       case "worktreeCreateClosed": {

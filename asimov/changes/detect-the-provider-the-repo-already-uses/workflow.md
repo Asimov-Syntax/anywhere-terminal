@@ -92,3 +92,23 @@ Build notes:
 - The assembly suite's `REPO` outlives a test, so 3_4's walks clear the provider files first;
   detection is about which files exist, and a leftover from another walk decides it silently.
 
+Round 1 remediation:
+
+- All seven findings accepted, none rebutted. Three BLOCKs were re-verified against the source
+  before triage rather than taken on the chair's word, and F001 went further than the report:
+  releasing the switch ceiling is not merely unsafe, it is unnecessary, because the dialog's
+  sequence only ever increases.
+- 4_1 carries all seven and `validate` warns it names ten files. Kept as ONE task: the fixes share
+  `providerKit.ts` and the three adapters, so separate entries would lease the same files, and each
+  extra entry costs a review round the split buys nothing back.
+- F002 is the interesting one. 1_2's own comment says "every append is charged, so the count cannot
+  drift from the collections it claims to bound" — and the appends charged without ever refusing.
+  Enforcement moves inside the append API so the comment becomes true.
+- One 4_1 mutant survives: dropping the `break` from the VS Code task loop. With enforcement in the
+  append, the model is identical either way — the break bounds wasted iterations over
+  repository-controlled input, not the rows. Kept and said so rather than writing a test that
+  asserts an implementation detail.
+- F005's fix moved a message. A glob refused before its `readdir` now says it is past the scan
+  budget instead of naming a directory too large to scan, because nothing measured that directory.
+  1_2's assertion was updated for that reason and declared with `--test-change`.
+

@@ -166,21 +166,33 @@ export function capped(draft: Draft): boolean {
   return draft.budget.capped;
 }
 
-// Every append is charged, so the count cannot drift from the collections it
-// claims to bound. A direct `.push` on a draft is the defect these prevent.
-export function addEntry(draft: Draft, entry: ProvisionEntry): void {
-  draft.budget.rows += 1;
-  draft.entries.push(entry);
+// Every append is charged AND refused by the same call, so the count cannot
+// drift from the collections it claims to bound. A direct `.push` on a draft is
+// one defect these prevent; the other is a caller that charges the budget and
+// never asks whether it had room, which is how a task file of 250 declared
+// steps produced 250 rows under a 200-row cap (.reviews/round-1.md F002).
+//
+// Each returns whether the row was taken, so a loop over repository-controlled
+// input can stop instead of spinning against a full budget.
+export function addEntry(draft: Draft, entry: ProvisionEntry): boolean {
+  return addRow(draft, `\`${entry.path}\``, draft.entries, entry);
 }
 
-export function addPort(draft: Draft, port: ProvisionPort): void {
-  draft.budget.rows += 1;
-  draft.ports.push(port);
+export function addPort(draft: Draft, port: ProvisionPort): boolean {
+  return addRow(draft, `port \`${port.name}\``, draft.ports, port);
 }
 
-export function addSetup(draft: Draft, step: ProvisionSetupStep): void {
+export function addSetup(draft: Draft, step: ProvisionSetupStep): boolean {
+  return addRow(draft, "a setup step", draft.setup, step);
+}
+
+function addRow<T>(draft: Draft, what: string, sink: T[], row: T): boolean {
+  if (full(draft, what)) {
+    return false;
+  }
   draft.budget.rows += 1;
-  draft.setup.push(step);
+  sink.push(row);
+  return true;
 }
 
 function addProblem(draft: Draft, p: ProvisionProblem): void {
@@ -239,6 +251,30 @@ export function report(draft: Draft, what: string, p: ProvisionProblem): void {
     return;
   }
   addProblem(draft, p);
+}
+
+/** True once no glob may look at another name. */
+export function scanExhausted(budget: ProviderBudget): boolean {
+  return budget.scanned >= MAX_SCAN;
+}
+
+/**
+ * The model an adapter's draft became.
+ *
+ * One assembly point, so a field added to `ProvisionModel` cannot reach two
+ * adapters and miss the third — and so a rule that belongs to every adapter has
+ * somewhere to live (.reviews/round-1.md F007). `providers` stays empty here:
+ * which sources were detected is the dispatcher's answer, never an adapter's.
+ */
+export function modelFromDraft(draft: Draft): ProvisionModel {
+  return {
+    entries: draft.entries,
+    setup: draft.setup,
+    ports: draft.ports,
+    providers: [],
+    excluded: [],
+    problems: draft.problems,
+  };
 }
 
 export function emptyModel(): ProvisionModel {
@@ -392,6 +428,13 @@ export async function scanNames(
   const names: string[] = [];
   let truncated = false;
   const room = () => Math.max(MAX_SCAN - budget.scanned, 0);
+  if (room() === 0) {
+    // Before the first pull, not after it. `for await` asks for a name and only
+    // then checks the room, so every later glob read one more name than the
+    // bound allows — a bound that admits an extra read per declaration is a
+    // different bound from the one D9 states (.reviews/round-1.md F005).
+    return { names, truncated: true };
+  }
   if (Symbol.asyncIterator in Object(listing)) {
     for await (const name of listing as AsyncIterable<string>) {
       if (room() === 0) {
@@ -477,6 +520,17 @@ export async function entriesFor(
         report(draft, `\`${relPath}\``, refusal(ctx, parent, relPath));
         continue;
       }
+    }
+    if (scanExhausted(draft.budget)) {
+      // The syscall is the cost. Checked here rather than inside `scanNames`,
+      // because by the time a listing has been handed over the directory has
+      // already been read and only the array is left to bound.
+      report(
+        draft,
+        `\`${relPath}\``,
+        problem(ctx, "malformed", `\`${relPath}\` is past the scan budget; it is not offered.`),
+      );
+      continue;
     }
     let scanned: { names: string[]; truncated: boolean };
     try {

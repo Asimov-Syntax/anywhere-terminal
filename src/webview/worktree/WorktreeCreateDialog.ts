@@ -422,6 +422,12 @@ function switchRow(provider: WorktreeProvisionOffer["model"]["providers"][number
   take_.type = "button";
   take_.className = "wt-bring-switch-take";
   take_.textContent = "Use this instead";
+  // The visible label is the same on every row, and the file list that tells
+  // them apart sits beside the button rather than inside it — so to a screen
+  // reader walking the controls every choice announced itself identically
+  // (.reviews/round-1.md F006). Naming the button after its own source is what
+  // makes the rows distinguishable without changing what is drawn.
+  take_.setAttribute("aria-label", `Use ${provider.files.join(", ")} instead`);
   take_.addEventListener("click", take);
   el.append(files, take_);
   return el;
