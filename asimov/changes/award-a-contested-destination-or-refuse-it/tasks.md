@@ -122,3 +122,13 @@
     1. `src/worktree/provisioning/applyEntries.ts` reports a lost exclusive claim as its own outcome shape rather than as refusal text.
     2. `src/worktree/provisioning/applyProvisioning.ts` refuses the contest on that shape alone and passes every other refusal through unchanged.
     3. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses a contested entry refused by the material rule keeping its own reason, and `src/worktree/provisioning/applyEntries.test.ts` covers the new shape.
+
+- [x] 6_2 Name the contest in a contested entry's own refusal — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 6_1
+  - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, design.md#d4b-a-refusal-says-which-rule-refused-and-the-reason-string-is-not-a-channel, .reviews/round-4.md#f009
+  - **Acceptance**:
+    - Outcome: A contested entry's own refusal carries its rule and every member of its contest
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyProvisioning.ts` decorates an ordinary refusal from a contested entry with the whole contest's membership instead of storing it unchanged.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts both the rule that fired and every member's path and declaring file in that row.

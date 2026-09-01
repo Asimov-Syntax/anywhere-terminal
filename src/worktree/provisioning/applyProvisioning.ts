@@ -130,6 +130,9 @@ export async function applyProvisioning(
    */
   const contended = (readings: readonly Reading[]): boolean => readings.some((reading) => reading !== "absent");
 
+  /** Every member of a contest, by path and declaring file, in one reading order. */
+  const namesOf = (contest: Contest): string => [contest.favoured, ...contest.held].map(declaredAs).join(", ");
+
   /** Refuse every member that is still claiming, naming the whole contest. */
   const refuseContest = async (contest: Contest, why: string): Promise<void> => {
     const members = [contest.favoured, ...contest.held];
@@ -207,7 +210,17 @@ export async function applyProvisioning(
       }
       continue;
     }
-    answered.set(entry, applied as ProvisionStepResult);
+    const result = applied as ProvisionStepResult;
+    // A contested entry refused by its own rule keeps that rule AND names the
+    // contest. D4a is about what a refusal says, not about which one it is, so
+    // passing an ordinary refusal through unchanged left the user with a rule
+    // and no counterparty (.reviews/round-4.md F009).
+    answered.set(
+      entry,
+      contest === undefined || result.outcome.kind !== "refused"
+        ? result
+        : step(entry, `${namesOf(contest)} may name this same destination — ${result.outcome.reason}`),
+    );
   }
 
   // The held members, once the favoured one has had its ordinary turn — and

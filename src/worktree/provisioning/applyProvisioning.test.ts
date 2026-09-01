@@ -338,6 +338,13 @@ describe("a refusal says which rule refused", () => {
       kind: "refused",
       reason: expect.stringContaining("devices, sockets and FIFOs are never configuration"),
     });
+    // The rule it fired AND the contest it is in — D4a holds for every refusal,
+    // not only the ones the contest itself produced (.reviews/round-4.md F009).
+    expect(steps[0]?.outcome).toMatchObject({
+      reason: expect.stringContaining(
+        "MixedCase (declared in .vscode/worktree.json), mixedcase (declared in asimov/worktree.yaml)",
+      ),
+    });
     // And the contest still settles: the favoured member never claimed it.
     expect(steps[1]?.outcome).toMatchObject({
       kind: "refused",

@@ -139,10 +139,12 @@ orchestration cannot read a rule out of prose, so replacing every one of them wi
 reason reported a destination collision that never happened, for refusals that had nothing to do
 with the contest (.reviews/round-3.md F006).
 
-So the claim-loss answer is distinguishable at the type level rather than by its text: `applyEntry`
-reports it as its own outcome shape, and the orchestration refuses the contest on THAT and passes
-every other refusal through with the rule it actually had. The reason a person reads still names
-every member, because D4a is about what a refusal says, not about which one it is.
+So the claim-loss answer is distinguishable at the type level rather than by its text, through two
+doors rather than one flag: `applyEntry` keeps returning only a `ProvisionStepResult`, and
+`applyExclusiveEntry` returns `ProvisionStepResult | typeof CLAIM_LOST`. The orchestration refuses
+the contest on `CLAIM_LOST` and passes every other refusal through with the rule it actually had —
+DECORATED with the contest's membership, never replaced by it, because D4a is about what a refusal
+says and not about which one it is (.reviews/round-4.md F009, F010).
 
 ### D4a — Every refusal names every member, by path and declaring file
 

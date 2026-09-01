@@ -30,9 +30,13 @@ This is the half that can observe the answer. The destination exists by the time
 
 - **Provisioning still deletes nothing.** No unlink, no truncate, no overwrite — on any path this
   change touches.
-- **No refusal on the folding key at apply time.** The key is over-inclusive by construction, so
-  using it to refuse material would destroy a declaration to prevent a collision the volume cannot
-  have. A symlink that loops only because the destination folds its target onto its own name is
+- **No refusal on the folding key at READ time.** The key is over-inclusive by construction, so
+  using it to refuse a row before the worktree exists would destroy a declaration to prevent a
+  collision the volume cannot have. At APPLY time it does refuse the held member, and that changed
+  during round 3: `absent` after the favoured member claimed cannot be told from the favoured
+  member's object having been removed, so writing on it is how the inherited declaration wins a
+  folded destination (.reviews/round-2.md F005). A symlink that loops only because the destination
+  folds its target onto its own name is
   therefore left to the filesystem, which answers `ELOOP` to a reader and loses nothing; owning
   that case needs the probe below and is a follow-up.
 - **No twin-create probe.** Creating two test names in a private directory to ask the volume
@@ -55,6 +59,8 @@ one place.
 
 The two hard requirements over one state are named and settled in design.md, not discovered during
 build: `Copying SHALL happen before linking` is accepted, and a native LINK claiming its slot ahead
-of an inherited COPY contradicts it outright. The other risk is over-refusal — the folding key is
-deliberately over-inclusive, so a group whose members are genuinely two files on this volume must
-still land both.
+of an inherited COPY contradicts it outright. The other risk was over-refusal — the folding key is deliberately
+over-inclusive, so a group whose members are genuinely two files on this volume was to land both.
+That is no longer the appetite: F005 established that the apply cannot tell that case from its own
+material being removed, so it refuses the held member and the repository's own declaration is the
+only one that lands. The cost is accepted deliberately and is stated in the spec delta.
