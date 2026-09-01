@@ -1208,6 +1208,13 @@
   align-items: center;
   min-width: 0;
 }
+/* An excluded row carries no checkbox, so nothing occupies the 13px column and
+   the auto-placed label landed in it — the "removed on purpose" marker and the
+   source badge crushed into 13px beside the subject (.reviews/round-1.md F004).
+   One column here, and both lines stack the way every other row's do. */
+.wt-brow--excluded {
+  grid-template-columns: minmax(0, 1fr);
+}
 .wt-brow-cb {
   margin: 0;
   width: 13px;
@@ -1254,6 +1261,10 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+/* After the rule it overrides: an excluded row has only one column. */
+.wt-brow--excluded .wt-brow-meta {
+  grid-column: 1;
 }
 /* Provider-file text. Truncated rather than wrapped: a long script must not push
    the form's own controls off the measure. */

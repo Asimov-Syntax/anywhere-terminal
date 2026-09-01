@@ -103,22 +103,33 @@ export const nativeAdapter: ProviderAdapter = {
       allowTrailingComma: true,
       allowEmptyContent: true,
     });
-    if (errors.length > 0) {
-      // The one failure that does discard the rest, because there is no rest to
-      // keep: nothing was parsed. Every other reason below leaves the file's
-      // other keys offered (§ 3.4).
+    // Reported, and then read anyway. `jsonc-parser` is error-tolerant: it hands
+    // back the keys it could read alongside the errors it hit, so a damaged
+    // `exclude` between a valid `copy` and a valid `setup` still yields both.
+    // Returning an empty model here threw those away, which is the one thing
+    // "none of them SHALL discard the rest of the file" forbids
+    // (.reviews/round-1.md F003).
+    const damaged = errors.length > 0;
+    if (damaged) {
       report(
         draft,
         `\`${NATIVE_PROVIDER_FILE}\``,
         problem(NATIVE, "malformed", `\`${NATIVE_PROVIDER_FILE}\` is not valid JSON with comments.`),
       );
-      return { model: modelFromDraft(draft) };
     }
     if (parsed === undefined) {
       return { model: modelFromDraft(draft) };
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      report(draft, `\`${NATIVE_PROVIDER_FILE}\``, problem(NATIVE, "malformed", "The file is not a mapping of keys."));
+      // One reason per file, not two: a damaged file that recovered no mapping
+      // has already been named, and saying it twice reads as two defects.
+      if (!damaged) {
+        report(
+          draft,
+          `\`${NATIVE_PROVIDER_FILE}\``,
+          problem(NATIVE, "malformed", "The file is not a mapping of keys."),
+        );
+      }
       return { model: modelFromDraft(draft) };
     }
 

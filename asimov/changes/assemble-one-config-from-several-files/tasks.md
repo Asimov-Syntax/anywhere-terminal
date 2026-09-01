@@ -97,3 +97,20 @@
     1. Extend `src/extension.worktreeAssembly.test.ts` with a walk writing a native file that extends a framework file, opening the create form, and asserting the merged rows, their source badges, the winning mode on a shared path, and the excluded row.
     2. In that walk, clear every provider file first — the suite's repository outlives a test, and a leftover decides detection silently.
   - **Boundary**: no fake may stand in for the host, the router or the dialog
+
+## 4. Round-1 review fixes
+
+- [x] 4_1 Close round 1's three blockers and its warning — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-1.md#{f001, f002, f003, f004}; specs/worktree-panel/spec.md#{the-repository-s-own-declaration-wins-the-path-it-shares, a-path-the-repository-removed-is-shown-as-deliberate, one-unreadable-part-never-discards-the-rest-of-a-configuration}; design.md#{d2-extends-resolves-by-file-membership-not-by-provider-name, d10-base-native-and-exclude-all-naming-one-path}
+  - **Acceptance**:
+    - Outcome: Two spellings of one path are one row, the authorized base is the one read, and a damaged key keeps its file's other keys
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/readProvisioning.ts`, derive one canonical repository-relative identity and key dedupe, exclusion and the D10 contradiction check on it — never the displayed `path` and never the `source`, which § 4.3 forbids rewriting.
+    2. In `src/worktree/provisioning/readProvisioning.ts`, hand the base adapter a `ProviderDeps` serving the authorized bytes for the exact `extends` target, so the file that passed the check is the file that is read; the adapter's other files still read live.
+    3. In `src/worktree/provisioning/nativeProvider.ts`, report a JSONC parse error and then read whatever mapping the parser recovered, returning early only when none was.
+    4. In `src/webview/worktree/worktreePanel.css`, give `.wt-brow--excluded` its own one-column placement so its label does not land in the 13px checkbox column.
+    5. Extend `src/worktree/provisioning/readProvisioning.test.ts` and `src/worktree/provisioning/nativeProvider.test.ts` with a witness per finding, each confirmed failing against this round's HEAD.
+  - **Boundary**: no new problem reason, and no change to what any row displays as its `path` or names as its `source`
+

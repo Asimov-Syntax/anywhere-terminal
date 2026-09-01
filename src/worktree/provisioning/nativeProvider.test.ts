@@ -135,7 +135,10 @@ describe("one unreadable part never discards the rest", () => {
     const answer = await read(withJson(`{"copy": [".env.local"`));
 
     expect(answer?.model.problems.map((p) => p.reason)).toEqual(["malformed"]);
-    expect(answer?.model.entries).toEqual([]);
+    // The entry assertion here used to be `[]`. That encoded the discard this
+    // round removed: the parser recovers `copy` from an unterminated document,
+    // and keeping it is what the requirement asks for (round-1 F003).
+    expect(answer?.model.entries.map((e) => e.path)).toEqual([".env.local"]);
   });
 
   it("reports a base that is not a path, and keeps the rest of the file", async () => {
@@ -230,5 +233,25 @@ describe("the shared budget", () => {
 
     expect(budget.rows).toBe(MAX_MODEL_ROWS);
     expect(answer?.model.problems.length).toBe(MAX_MODEL_ROWS);
+  });
+});
+
+describe("[round-1 F003] a damaged key does not take the file's other keys with it", () => {
+  it("offers what the parser recovered, and reports the damage", async () => {
+    // `jsonc-parser` is error-tolerant and hands back the keys it could read.
+    // Returning an empty model on any error threw those away, which is the one
+    // thing "none of them SHALL discard the rest of the file" forbids.
+    const answer = await read(withJson(`{"copy": [".env.local"], "exclude": , "setup": ["pnpm i"]}`));
+
+    expect(answer?.model.entries.map((e) => e.path)).toEqual([".env.local"]);
+    expect(answer?.model.setup.map((s) => s.script)).toEqual(["pnpm i"]);
+    expect(answer?.model.problems.map((p) => p.reason)).toEqual(["malformed"]);
+  });
+
+  it("still reports exactly one reason for a file that recovered nothing", async () => {
+    const answer = await read(withJson("{{{"));
+
+    expect(answer?.model.problems.map((p) => p.reason)).toEqual(["malformed"]);
+    expect(answer?.model.entries).toEqual([]);
   });
 });

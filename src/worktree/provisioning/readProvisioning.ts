@@ -9,6 +9,7 @@
 // as if it had never configured the tool it uses. One answers; the others are
 // named and one click away (design.md D3, D5).
 
+import * as path from "node:path";
 import type { ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
 import { asimovAdapter } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
@@ -110,13 +111,56 @@ async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: Pro
  * Once it resolves, the WHOLE adapter reads — both of orca's files, not the one
  * that was named. Half of orca is a model orca would not recognize.
  */
-async function baseFor(deps: ProviderDeps, repoRoot: string, target: string): Promise<ProviderAdapter | null> {
+async function baseFor(
+  deps: ProviderDeps,
+  repoRoot: string,
+  target: string,
+): Promise<{ adapter: ProviderAdapter; deps: ProviderDeps } | null> {
   const adapter = FRAMEWORK_ORDER.find((a) => a.files.includes(target));
   if (adapter === undefined) {
     return null;
   }
   const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file: target });
-  return opened.kind === "text" ? adapter : null;
+  if (opened.kind !== "text") {
+    return null;
+  }
+  // The bytes that passed the check are the bytes the adapter reads.
+  //
+  // Authorizing the target and then letting the adapter open it again left a
+  // gap: with `.worktreeinclude` named and vanishing in between, orca read only
+  // `orca.yaml` and the model inherited a shared directory AND a setup command
+  // from a file the user never named — orca marked active, no problem reported
+  // (.reviews/round-1.md F002). That is D2 rule 2's own defeater, returning
+  // through a seam the rule did not cover.
+  //
+  // Only the named path is pinned. The adapter's other files still read live,
+  // because D2 rule 3 wants the WHOLE adapter: half of orca is a model orca
+  // would not recognize.
+  const at = path.resolve(repoRoot, target);
+  const pinned: ProviderDeps = {
+    ...deps,
+    readFile: async (p) => (p === at ? opened.text : deps.readFile(p)),
+  };
+  return { adapter, deps: pinned };
+}
+
+/**
+ * Which destination on disk a declared path names.
+ *
+ * Two files spelling one destination differently — `node_modules` against
+ * `./node_modules`, or `a/../node_modules` — compared as raw strings stayed two
+ * rows, so an inherited LINK survived beside the native COPY for the same place,
+ * and `exclude: ["./x"]` matched an inherited `x` not at all
+ * (.reviews/round-1.md F001). The spec says exactly one row is offered for that
+ * PATH, and a path is a destination, not a spelling.
+ *
+ * Used for identity only. What a row DISPLAYS and what it names as its `source`
+ * are never touched — § 4.3 forbids rewriting either, and a row that showed the
+ * canonical form would be telling the user something their file does not say.
+ */
+function pathKey(declared: string): string {
+  const normalized = path.posix.normalize(declared);
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
 }
 
 /**
@@ -131,10 +175,10 @@ function mergeEntries(
   base: readonly ProvisionEntry[],
   native: readonly ProvisionEntry[],
 ): { entries: ProvisionEntry[]; inline: Set<string> } {
-  const inline = new Set(native.map((e) => e.path));
+  const inline = new Set(native.map((e) => pathKey(e.path)));
   // Superseded, not excluded: a losing inherited row is dropped rather than
   // listed as something the user deliberately removed (design.md D10).
-  return { entries: [...base.filter((e) => !inline.has(e.path)), ...native], inline };
+  return { entries: [...base.filter((e) => !inline.has(pathKey(e.path))), ...native], inline };
 }
 
 /**
@@ -153,23 +197,24 @@ function applyExclude(
   draft: Draft,
 ): { kept: ProvisionEntry[]; excluded: ProvisionEntry[] } {
   const removed = new Set<string>();
-  for (const path of exclude) {
-    if (inline.has(path)) {
+  for (const declared of exclude) {
+    const key = pathKey(declared);
+    if (inline.has(key)) {
       report(
         draft,
-        `\`${path}\``,
-        problem(NATIVE, "unknownKey", `\`${path}\` is both declared and excluded here; the row is kept.`),
+        `\`${declared}\``,
+        problem(NATIVE, "unknownKey", `\`${declared}\` is both declared and excluded here; the row is kept.`),
       );
       continue;
     }
-    removed.add(path);
+    removed.add(key);
   }
   // `source` is never rewritten by exclusion: an excluded row keeps the name of
   // the file that declared it, which is what makes it legible as deliberate
   // rather than as something this file produced (§ 4.3).
   return {
-    kept: entries.filter((e) => !removed.has(e.path)),
-    excluded: entries.filter((e) => removed.has(e.path)),
+    kept: entries.filter((e) => !removed.has(pathKey(e.path))),
+    excluded: entries.filter((e) => removed.has(pathKey(e.path))),
   };
 }
 
@@ -182,9 +227,10 @@ async function assemble(
 ): Promise<{ model: ProvisionModel; base: ProviderAdapter | null }> {
   const draft = newDraft(NATIVE, budget);
   const target = native.extends;
-  const base = target === undefined ? null : await baseFor(deps, repoRoot, target);
+  const resolved = target === undefined ? null : await baseFor(deps, repoRoot, target);
+  const base = resolved?.adapter ?? null;
 
-  if (target !== undefined && base === null) {
+  if (target !== undefined && resolved === null) {
     // A path matching no framework adapter and a path whose file is not there
     // are one problem: from the user's side both are "the thing you named is
     // not something I can read", and splitting them would mean explaining the
@@ -193,7 +239,7 @@ async function assemble(
   }
   // The inline keys are offered whether or not the base resolved. An early
   // return here would discard them for a typo in one other key.
-  const inherited = base === null ? null : await base.read(deps, repoRoot, budget);
+  const inherited = resolved === null ? null : await resolved.adapter.read(resolved.deps, repoRoot, budget);
   const baseModel = inherited?.model ?? emptyModel();
 
   const merged = mergeEntries(baseModel.entries, native.model.entries);

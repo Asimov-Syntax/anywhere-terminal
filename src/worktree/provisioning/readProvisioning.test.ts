@@ -559,3 +559,87 @@ describe("one unreadable part never discards the rest of a configuration", () =>
     expect(model.setup.map((s) => s.script)).toEqual(["pnpm i"]);
   });
 });
+
+describe("[round-1 F001] one path is one row, however the two files spell it", () => {
+  it("dedupes an inherited spelling the native file wrote differently", async () => {
+    // Raw-string comparison offered both, so an inherited LINK survived beside
+    // the native COPY for the same destination on disk — and the link is the
+    // one that writes through to the main checkout.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["node_modules"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: ['./node_modules']\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([
+      ["node_modules", "copy", NATIVE_PROVIDER_FILE],
+    ]);
+  });
+
+  it("excludes an inherited path the exclusion spelled differently", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "exclude": ["./.cache"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: ['.cache', 'node_modules']\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["node_modules"]);
+    // The row keeps the spelling ITS file used. Only the identity was
+    // canonical; § 4.3 forbids rewriting what a row displays.
+    expect(model.excluded.map((e) => [e.path, e.source])).toEqual([[".cache", ORCA_YAML_FILE]]);
+  });
+
+  it("reports the D10 contradiction across two spellings", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": [".cache"], "exclude": ["./.cache"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: ['.cache']\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => [e.path, e.source])).toEqual([[".cache", NATIVE_PROVIDER_FILE]]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
+    expect(model.excluded).toEqual([]);
+  });
+});
+
+describe("[round-1 F002] the file that was authorized is the file that is read", () => {
+  it("inherits the named file's own material, not a sibling's, when it changes under the read", async () => {
+    // The base was authorized by opening `.worktreeinclude`; the adapter then
+    // opened it a second time. In the gap the file went away, orca read only
+    // `orca.yaml`, and the model inherited a setup command from a file the user
+    // never named — with orca marked active and no problem at all.
+    let opens = 0;
+    const deps: ProviderDeps = {
+      ...fs({
+        native: `{"extends": ".worktreeinclude"}`,
+        orcaInclude: ".env\n",
+        orcaYaml: "worktree:\n  sharedDirectories: [node_modules]\nscripts:\n  setup: pnpm install\n",
+      }),
+      readFile: async (p) => {
+        if (p.endsWith(ORCA_INCLUDE_FILE)) {
+          opens += 1;
+          if (opens > 1) {
+            throw Object.assign(new Error("gone"), { code: "ENOENT" });
+          }
+          return ".env\n";
+        }
+        if (p.endsWith(NATIVE_PROVIDER_FILE)) {
+          return `{"extends": ".worktreeinclude"}`;
+        }
+        if (p.endsWith(ORCA_YAML_FILE)) {
+          return "worktree:\n  sharedDirectories: [node_modules]\nscripts:\n  setup: pnpm install\n";
+        }
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+    };
+    const model = await readProvisioning(deps, ROOT);
+
+    expect(model.entries.map((e) => [e.path, e.source])).toContainEqual([".env", ORCA_INCLUDE_FILE]);
+  });
+});
