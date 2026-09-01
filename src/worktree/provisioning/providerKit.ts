@@ -122,19 +122,70 @@ export function ids(): () => string {
   };
 }
 
+/**
+ * Two accounts, spent once per read.
+ *
+ * They are separate because they bound different costs and neither implies the
+ * other: `rows` bounds what crosses `postMessage` and reaches the DOM, `scanned`
+ * bounds the work done to decide what those rows are. A directory of
+ * non-matching names costs the second and nothing of the first, which is how a
+ * repository declaring many globs stayed unbounded under a row cap alone
+ * (design.md D9).
+ *
+ * They are also on the BUDGET rather than on a draft, because a provider that
+ * reads two files builds two drafts and must not get two budgets for it.
+ */
+export interface ProviderBudget {
+  rows: number;
+  scanned: number;
+  /** The cap's reason has been recorded against this budget; do not record it again. */
+  capped: boolean;
+}
+
+export function newBudget(): ProviderBudget {
+  return { rows: 0, scanned: 0, capped: false };
+}
+
 export type Draft = {
   /** Stamped onto everything this draft emits. Reassigned when a source moves file. */
   ctx: ProviderContext;
+  /** Shared with every other draft of the same read. */
+  budget: ProviderBudget;
   entries: ProvisionEntry[];
   setup: ProvisionSetupStep[];
   ports: ProvisionPort[];
   problems: ProvisionProblem[];
-  /** The budget message has been recorded; do not record it again. */
-  capped?: boolean;
 };
 
-export function newDraft(ctx: ProviderContext): Draft {
-  return { ctx, entries: [], setup: [], ports: [], problems: [] };
+export function newDraft(ctx: ProviderContext, budget: ProviderBudget = newBudget()): Draft {
+  return { ctx, budget, entries: [], setup: [], ports: [], problems: [] };
+}
+
+/** True once this budget's row cap has been recorded. */
+export function capped(draft: Draft): boolean {
+  return draft.budget.capped;
+}
+
+// Every append is charged, so the count cannot drift from the collections it
+// claims to bound. A direct `.push` on a draft is the defect these prevent.
+export function addEntry(draft: Draft, entry: ProvisionEntry): void {
+  draft.budget.rows += 1;
+  draft.entries.push(entry);
+}
+
+export function addPort(draft: Draft, port: ProvisionPort): void {
+  draft.budget.rows += 1;
+  draft.ports.push(port);
+}
+
+export function addSetup(draft: Draft, step: ProvisionSetupStep): void {
+  draft.budget.rows += 1;
+  draft.setup.push(step);
+}
+
+function addProblem(draft: Draft, p: ProvisionProblem): void {
+  draft.budget.rows += 1;
+  draft.problems.push(p);
 }
 
 export function problem(ctx: ProviderContext, reason: ProvisionProblem["reason"], detail: string): ProvisionProblem {
@@ -142,15 +193,15 @@ export function problem(ctx: ProviderContext, reason: ProvisionProblem["reason"]
 }
 
 /**
- * How many rows the offer has already committed to.
+ * How many rows the read has already committed to.
  *
- * One budget across ALL four collections. Counting `entries` alone let ports,
- * setup steps and problems past a cap described as model-wide (round-2 B7) —
- * and a refused match emits a problem, so an all-escaping directory was as
- * unbounded as an all-matching one.
+ * One account across ALL four collections and every draft sharing the budget.
+ * Counting `entries` alone let ports, setup steps and problems past a cap
+ * described as model-wide (round-2 B7) — and a refused match emits a problem, so
+ * an all-escaping directory was as unbounded as an all-matching one.
  */
 export function emitted(draft: Draft): number {
-  return draft.entries.length + draft.ports.length + draft.setup.length + draft.problems.length;
+  return draft.budget.rows;
 }
 
 /** True once the offer is full. Records the reason exactly once. */
@@ -160,12 +211,13 @@ export function full(draft: Draft, what: string): boolean {
   if (emitted(draft) < MAX_MODEL_ROWS - 1) {
     return false;
   }
-  if (!draft.capped) {
-    draft.capped = true;
+  if (!draft.budget.capped) {
+    draft.budget.capped = true;
     // Reported, never silently truncated: a shorter list than the repository
     // asked for is the "shown list differs from the copied list" failure this
     // module exists to prevent.
-    draft.problems.push(
+    addProblem(
+      draft,
       problem(draft.ctx, "malformed", `More than ${MAX_MODEL_ROWS} rows; ${what} and after are not offered.`),
     );
   }
@@ -186,7 +238,7 @@ export function report(draft: Draft, what: string, p: ProvisionProblem): void {
   if (full(draft, what)) {
     return;
   }
-  draft.problems.push(p);
+  addProblem(draft, p);
 }
 
 export function emptyModel(): ProvisionModel {
@@ -319,28 +371,36 @@ export async function openProviderFile(
 }
 
 /**
- * Read at most `MAX_SCAN` names from a directory.
+ * Read names from a directory, charging what is read to the shared account.
  *
  * Sorted after collection so expansion order stays deterministic, and bounded
- * before it so a hostile directory cannot be materialized (round-2 B7).
+ * before it so a hostile directory cannot be materialized (round-2 B7). The
+ * budget is the READ's, not this call's: the previous per-call counter let every
+ * glob in a file scan a fresh `MAX_SCAN` names, so a file declaring twenty of
+ * them cost twenty times the bound while emitting no rows at all (design.md D9).
  */
 export async function scanNames(
   listing: Promise<readonly string[]> | AsyncIterable<string>,
+  budget: ProviderBudget,
 ): Promise<{ names: string[]; truncated: boolean }> {
   const names: string[] = [];
   let truncated = false;
+  const room = () => Math.max(MAX_SCAN - budget.scanned, 0);
   if (Symbol.asyncIterator in Object(listing)) {
     for await (const name of listing as AsyncIterable<string>) {
-      if (names.length >= MAX_SCAN) {
+      if (room() === 0) {
         truncated = true;
         break;
       }
+      budget.scanned += 1;
       names.push(name);
     }
   } else {
     const all = await (listing as Promise<readonly string[]>);
-    truncated = all.length > MAX_SCAN;
-    names.push(...all.slice(0, MAX_SCAN));
+    const take = Math.min(all.length, room());
+    truncated = all.length > take;
+    budget.scanned += take;
+    names.push(...all.slice(0, take));
   }
   names.sort();
   return { names, truncated };
@@ -381,7 +441,7 @@ export async function entriesFor(
     if (!relPath.includes("*")) {
       const where = await contained(relPath, repoRoot, root, deps);
       if (where === "inside") {
-        draft.entries.push({ id: nextId(), path: relPath, mode, source: ctx.file });
+        addEntry(draft, { id: nextId(), path: relPath, mode, source: ctx.file });
       } else {
         // Refused and reported, never clamped: clamping turns a suspicious
         // entry into a silently different one (§ 7).
@@ -414,7 +474,7 @@ export async function entriesFor(
     }
     let scanned: { names: string[]; truncated: boolean };
     try {
-      scanned = await scanNames(deps.readdir(path.resolve(repoRoot, glob.dir)));
+      scanned = await scanNames(deps.readdir(path.resolve(repoRoot, glob.dir)), draft.budget);
     } catch (error) {
       if (!isAbsence(error)) {
         // Present and unreadable is not the same as absent. Reported, so the
@@ -460,7 +520,7 @@ export async function entriesFor(
         report(draft, `\`${expanded}\``, refusal(ctx, where, expanded));
         continue;
       }
-      draft.entries.push({ id: nextId(), path: expanded, mode, source: ctx.file });
+      addEntry(draft, { id: nextId(), path: expanded, mode, source: ctx.file });
     }
   }
 }

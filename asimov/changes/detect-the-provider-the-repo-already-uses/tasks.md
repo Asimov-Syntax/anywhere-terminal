@@ -15,7 +15,7 @@
     6. Create `src/worktree/provisioning/providerKit.test.ts` calling the kit as a NON-asimov provider: an entry's `source` and a problem's `file` are the context's file; `openProviderFile` answers `absent` for a missing file, `problem` for one that resolves outside the root, and `problem` for one whose own path is a symlink out.
   - **Boundary**: behaviour-preserving for the asimov adapter — `src/worktree/provisioning/asimovProvider.test.ts` may not be edited by this task
 
-- [ ] 1_2 Count rows and scanned names separately, once per read
+- [x] 1_2 Count rows and scanned names separately, once per read — verified: pnpm exec vitest run 'src/worktree/provisioning/providerKit.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D9; design.md § Obligation ledger
   - **Acceptance**:
@@ -24,7 +24,7 @@
   - **Plan**:
     1. In `src/worktree/provisioning/providerKit.ts`, add the `ProviderBudget` interface and `newBudget()` design.md D9 names, holding a `rows` and a `scanned` count.
     2. In `src/worktree/provisioning/providerKit.ts`, make `scanNames` charge the passed budget's `scanned` account instead of allocating a counter per call, and stop at `MAX_SCAN` across every call sharing that budget.
-    3. In `src/worktree/provisioning/providerKit.ts`, make `Draft` hold the same budget so `emitted`, `full` and `report` charge `rows` across every draft sharing it, and record the cap's reason exactly once per budget.
+    3. In `src/worktree/provisioning/providerKit.ts`, make `Draft` hold the same budget so `emitted`, `full` and `report` charge `rows` across every draft sharing it, and record the cap's reason exactly once per budget. A charged account only counts what every append goes through, so the kit owns the appends: add `addEntry`, `addPort` and `addSetup`, and update `src/worktree/provisioning/asimovProvider.ts` to append its ports and setup steps through them.
     4. Extend `src/worktree/provisioning/providerKit.test.ts`: two globs over directories of non-matching names stop at `MAX_SCAN` in total, not per glob, while emitting no rows; two drafts sharing one budget stop at the combined row cap; the reason is recorded once; a fresh budget starts empty.
 
 ## 2. The two new adapters

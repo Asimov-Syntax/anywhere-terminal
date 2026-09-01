@@ -3,6 +3,9 @@ import {
   contained,
   entriesFor,
   ids,
+  MAX_MODEL_ROWS,
+  MAX_SCAN,
+  newBudget,
   newDraft,
   openProviderFile,
   type ProviderContext,
@@ -211,5 +214,88 @@ describe("containment stays the kit's one rule", () => {
     expect(await contained("../up", ROOT, opened.root, deps)).toBe("outside");
     expect(await contained("tangled", ROOT, opened.root, broken)).toBe("unresolvable");
     expect(refusal(ORCA, "unresolvable", "tangled").reason).toBe("unreadable");
+  });
+});
+
+describe("one read, two accounts", () => {
+  /** A directory of `count` names, none of which the glob below can match. */
+  function noise(count: number): string[] {
+    return Array.from({ length: count }, (_, i) => `n${String(i).padStart(5, "0")}.txt`);
+  }
+
+  it("[D9] two non-matching globs share one scan budget rather than one each", async () => {
+    // The defect this closes: a per-call counter let each glob scan MAX_SCAN
+    // names while emitting nothing, so the ROW cap — the only budget there
+    // was — never engaged and the real cost was unbounded in the number of
+    // globs a repository declares.
+    let seen = 0;
+    const deps: ProviderDeps = {
+      ...fs({ files: { [`${ROOT}/${ORCA.file}`]: "" } }),
+      readdir: async function* (p: string) {
+        for (const name of noise(MAX_SCAN)) {
+          seen += 1;
+          yield `${p === `${ROOT}/a` ? "a" : "b"}-${name}`;
+        }
+      },
+    };
+    const opened = await openProviderFile(deps, ROOT, ORCA);
+    if (opened.kind !== "text") {
+      throw new Error(`expected the file to open, got ${opened.kind}`);
+    }
+    const budget = newBudget();
+    const draft = newDraft(ORCA, budget);
+    await entriesFor(["a/*.env", "b/*.env"], "copy", ROOT, opened.root, deps, ids(), draft);
+
+    expect(draft.entries).toEqual([]);
+    expect(budget.scanned).toBeLessThanOrEqual(MAX_SCAN);
+    // One name past the cap is what breaking out of an iterator costs; two
+    // full directories would be twice MAX_SCAN.
+    expect(seen).toBeLessThanOrEqual(MAX_SCAN + 1);
+  });
+
+  it("[D9] a second glob is refused outright once the scan budget is spent", async () => {
+    const deps: ProviderDeps = {
+      ...fs({ files: { [`${ROOT}/${ORCA.file}`]: "" } }),
+      readdir: async (p: string) => (p === `${ROOT}/a` ? noise(MAX_SCAN + 10) : ["wanted.env"]),
+    };
+    const opened = await openProviderFile(deps, ROOT, ORCA);
+    if (opened.kind !== "text") {
+      throw new Error(`expected the file to open, got ${opened.kind}`);
+    }
+    const draft = newDraft(ORCA, newBudget());
+    await entriesFor(["a/*.env", "b/*.env"], "copy", ROOT, opened.root, deps, ids(), draft);
+
+    // Reported, not silently dropped: the shown list must not differ from the
+    // list that would be copied.
+    expect(draft.entries).toEqual([]);
+    expect(draft.problems.map((p) => p.detail)).toEqual([
+      "`a/*.env` names a directory too large to scan; it is not offered.",
+      "`b/*.env` names a directory too large to scan; it is not offered.",
+    ]);
+  });
+
+  it("[D9] two drafts sharing one budget stop at the combined row cap, reported once", async () => {
+    const deps = fs({ files: { [`${ROOT}/${ORCA.file}`]: "" } });
+    const opened = await openProviderFile(deps, ROOT, ORCA);
+    if (opened.kind !== "text") {
+      throw new Error(`expected the file to open, got ${opened.kind}`);
+    }
+    const budget = newBudget();
+    const half = Array.from({ length: MAX_MODEL_ROWS }, (_, i) => `f${String(i).padStart(4, "0")}.env`);
+    const first = newDraft(ORCA, budget);
+    const second = newDraft({ id: "orca", file: ".worktreeinclude" }, budget);
+    await entriesFor(half, "copy", ROOT, opened.root, deps, ids(), first);
+    await entriesFor(half, "link", ROOT, opened.root, deps, ids(), second);
+
+    expect(budget.rows).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    expect(first.entries.length + second.entries.length).toBeLessThan(2 * MAX_MODEL_ROWS);
+    // The cap belongs to the budget, so the reason is recorded once no matter
+    // how many drafts run out on it.
+    const caps = [...first.problems, ...second.problems].filter((p) => p.detail.startsWith("More than"));
+    expect(caps).toHaveLength(1);
+  });
+
+  it("a fresh budget starts empty", () => {
+    expect(newBudget()).toEqual({ rows: 0, scanned: 0, capped: false });
   });
 });

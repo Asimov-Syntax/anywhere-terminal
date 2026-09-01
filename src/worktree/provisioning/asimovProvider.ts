@@ -14,6 +14,9 @@
 import { parse as parseYaml } from "yaml";
 import type { ProvisionModel } from "../../types/messages";
 import {
+  addPort,
+  addSetup,
+  capped,
   type Draft,
   emptyModel,
   entriesFor,
@@ -95,7 +98,7 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
   const record = parsed as Record<string, unknown>;
 
   for (const key of Object.keys(record)) {
-    if (draft.capped) {
+    if (capped(draft)) {
       break;
     }
     if (!KNOWN_KEYS.has(key)) {
@@ -108,14 +111,14 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
   // keeps the cap to exactly one row — every section below would otherwise call
   // `report`, find the budget spent, and do nothing, one no-op per declaration
   // in a file we have already refused to finish reading (round-3 B7).
-  if (record.copy !== undefined && !draft.capped) {
+  if (record.copy !== undefined && !capped(draft)) {
     await entriesFor(record.copy, "copy", repoRoot, root, deps, nextId, draft);
   }
-  if (record.link !== undefined && !draft.capped) {
+  if (record.link !== undefined && !capped(draft)) {
     await entriesFor(record.link, "link", repoRoot, root, deps, nextId, draft);
   }
 
-  if (record.ports !== undefined && !draft.capped) {
+  if (record.ports !== undefined && !capped(draft)) {
     if (typeof record.ports !== "object" || record.ports === null || Array.isArray(record.ports)) {
       report(draft, "`ports`", problem(ASIMOV, "malformed", "`ports` must be a mapping of names."));
     } else {
@@ -125,12 +128,12 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
         }
         // No number: the name is what the file declares, and probing for a free
         // port is WT-012.6's. The row is offered without one.
-        draft.ports.push({ id: nextId(), name, source: ASIMOV_PROVIDER_FILE });
+        addPort(draft, { id: nextId(), name, source: ASIMOV_PROVIDER_FILE });
       }
     }
   }
 
-  if (record.setup !== undefined && !draft.capped) {
+  if (record.setup !== undefined && !capped(draft)) {
     if (!Array.isArray(record.setup)) {
       report(draft, "`setup`", problem(ASIMOV, "malformed", "`setup` must be a list of commands."));
     } else {
@@ -144,7 +147,7 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
         }
         // Stored exactly as written. It is display text here and the shell's
         // single script argument later — never concatenated into one.
-        draft.setup.push({ id: nextId(), kind: "shell", script: raw, source: ASIMOV_PROVIDER_FILE });
+        addSetup(draft, { id: nextId(), kind: "shell", script: raw, source: ASIMOV_PROVIDER_FILE });
       }
     }
   }
