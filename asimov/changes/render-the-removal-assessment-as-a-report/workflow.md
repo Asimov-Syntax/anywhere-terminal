@@ -8,12 +8,12 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-013.4
 Lane: full (standard) — MEDIUM risk: presentation only, but it decides what a user is told before authorizing an irreversible deletion, and retires an existing safety guard | flags: none
-Planned at: 6e521950
+Planned at: 39099132 (re-earned; originally 6e521950)
 - Worktree based on huybuidac/create-worktree-harden, not main: WT-013.1 and WT-013.2 are the deps and neither is merged to main yet — main's docs/PLAN.md has no WT-013 tasks at all and src/worktree has no orphan proofs. A first attempt on the default base was discarded before any work landed.
 - No new-api-contract flag: WT-013.1 and WT-013.2 already carry `cls`, the four-outcome vocabulary and the three proofs in the same checks array, so this change alters no message shape.
 - 1_2 leaves a residual D2/D3 composed: a REFUSAL-class check that is `unproven` no longer withholds anything (`isRefusedByChecks` refuses only on `failed`), so it falls to the confirmable classes — typed if one of those is failing or unproven, ordinary otherwise. Both the spec's "Otherwise ... ordinary" and D2 say this explicitly, so it is built as accepted; flagged here because the retired guard was the only thing covering it and review should see it named rather than infer it.
@@ -260,3 +260,65 @@ Two of the round-6 items travelled with it rather than staying here, because the
 question: W6's dropped-reply strand (the panel guard that blocks the re-ask is the guard B5 refutes)
 and S2's assembly-walk overclaim, which that change's task 3_1 strengthens rather than correcting
 this change's ticked 3_4 title.
+
+DEPENDENCY SETTLED (2026-09-01). `coalesce-assessment-requests-at-the-host` is APPROVED and ARCHIVED
+at `asimov/changes/archive/260901-0348-coalesce-assessment-requests-at-the-host/` — cycle 1 round 1,
+APPROVE, 0 BLOCK / 0 WARN / 0 SUGGEST across six specialists. It closes round-6 B5 and W6 and
+round-6 S2. Round-6 S1 stays REJECTED: the chair's reasons hold, and the retrying `postCritical`
+design that would have made it reachable was cut by that change's own plan attack.
+
+Gate 2 is being re-earned on the artifacts, not the code. Nothing in `src/` is re-opened here and no
+ticked task is rewritten — the child edited `WorktreeHost.ts` and `WorktreeController.ts` under its
+own leases and its own review. Three artifact lines in this change were made false by that and are
+corrected in design.md: D10's "One request at a time" paragraph, the backlog-control ledger row, and
+D12's "exactly one reply per request" semantics. Each now cites the child as the owner of the bound
+rather than restating it.
+
+The spec delta is deliberately NOT edited. "Asking to remove a worktree SHALL NOT leave the user with
+no response" sits inside a WHERE clause scoped to an assessment that cannot be completed, and the
+child's ADDED requirement "Asking to remove again always asks again" — "exactly one report is shown,
+and it is the answer to the later request" — makes it more true rather than less. A superseded
+request receiving no reply of its own is not a user left without a response; it is a user who moved
+on and is answered on the ask they are still making. Read for a contradiction and none was found;
+recorded here so the next round tests the reading rather than assuming it.
+
+Plan attack on the amendment (`asm-oracle`, scoped to the five questions the amendment raises rather
+than to the ledger, which round 6 and the child's round 1 have both already attacked). Two questions
+came back `supported` and three `refuted`. All five dispositions are recorded; three findings were
+accepted outright and one accepted as fact with its remedy rejected:
+
+- SUPPORTED — the per-repository bound. No request pattern, surface attach/detach interleaving or
+  error path puts two assessment jobs in one repository's queue: admission sets `outstanding` before
+  the job is enqueued, the queue body releases before its promise settles, and the service step's
+  `finally` decides synchronously.
+- SUPPORTED — and this is the one worth reading, because it is the round-6 defect: W6's permanent
+  same-row wedge is CLOSED, not moved. A lost reply still costs the user a click, but the guard that
+  made that click a no-op is gone, so no finite schedule leaves a row unrecoverable.
+- ACCEPTED — my `n/a — consumed as a settled dependency` was a disposition wearing a disguise. D10
+  depends on that bound for its cost model, and the child ESTABLISHES it rather than making it
+  inapplicable. Relocating a witness does not relocate an obligation. The row is now `supported`,
+  citing the child's mechanism and its measurement.
+- ACCEPTED — the D12 prose still read "one live request, one reply, with no exception" two paragraphs
+  above the row I had amended. Corrected to the host-local property it can actually hold, with both
+  things it does not own — supersession and unacknowledged delivery — named rather than defended.
+- ACCEPTED — my own rewritten cost-model paragraph still asserted the backlog in the present tense.
+  It is now written as the counterfactual it is: what makes the bound necessary, not what happens.
+- ACCEPTED AS FACT, REMEDY REJECTED — the spec sentence. The oracle is right that a dropped
+  `postMessage` leaves the panel silent, and both adapters swallow it. It is wrong that this makes
+  the sentence a scope question for this requirement. Every message in this capability rides the same
+  unacknowledged transport, so that reading falsifies the whole spec uniformly; qualifying this one
+  sentence would put the residual in the wrong place and would cut accepted scope to fix a defect the
+  requirement does not own. It is a ledger row instead — `n/a`, pre-existing and shared, naming the
+  falsifying state and naming an acknowledged transport as its own change. Review should test this
+  disagreement rather than assume it settled; an Overrule makes it a spec question and a user call.
+
+Task 3_3's Plan prose was ANNOTATED, not rewritten. Steps 2, 3 and 5 described the controller-side
+duplicate drop the child deleted; each now carries what superseded it. Acceptance, Verify, Boundary
+and the `[x]` are untouched, and the oracle confirms no task Acceptance in this change became false —
+3_3's Outcome is the live-token guard, which still holds and is still witnessed.
+
+Verify Gate re-run after the amendment (2026-09-01, HEAD 39099132): check-types clean, 6262/6262,
+`gate:fs-deletion` ok (46 modules, 1 declared carve-out), biome check-mode at the 3 errors /
+14 warnings / 1 info baseline. `verify-status` exit 0, all 16 tasks. No source file was touched by
+this Gate 2 pass — the suite grew from 6254 to 6262 because the child change's tests are on this
+branch, not because anything here was rebuilt.

@@ -265,11 +265,25 @@ holds and would not: round-2 B5 established that `head:branch` repeats on a recr
 commit, which is the case that matters. A check that fails silently in exactly its motivating case is
 worse than an honestly named residual.
 
-**One request at a time.** Every menu activation posts another assess, and each one now holds the
-per-repo mutation queue across two forced rebuilds, the git status and proof commands (10 s timeout)
-and the ignored-content scan (1.5 s bound). A burst therefore builds a backlog that delays any
-mutation queued behind it. The controller drops a duplicate assess while one is outstanding for the
-same worktree, which is what makes the "one human click" cost model true rather than assumed.
+**The cost model, and who owns it.** One assessment holds the per-repo mutation queue across two
+forced rebuilds, the git status and proof commands (10 s timeout) and the ignored-content scan (1.5 s
+bound). That is affordable once. It is affordable per *click* only if something bounds how many
+clicks become queued work — without such a bound every menu activation would enter the queue in its
+own right, and a burst would delay any mutation behind it by the sum of all of them. This decision
+therefore does not merely benefit from a bound on ADMITTED assessments; it is unaffordable without
+one.
+
+**It does not have one, and never did.** A controller-side duplicate drop was written here and
+round-6 B5 refuted it: keyed on the single live worktree id, it saw one surface, so alternating two
+rows — or two panels — walked straight past it. That is not a gap this decision can patch, because a
+bound on work sharing the mutation queue has to be keyed by the repository the queue is keyed by, and
+has to sit where every surface is visible.
+
+**The bound is a settled dependency, owned elsewhere.** `coalesce-assessment-requests-at-the-host`
+(`asimov/changes/archive/260901-0348-coalesce-assessment-requests-at-the-host/`) admits at most one assessment job per
+repository, and the controller-side drop this paragraph used to rely on is gone. What that change
+guarantees, how, and at what residual is its design.md's to state; this decision consumes it and
+restates none of it.
 
 **What this closes, and by which existing mechanism.** Binding the token to an incarnation was tried
 and rejected at round-2 B5: `head:branch` repeats on a recreate onto the same commit, and git reuses
@@ -356,11 +370,18 @@ rebuild actually broadcasts, and a rebuild whose presence projection rejects pub
 all (`WorktreeHost.ts:2518-2543`). The panel then keeps a stale row AND gets no reply.
 
 So the `missing` leg answers too, through the same `unavailable` arm, naming the departure rather
-than a read: `unreadable: ["the worktree is no longer registered"]`. One live request, one reply, with
-no exception.
+than a read: `unreadable: ["the worktree is no longer registered"]`. Every request the host takes up
+is answered on one of these arms; none of them exits silently.
 
-Fail-closed is preserved either way — nothing is deleted — but an explicit destructive request now
-always gets an answer.
+Fail-closed is preserved either way — nothing is deleted.
+
+**Amended, and narrower than first written.** This decision originally claimed "one live request, one
+reply, with no exception". Two things it does not own make that false as stated, and both are better
+named than defended. A request superseded before the host takes it up is never served and receives no
+reply of its own — the child change's D3 chose that deliberately, and the user is not left waiting,
+because the ask that replaced it is the one they are on. And delivery itself is unacknowledged: this
+host posts, it does not confirm arrival. What D12 establishes is the host-local property — no exit
+from a served request is silent — which is the part a design here can actually hold.
 
 ## Obligation ledger
 
@@ -375,6 +396,7 @@ always gets an answer.
 | Assessing is no weaker than the removal path it reports for | The assess resolves its target behind the same forced-rebuild barrier, from the same coordinator body, as the shipped `blocked` → force path | Assessing straight off the cache, so `forget` (`worktreeFingerprint.ts:44-53`) has not fired for a path already removed and recreated | D10. `coordinator.run` awaits `gate.request(force: true)` before `resolve`. Test: a deferred `forceRebuild` proves neither `resolve` nor the assessment runs before the barrier releases, and a registration replaced ACROSS the barrier is assessed as the replacement | supported |
 | A registration replaced DURING the assessment's own reads cannot be told apart | — | Barrier resolves A; the async status, ignored and proof reads (`WorktreeHost.ts:3084-3110`) then read the path while A is replaced by B; `stillObserved` (`:3116`) sees no change because the deferred watcher has landed no rebuild; a token is minted over B's evidence | **Not a claim this change makes.** The shipped `blocked` → force path issues from inside the same body after the same reads and holds the identical window; round-4 B3 measured this path against that one, and parity is what it asked for. Named rather than dressed as closed — a re-resolve comparing `incarnation` was rejected in D10 because `head:branch` repeats on the recreate that motivates it (round-2 B5) | n/a — pre-existing and shared with blocked→force; needs its own PLAN task, named in workflow.md Notes |
 | A late assessment cannot replace what the user is looking at | An assessed reply opens a report only while its token is the controller's live one | Two assessments of the SAME worktree answered out of order; the blocked-notice *Force remove…* dialog, which the VIEW opens directly at `WorktreeView.ts:1540-1547` | D11's echoed token — an id-only guard was drafted, refuted on both counts, and replaced. Tests: reply for A after B was asked opens nothing; reply 1 of two same-worktree requests opens nothing; a reply after the view's own opener leaves that dialog standing; a re-scoped `unavailable` result renders no Retry | supported |
-| An explicit destructive request always gets an answer | Every `worktreeRemoveAssess` from a live surface is followed by exactly one reply carrying its token | The `catch` posting nothing; and the coordinator's `missing` leg returning null while the rebuild that would have removed the row published nothing because presence projection rejected (`WorktreeHost.ts:2518-2543`) | D12, which answers BOTH exits through the `unavailable` arm. Tests: a rejecting assessment capability produces one `unavailable` reply; a target that vanishes across the barrier produces one too, not silence | supported |
-| A burst of requests cannot back up the mutation queue behind it | At most one assess is outstanding per worktree | Repeated menu activations, each holding the per-repo queue across two forced rebuilds, git status/proof (10 s timeout) and the ignored scan (1.5 s) | D10's duplicate-request drop. Test: a second remove activation while one is outstanding posts nothing | supported |
+| An explicit destructive request always gets an answer | The latest `worktreeRemoveAssess` a live surface has made is followed by exactly one reply carrying its token. **Amended**: a request superseded before it is served now receives no reply of its own, per the child change's D3 — the user is not waiting on it, because the same surface asked again | The `catch` posting nothing; and the coordinator's `missing` leg returning null while the rebuild that would have removed the row published nothing because presence projection rejected (`WorktreeHost.ts:2518-2543`) | D12, which answers BOTH exits through the `unavailable` arm. Tests: a rejecting assessment capability produces one `unavailable` reply; a target that vanishes across the barrier produces one too, not silence | supported |
+| A burst of requests cannot back up the mutation queue behind it | At most one assessment job is in a repository's mutation queue, over all request patterns and all surface churn | Repeated or alternating menu activations, from one panel or several, each holding the per-repo queue across two forced rebuilds, git status/proof (10 s timeout) and the ignored scan (1.5 s) | Witnessed elsewhere, not unwitnessed. `coalesce-assessment-requests-at-the-host` (`asimov/changes/archive/260901-0348-coalesce-assessment-requests-at-the-host/`) owns it: one lane per repository, admission setting `outstanding` before the job is enqueued, and a synchronous re-arm in the service step's `finally` — approved at its cycle-1 round 1 with 0 findings and measured rather than asserted (dropping the lane guard puts 80 assessments in flight where 2 are allowed, and 11 ahead of a removal where 1 is) | supported — by a settled dependency, which relocates the witness and not the obligation. This row previously claimed "at most one assess is outstanding per worktree", witnessed by a controller-side duplicate drop; round-6 B5 refuted both, and that drop no longer exists |
+| The panel tells the user what the host answered | — | The host posts an `unavailable` reply; `webview.postMessage` resolves `false` or rejects; both production adapters ignore the boolean and swallow the rejection (`TerminalViewProvider.ts:1659-1666`, `TerminalEditorProvider.ts:1132-1139`), so the panel shows neither the notice nor a retry | **Not a claim this change makes, and not one any requirement in this capability makes separately.** Every panel message rides the same unacknowledged transport, so a dropped-delivery reading falsifies the whole spec uniformly rather than this requirement in particular; qualifying this one sentence and no other would misdescribe where the residual lives. What bounds the cost is the child change's requirement that asking again always asks again — one click, tested at `WorktreeController.test.ts` `[W6] still opens a report after an answer that never arrived` — which is why round-6 W6 is closed rather than moved | n/a — pre-existing and shared with every message in the panel's protocol; an acknowledged transport is its own change, named in workflow.md Notes |
 | Typing never unlocks a proof-gated option | The typed predicate excludes `cls === "proof"` | A proof check misclassified `confirmable` | The class is the host's and the panel reads it. The witness is **vacuous until WT-013.3** ships a proof-gated control: with none in the DOM, no test can fail. Stated rather than dressed as covered | n/a — no proof-gated control exists to gate; WT-013.3 owns the real witness |
