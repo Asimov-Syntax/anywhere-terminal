@@ -228,8 +228,12 @@ const IDENTITY_ROOTS: readonly (readonly [file: string, root: string])[] = [
   ["readProvisioning.ts", "applyExclude"],
 ];
 
-/** Every dep hook, plus the value that carries them and the keyword they need. */
-const CONSULTS_A_FILESYSTEM = /\bdeps\b|\bawait\b|\.(?:readFile|readdir|realpath|lstat)\s*\(/;
+/**
+ * Every dep hook, plus the value that carries them and the keyword they need —
+ * and `require`, which acquires a capability without an import for the boundary
+ * below to see (.reviews/round-4.md F005).
+ */
+const CONSULTS_A_FILESYSTEM = /\bdeps\b|\bawait\b|\brequire\s*\(|\.(?:readFile|readdir|realpath|lstat)\s*\(/;
 
 /** `ts.sys` is undefined when the namespace import is used directly under bun. */
 const ts: typeof tsmod = (tsmod as { default?: typeof tsmod }).default ?? tsmod;
@@ -411,6 +415,16 @@ describe("identity never reaches a filesystem", () => {
     }
   });
 
+  it("[round-4 F005] catches a capability acquired by require, which no import declares", () => {
+    const sneaked = [
+      "function identityOf(declared: string): string {",
+      '  return require("node:fs").realpathSync(declared);',
+      "}",
+    ].join("\n");
+
+    expect(CONSULTS_A_FILESYSTEM.test(bodyOf(sneaked, "identityOf"))).toBe(true);
+  });
+
   it("does not fire on a helper that only reads the declared spelling", () => {
     const clean = [
       "function identityOf(declared: string): string {",
@@ -434,6 +448,13 @@ describe("identity never reaches a filesystem", () => {
  * either a callable in a file this walk reads, or an import from a module
  * declared pure below. Anything else is an offender — including a module this
  * check cannot open, which is the point (design.md D1).
+ *
+ * Round 4 found the first version of this refusing nothing it could not
+ * represent: a namespace import, a default import, a barrel and a local alias
+ * were each read as inert. They are followed or refused now. What a name-keyed
+ * walk still cannot see is a shadowed binding — two scopes in one file naming
+ * one callable differently — which needs a `ts.Program` and its checker; the
+ * refusals above are what keeps that gap from being a silent pass.
  */
 const PURE_MODULES: ReadonlySet<string> = new Set([
   // Lexical path algebra. `node:path` never touches a volume — `node:fs` is the
@@ -485,6 +506,74 @@ function importsOf(source: string): Map<string, ImportedName> {
       });
     }
   }
+
+  // A named re-export is an import the module happens to pass straight on, and
+  // a barrel is the ordinary way one appears (.reviews/round-4.md F005).
+  for (const statement of file.statements) {
+    if (
+      !ts.isExportDeclaration(statement) ||
+      statement.moduleSpecifier === undefined ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.exportClause === undefined ||
+      !ts.isNamedExports(statement.exportClause)
+    ) {
+      continue;
+    }
+    const module = statement.moduleSpecifier.text;
+    for (const element of statement.exportClause.elements) {
+      found.set(element.name.text, {
+        module,
+        exported: (element.propertyName ?? element.name).text,
+        typeOnly: statement.isTypeOnly || element.isTypeOnly,
+      });
+    }
+  }
+  return found;
+}
+
+/** Every name the file declares at all, callable or not — a constant is not a hole. */
+function declaredNamesOf(source: string): Set<string> {
+  const file = ts.createSourceFile("probe.ts", source, ts.ScriptTarget.Latest, true);
+  const names = new Set<string>();
+  const visit = (node: tsmod.Node): void => {
+    const named = node as { name?: tsmod.Node };
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isVariableDeclaration(node) ||
+        ts.isInterfaceDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) ||
+        ts.isEnumDeclaration(node)) &&
+      named.name !== undefined &&
+      ts.isIdentifier(named.name)
+    ) {
+      names.add(named.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return names;
+}
+
+/**
+ * `const helper = probe;` — a callable renamed, which the walk sees as a name
+ * that is neither a callable nor an import and used to drop on the floor.
+ */
+function aliasesOf(source: string): Map<string, string> {
+  const file = ts.createSourceFile("probe.ts", source, ts.ScriptTarget.Latest, true);
+  const found = new Map<string, string>();
+  const visit = (node: tsmod.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      ts.isIdentifier(node.initializer)
+    ) {
+      found.set(node.name.text, node.initializer.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
   return found;
 }
 
@@ -498,6 +587,38 @@ function boundaryOffenders(entry: string, root: string, read: (file: string) => 
   const offenders: string[] = [];
   const seen = new Set<string>();
   const queue: (readonly [string, string])[] = [[entry, root]];
+
+  /**
+   * Where an imported name leads: another file to walk, or an offender.
+   *
+   * A namespace or default import names no export this walk can queue, so it is
+   * REFUSED rather than dropped — round 4 found both silently inert, and a gate
+   * that fails open is worse than no gate at all.
+   */
+  const admit = (imported: ImportedName, shownAs: string): void => {
+    if (imported.typeOnly) {
+      return;
+    }
+    if (PURE_MODULES.has(imported.module)) {
+      return;
+    }
+    if (imported.exported === "*") {
+      offenders.push(`${shownAs} from ${imported.module}, a namespace import this walk cannot narrow`);
+      return;
+    }
+    if (imported.exported === "default") {
+      offenders.push(`${shownAs} from ${imported.module}, a default import this walk cannot narrow`);
+      return;
+    }
+    if (imported.module.startsWith("./")) {
+      // A sibling module is WALKED, never trusted: the only way past this gate
+      // is to be readable and clean.
+      queue.push([`${imported.module.slice(2)}.ts`, imported.exported]);
+      return;
+    }
+    offenders.push(`${shownAs} from ${imported.module}`);
+  };
+
   for (;;) {
     const next = queue.pop();
     if (next === undefined) {
@@ -515,38 +636,47 @@ function boundaryOffenders(entry: string, root: string, read: (file: string) => 
       continue;
     }
     const callables = callablesOf(source);
+    const imports = importsOf(source);
     const node = callables.get(name);
     if (node === undefined) {
-      // A name a module exports that is not a callable — a constant, a type —
-      // reaches nothing on its own.
+      const passedOn = imports.get(name);
+      if (passedOn !== undefined) {
+        admit(passedOn, name);
+      } else if (!declaredNamesOf(source).has(name)) {
+        // A barrel this walk could not follow, a rename, a module built at
+        // runtime — whatever the reason, a name resolving to nothing is a hole.
+        offenders.push(`${file} does not declare ${name}`);
+      }
       continue;
     }
     if (CONSULTS_A_FILESYSTEM.test(node.getText())) {
       offenders.push(key);
     }
-    const imports = importsOf(source);
+    const aliases = aliasesOf(source);
     for (const other of referencesOf(node)) {
       if (other === name) {
         continue;
       }
-      if (callables.has(other)) {
-        queue.push([file, other]);
+      // An alias is followed to whatever it renamed, however many hops deep.
+      let resolved = other;
+      const walked = new Set<string>([other]);
+      for (;;) {
+        const behind = aliases.get(resolved);
+        if (behind === undefined || walked.has(behind)) {
+          break;
+        }
+        walked.add(behind);
+        resolved = behind;
+      }
+      if (callables.has(resolved)) {
+        queue.push([file, resolved]);
         continue;
       }
-      const imported = imports.get(other);
-      if (imported === undefined || imported.typeOnly) {
+      const imported = imports.get(resolved);
+      if (imported === undefined) {
         continue;
       }
-      if (imported.module.startsWith("./")) {
-        // A sibling module is WALKED, never trusted: the only way past this
-        // gate is to be readable and clean. `read` answering `undefined` for
-        // one is an offender above, not a shrug.
-        queue.push([`${imported.module.slice(2)}.ts`, imported.exported]);
-        continue;
-      }
-      if (!PURE_MODULES.has(imported.module)) {
-        offenders.push(`${other} from ${imported.module}`);
-      }
+      admit(imported, other);
     }
   }
 }
@@ -612,6 +742,123 @@ describe("identity reaches nothing this walk cannot see", () => {
     expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([
       "probe from an unreadable elsewhere.ts",
     ]);
+  });
+
+  it("[round-4 F005] refuses a NAMESPACE import, which no name-keyed walk can narrow", () => {
+    // `probes.resolveName(d)` names the module, not the export, so there is no
+    // export name to queue. Round 4: the walk queued `probes.ts#*`, found no
+    // callable called `*`, and read that as inert — a gate failing open in the
+    // one direction a gate must not.
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import * as probes from "./probes";',
+        "export function identityOf(declared: string): string {",
+        "  return probes.resolveName(declared);",
+        "}",
+      ].join("\n"),
+      "probes.ts": [
+        "export function resolveName(declared: string, deps: ProviderDeps): string {",
+        "  return deps.realpath(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([
+      "probes from ./probes, a namespace import this walk cannot narrow",
+    ]);
+  });
+
+  it("[round-4 F005] refuses a DEFAULT import", () => {
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import probe from "./probes";',
+        "export function identityOf(declared: string): string {",
+        "  return probe(declared);",
+        "}",
+      ].join("\n"),
+      "probes.ts": [
+        "export default function probe(declared: string, deps: ProviderDeps): string {",
+        "  return deps.realpath(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([
+      "probe from ./probes, a default import this walk cannot narrow",
+    ]);
+  });
+
+  it("[round-4 F005] follows a re-export barrel to the module that actually holds the helper", () => {
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { probe } from "./barrel";',
+        "export function identityOf(declared: string): string {",
+        "  return probe(declared);",
+        "}",
+      ].join("\n"),
+      "barrel.ts": 'export { probe } from "./probes";',
+      "probes.ts": [
+        "export function probe(declared: string, deps: ProviderDeps): string {",
+        "  return deps.realpath(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual(["probes.ts#probe"]);
+  });
+
+  it("[round-4 F005] follows a local alias of an imported helper", () => {
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { probe } from "./probes";',
+        "const helper = probe;",
+        "export function identityOf(declared: string): string {",
+        "  return helper(declared);",
+        "}",
+      ].join("\n"),
+      "probes.ts": [
+        "export function probe(declared: string, deps: ProviderDeps): string {",
+        "  return deps.realpath(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual(["probes.ts#probe"]);
+  });
+
+  it("[round-4 F005] refuses a name the module it was queued against does not declare", () => {
+    // Whatever the reason — a barrel this walk could not follow, a rename, a
+    // module built at runtime — a name that resolves to nothing is a hole, and
+    // a hole is where the ninth mechanism goes.
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { probe } from "./probes";',
+        "export function identityOf(declared: string): string {",
+        "  return probe(declared);",
+        "}",
+      ].join("\n"),
+      "probes.ts": "export const UNRELATED = 1;",
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([
+      "probes.ts does not declare probe",
+    ]);
+  });
+
+  it("[round-4 F005] still admits a constant a module really does declare", () => {
+    // The refusal above must not turn every imported non-callable into an
+    // offender: `NATIVE_PROVIDER_FILE` is a string and reaches nothing.
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { NATIVE_PROVIDER_FILE } from "./nativeProvider";',
+        "export function identityOf(declared: string): string {",
+        "  return declared === NATIVE_PROVIDER_FILE ? declared : declared;",
+        "}",
+      ].join("\n"),
+      "nativeProvider.ts": 'export const NATIVE_PROVIDER_FILE = ".vscode/worktree.json";',
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([]);
   });
 
   it("admits a pure module, and a type-only import of anything", () => {

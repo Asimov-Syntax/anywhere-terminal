@@ -139,3 +139,15 @@
     1. The walk in `src/worktree/provisioning/oneOwner.test.ts` parses one file and indexes callables by unqualified name, so an imported helper calling `realpathSync` is never traversed. Two rewrites have each closed the shapes the previous round named and left a wider one, so stop chasing shapes: assert a closed boundary instead. Every name the identity closure reaches must be either a local callable or an import from a declared pure module, and anything else fails.
     2. Prove RED with an imported helper that reaches the filesystem — the shape neither previous version could see.
     3. `src/worktree/provisioning/readProvisioning.ts` keeps the imports 5_2 left behind: `path` and `ProvisionContenders` are unused there now, and the lint gate is a count. `src/worktree/provisioning/providerKit.ts` and `src/worktree/provisioning/readProvisioning.test.ts` carry the same residue (one signature the formatter joins, one import the mover split in two), and so does `src/worktree/provisioning/asimovProvider.test.ts`.
+
+## 6. Round-4 findings
+
+- [x] 6_1 Refuse the callable edges the boundary walk cannot resolve — verified: pnpm exec vitest run 'src/worktree/provisioning/oneOwner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_3
+  - **Refs**: .reviews/round-4.md#f005
+  - **Acceptance**:
+    - Outcome: A namespace import, a default import, a re-export barrel, and a local alias of an imported helper each fail the gate
+    - Verify: unit src/worktree/provisioning/oneOwner.test.ts
+  - **Plan**:
+    1. `boundaryOffenders` in `src/worktree/provisioning/oneOwner.test.ts` treats every reference it cannot represent as inert, which is the one direction a gate must never fail in. Follow what is cheap to follow — a local alias of an imported callable, a named re-export — and refuse what a name-keyed walk cannot narrow: a namespace import, a default import, and a queued name the target file does not declare at all.
+    2. Prove RED with one witness per shape, each reaching a sibling helper that consults a filesystem.
