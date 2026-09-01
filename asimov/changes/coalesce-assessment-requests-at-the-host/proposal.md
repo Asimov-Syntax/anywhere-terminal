@@ -24,10 +24,8 @@ M (≤3d)
 
 - Assessment admission at the host: how many assessment runs one surface may have outstanding, and
   which request a run serves when it starts.
-- The lifetime of an assessment request on both sides of the wire — what supersedes it, and what a
-  repeat does.
-- Delivery of the assessment reply itself, which is the one reply whose loss is not recoverable by
-  waiting.
+- The lifetime of an assessment request on both sides of the wire — what supersedes it, what a
+  repeat does, and what a lost answer leaves behind.
 - The assembly witness for `render-the-removal-assessment-as-a-report` task 3_4, which claims a
   remove-and-recreate walk it does not perform (round-6 S2).
 
@@ -40,6 +38,8 @@ M (≤3d)
   reads. It is shared with the shipped `blocked` → force path, it is pre-existing, and it needs its
   own PLAN task.
 - Which removals are assessed at all. That is host policy and the parent change's follow-up.
+- Making extension→webview delivery reliable. The channel is best-effort everywhere, and a retrying
+  sender for this one reply was designed, attacked and cut — see design.md § Rejected.
 - The removal, lock, unlock, prune and create verbs. This change may reorder nothing they do.
 
 ### Must not

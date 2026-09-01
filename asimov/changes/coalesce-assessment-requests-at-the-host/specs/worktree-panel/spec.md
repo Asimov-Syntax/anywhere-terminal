@@ -7,24 +7,29 @@
 WHERE the user asks about removing several worktrees in succession, asks repeatedly, or asks from
 more than one panel, the assessments they have moved on from SHALL NOT accumulate. An action the user
 then takes on the same repository — a removal, a lock, an unlock, a prune or a create — SHALL wait
-behind at most a bounded amount of assessment work, whatever the number or pattern of requests.
+behind at most one assessment, whatever the number or pattern of requests and however many panels
+have been opened or closed.
 
 #### Scenario: The user asks about several worktrees before deciding
 
 - **WHEN** the user asks to remove one worktree, then another, then the first again, and then confirms a removal
-- **THEN** the confirmed removal is not delayed by the assessments that were superseded before they ran
+- **THEN** the confirmed removal waits behind at most one assessment, not behind the ones that were superseded
+
+#### Scenario: Panels are opened and closed while asking
+
+- **WHEN** a panel is opened, asks about a removal, and is closed, repeatedly
+- **THEN** a removal asked for afterwards still waits behind at most one assessment
 
 #### Scenario: Two panels ask at once
 
 - **WHEN** two panels each ask about removing a worktree in the same repository
-- **THEN** each panel receives the answer to its own latest question, and neither panel's superseded requests delay the other
+- **THEN** each panel is answered in turn, and neither is starved by the other continuing to ask
 
-### Requirement: Asking to remove again replaces the question rather than being ignored
+### Requirement: Asking to remove again always asks again
 
-WHEN the user asks to remove a worktree while an earlier assessment of that same worktree is
-outstanding, the panel SHALL replace the earlier question with the new one and answer the new one. It
-SHALL NOT ignore the request, and SHALL NOT be left without a response because an earlier answer
-never arrived.
+WHEN the user asks to remove a worktree, the panel SHALL put the question rather than suppress it,
+whatever earlier assessment of that worktree is outstanding and whatever became of its answer. The
+panel SHALL NOT reach a state in which asking to remove a worktree does nothing.
 
 #### Scenario: The answer to the first request never arrives
 
