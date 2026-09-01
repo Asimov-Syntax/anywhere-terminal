@@ -58,7 +58,7 @@
 
 ## 3. The gate that keeps it true
 
-- [ ] 3_1 Fail the suite if identity ever reads the filesystem again
+- [x] 3_1 Fail the suite if identity ever reads the filesystem again — verified: pnpm exec vitest run 'src/worktree/provisioning/oneOwner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md#obligation-ledger
   - **Acceptance**:

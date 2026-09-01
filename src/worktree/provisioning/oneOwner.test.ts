@@ -191,3 +191,135 @@ describe("one owner for the lockfile rule", () => {
     expect("const material = refusedLockfile(destination);".match(LOCKFILE_CLASSIFIER)).toBeNull();
   });
 });
+
+/**
+ * Identity is decided from the declared spellings and nothing else.
+ *
+ * Seven mechanisms for "are these two paths one file?" have now been refuted,
+ * and six of them were filesystem probes. Each was correct-looking and each
+ * dropped a declaration on some volume, so the property worth gating is not
+ * "the current helper does not call `realpath`" — it is that NOTHING the
+ * identity or exclusion path reaches can consult a filesystem at all
+ * (design.md D1, and the obligation ledger's first row).
+ *
+ * REACHABILITY, not naming: a helper that calls `inspect()` which calls
+ * `deps.realpath()` defeats a lexical match on the helper alone, and that is
+ * exactly the shape the eighth mechanism will have.
+ *
+ * Two limits, stated rather than hidden. The walk follows CALL SITES, so a
+ * helper handed across as a bare value — `mergeEntries(a, b, probe)` — is an
+ * edge it cannot see; that is why every root is walked on its own instead of
+ * relying on one graph to cover the others, and why dropping a root from this
+ * list silently drops a guarantee. And it reads one file: a hook reached
+ * through an imported helper is caught only because passing `deps` to that
+ * helper is visible in the caller's own body, which is what the pattern below
+ * matches first.
+ */
+const IDENTITY_ROOTS = ["identityOf", "foldable", "mergeEntries", "applyExclude", "contendersOf"] as const;
+
+/** Every dep hook, plus the value that carries them and the keyword they need. */
+const CONSULTS_A_FILESYSTEM = /\bdeps\b|\bawait\b|\.(?:readFile|readdir|realpath|lstat)\s*\(/;
+
+/** `function name(` at the left margin, and everything up to the next one. */
+function topLevelFunctions(source: string): Map<string, string> {
+  const marks = [...source.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)];
+  const bodies = new Map<string, string>();
+  marks.forEach((mark, i) => {
+    const start = mark.index ?? 0;
+    const end = i + 1 < marks.length ? (marks[i + 1]?.index ?? source.length) : source.length;
+    const name = mark[1];
+    if (name !== undefined) {
+      bodies.set(name, source.slice(start, end));
+    }
+  });
+  return bodies;
+}
+
+/**
+ * The roots and everything they call, transitively.
+ *
+ * A name that resolves to an import rather than a local function is not in the
+ * map and cannot be walked — which is why the pattern above matches `deps`
+ * itself. Handing the deps to somebody else is the only way an import can reach
+ * a hook, and that hand-off is visible in the caller's own body.
+ */
+function reachableFrom(source: string, roots: readonly string[]): Set<string> {
+  const bodies = topLevelFunctions(source);
+  const seen = new Set<string>();
+  const queue = [...roots];
+  for (;;) {
+    const name = queue.pop();
+    if (name === undefined) {
+      return seen;
+    }
+    const body = bodies.get(name);
+    if (body === undefined || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    for (const other of bodies.keys()) {
+      if (other !== name && new RegExp(`\\b${other}\\s*\\(`).test(body)) {
+        queue.push(other);
+      }
+    }
+  }
+}
+
+describe("identity never reaches a filesystem", () => {
+  const source = sourceOf("readProvisioning.ts");
+
+  it("names roots that all still exist, so the walk below is not vacuous", () => {
+    const bodies = topLevelFunctions(source);
+
+    expect(IDENTITY_ROOTS.filter((root) => !bodies.has(root))).toEqual([]);
+  });
+
+  it.each(IDENTITY_ROOTS)("%s reaches no dep hook, directly or through a helper", (root) => {
+    const bodies = topLevelFunctions(source);
+    const offenders = [...reachableFrom(source, [root])].filter((name) =>
+      CONSULTS_A_FILESYSTEM.test(bodies.get(name) ?? ""),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("catches a root that calls a hook itself", () => {
+    const direct = [
+      "async function identityOf(declared: string, deps: ProviderDeps): Promise<string> {",
+      "  return await deps.realpath(declared);",
+      "}",
+    ].join("\n");
+
+    expect(reachableFrom(direct, ["identityOf"]).size).toBe(1);
+    expect(CONSULTS_A_FILESYSTEM.test(topLevelFunctions(direct).get("identityOf") ?? "")).toBe(true);
+  });
+
+  it("catches a root that reaches one through a second helper", () => {
+    // The root itself is clean here. A check that read only the root's own body
+    // would pass this, which is the whole reason the walk exists.
+    const indirect = [
+      "function identityOf(declared: string, io: Io): string {",
+      "  return inspect(declared, io);",
+      "}",
+      "async function inspect(declared: string, deps: ProviderDeps): Promise<string> {",
+      "  return deps.realpath(declared);",
+      "}",
+    ].join("\n");
+    const bodies = topLevelFunctions(indirect);
+    const reached = reachableFrom(indirect, ["identityOf"]);
+
+    expect(CONSULTS_A_FILESYSTEM.test(bodies.get("identityOf") ?? "")).toBe(false);
+    expect([...reached].filter((n) => CONSULTS_A_FILESYSTEM.test(bodies.get(n) ?? ""))).toEqual(["inspect"]);
+  });
+
+  it("does not fire on a helper that only reads the declared spelling", () => {
+    const clean = [
+      "function identityOf(declared: string): string {",
+      "  return path.posix.normalize(declared).replace(/\\/+$/, '');",
+      "}",
+    ].join("\n");
+    const bodies = topLevelFunctions(clean);
+
+    expect(CONSULTS_A_FILESYSTEM.test(bodies.get("identityOf") ?? "")).toBe(false);
+  });
+});
