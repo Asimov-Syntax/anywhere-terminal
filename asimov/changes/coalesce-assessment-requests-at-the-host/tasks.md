@@ -38,7 +38,7 @@
 
 ## 2. The witness
 
-- [ ] 2_1 Make the assembly walk prove the removal it is named for
+- [x] 2_1 Make the assembly walk prove the removal it is named for — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: none
   - **Acceptance**:
     - Outcome: The walk removes and recreates a registration, delivers the watcher event, and confirms

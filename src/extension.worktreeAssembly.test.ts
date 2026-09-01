@@ -50,6 +50,16 @@ let registered: string[] = [];
 
 /** Set by a test that needs the linked worktree to render as locked. */
 let lockedRow = false;
+/**
+ * The commit the linked registration reports.
+ *
+ * Mutable so a walk can model a genuine remove-and-recreate at ONE path: the
+ * registration leaves the listing and a new one appears there on a different
+ * commit. Round-2 B5 established that `head:branch` REPEATS when a worktree is
+ * recreated onto the same commit, so a walk that needs the two generations to
+ * be distinguishable at all has to move the commit.
+ */
+let featHead = "2".repeat(40);
 /** Set by a test that needs git to report a stale registration.  */
 let prunableRow = false;
 /** Set by a test that needs the repository's listing to stop being readable. */
@@ -94,7 +104,7 @@ function listing(): string {
   return [
     ...record(REPO, "1".repeat(40), "main"),
     ...registered.flatMap((p) =>
-      record(p, "2".repeat(40), "feature", [
+      record(p, featHead, "feature", [
         ...(lockedRow ? ["locked"] : []),
         ...(prunableRow ? ["prunable gitdir file points to non-existent location"] : []),
       ]),
@@ -438,6 +448,7 @@ beforeEach(() => {
   posted = [];
   outbound = [];
   registered = [LINKED];
+  featHead = "2".repeat(40);
   fs.mkdirSync(LINKED, { recursive: true });
   captured.host = undefined;
   captured.runtime = undefined;
@@ -783,12 +794,19 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(gitCalls("remove")).toEqual([]);
   });
 
-  it("[3_4] assesses the registration the barrier resolved, not the one the cache held", async () => {
-    // Round-4 B3, through the shipped wiring. The assess used to read straight
-    // from the cache, so with a watcher rebuild still pending it described the
-    // predecessor while reading the replacement's evidence — and minted force
-    // authority over it. Taking the coordinator's barrier is what makes the
-    // registration the report describes the one the confirmation acts on (D10).
+  it("[3_4] removes the replacement the barrier resolved, never the predecessor the cache held", async () => {
+    // Round-4 B3, through the shipped wiring, end to end. The assess used to
+    // read straight from the cache, so with a watcher rebuild still pending it
+    // described the predecessor while reading the replacement's evidence — and
+    // minted force authority over it. Taking the coordinator's barrier is what
+    // makes the registration the report describes the one the confirmation acts
+    // on (D10).
+    //
+    // Round-6 S2: this walk previously modelled the "replacement" by flipping
+    // one lock bit, never delivered the watcher event it held, and stopped at
+    // the dialog. It now removes and recreates a registration at one path on a
+    // different commit, delivers the rebuild, and confirms — so the title is
+    // something the walk earns rather than something it asserts.
     watchRepos = true;
     await assemble();
 
@@ -800,11 +818,15 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     const listings = (): number => argv.filter((c) => c.args[0] === "worktree" && c.args[1] === "list").length;
     const before = listings();
 
-    // The replacement: same path, a registration git now reports as locked,
-    // which is a confirmable risk the predecessor did not carry. Its watcher
-    // event is DELIBERATELY not delivered — `watchers[0].deliver()` is the
-    // rebuild this walk withholds.
+    // The replacement, as git would report it: the registration LEAVES and one
+    // appears at the same path on a different commit, carrying a lock the
+    // predecessor did not. Its watcher event is deliberately withheld for now —
+    // `watchers[0].deliver()` is the rebuild this walk controls.
+    registered = registered.filter((p) => p !== LINKED);
+    expect(registered, "the predecessor never left, so there is only one generation").toEqual([]);
+    featHead = "3".repeat(40);
     lockedRow = true;
+    registered = [LINKED];
     await settle();
     expect(listings(), "a rebuild landed before the click, so nothing was stale").toBe(before);
 
@@ -822,6 +844,24 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     ).not.toBeNull();
     expect(dialog?.textContent ?? "").toMatch(/lock/i);
     expect(gitCalls("remove"), "git ran before the user had answered anything").toEqual([]);
+
+    // The withheld rebuild lands NOW, between the report and the answer — the
+    // schedule the cache-reading version could never survive, and the one a
+    // real watcher produces once the debounce expires.
+    watchers[0]?.deliver();
+    await settle();
+
+    confirmRemoval("feature");
+    await settle();
+
+    // The confirmation reached git, and reached it for the replacement: the
+    // report was issued against generation two and generation two is what the
+    // removal names. A report built from the predecessor would either have
+    // offered a plain confirmation above or had its authority refused here.
+    const removals = gitCalls("remove");
+    expect(removals, "the confirmation never reached git").toHaveLength(1);
+    expect(removals[0]?.[removals[0].length - 1]).toBe(LINKED);
+    expect(registered, "the registration git was told to drop is still listed").toEqual([]);
   });
 
   it("shows the removal's outcome, in the order the coordinator really produces", async () => {
