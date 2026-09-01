@@ -261,3 +261,31 @@ describe("[round-2 F001] a directory resolves only when its main does", () => {
     expect(verdicts(`require("./pkg")`, withMain, isDir, () => `{"main":"./lib/entry"}`)).toEqual([]);
   });
 });
+
+// [round-2 F003] The allowlist is an authority, so it fails closed. An object
+// can be composed with a spread, a computed key, or an accessor, and then the
+// property esbuild consumes is not the one a literal read returns — an earlier
+// `external: ["stale"]` overridden later leaves the extractor reporting `stale`
+// while the build externalizes something else. That direction allowlists a
+// dependency the VSIX does not carry.
+describe("[round-2 F003] a config the extractor cannot read is refused", () => {
+  const config = (body: string) => `const extensionConfig = { outfile: "./dist/extension.js", ${body} };`;
+
+  it("refuses a spread that could override the externals", () => {
+    expect(() => declaredExternals(config(`external: ["stale"], ...overrides`), OUT)).toThrow(/spread|cannot read/i);
+  });
+
+  it("refuses a computed property name", () => {
+    expect(() => declaredExternals(config(`external: ["stale"], [key]: 1`), OUT)).toThrow(/computed|cannot read/i);
+  });
+
+  it("refuses an accessor", () => {
+    expect(() => declaredExternals(config(`get external() { return ["live"]; }`), OUT)).toThrow(
+      /accessor|cannot read/i,
+    );
+  });
+
+  it("still reads the plain literal shape the repo actually has", () => {
+    expect([...declaredExternals(ESBUILD, OUT)]).toEqual(["vscode", "node-pty"]);
+  });
+});

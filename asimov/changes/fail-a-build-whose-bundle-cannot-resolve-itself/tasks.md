@@ -63,7 +63,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     2. Report an unparseable manifest, a missing `main` target, and a `main` escaping the artifact directory as distinct named failures.
     3. Witness each of those three plus the resolving case in `src/test/invariants/bundleRequires.test.ts`.
 
-- [ ] 3_3 Refuse a build config whose composition the extractor cannot read
+- [x] 3_3 Refuse a build config whose composition the extractor cannot read — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: design.md D5
   - **Acceptance**:

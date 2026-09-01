@@ -273,6 +273,27 @@ export function declaredExternals(esbuildSource, outfile) {
     if (out === undefined || !ts.isStringLiteralLike(out) || out.text !== outfile) {
       return;
     }
+    // Fails CLOSED. A spread, a computed key, or an accessor can supply the
+    // `external` esbuild actually consumes, and reading past them leaves an
+    // earlier literal authoritative — allowlisting a dependency the build
+    // stopped externalizing and the VSIX does not carry (.reviews/round-2.md
+    // F003). The current config is a plain literal, so strictness costs nothing
+    // today and is loud on the day it stops being free.
+    const unreadable = node.properties.find(
+      (p) =>
+        ts.isSpreadAssignment(p) ||
+        ts.isGetAccessorDeclaration(p) ||
+        ts.isSetAccessorDeclaration(p) ||
+        (p.name !== undefined && ts.isComputedPropertyName(p.name)),
+    );
+    if (unreadable !== undefined) {
+      const kind = ts.isSpreadAssignment(unreadable)
+        ? "a spread"
+        : unreadable.name !== undefined && ts.isComputedPropertyName(unreadable.name)
+          ? "a computed property name"
+          : "an accessor";
+      throw new Error(`the esbuild config for ${outfile} uses ${kind} — this gate cannot read it, so it refuses to guess`);
+    }
     const external = props.get("external");
     if (external === undefined) {
       found.push(new Set());
