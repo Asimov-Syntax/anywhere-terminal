@@ -112,7 +112,7 @@ the extension failed to activate. No suite could catch it, because every suite i
 
 ## 5. Round-4 handback — sweep the class instead of the spelling
 
-- [ ] 5_1 Resolve every relative string literal in the artifact
+- [x] 5_1 Resolve every relative string literal in the artifact — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D6, D3
   - **Acceptance**:

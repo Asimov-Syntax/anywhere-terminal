@@ -347,3 +347,52 @@ describe("[round-3 F003] a shorthand property is refused too", () => {
     expect([...declaredExternals(ESBUILD, OUT)]).toEqual(["vscode", "node-pty"]);
   });
 });
+
+// [round-4 D6] The sweep asks what a specifier IS, not how it is called. Every
+// shape below defeated a call-analysis mechanism in some earlier round; none of
+// them can hide a relative string literal, because a call has to name its target.
+describe("[round-4 D6] a relative specifier is resolved however it is called", () => {
+  const swept = (bundle: string) =>
+    unresolvableRequires(bundle, {
+      esbuildSource: ESBUILD,
+      outfile: OUT,
+      resolvesFrom: DIST,
+      exists: nowhere,
+      isDirectory: notADirectory,
+      readFile: () => "{}",
+    }).map((v) => v.specifier);
+
+  it("reports a conditional alias of require", () => {
+    expect(swept(`var r = typeof require === "function" ? require : f; r("./cond");`)).toContain("./cond");
+  });
+
+  it("reports a factory invoked through call", () => {
+    expect(swept(`function factory(req){ req("./via-call"); } factory.call(null, require);`)).toContain("./via-call");
+  });
+
+  it("reports a specifier held in a constant", () => {
+    expect(swept(`var r = require, p = "./constant"; r(p);`)).toContain("./constant");
+  });
+
+  it("reports a loader carried on an object", () => {
+    expect(swept(`var box = { r: require }; box.r("./boxed");`)).toContain("./boxed");
+  });
+
+  it("does not report a relative literal that resolves", () => {
+    const there = (p: string) => p === "/repo/dist/real.js";
+    expect(
+      unresolvableRequires(`var x = "./real.js";`, {
+        esbuildSource: ESBUILD,
+        outfile: OUT,
+        resolvesFrom: DIST,
+        exists: there,
+        isDirectory: notADirectory,
+        readFile: () => "{}",
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not report an allowlisted literal that is not a specifier", () => {
+    expect(swept(`var isUp = (p) => p.startsWith("../");`)).not.toContain("../");
+  });
+});

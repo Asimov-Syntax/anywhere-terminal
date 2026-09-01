@@ -234,6 +234,41 @@ function requireLiteral(node, isTainted) {
   return ts.isStringLiteralLike(arg) ? arg.text : undefined;
 }
 
+/**
+ * Literals that look relative but are not module specifiers.
+ *
+ * The sweep is sound and imprecise (design.md D6), so this is where imprecision
+ * is paid for — explicitly, one reviewed entry at a time, rather than by
+ * weakening the rule. It is not a place to silence a real finding.
+ */
+export const NOT_SPECIFIERS = new Set([
+  // `t.startsWith("../")` — a path-prefix test in the workspace path helpers.
+  // The only relative literal the production bundle carries.
+  "../",
+]);
+
+/**
+ * Every distinct relative string literal in the bundle, in first-seen order.
+ *
+ * Independent of how anything is CALLED. Four rounds of call analysis each
+ * missed a spelling that ships — a conditional alias, `.call`, a constant
+ * argument, a loader on an object property — and a call has to name its target,
+ * so the literal is the one thing no spelling can hide (design.md D6).
+ */
+export function relativeLiterals(bundleSource) {
+  const seen = new Set();
+  walk(parse(bundleSource, "bundle.js"), (node) => {
+    if (!ts.isStringLiteralLike(node)) {
+      return;
+    }
+    const text = node.text;
+    if ((text.startsWith("./") || text.startsWith("../")) && !NOT_SPECIFIERS.has(text)) {
+      seen.add(text);
+    }
+  });
+  return [...seen];
+}
+
 /** Every distinct specifier the bundle still requires, in first-seen order. */
 export function requiredSpecifiers(bundleSource) {
   const { checker, root } = checkerFor(bundleSource);
@@ -449,7 +484,11 @@ function defaultIsDirectory(p) {
 /** Every specifier the packaged extension could not satisfy. */
 export function unresolvableRequires(bundleSource, { esbuildSource, outfile, resolvesFrom, exists, isDirectory, readFile }) {
   const externals = declaredExternals(esbuildSource, outfile);
-  return requiredSpecifiers(bundleSource)
+  // Two questions, neither subsuming the other: the sweep owns the relative
+  // class soundly, and call detection owns bare and absolute specifiers, which
+  // cannot be swept because every string would be a candidate (design.md D6).
+  const candidates = new Set([...requiredSpecifiers(bundleSource), ...relativeLiterals(bundleSource)]);
+  return [...candidates]
     .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory, readFile }))
     .filter((verdict) => !verdict.ok);
 }

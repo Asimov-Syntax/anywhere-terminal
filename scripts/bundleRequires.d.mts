@@ -24,6 +24,8 @@ export interface BundleDeps {
   readonly readFile?: (p: string) => string;
 }
 
+export declare const NOT_SPECIFIERS: ReadonlySet<string>;
+export function relativeLiterals(bundleSource: string): string[];
 export function requiredSpecifiers(bundleSource: string): string[];
 export function declaredExternals(esbuildSource: string, outfile: string): Set<string>;
 export function classify(specifier: string, deps: ResolveDeps): Verdict;
