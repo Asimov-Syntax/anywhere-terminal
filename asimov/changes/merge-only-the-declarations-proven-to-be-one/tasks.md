@@ -119,7 +119,7 @@
     4. Keep the direct witnesses that were verified against the real volume: `σ`/`ς`, `ß`/`ss`, `ᾳ`/`αι`, and the round-1 three.
   - **Boundary**: no `Intl.Collator` and no new dependency — D9 rejects both, and grouping stays key equality rather than a relation
 
-- [ ] 5_2 Give every exported model constructor the same contender semantics
+- [x] 5_2 Give every exported model constructor the same contender semantics — verified: pnpm exec vitest run 'src/worktree/provisioning/asimovProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: design.md#d3-a-contender-group-offered-in-full
   - **Acceptance**:
@@ -127,7 +127,7 @@
     - Verify: unit src/worktree/provisioning/asimovProvider.test.ts
   - **Plan**:
     1. `readAsimovProvisioning` in `src/worktree/provisioning/asimovProvider.ts` returns `modelFromDraft()`, whose `contenders` is always empty. Only tests call it today, so this is a trap for the next caller rather than a live defect — finalize contenders there too rather than leaving two meanings of `ProvisionModel`.
-    2. Put the finalization where both callers reach it instead of copying it, so `oneOwner.test.ts` has nothing new to catch.
+    2. Put the finalization where both callers reach it instead of copying it, so `oneOwner.test.ts` has nothing new to catch: `foldSegment` and the grouping move from `src/worktree/provisioning/readProvisioning.ts` into `src/worktree/provisioning/providerKit.ts`, and `modelFromDraft` fills the field so every adapter's model carries it. `src/worktree/provisioning/readProvisioning.test.ts` and `src/worktree/provisioning/oneOwner.test.ts` follow the move.
 
 - [ ] 5_3 Make the identity gate refuse what it cannot see
   - **Deps**: 5_1

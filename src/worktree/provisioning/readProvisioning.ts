@@ -19,7 +19,8 @@ import {
   type Authorized,
   type Draft,
   emptyModel,
-  foldWin32Name,
+  contendersOf,
+  identityOf,
   newBudget,
   newDraft,
   openProviderFile,
@@ -146,50 +147,6 @@ async function baseFor(
   return { adapter, authorized: new Map([[target, opened]]) };
 }
 
-/**
- * Which destination a declared path names.
- *
- * Two files spelling one destination differently — `node_modules` against
- * `./node_modules`, or `a/../node_modules` — compared as raw strings stayed two
- * rows, so an inherited LINK survived beside the native COPY for the same place,
- * and `exclude: ["./x"]` matched an inherited `x` not at all
- * (.reviews/round-1.md F001). Normalization closes that on every platform.
- *
- * Case is folded on the PLATFORM's answer and nothing else. Five mechanisms that
- * asked the FILESYSTEM instead were each refuted, always in the same direction:
- * a probe reads an OBJECT, and the question is about a NAME. Existence is not
- * folding (round-4 F005); a case-toggled symlink makes two spellings resolve
- * alike on a volume that folds nothing; `realpath` dereferences, so two symlink
- * aliases to one file collapsed into one row and a declared row vanished
- * (round-5 F008); `dev`+`ino` is object identity, so two hard links and a
- * symlinked parent collapse the same way. Merging is the direction that DISCARDS
- * something the repository asked for, and no available primitive can prove two
- * names are one destination slot (design.md D11).
- *
- * So this reads nothing. The identity path makes no filesystem call at all,
- * which is also why a raw `exclude` spelling can no longer reach outside the
- * checkout (round-5 F009) and why there is nothing here to bound (F010).
- *
- * A seventh answer was tested and rejected before this landed: folding ASCII
- * only. It closes the over-merge (`İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ` stay apart, as NTFS
- * keeps them) but makes the other direction worse — `Straße`/`STRASSE` and
- * `ﬀ`/`ff` are ONE file on APFS, so splitting them reproduces the defect. Every
- * fold has a volume it is wrong on, because folding is a property of the
- * destination directory and this code runs before that directory exists.
- *
- * So there is no fold here at all. Two spellings that differ stay two rows; a
- * pair that MAY be one destination travels as a contender group instead, and
- * the apply side settles it where the answer can actually be observed
- * (design.md D1, D2, D3).
- *
- * Used for identity only. What a row DISPLAYS and what it names as its `source`
- * are never touched — § 4.3 forbids rewriting either, and a row that showed the
- * canonical form would be telling the user something their file does not say.
- */
-function identityOf(declared: string): string {
-  const normalized = path.posix.normalize(declared);
-  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
-}
 
 /**
  * Base first, then the repository's own — and the native entry wins the path
@@ -267,95 +224,6 @@ function applyExclude(
   };
 }
 
-/**
- * The key a common filesystem might fold two spellings onto.
- *
- * Deliberately NOT a proof, and never used to merge. It answers "could these be
- * one destination", and it is allowed to say yes when the answer is no: a false
- * positive costs an ordering constraint on two entries that never collide. A
- * false NEGATIVE is the one that still loses a guarantee, so this folds
- * everything a supported filesystem is known to fold and does not try to be
- * exact (design.md D4):
- *
- *  - Win32 ignores trailing dots and spaces and the `::$DATA` stream suffix, so
- *    `foo` and `foo.` are one object there — and no case fold closes that.
- *  - APFS and NTFS both compare case-insensitively by default, though NOT by the
- *    same table, which is why the answer belongs to the volume and not here.
- *  - macOS stores NFD and compares canonically, so `é` composed and `é` decomposed
- *    are one name.
- */
-/**
- * A key two spellings share when some supported filesystem would fold them.
- *
- * Deliberately generous and deliberately not a proof (design.md D4). Three
- * attempts at this predicate have now been rejected, each of which passed its
- * own witnesses, so the shape of the answer matters more than the characters:
- *
- * - Lexical normalization only. Missed everything.
- * - `NFC` + `toLowerCase`. Missed `Straße`/`STRASSE`, the `ﬀ` ligature, and a
- *   Win32 dot on a non-final segment.
- * - `NFKC` + lowercase + a curated expansion list. Missed Greek `σ`/`ς`.
- *
- * A union with `Intl.Collator` was proposed to close the third and refuted
- * before it was built: against every default full fold in Unicode 16 it still
- * missed 64 pairs, all of which are one file on APFS — Greek ypogegrammeni
- * expansion, where `ᾳ` and `αι` name one destination. `ᾼ`/`ᾳ` is ordinary case
- * mapping and was always grouped, which is exactly why no curated witness
- * revealed the class.
- *
- * `toUpperCase` is what performs the multi-character and Greek expansions
- * `toLowerCase` does not, so the key uppercases LAST (design.md D9). Two
- * orderings are load-bearing and are asserted rather than trusted: lowercase
- * must precede uppercase, because it is what turns `ẞ` into `ß` so the
- * uppercase step can expand it to `SS`; and the FINAL `NFKC` is not decoration,
- * because without it eight Greek iota-with-dialytika code points stop folding.
- *
- * Per SEGMENT, because Win32 strips trailing dots and spaces from every
- * component rather than from the end of the path.
- *
- * It over-groups — `NFKC` alone maps `Ⅻ` onto `xii`, and `I`/`ı` group though
- * APFS keeps them apart. That is the direction D4 permits.
- */
-export function foldSegment(segment: string): string {
-  return foldWin32Name(segment.normalize("NFKC").toLowerCase()).toUpperCase().normalize("NFKC");
-}
-
-function foldable(declared: string): string {
-  return identityOf(declared)
-    .split("/")
-    .map((segment) => foldSegment(segment))
-    .join("/");
-}
-
-function contendersOf(entries: readonly ProvisionEntry[]): ProvisionContenders[] {
-  const byKey = new Map<string, ProvisionEntry[]>();
-  for (const entry of entries) {
-    const key = foldable(entry.path);
-    const held = byKey.get(key);
-    if (held === undefined) {
-      byKey.set(key, [entry]);
-    } else {
-      held.push(entry);
-    }
-  }
-  const groups: ProvisionContenders[] = [];
-  for (const members of byKey.values()) {
-    if (members.length < 2) {
-      continue;
-    }
-    // By declaring FILE, not by id: `ids()` mints a fresh sequence per adapter,
-    // so a base row and a native row can carry the same id, and identifying the
-    // repository's own row that way silently matched both — which cost every
-    // group its favoured member. The source is what "the repository's own
-    // declaration" actually means anyway (§ 4.3).
-    const native = members.filter((e) => e.source === NATIVE_PROVIDER_FILE);
-    groups.push({
-      members: members.map((e) => e.id),
-      ...(native.length === 1 && native[0] !== undefined ? { favoured: native[0].id } : {}),
-    });
-  }
-  return groups;
-}
 
 /** What the native file's answer becomes once the base it named is resolved. */
 async function assemble(
@@ -396,7 +264,7 @@ async function assemble(
       excluded,
       // Built from the rows that SURVIVED merge and exclusion, so a group never
       // names an id the offer will not carry.
-      contenders: contendersOf(kept),
+      contenders: contendersOf(kept, NATIVE_PROVIDER_FILE),
       // Base-first, matching the entry order. The build order is the other way
       // round, so problem order is chosen here rather than falling out of it.
       problems: [...baseModel.problems, ...native.model.problems, ...draft.problems],
@@ -465,7 +333,7 @@ export async function readProvisioning(
     // so the section that needed the relation most — one file declaring two
     // foldable spellings — was the one branch that never computed it
     // (round-1 F002).
-    return { ...chosen.answer.model, providers, contenders: contendersOf(chosen.answer.model.entries) };
+    return { ...chosen.answer.model, providers };
   }
 
   const { model, base } = await assemble(deps, repoRoot, budget, chosen.answer);

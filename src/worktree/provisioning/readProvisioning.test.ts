@@ -3,7 +3,8 @@ import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
 import { MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
-import { DETECTION_ORDER, foldSegment, readProvisioning } from "./readProvisioning";
+import { foldSegment } from "./providerKit";
+import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
 const ROOT = "/repo";

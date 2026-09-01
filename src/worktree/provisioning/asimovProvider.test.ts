@@ -244,6 +244,26 @@ describe("readAsimovProvisioning", () => {
   });
 });
 
+describe("a directly-read model carries the contender relation too", () => {
+  it("groups two spellings that fold together, exactly as the offered model does", async () => {
+    // `readAsimovProvisioning` is exported and read directly — the dispatcher is
+    // not the only door. Round-3 F006: the grouping lived behind the dispatcher,
+    // so a caller holding this model saw two independent rows for one
+    // destination and no sign that either could clobber the other.
+    const deps = withYaml("copy:\n  - MixedCase\n  - mixedcase\n  - other\n");
+    const model = await readAsimovProvisioning(deps, ROOT);
+
+    const grouped = model.contenders.map((g) =>
+      g.members.map((id) => model.entries.find((e) => e.id === id)?.path),
+    );
+
+    expect(grouped).toEqual([["MixedCase", "mixedcase"]]);
+    // One declaring file, so nothing in it is "the repository's own" relative
+    // to the rest — the row the user keeps is theirs to pick (design.md D3).
+    expect(model.contenders[0]?.favoured).toBeUndefined();
+  });
+});
+
 describe("what it refuses to trust (round-1 B2, B7, B8, W1)", () => {
   /** An errno-carrying rejection, the way `node:fs` reports one. */
   function fail(code: string): Promise<never> {

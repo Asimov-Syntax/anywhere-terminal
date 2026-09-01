@@ -219,7 +219,14 @@ describe("one owner for the lockfile rule", () => {
  * pattern below matches `deps` itself: handing the deps to an imported helper
  * is the only way one can reach a hook, and that hand-off is visible here.
  */
-const IDENTITY_ROOTS = ["identityOf", "foldable", "mergeEntries", "applyExclude", "contendersOf"] as const;
+const IDENTITY_ROOTS: readonly (readonly [file: string, root: string])[] = [
+  ["providerKit.ts", "identityOf"],
+  ["providerKit.ts", "foldSegment"],
+  ["providerKit.ts", "foldable"],
+  ["providerKit.ts", "contendersOf"],
+  ["readProvisioning.ts", "mergeEntries"],
+  ["readProvisioning.ts", "applyExclude"],
+];
 
 /** Every dep hook, plus the value that carries them and the keyword they need. */
 const CONSULTS_A_FILESYSTEM = /\bdeps\b|\bawait\b|\.(?:readFile|readdir|realpath|lstat)\s*\(/;
@@ -311,15 +318,17 @@ function bodyOf(source: string, name: string): string {
 }
 
 describe("identity never reaches a filesystem", () => {
-  const source = sourceOf("readProvisioning.ts");
-
   it("names roots that all still exist, so the walk below is not vacuous", () => {
-    const callables = callablesOf(source);
+    // Named per FILE since the fold and the grouping moved to `providerKit.ts`
+    // so one model assembly point could fill the relation for every adapter.
+    // A root that silently stopped resolving would make its own check pass.
+    const missing = IDENTITY_ROOTS.filter(([file, root]) => !callablesOf(sourceOf(file)).has(root));
 
-    expect(IDENTITY_ROOTS.filter((root) => !callables.has(root))).toEqual([]);
+    expect(missing).toEqual([]);
   });
 
-  it.each(IDENTITY_ROOTS)("%s reaches no dep hook, in any callable shape", (root) => {
+  it.each(IDENTITY_ROOTS)("%s#%s reaches no dep hook, in any callable shape", (file, root) => {
+    const source = sourceOf(file);
     const offenders = [...reachableFrom(source, [root])].filter((name) =>
       CONSULTS_A_FILESYSTEM.test(bodyOf(source, name)),
     );
