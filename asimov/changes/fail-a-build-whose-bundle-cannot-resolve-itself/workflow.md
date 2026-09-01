@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -45,3 +45,4 @@ Round 3 closes cycle 2 as superseded: its four blockers were accepted and handed
 Binder cost on the real artifact (round-3 F006): `node scripts/check-bundle-requires.mjs` over the 1 MB dist/extension.js runs in 0.47s wall clock end to end — cheaper than the hand-rolled scope walk it replaces, so the superlinear-growth concern is answered by measurement rather than by argument.
 Arm check on that same artifact, all four shapes appended at once: ./umd-minified, ./scalar-alias and ./decl-factory are reported; ./legit-local — a local binding spelled `require` bound to a plain callback — is not, which is F007 closed in the direction that matters.
 Verify gate after the round-3 handback: check-types clean, 6756 unit tests pass, biome check at the 3/14/1 baseline, verify-status 0. One unrelated test in src/extension.worktreeAssembly.test.ts failed once under full-suite load and passed 3/3 standalone and on the re-run — the same infra flake recorded above, not reproduced on a clean tree.
+Verify gate after the round-4 handback: check-types clean, 6763 unit tests pass, biome at the 3/14/1 baseline, verify-status 0. Sweep arm check on the real artifact: the conditional alias, the .call factory, the constant argument and the object-carried loader are all reported when appended to dist/extension.js, and the unmodified artifact still exits 0.
