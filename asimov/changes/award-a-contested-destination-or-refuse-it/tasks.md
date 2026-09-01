@@ -45,3 +45,34 @@
   - **Plan**:
     1. In `copyLink` in `src/worktree/provisioning/applyEntries.ts`, refuse when the target resolved against the link's own directory is exactly the link's own destination.
     2. Witness both directions in `src/worktree/provisioning/applyEntries.test.ts`, including that a case-distinct in-repo link is still recreated — refusing on the folding key would destroy material to prevent a loop the volume cannot have.
+
+## 4. Round-1 blockers
+
+- [ ] 4_1 Establish absence before writing, and read it twice
+  - **Deps**: 2_2
+  - **Refs**: design.md#d3-absence-is-observed-twice-and-only-enoent-establishes-it, design.md#d4-the-adjudication, .reviews/round-1.md#f001, .reviews/round-1.md#f002
+  - **Acceptance**:
+    - Outcome: A contest refuses unless every member's destination is proven absent at its own turn
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/applyProvisioning.ts`, replace the boolean reading with D3's four states, and take the second reading immediately before the favoured member's ordinary turn.
+    2. Witness in `src/worktree/provisioning/applyProvisioning.test.ts` that an uncontested copy creating the favoured directory first refuses the contest instead of merging into it, and that an `lstat` failure that is not `ENOENT` refuses rather than authorizing the write. `src/worktree/provisioning/applyEntries.fake.ts` gains whatever the failing-`lstat` case needs.
+
+- [ ] 4_2 Answer in the order the answers were produced
+  - **Deps**: 4_1
+  - **Refs**: design.md#d5-one-orchestration-out-of-the-extension-entry-point, .reviews/round-1.md#f003
+  - **Acceptance**:
+    - Outcome: The steps come back in execution order, as the closure returned them
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyProvisioning.ts` returns results in the order they were produced, and `src/worktree/provisioning/applyProvisioning.test.ts` replaces the arrival-order assertion that codified the regression.
+
+- [ ] 4_3 Say who is contesting, and claim nothing about who created what
+  - **Deps**: 4_2
+  - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, .reviews/round-1.md#f004
+  - **Acceptance**:
+    - Outcome: Every refusal names every member by path and declaring file, its own included
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. Each refusal reason in `src/worktree/provisioning/applyProvisioning.ts` names the whole contest, and the appeared-during-the-apply reason says creation cannot be attributed rather than naming a non-creator.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts the refused member's own spelling and source appear in its own row.

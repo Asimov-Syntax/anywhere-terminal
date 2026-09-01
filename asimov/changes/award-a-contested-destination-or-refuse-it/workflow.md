@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -34,3 +34,5 @@ Lane: full — HIGH risk: two accepted requirements constrain one order, and the
 Planned at: 335a04a8
 - Plan attack run before Gate 2. It refuted FOUR ledger rows and the design was rewritten rather than argued: D4's pre-existing check ran only against the loser, so the favoured member merged into a destination that was already there while only the loser was reported; the D3 reading cannot attribute a name another entry's directory walk or another process created, so the "skipped, awarded to f" outcome claimed a causal fact the apply cannot establish and is now a refusal; promoting the favoured member ahead of the copy pass gave an UNCONTESTED `Foo/seed` copy a new refusal, so the loser yields its place instead and nothing is promoted; and D6's folding-key test would have refused an ordinary `Foo -> foo` beside a real `foo` on a case-sensitive volume, destroying material to prevent a loop that volume cannot have.
 - Gate 2 taken under fastlane on the standing goal, with the user away. The scope cut it carries: the folded self-loop (a link that loops only because the destination folds) is NOT owned here — it needs the twin-create probe this change refuses to assume, and the filesystem answers ELOOP to a reader meanwhile.
+- Round 1 REJECTed with four blockers and every one of them changed an artifact rather than a line, so cycle 1 closed at triage instead of opening a fix loop: D3 now owns two readings and a four-state observation (one reading cannot show that the favoured member own write created its destination, and "not ENOENT" is not "absent"), D4 gained the row those imply, D4a says a refusal names every member including itself, and D5 owns the returned ORDER — the closure answered in execution order and the extraction had quietly changed it to provider order.
+- Gate 2 re-earned under fastlane on the standing goal, with the user away. Nothing in the four fixes widens scope; the mechanism, the non-goals and the refused twin-create probe are unchanged.
