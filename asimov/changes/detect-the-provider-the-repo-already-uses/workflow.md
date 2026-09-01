@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -76,3 +76,19 @@ ledger rows and left two unresolved; every finding was accepted and none rejecte
   constrains what is passed and not what a module may import — task 3_5 is the witness.
 - Task 3_2's Verify covered a third of its own Plan: a dialog-only run passes while the host never
   re-resolves. Split into 3_2 (host lifecycle) and 3_3 (webview), each gated on its own layer.
+
+Build notes:
+
+- 1_2 needed `asimovProvider.ts` in its lease and 2_1 needed `providerKit.ts`: a charged row account
+  is only correct if every append goes through it, and the first adapter to need `ProviderAdapter`
+  is the one that declares it. Plan paths updated, acceptance untouched.
+- `readProvisioning` skips a losing adapter's `read` and probes its files for presence instead.
+  D3 only needs presence, and building rows for a section nobody is shown would spend the shared
+  scan account on nothing.
+- Two 3_2 mutants survive: dropping the opening re-check inside the switch read, and dropping the
+  opening from the ceiling key. `retireOpening`'s sweep independently catches both, so neither is
+  isolated by the suite. Written into the source rather than papered over — the same overlap
+  `provisionReading` already documents.
+- The assembly suite's `REPO` outlives a test, so 3_4's walks clear the provider files first;
+  detection is about which files exist, and a leftover from another walk decides it silently.
+
