@@ -4,7 +4,11 @@
 // branch, collided path, agent picker expanded).
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorktreeCreateResolutionMessage, WorktreeDebrisAuthorizedMessage } from "../../types/messages";
+import type {
+  ProvisionModel,
+  WorktreeCreateResolutionMessage,
+  WorktreeDebrisAuthorizedMessage,
+} from "../../types/messages";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
 import {
   createDefaults,
@@ -14,7 +18,7 @@ import {
   provisionOffer,
   REPO_ID,
 } from "./worktreeFixtures";
-import type { WorktreeCreateDraft, WorktreePullRequestOffer } from "./worktreeViewTypes";
+import type { WorktreeCreateDraft, WorktreeProvisionOffer, WorktreePullRequestOffer } from "./worktreeViewTypes";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -1200,6 +1204,130 @@ describe("Bring over — a repository that declares nothing, and a file that can
     );
     const files = Array.from(host.querySelectorAll(".wt-bring-problem-file")).map((f) => f.textContent);
     expect(files).toEqual(["asimov/worktree.yaml", ".vscode/worktree.json"]);
+  });
+});
+
+describe("[D5] a source that did not win stays visible and selectable", () => {
+  const ORCA = { id: "orca" as const, files: ["orca.yaml", ".worktreeinclude"], active: false };
+
+  function withProviders(providers: ProvisionModel["providers"], onProvisionSwitch?: (r: unknown) => void) {
+    return open({
+      repos: [createDefaults({ provisioning: provisionOffer({ model: provisionModel({ providers }) }) })],
+      ...(onProvisionSwitch === undefined ? {} : { onProvisionSwitch: onProvisionSwitch as never }),
+    });
+  }
+
+  it("draws one row per inactive source, naming every file it reads", () => {
+    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA]);
+
+    const rows = host.querySelectorAll(".wt-bring-switch");
+    expect(rows).toHaveLength(1);
+    // Both files, because orca is one provider over two and naming one of them
+    // would tell the user something other than what the host read.
+    expect(rows[0]?.querySelector(".wt-bring-switch-files")?.textContent).toBe("orca.yaml, .worktreeinclude");
+  });
+
+  it("draws none for the source that supplied the offer", () => {
+    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }]);
+
+    expect(host.querySelectorAll(".wt-bring-switch")).toHaveLength(0);
+  });
+
+  it("posts the provider id and nothing else, with an increasing sequence", () => {
+    const taken: unknown[] = [];
+    const { host } = withProviders(
+      [
+        { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+        ORCA,
+        { id: "vscodeTasks", files: [".vscode/tasks.json"], active: false },
+      ],
+      (r) => taken.push(r),
+    );
+    const buttons = host.querySelectorAll<HTMLButtonElement>(".wt-bring-switch-take");
+    buttons[0]?.click();
+    buttons[1]?.click();
+
+    expect(taken).toEqual([
+      { repoId: REPO_ID, switch: 1, provider: "orca" },
+      { repoId: REPO_ID, switch: 2, provider: "vscodeTasks" },
+    ]);
+  });
+
+  it("never submits", () => {
+    // A default-type button inside the form would submit, and a switch that
+    // created a worktree is the one thing this must not do.
+    const submitted: unknown[] = [];
+    const { host } = open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+            }),
+          }),
+        }),
+      ],
+      onSubmit: (draft) => submitted.push(draft),
+      onProvisionSwitch: () => {},
+    });
+    host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
+
+    expect(submitted).toEqual([]);
+    expect(host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.type).toBe("button");
+  });
+
+  it("replaces the rows when a new offer arrives rather than appending them", () => {
+    let apply: ((repoId: string, offer: WorktreeProvisionOffer) => void) | undefined;
+    const { host } = open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+            }),
+          }),
+        }),
+      ],
+      bindProvisioning: (fn) => {
+        apply = fn;
+      },
+    });
+    apply?.(REPO_ID, {
+      offerId: "provision-2",
+      model: provisionModel({
+        providers: [
+          { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: true },
+          { id: "asimov", files: ["asimov/worktree.yaml"], active: false },
+        ],
+      }),
+    });
+
+    const rows = host.querySelectorAll(".wt-bring-switch");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.querySelector(".wt-bring-switch-files")?.textContent).toBe("asimov/worktree.yaml");
+  });
+
+  it("still says what the worktree will lack when the winning source declared nothing", () => {
+    const { host } = open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              entries: [],
+              ports: [],
+              setup: [],
+              problems: [],
+              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+            }),
+          }),
+        }),
+      ],
+    });
+
+    // A switch row is an offer, not something this worktree gets — so it must
+    // not stand in for the sentence that says the section is empty.
+    expect(host.querySelectorAll(".wt-bring-switch")).toHaveLength(1);
+    expect(host.querySelector(".wt-bring-empty")?.hasAttribute("hidden")).toBe(false);
   });
 });
 

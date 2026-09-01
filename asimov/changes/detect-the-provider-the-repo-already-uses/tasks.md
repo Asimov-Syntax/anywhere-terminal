@@ -85,7 +85,7 @@
     4. Extend `src/providers/WorktreeHost.actions.test.ts`: a switch posts a fresh offer with a different offer id and the other source's rows; two switches whose reads resolve in reverse order leave the later provider's offer published; a switch for an undetected provider is refused with no read; a switch after the opening is retired publishes nothing; a switch submits and creates nothing.
   - **Boundary**: no message may carry a path, a command, or a model from the webview
 
-- [ ] 3_3 Draw the sources that did not win, and post the switch
+- [x] 3_3 Draw the sources that did not win, and post the switch — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_2
   - **Refs**: specs/worktree-panel/spec.md#a-source-that-did-not-supply-the-offer-stays-visible-and-selectable; design.md D5, D8
   - **Acceptance**:

@@ -3341,3 +3341,54 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(document.querySelector('[role="dialog"]'), "the row stayed dead after a dropped reply").not.toBeNull();
   });
 });
+
+describe("[D5] the switch the dialog takes reaches the host as a request", () => {
+  it("posts the provider and the sequence on the opening the form rides", () => {
+    const h = mount();
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            createDialogDeps(): {
+              onProvisionSwitch(r: { repoId: string; switch: number; provider: string }): void;
+            };
+          };
+        };
+      }
+    ).view.deps.createDialogDeps();
+
+    deps.onProvisionSwitch({ repoId: "/repo/.git", switch: 1, provider: "orca" });
+
+    const posted = h.posts.filter((m) => m.type === "worktreeProvisionSwitch");
+    expect(posted).toHaveLength(1);
+    // Four scalars. Nothing on this message can carry a file, a path, a command
+    // or a model — the host re-resolves the provider it already detected.
+    expect(Object.keys(posted[0] ?? {}).sort()).toEqual(["opening", "provider", "repoId", "switch", "type"]);
+    expect(posted[0]).toMatchObject({ repoId: "/repo/.git", switch: 1, provider: "orca" });
+  });
+
+  it("rides the same opening every other request from the form rides", () => {
+    const h = mount();
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            createDialogDeps(): {
+              onProvisionSwitch(r: { repoId: string; switch: number; provider: string }): void;
+              onSelectionChange(s: { repoId: string; branch: string }): void;
+            };
+          };
+        };
+      }
+    ).view.deps.createDialogDeps();
+
+    deps.onSelectionChange({ repoId: "/repo/.git", branch: "feat" });
+    deps.onProvisionSwitch({ repoId: "/repo/.git", switch: 1, provider: "orca" });
+
+    // A switch naming a different opening is not honoured host-side, which is
+    // what stops a dismissed form redrawing itself.
+    const defaults = h.posts.find((m) => m.type === "requestWorktreeCreateDefaults") as { opening: number };
+    const swap = h.posts.find((m) => m.type === "worktreeProvisionSwitch") as { opening: number };
+    expect(swap.opening).toBe(defaults.opening);
+  });
+});

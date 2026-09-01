@@ -239,6 +239,16 @@ export interface WorktreeCreateDialogDeps {
    * callback is what B4 was.
    */
   bindRefs?: (apply: (repoId: string, refs: WorktreeRefOffer) => void) => void;
+  /**
+   * Populate the section from a source that was detected but did not win.
+   *
+   * Carries the provider's ID and a sequence this form mints, and nothing else.
+   * A dep that could carry a file, a path or a model would make the webview the
+   * authority on what the host reads (design.md D5). Taking it submits nothing:
+   * the host answers with a fresh offer, which arrives through
+   * `bindProvisioning` like any other.
+   */
+  onProvisionSwitch?: (request: { repoId: string; switch: number; provider: string }) => void;
   /** The forge's answer, on its own channel — it must never gate `bindRefs`. */
   bindPullRequests?: (apply: (repoId: string, offer: WorktreePullRequestOffer) => void) => void;
   /**
@@ -388,6 +398,32 @@ function bringProblem(problem: WorktreeProvisionOffer["model"]["problems"][numbe
   detail.className = "wt-bring-problem-detail";
   detail.textContent = problem.detail;
   el.append(file, detail);
+  return el;
+}
+
+/**
+ * A source that was detected and did not supply the offer.
+ *
+ * One row per source, naming every file it reads — orca is one provider over
+ * two, and a row naming one of them would be telling the user something other
+ * than what the host read (design.md D8). Hiding it instead would leave a
+ * repository looking as if it had never configured the tool it uses.
+ */
+function switchRow(provider: WorktreeProvisionOffer["model"]["providers"][number], take: () => void): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "wt-bring-switch";
+  const files = document.createElement("span");
+  files.className = "wt-bring-switch-files";
+  // Provider-file text, set with `textContent` like every other piece of it.
+  files.textContent = provider.files.join(", ");
+  const take_ = document.createElement("button");
+  // Explicitly a button. A default-type button inside the form SUBMITS, and a
+  // switch that created a worktree is the one thing this must never do.
+  take_.type = "button";
+  take_.className = "wt-bring-switch-take";
+  take_.textContent = "Use this instead";
+  take_.addEventListener("click", take);
+  el.append(files, take_);
   return el;
 }
 
@@ -845,6 +881,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
   });
 
+  /**
+   * Monotonic per dialog, minted here.
+   *
+   * The host orders answers by it, so it must increase across every switch this
+   * form takes — including switches for different repositories, which is why it
+   * is one counter and not one per repo.
+   */
+  let switchSeq = 0;
+
   /** Redraw the section from the repo's offer. Called on every derive. */
   function syncBringOver(offer: WorktreeProvisionOffer | undefined): void {
     if (offer === undefined) {
@@ -878,17 +923,30 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     const held = ticked;
     const rows = bringRows(offer.model).map((row) => ({ ...row, checked: held.has(row.id) }));
+    // Every source the host detected and did not choose. `active` is the host's
+    // word for which one supplied the rows above.
+    const inactive = offer.model.providers.filter((p) => !p.active);
     // Problems sit inside the box beside the rows, not instead of them: an
     // unknown key does not discard the keys that parsed, and reporting only the
     // problem would understate what the create is about to do.
+    // Replaced, never appended: a redrawn offer that added its switch rows to
+    // the previous offer's would grow a row per switch taken.
     bringBox.replaceChildren(
       ...rows.map((row, i) => bringRow(row, i)),
       ...offer.model.problems.map((problem) => bringProblem(problem)),
+      ...inactive.map((provider) =>
+        switchRow(provider, () => {
+          switchSeq += 1;
+          deps.onProvisionSwitch?.({ repoId: draft.repoId, switch: switchSeq, provider: provider.id });
+        }),
+      ),
     );
     bringBox.hidden = bringBox.childElementCount === 0;
     // The sentence stands in only where there is genuinely nothing to list. A
-    // file that failed to parse has a problem row, which is a different answer.
-    bringEmpty.hidden = bringBox.childElementCount > 0;
+    // file that failed to parse has a problem row, which is a different answer,
+    // and a switch row is an offer rather than something this worktree gets —
+    // so a present source declaring nothing still says what the worktree lacks.
+    bringEmpty.hidden = rows.length + offer.model.problems.length > 0;
   }
 
   // ── After creating ──────────────────────────────────────────────────────

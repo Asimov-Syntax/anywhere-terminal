@@ -517,6 +517,21 @@ export class WorktreeController {
         bindProvisioning: (apply) => {
           this.applyProvisionOffer = apply;
         },
+        // A source the HOST detected, named by id. The message carries no file,
+        // no path and no model — the host re-resolves that provider itself, and
+        // the fresh offer comes back through `bindProvisioning` (design.md D5).
+        onProvisionSwitch: (request) => {
+          deps.postMessage({
+            type: "worktreeProvisionSwitch",
+            repoId: request.repoId,
+            // The opening this form was composed in, the same one every other
+            // request from it rides. A switch naming a retired opening is not
+            // honoured, which is what stops a dismissed form redrawing.
+            opening: this.refsToken,
+            switch: request.switch,
+            provider: request.provider as WorktreeProvisionOffer["model"]["providers"][number]["id"],
+          });
+        },
         bindPullRequests: (apply) => {
           this.applyPullRequests = apply;
         },
