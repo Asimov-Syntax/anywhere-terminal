@@ -2,7 +2,7 @@
 
 ## 1. The bound
 
-- [ ] 1_1 Serve assessments from one lane per repository
+- [x] 1_1 Serve assessments from one lane per repository — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{an-assessment-the-user-moved-on-from-does-not-delay-what-they-do-next, asking-to-remove-again-always-asks-again}; design.md D1, design.md D2, design.md D3, design.md D6
   - **Acceptance**:

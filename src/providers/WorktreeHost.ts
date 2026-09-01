@@ -687,6 +687,155 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     retireOpening(key);
     openingHighWater.delete(key);
   };
+
+  /**
+   * Assessment admission, one lane per REPOSITORY (design.md D1).
+   *
+   * A removal assessment runs inside `coordinator.run`, so every one of them is
+   * a job on that repository's mutation queue, ahead of any lock, unlock,
+   * remove, prune or create queued behind it. The queue is deliberately
+   * non-coalescing (`keyedSerialQueue.ts`), so the bound has to live here.
+   *
+   * Keyed by repository because that is what the queue is keyed by. A slot per
+   * `(surface, repository)` was drafted and refuted: detaching a surface
+   * deletes its record but cannot retract a job already appended, so attach →
+   * ask → detach repeated N times left N jobs queued with nothing attached.
+   *
+   * At most ONE job per repository exists at a time. Further requests rewrite
+   * `pending` and enqueue nothing; the job re-enqueues itself while anything is
+   * still owed. Service is round-robin over `rotation`, not newest-first: two
+   * panels asking continuously must each be answered.
+   */
+  interface PendingAssess {
+    surface: WorktreeSurface;
+    worktreeId: string;
+    token: string;
+  }
+  interface AssessLane {
+    /** The latest unanswered request per surface, keyed by `surfaceKey`. */
+    pending: Map<string, PendingAssess>;
+    /** Service order. A key joins when it first has a request and cycles when served. */
+    rotation: string[];
+    /** A job for this repository is enqueued or running. */
+    outstanding: boolean;
+  }
+  type AssessCapability = NonNullable<WorktreeActions["assessRemovalReport"]>;
+  const assessLanes = new Map<string, AssessLane>();
+
+  /** Everything one surface has pending, dropped when it detaches. */
+  const forgetSurfaceAssessments = (key: string): void => {
+    for (const [repoId, lane] of [...assessLanes]) {
+      lane.pending.delete(key);
+      const at = lane.rotation.indexOf(key);
+      if (at !== -1) {
+        lane.rotation.splice(at, 1);
+      }
+      if (!lane.outstanding && lane.pending.size === 0) {
+        assessLanes.delete(repoId);
+      }
+    }
+  };
+
+  /**
+   * The next request this lane owes, taken from the rotation rather than from
+   * arrival order. Bounded by the rotation's length, so a lane holding only
+   * departed surfaces terminates rather than spinning.
+   */
+  function takeNextAssess(lane: AssessLane): PendingAssess | undefined {
+    for (let guard = lane.rotation.length; guard > 0; guard -= 1) {
+      const key = lane.rotation.shift();
+      if (key === undefined) {
+        break;
+      }
+      const request = lane.pending.get(key);
+      // Nothing owed under this key any more, so it leaves the rotation.
+      if (request === undefined) {
+        continue;
+      }
+      lane.pending.delete(key);
+      // A detached surface cannot be answered, and its request must not cost a
+      // job. Dropped WITHOUT rejoining the rotation.
+      if (!surfaces.has(request.surface)) {
+        continue;
+      }
+      lane.rotation.push(key);
+      return request;
+    }
+    return undefined;
+  }
+
+  async function runAssessLane(repoId: string, assess: AssessCapability): Promise<void> {
+    const lane = assessLanes.get(repoId);
+    if (lane === undefined) {
+      return;
+    }
+    try {
+      const request = takeNextAssess(lane);
+      if (request !== undefined) {
+        await serveAssess(repoId, request, assess);
+      }
+    } finally {
+      // Synchronous, in one block: the flag falls and the re-enqueue decision
+      // is taken together, so a request that arrived during the job cannot land
+      // in a window where nothing is outstanding and nothing is queued — a lost
+      // wakeup leaves it owed forever (design.md D6).
+      lane.outstanding = false;
+      if (lane.pending.size > 0) {
+        lane.outstanding = true;
+        void runAssessLane(repoId, assess);
+      } else if (assessLanes.get(repoId) === lane) {
+        assessLanes.delete(repoId);
+      }
+    }
+  }
+
+  /**
+   * One request, answered exactly once while its surface is attached (D12, as
+   * amended by design.md D3).
+   */
+  async function serveAssess(repoId: string, request: PendingAssess, assess: AssessCapability): Promise<void> {
+    const { surface: origin, worktreeId, token } = request;
+    const unavailable = (unreadable: readonly string[]): void => {
+      if (surfaces.has(origin)) {
+        origin.post({
+          type: "worktreeRemoveAssessment",
+          worktreeId,
+          token,
+          result: { kind: "unavailable", unreadable },
+        });
+      }
+    };
+    // Re-checked HERE as well as at admission: a request waits its turn in the
+    // lane, and the registration can leave while it does.
+    if (actionPath(worktreeId, true) === undefined) {
+      unavailable(["the worktree is no longer registered"]);
+      return;
+    }
+    let result: Awaited<ReturnType<AssessCapability>>;
+    try {
+      result = await assess({ repoId, worktreeId, origin });
+    } catch {
+      // Inventing an empty report would render a worktree of unknown risk as
+      // one with none — but silence made an explicit destructive request look
+      // inert, with no retry. The `unavailable` arm D8 already defines is the
+      // honest third answer (D12).
+      //
+      // Scoped to the assessment alone. Chaining it after the success handler
+      // would report a failure to DELIVER a report as a failure to produce one.
+      unavailable(["the assessment"]);
+      return;
+    }
+    // Re-checked after the await, like every other read here: the surface may
+    // have gone, and this answer carries a fingerprint.
+    if (!surfaces.has(origin)) {
+      return;
+    }
+    if (result === null) {
+      unavailable(["the worktree is no longer registered"]);
+      return;
+    }
+    origin.post({ type: "worktreeRemoveAssessment", worktreeId, token, result });
+  }
   /**
    * The branch enumeration each repository's open dialog is riding.
    *
@@ -1735,45 +1884,40 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // that half was never a reason to avoid it, and the capability now takes
         // that barrier itself, because a report read from the cache can describe
         // a registration the confirmation will not act on (D10).
-        // Answered, not dropped. D12 admits no exception: an unanswered request
-        // leaves the panel's own duplicate-request guard holding a reply that
-        // is never coming, and the menu item dead for that row (D10, D11).
-        const unavailable = (unreadable: readonly string[]): void => {
+        if (assess === undefined || assessRepo === undefined || actionPath(assessTarget, true) === undefined) {
+          // Answered, not dropped. D12 admits no exception: an unanswered
+          // request leaves the panel waiting on a reply that is never coming.
           if (surfaces.has(surface)) {
             surface.post({
               type: "worktreeRemoveAssessment",
               worktreeId: assessTarget,
               token: msg.token,
-              result: { kind: "unavailable", unreadable },
+              result: { kind: "unavailable", unreadable: ["the worktree is no longer registered"] },
             });
           }
-        };
-        if (assess === undefined || assessRepo === undefined || actionPath(assessTarget, true) === undefined) {
-          unavailable(["the worktree is no longer registered"]);
           return;
         }
-        void assess({ repoId: assessRepo, worktreeId: assessTarget, origin: surface })
-          .then((result) => {
-            // Re-checked after the await, like every other read here: the
-            // surface may have gone, and this answer carries a fingerprint.
-            if (!surfaces.has(surface)) {
-              return;
-            }
-            if (result === null) {
-              unavailable(["the worktree is no longer registered"]);
-              return;
-            }
-            surface.post({ type: "worktreeRemoveAssessment", worktreeId: assessTarget, token: msg.token, result });
-          })
-          .catch(() => {
-            // Inventing an empty report would render a worktree of unknown risk
-            // as one with none — but silence made an explicit destructive
-            // request look inert, with no retry. The `unavailable` arm D8
-            // already defines is the honest third answer, and naming the
-            // assessment itself keeps its promise that the list is never empty
-            // (D12).
-            unavailable(["the assessment"]);
-          });
+        // Admission, and nothing else — every write below is synchronous in
+        // this handler turn, before any await (design.md D6). A request always
+        // REPLACES this surface's pending one; it adds a job only when this
+        // repository has none outstanding, which is the whole bound (D1).
+        const laneKey = surfaceKey(surface);
+        const fresh: AssessLane = { pending: new Map(), rotation: [], outstanding: false };
+        const lane = assessLanes.get(assessRepo) ?? fresh;
+        assessLanes.set(assessRepo, lane);
+        // Against the ROTATION, not against `pending`: a surface being served
+        // has already had its pending entry taken, so testing `pending` here
+        // re-appended its key on every re-ask and grew the rotation without
+        // bound — the shape this lane exists to prevent.
+        if (!lane.rotation.includes(laneKey)) {
+          lane.rotation.push(laneKey);
+        }
+        lane.pending.set(laneKey, { surface, worktreeId: assessTarget, token: msg.token });
+        if (lane.outstanding) {
+          return;
+        }
+        lane.outstanding = true;
+        void runAssessLane(assessRepo, assess);
         return;
       }
       case "worktreeRemove": {
@@ -2924,6 +3068,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // One routine for all three lifecycles now, so a channel added to
         // retirement cannot reach close and miss detach.
         forgetSurfaceOpenings(surfaceKey(surface));
+        // The assessments it was still owed go with it too. Kept beside rather
+        // than inside `forgetSurfaceOpenings`: that routine is the create
+        // form's three lifecycles, and a create form closing must not retire a
+        // removal assessment the user is waiting on.
+        //
+        // PROMPTNESS, not correctness, and deliberately not dressed as more:
+        // `pending` is non-empty only while a job is outstanding, and
+        // `takeNextAssess` already drops the entry of a departed surface, so
+        // removing this line changes no assertion in the suite. What it buys is
+        // releasing the surface reference now rather than holding it across an
+        // assessment that can run for the length of a git status timeout.
+        forgetSurfaceAssessments(surfaceKey(surface));
         // Detaching is a falling edge too: the last showing surface going away
         // this way would otherwise leave the scan armed for the window's life,
         // and the last ROW-DRAWING surface would leave a turn order standing

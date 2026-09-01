@@ -4634,3 +4634,148 @@ describe("a removal is reported without being performed", () => {
     expect(view.posts).toEqual([]);
   });
 });
+
+describe("assessment traffic is bounded by one job per repository", () => {
+  const REPORT: WorktreeRemoveAssessmentMessage["result"] = {
+    kind: "assessed",
+    assessment: { checks: [], contained: [] },
+    fingerprint: null,
+  };
+
+  /**
+   * The count of `assessRemovalReport` calls IS the count of mutation-queue
+   * jobs. In production the whole body of that capability runs inside
+   * `coordinator.run`, so a second call here is a second job sitting ahead of
+   * every destructive mutation on that repository — which is what round-6 B5
+   * measured (design.md D1).
+   */
+  const assessed = (calls: Array<[string, ...unknown[]]>) => calls.filter((c) => c[0] === "assessRemovalReport");
+  const targetsOf = (calls: Array<[string, ...unknown[]]>) =>
+    assessed(calls).map((c) => (c[1] as { worktreeId: string }).worktreeId);
+  const tokensOf = (posts: readonly ExtensionToWebViewMessage[]) =>
+    posts.filter((p) => p.type === "worktreeRemoveAssessment").map((p) => (p as { token: string }).token);
+
+  /** Holds every assessment open, so a test can inspect the lane mid-flight. */
+  function heldAssess() {
+    const waiting: Array<() => void> = [];
+    return {
+      report: () =>
+        new Promise<AssessReport>((resolve) => {
+          waiting.push(() => resolve(REPORT));
+        }),
+      /** Let them finish one at a time, so a re-enqueue can happen between. */
+      drain: async () => {
+        for (let guard = 0; guard < 20 && waiting.length > 0; guard += 1) {
+          waiting.shift()?.();
+          await settle();
+        }
+      },
+    };
+  }
+
+  it("adds no job while one is outstanding, and then serves only the latest question", async () => {
+    const gate = heldAssess();
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: gate.report });
+
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
+    await settle();
+    // Alternating two rows is exactly what defeated the panel-side guard: it
+    // dropped only a repeat of the ONE live worktree id (round-6 B5).
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: FEAT_PATH, token: "t-2" });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-3" });
+    await settle();
+
+    expect(assessed(calls)).toHaveLength(1);
+
+    await gate.drain();
+
+    // Two jobs, never three. `t-2` was replaced while still pending, so it is
+    // never assessed at all — the work is dropped, not merely its answer.
+    expect(targetsOf(calls)).toEqual([RAW_ID, RAW_ID]);
+    expect(tokensOf(view.posts)).toEqual(["t-1", "t-3"]);
+    dispose();
+  });
+
+  it("queues nothing more however many surfaces attach, ask and detach", async () => {
+    const gate = heldAssess();
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: gate.report });
+
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
+    await settle();
+
+    // The counterexample that refuted a slot keyed by (surface, repository):
+    // detaching deletes the record but cannot retract a job already appended,
+    // so N cycles left N jobs ahead of a mutation with nothing attached.
+    for (let i = 0; i < 8; i += 1) {
+      const extra = surface();
+      const attachment = host.attach(extra);
+      host.handleMessage(extra, { type: "worktreeRemoveAssess", worktreeId: FEAT_PATH, token: `churn-${i}` });
+      attachment.dispose();
+    }
+    await settle();
+    expect(assessed(calls)).toHaveLength(1);
+
+    await gate.drain();
+
+    // And nothing is left owing afterwards: every churned request went with the
+    // surface that made it.
+    expect(assessed(calls)).toHaveLength(1);
+    dispose();
+  });
+
+  it("serves each asking surface in turn rather than the newest question", async () => {
+    const gate = heldAssess();
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, { assessReport: gate.report });
+    const second = surface();
+    const secondAttachment = host.attach(second);
+
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "a-1" });
+    await settle();
+    // Both panels keep asking while the first job is held, and `second` asks
+    // LAST. A lane serving the newest pending request would answer `second`
+    // next and leave `view` behind its own newer question; the rotation answers
+    // `view` next because it is the one whose turn it is.
+    host.handleMessage(second, { type: "worktreeRemoveAssess", worktreeId: FEAT_PATH, token: "b-1" });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "a-2" });
+    host.handleMessage(second, { type: "worktreeRemoveAssess", worktreeId: FEAT_PATH, token: "b-2" });
+    await settle();
+
+    expect(assessed(calls)).toHaveLength(1);
+    await gate.drain();
+
+    expect(targetsOf(calls)).toEqual([RAW_ID, RAW_ID, FEAT_PATH]);
+    // `b-1` was replaced while still pending, so it is never assessed and never
+    // answered — but `second` is still answered, which is the anti-starvation
+    // property the round-robin exists for.
+    expect(tokensOf(view.posts)).toEqual(["a-1", "a-2"]);
+    expect(tokensOf(second.posts)).toEqual(["b-2"]);
+    secondAttachment.dispose();
+    dispose();
+  });
+
+  it("gives each repository its own lane", async () => {
+    const gate = heldAssess();
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, {
+      sibling: true,
+      assessReport: gate.report,
+    });
+
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "r-1" });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: OTHER_ROOT, token: "o-1" });
+    await settle();
+
+    // One lane each: a busy repository must not hold up a question about a
+    // different one, because they are different mutation queues.
+    expect(assessed(calls)).toHaveLength(2);
+
+    // And the lanes bound independently — a repeat into either adds nothing
+    // while that one is busy, which is what makes this two lanes rather than
+    // no lane at all.
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "r-2" });
+    host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: OTHER_ROOT, token: "o-2" });
+    await settle();
+    expect(assessed(calls)).toHaveLength(2);
+    await gate.drain();
+    dispose();
+  });
+});
