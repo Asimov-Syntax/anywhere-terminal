@@ -66,3 +66,46 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     4. `src/providers/WorktreeHost.ts` and `src/extension.ts`: post `worktreeProvisionResult` to the originating surface after the create's own result, through the host's existing mutation-report path rather than a second surface lookup — it already owns attachment, and posting straight at the providers is what missed every editor surface.
     5. `src/providers/WorktreeHost.actions.test.ts` and `src/worktree/worktreeMutationService.test.ts`: an apply that REJECTS still yields `ok` with a `failed` step — a fake returning a failed result does not exercise the outer arm and is not the witness for this; selected entries only; copy ordered before link; apply runs before `afterCreate`; a stale offer id creates nothing; a create with no `provision` field still succeeds and provisions nothing.
   - **Boundary**: the service receives entry values, never ids and never a store handle — it must not become able to resolve an offer
+
+- [ ] 2_1 Bound the walk per operation, and make the production binding the one under test
+  - **Deps**: 1_5
+  - **Refs**: design.md D5, D6, D10; .reviews/round-1.md F003, F002, F004, F008, F012, F013
+  - **Acceptance**:
+    - Outcome: A committed symlink cannot land a link resolving outside the new worktree, and no single operation runs unbounded
+    - Verify: unit src/worktree/provisioning/applyEntries.node.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyEntries.ts`: bind `realpath` on `nodeApplyFsDeps`, and change the local helper's fallback from the spelled path to `fs.realpath` — the fallback `resolvedPathBoundary.ts:63,99` already uses. Either alone leaves an omitted dep degrading to lexical resolution (F003).
+    2. `src/worktree/provisioning/applyEntries.node.test.ts`: a NEW suite exercising `nodeApplyFsDeps` itself against a real temp tree. The existing suite cannot witness F003 by construction — its fake supplies the dep production omits. Includes the chair's reproduction: an in-repo symlink chain whose lexical dirname is inside both roots and whose real dirname is outside.
+    3. `src/worktree/provisioning/applyEntries.ts`: charge the budget per OPERATION, not per node — the source size known from D5's `fstat` is spent before the copy, `readdir` is charged for the listing it materializes, and the deadline is read synchronously so an already-expired budget stops node 1 rather than after it (F002).
+    4. `src/worktree/provisioning/entryGate.ts`: refuse any `\` in `entry.path`. `path.posix.basename` does not split it but `path.resolve` does on Windows, so the lockfile and `node_modules` refusals are bypassable by spelling (F004).
+    5. `src/worktree/provisioning/applyEntries.ts`: cap `details` with an explicit truncation row (F008); create missing destination parents recursively, each component no-follow and containment-checked exactly as the descent is (F012); build the display path with one separator convention (F013).
+    6. `src/worktree/provisioning/applyEntries.test.ts`, `src/worktree/provisioning/entryGate.test.ts`: one invariant-level falsifier per boundary — a single oversized file, an oversized listing, an already-expired deadline, a backslash spelling of each refused basename, a truncated `details`, a missing destination parent.
+  - **Boundary**: no deletion primitive may appear in this module — the D9 report-don't-unwind rule and the I10 gate both still hold
+
+- [ ] 2_2 Say what happened, on every arm that can happen
+  - **Deps**: 2_1
+  - **Refs**: design.md D3, D8, D10; .reviews/round-1.md F001, F006, F007, F009, F010, F011, F015
+  - **Acceptance**:
+    - Outcome: A refusal states its reason on the wire
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: a stale `offerId` refuses on the existing `worktreeMutationResult` error arm with a stated reason, which is what D3 already says and the code does not do (F001). The test asserts the posted message, not only the absent create.
+    2. `src/providers/WorktreeHost.ts`: an `isKnownProvision` runtime guard beside its three neighbours — the dispatch at `TerminalViewProvider.ts:1024-1031` returns before the `try`, so a malformed `provision` escapes into VS Code's callback rather than failing closed (F006).
+    3. `src/extension.ts`: ONE budget for the whole apply, created once and threaded through the loop — a fresh `afterDelay` per entry multiplies D10's bound by the entry count (F007).
+    4. `src/worktree/worktreeMutationService.ts`: a selection with no `applyProvision` binding reports a step per entry instead of dropping them silently into an outcome identical to "selected nothing" (F009); remove the duplicated `provision` spread (F010); normalize `worktreeId` through the helper the tree keys on (F015).
+    5. `src/worktree/provisioning/applyEntries.ts`, `src/worktree/clearDebris.ts`, `src/worktree/worktreeMutationService.ts`: one shared `messageOf` — the third copy has already drifted to `"unknown error"` where the other two answer `String(error)`, in a string the user reads (F011).
+  - **Boundary**: no new error arm — every refusal added here rides the `worktreeMutationResult` shape that already exists
+
+- [ ] 2_3 Land the two halves that make the flow reach a user
+  - **Deps**: 2_2
+  - **Refs**: specs/worktree-panel/spec.md#the-material-a-worktree-was-promised-is-actually-put-there; .reviews/round-1.md F005
+  - **Acceptance**:
+    - Outcome: The rows the user ticked reach the host, and what provisioning did reaches the panel
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts`: surface the selection the dialog ALREADY holds — `checkedByOffer` at `:828`, re-ticked across offers at `:870-880` — onto the draft as `{ offerId, itemIds }`. Nothing new is tracked; the last hop is what is missing.
+    2. `src/webview/worktree/WorktreeController.ts`: spread `provision` into the `worktreeCreate` post. Absent when the offer is absent or nothing is ticked, so a form with no provisioning posts exactly what it posts today.
+    3. `src/webview/messaging/MessageRouter.ts`: a case for `worktreeProvisionResult` — its default silently ignores unknown types, which is why a declared, posted, handled type reached nobody (the `TerminalViewProvider.ts:1021` precedent).
+    4. `src/webview/worktree/WorktreeController.ts`: render the steps on the surface that asked, reusing the notice path the mutation result already uses.
+    5. Tests in `WorktreeCreateDialog.test.ts`, `WorktreeController.test.ts`, `MessageRouter.test.ts`: a ticked row reaches the post; an unticked one does not; a form with no offer posts no `provision`; a result message routes rather than falling into the default.
+  - **Boundary**: no new wire type — task 1_1 already defined both directions; this task only connects them
