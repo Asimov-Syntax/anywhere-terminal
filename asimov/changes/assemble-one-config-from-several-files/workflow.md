@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -121,3 +121,9 @@ scope, admits nothing speculative and accepts no risk, so fastlane may choose it
 D11 added, Gate 2 re-earned, tasks 5_1 and 5_2 added. This does NOT reopen the review: round 3 was
 the final automatic round and round 4 still needs an explicit user grant. The change must not
 archive. The work is done so that a granted round 4 has something to review.
+
+Round-3 handback complete: 5_1 (6faf842b) and 5_2 (8f9e22b7) built, verified, and committed; Verify
+Gate re-run clean on the whole tree (types, fs-deletion gate, biome at the 3/14/1 baseline, 6556
+unit tests). Both round-3 blockers now have witnesses that were confirmed failing against the prior
+mechanism — 5_1's against round 1's own `readFile` pin, not merely against no fix. The change stops
+here: `Review done` and every gate after it stay unticked, because round 4 is the user's to grant.
