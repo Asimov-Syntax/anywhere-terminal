@@ -26,7 +26,7 @@ import {
   prepareResolvedRoot,
   type ResolvedPathInsideDeps,
 } from "../../utils/resolvedPathBoundary";
-import { platformFoldsFilenameCase } from "./providerKit";
+import { platformUsesWin32FilenameRules } from "./providerKit";
 
 /** A root an entry's repo-relative spelling joins onto, resolved once for the pass. */
 export interface GateRoot {
@@ -184,7 +184,7 @@ function filesystemIdentity(base: string, win32: boolean): string {
  */
 export function refusedLockfile(
   resolvedDestination: string,
-  win32: boolean = platformFoldsFilenameCase(),
+  win32: boolean = platformUsesWin32FilenameRules(),
 ): string | null {
   return LOCKFILES.has(filesystemIdentity(path.basename(resolvedDestination), win32)) ? LOCKFILE_REASON : null;
 }
@@ -198,7 +198,7 @@ function refusedMaterial(resolvedDestination: string, mode: ProvisionEntry["mode
   if (lockfile !== null) {
     return lockfile;
   }
-  const base = filesystemIdentity(path.basename(resolvedDestination), platformFoldsFilenameCase());
+  const base = filesystemIdentity(path.basename(resolvedDestination), platformUsesWin32FilenameRules());
   if (base === "node_modules" && mode === "link") {
     return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";
   }

@@ -26,7 +26,6 @@ import {
   type ProviderBudget,
   type ProviderContext,
   type ProviderDeps,
-  platformFoldsFilenameCase,
   problem,
   report,
 } from "./providerKit";
@@ -170,21 +169,25 @@ async function baseFor(
  * which is also why a raw `exclude` spelling can no longer reach outside the
  * checkout (round-5 F009) and why there is nothing here to bound (F010).
  *
- * The residual is a case-insensitive POSIX volume, where two spellings of one
- * file are offered as two rows. The user sees both. That is round-3 F001, held
- * open deliberately, and the volume-level question belongs to its own change.
+ * A seventh answer was tested and rejected before this landed: folding ASCII
+ * only. It closes the over-merge (`İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ` stay apart, as NTFS
+ * keeps them) but makes the other direction worse — `Straße`/`STRASSE` and
+ * `ﬀ`/`ff` are ONE file on APFS, so splitting them reproduces the defect. Every
+ * fold has a volume it is wrong on, because folding is a property of the
+ * destination directory and this code runs before that directory exists.
+ *
+ * So there is no fold here at all. Two spellings that differ stay two rows; a
+ * pair that MAY be one destination travels as a contender group instead, and
+ * the apply side settles it where the answer can actually be observed
+ * (design.md D1, D2, D3).
  *
  * Used for identity only. What a row DISPLAYS and what it names as its `source`
  * are never touched — § 4.3 forbids rewriting either, and a row that showed the
  * canonical form would be telling the user something their file does not say.
  */
-function identityOf(): (declared: string) => string {
-  const fold = platformFoldsFilenameCase();
-  return (declared) => {
-    const normalized = path.posix.normalize(declared);
-    const trimmed = normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
-    return fold ? trimmed.toLowerCase() : trimmed;
-  };
+function identityOf(declared: string): string {
+  const normalized = path.posix.normalize(declared);
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
 }
 
 /**
@@ -268,10 +271,8 @@ async function assemble(
   const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
   const baseModel = inherited?.model ?? emptyModel();
 
-  // The platform's own naming rule, asked once and of nothing on disk.
-  const pathKey = identityOf();
-  const merged = mergeEntries(baseModel.entries, native.model.entries, pathKey);
-  const { kept, excluded } = applyExclude(merged.entries, merged.inline, native.exclude ?? [], draft, pathKey);
+  const merged = mergeEntries(baseModel.entries, native.model.entries, identityOf);
+  const { kept, excluded } = applyExclude(merged.entries, merged.inline, native.exclude ?? [], draft, identityOf);
 
   return {
     model: {

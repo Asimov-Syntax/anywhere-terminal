@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
-import { MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps, platformFoldsFilenameCase } from "./providerKit";
+import { MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
 import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
@@ -684,7 +684,7 @@ describe("[round-3 F002] authorization is a result, not a byte source", () => {
   });
 });
 
-describe("[round-3 F001, round-5 F008] identity is the declared path, folded where the platform folds", () => {
+describe("[round-7 F001, F013] identity is the declared spelling, and nothing folds it", () => {
   const CASE_REPO: Repo = {
     native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
     orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
@@ -705,20 +705,39 @@ describe("[round-3 F001, round-5 F008] identity is the declared path, folded whe
     expect(model.entries.map((e) => [e.path, e.mode])).toEqual([["a/../node_modules", "copy"]]);
   });
 
-  it("keeps case-variant spellings apart on a platform whose filenames are bytes", async () => {
-    // The residual this decision accepts, stated as a test rather than left to
-    // a comment. On POSIX the two rows both show, and the user can see and
-    // remove the one they did not want — which is the failure direction that
-    // does not silently discard a declaration (design.md D11).
-    if (platformFoldsFilenameCase()) {
-      return;
-    }
+  it("keeps case-variant spellings apart on EVERY platform", async () => {
+    // No platform guard, deliberately. The version this replaced skipped itself
+    // wherever the fold was active, so it could only ever pass — the one lane
+    // that could have caught round-7 F013 was the lane it declined to run on.
     const model = await readProvisioning(fs(CASE_REPO), ROOT);
 
     expect(model.entries.map((e) => [e.path, e.source])).toEqual([
       ["mixedcase", ORCA_YAML_FILE],
       ["MixedCase", NATIVE_PROVIDER_FILE],
     ]);
+  });
+
+  it.each([
+    ["\u0130", "i\u0307", "NTFS keeps these apart; toLowerCase does not"],
+    ["\u1E9E", "\u00DF", "same"],
+    ["\u03CF", "\u03D7", "same"],
+    ["Stra\u00DFe", "STRASSE", "one file on APFS, two keys under any fold"],
+    ["\uFB00", "ff", "same"],
+    ["foo", "foo.", "one object to Win32; no case fold closes it"],
+  ])("conserves both declarations for %s against %s", async (inherited, native) => {
+    // The count is the claim. Every mechanism this replaced failed by mapping
+    // two declarations to one key, and every one of those failures deleted a
+    // row the repository had written down (design.md, obligation ledger).
+    const model = await readProvisioning(
+      fs({
+        native: JSON.stringify({ extends: "orca.yaml", copy: [native] }),
+        orcaYaml: `worktree:\n  sharedDirectories: [${JSON.stringify(inherited)}]\n`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length + model.excluded.length).toBe(2);
+    expect(model.entries.map((e) => e.path).sort()).toEqual([inherited, native].sort());
   });
 
   it("[round-5 F009] makes NO filesystem call to decide identity, not even for a raw exclusion", async () => {
@@ -751,7 +770,39 @@ describe("[round-3 F001, round-5 F008] identity is the declared path, folded whe
     expect(model.entries.map((e) => e.path)).toEqual(["kept"]);
     // ...but nothing outside the checkout was ever named to the filesystem.
     expect(asked.filter((p) => !p.startsWith(`${ROOT}/`) && p !== ROOT)).toEqual([]);
+    // NOT asserted: that `asked` is empty, nor that no declared path appears in
+    // it. Both are false and would have to be weakened later — provider files
+    // are opened, and `kept` is resolved on purpose, because CONTAINMENT must
+    // check where a declared path lands. That is the security property and it
+    // stays. What identity must not do is let the answer change the model.
     expect(asked.some((p) => p.includes("outside") || p.includes("passwd"))).toBe(false);
+  });
+
+  it("gives the same model whatever the filesystem answers about the declared paths", async () => {
+    // The witness for "identity reads nothing", stated so it can fail. Identity
+    // is a pure function of the declared spelling, so two filesystems that
+    // disagree about every declared path — one resolving each to itself, one
+    // resolving each to a single shared canonical path, which is exactly what a
+    // case-folding volume would report — must still produce the same rows.
+    // Under the mechanism this replaced the second fake collapsed the two rows.
+    const repo = {
+      native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+      orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+    };
+    const asItself = await readProvisioning(fs(repo), ROOT);
+    const base = fs(repo);
+    const asOneFile = await readProvisioning(
+      {
+        ...base,
+        realpath: async (p) => (p.endsWith("MixedCase") || p.endsWith("mixedcase") ? `${ROOT}/mixedcase` : p),
+      },
+      ROOT,
+    );
+
+    expect(asOneFile.entries.map((e) => [e.path, e.mode, e.source])).toEqual(
+      asItself.entries.map((e) => [e.path, e.mode, e.source]),
+    );
+    expect(asOneFile.entries.length).toBe(2);
   });
 
   it("matches an exclusion against the normalized path, not the raw spelling", async () => {

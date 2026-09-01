@@ -2,7 +2,7 @@
 
 ## 1. Identity stops guessing
 
-- [ ] 1_1 Merge only spellings that are equal, and prove nothing is asked of the filesystem
+- [x] 1_1 Merge only spellings that are equal, and prove nothing is asked of the filesystem — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md#d1-the-read-path-stops-trying-to-prove-it, specs/worktree-panel/spec.md#{two-declarations-are-one-path-only-when-they-are-spelled-alike, the-extension-never-asks-a-filesystem-which-spellings-are-one-file}
   - **Acceptance**:
@@ -10,7 +10,7 @@
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
     1. In `src/worktree/provisioning/readProvisioning.ts`, drop the platform fold from `identityOf` so the key is the normalized spelling and nothing else; remove the now-unused `platformFoldsFilenameCase` import.
-    2. Rename `platformFoldsFilenameCase` in `src/worktree/provisioning/providerKit.ts` to name what its ONE remaining caller actually asks it — `entryGate.ts` lowercases unconditionally and uses this flag only for Win32 trailing dots, spaces and `::$DATA`, so "folds filename case" stops being true the moment this task lands. Behaviour unchanged; the name and its comment are the change.
+    2. Rename `platformFoldsFilenameCase` in `src/worktree/provisioning/providerKit.ts` to name what its ONE remaining caller actually asks it — `entryGate.ts` lowercases unconditionally and uses this flag only for Win32 trailing dots, spaces and `::$DATA`, so "folds filename case" stops being true the moment this task lands. Update its one caller in `src/worktree/provisioning/entryGate.ts`. Behaviour unchanged; the name and its comment are the change.
     3. Extend `src/worktree/provisioning/readProvisioning.test.ts` with an instrumented `ProviderDeps` that records every path handed to every hook, and assert the recorded list holds nothing that came from a declared path or an `exclude` spelling.
     4. Assert the declaration count is conserved across `entries` + `excluded` for the pairs the fold used to collapse: `İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ`, `mixedcase`/`MixedCase` and `foo`/`foo.`.
     5. The RED step must INJECT Win32 semantics: the old fold only fired when `path.sep === "\\"`, so on this darwin lane the count assertion passes against the pre-change code and proves nothing. Drive the identity through an injected platform flag, and confirm the assertion fails with that flag set before committing.

@@ -731,31 +731,24 @@ export interface ProviderAdapter {
 }
 
 /**
- * Does this platform treat two case spellings of a filename as one name?
+ * Whether the platform underneath applies Win32 filename rules.
  *
- * A PLATFORM question, deliberately, and never a question about a volume. Two
- * shipped implementations of the same problem answer it this way and neither
- * probes a filesystem: `orca/src/relay/git-handler-worktree-ops.ts` compares
- * worktree paths case-insensitively only when both are Windows-spelled, and
- * `t3code/apps/mobile/src/features/files/filePath.ts` does the same for
- * workspace-relative paths.
+ * NOT "does this platform fold filename case" — it was called that while the
+ * read path used it to fold identity, and that use is gone. Folding is a
+ * property of a DIRECTORY, not of a platform: a case-sensitive APFS volume
+ * mounts inside a case-insensitive one, and Windows carries case sensitivity
+ * per directory. Every fold keyed on the platform is therefore wrong on some
+ * volume, which is why identity no longer asks (design.md D1).
  *
- * Asking the volume was tried five times here and refuted five times, in the
- * same direction each time: every probe that reads a filesystem OBJECT — does a
- * toggled spelling exist, do two spellings resolve alike, do two paths share
- * `dev` and `ino` — answers "one object" when the question is "one name". Hard
- * links, symlink aliases and symlinked parents are each two names for one
- * object, and merging them silently discards a declaration the user made. A
- * platform answer can only be wrong the visible way: on a case-insensitive POSIX
- * volume, two spellings of one file stay two rows, which the user can see and
- * remove (design.md D11).
+ * What survives is the one question a platform CAN answer: which naming rules
+ * the kernel applies, so `entryGate.ts` can strip the trailing dots, trailing
+ * spaces and `::$DATA` suffix Win32 treats as the same name before it decides
+ * whether a destination is a lockfile it must refuse. That refusal is safe to
+ * be over-eager — it stays visible to the user — which a merge key never was.
  *
- * The exception it accepts, named rather than hidden: a Windows directory with
- * per-directory case sensitivity enabled holds two real files this folds to one.
- *
- * `path.sep` is the plainest true statement about which naming rules the kernel
- * underneath applies, and `path` here is the platform-bound module.
+ * `path.sep` is the plainest true statement about it, and `path` here is the
+ * platform-bound module.
  */
-export function platformFoldsFilenameCase(): boolean {
+export function platformUsesWin32FilenameRules(): boolean {
   return path.sep === "\\";
 }
