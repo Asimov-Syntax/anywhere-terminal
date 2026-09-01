@@ -2531,6 +2531,23 @@ export interface ProvisionStepResult {
   readonly details?: readonly { readonly path: string; readonly reason: string }[];
 }
 
+/** One selected named port's authoritative outcome. */
+export interface ProvisionPortResult {
+  /** The opaque, per-offer item id the host issued. */
+  readonly id: string;
+  /** Configured environment name. Never a path or command. */
+  readonly name: string;
+  /** What the dialog showed, when a preview probe succeeded. */
+  readonly preview?: number;
+  readonly outcome:
+    | { readonly kind: "allocated"; readonly port: number }
+    | { readonly kind: "reused"; readonly port: number }
+    | { readonly kind: "failed"; readonly reason: string };
+}
+
+/** A batch condition that does not change any committed per-port outcome. */
+export type ProvisionPortWarning = "lockReleaseFailed" | "excludeFailed";
+
 /**
  * Extension → WebView: what provisioning did, per item, after a create.
  *
@@ -2544,6 +2561,9 @@ export interface WorktreeProvisionResultMessage {
   type: "worktreeProvisionResult";
   worktreeId: string;
   steps: readonly ProvisionStepResult[];
+  /** Optional until the create producer lands; required by WT-012.6's final assembly. */
+  ports?: readonly ProvisionPortResult[];
+  portWarnings?: readonly ProvisionPortWarning[];
 }
 
 /**

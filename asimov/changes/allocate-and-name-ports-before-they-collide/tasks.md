@@ -26,7 +26,7 @@ The lock extraction and result skeleton can start together. Everything after the
     2. `src/worktree/gitExclude.ts`: keep `excludePatternFor` directory-only; admit the literal file pattern `/.env.worktree` without adding a second path-pattern helper.
     3. `src/worktree/gitExclude.test.ts`: preserve idempotence and escaping coverage; add concurrent distinct rules, non-ENOENT read failure, failed publication, and exact `/.env.worktree` cases.
 
-- [ ] 1_3 Give ports their own result contract and show the preview in the row
+- [x] 1_3 Give ports their own result contract and show the preview in the row — verified: pnpm exec vitest run 'src/types/messages.contract.test.ts' 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D1, design.md D8; specs/worktree-panel/spec.md#{a-named-port-carries-a-numeric-preview, a-claimed-port-is-not-described-as-reserved-from-other-processes}
   - **Boundary**: do not edit `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`
@@ -34,7 +34,7 @@ The lock extraction and result skeleton can start together. Everything after the
     - Outcome: A supplied preview renders as NAME=number, and an unavailable preview is stated
     - Verify: command pnpm exec vitest run 'src/types/messages.contract.test.ts' 'src/webview/worktree/WorktreeCreateDialog.test.ts'
   - **Plan**:
-    1. `src/types/messages.ts`: add `ProvisionPortResult`, required `ports` and optional port-warning kinds to `WorktreeProvisionResultMessage`; leave path-bearing `ProvisionStepResult` unchanged.
+    1. `src/types/messages.ts`: add `ProvisionPortResult` plus compatibility-optional port results and warnings to `WorktreeProvisionResultMessage`; leave path-bearing `ProvisionStepResult` unchanged. Task 1_6 makes ports required when every producer is updated.
     2. `src/types/messages.contract.test.ts`: cover allocated, reused and failed port results, preview retention, and the absence of path or command authority on the submitted selection.
     3. `src/webview/worktree/WorktreeCreateDialog.ts`: replace the WT-012.6 placeholder comment and render each port subject as `NAME=preview`, or `NAME · preview unavailable`, while the source stays in the existing badge slot.
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts`: replace the no-number assertion with numeric and unavailable-preview cases; keep per-item ids and source provenance unchanged.

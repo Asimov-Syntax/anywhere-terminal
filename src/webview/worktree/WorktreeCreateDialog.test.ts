@@ -1046,7 +1046,7 @@ describe("Bring over — what the new worktree will lack", () => {
       ".env",
       ".claude/settings.local.json",
       ".env.local",
-      "APP",
+      "APP · preview unavailable",
       "pnpm install --frozen-lockfile",
     ]);
   });
@@ -1085,11 +1085,27 @@ describe("Bring over — what the new worktree will lack", () => {
     expect(checked).toEqual([true, true, true, true, false]);
   });
 
-  it("renders a port row without inventing a number for it", () => {
-    // Allocation is a later task. A placeholder here reads as an allocation
-    // nobody made.
+  it("renders a supplied port preview as NAME=number while source keeps the badge", () => {
+    const { host } = withOffer({
+      model: provisionModel({
+        entries: [],
+        setup: [],
+        ports: [{ id: "i4", name: "APP", port: 5183, source: "asimov/worktree.yaml" }],
+      }),
+    });
+    const port = rows(host)[0];
+
+    expect(port?.querySelector(".wt-brow-code")?.textContent).toBe("APP=5183");
+    expect(port?.querySelector(".wt-brow-src")?.textContent).toBe("asimov/worktree.yaml");
+  });
+
+  it("states that a port preview is unavailable rather than inventing a number", () => {
     const { host } = withOffer();
-    const port = rows(host).find((r) => r.querySelector(".wt-brow-code")?.textContent === "APP");
+    const port = rows(host).find(
+      (r) => r.querySelector(".wt-brow-code")?.textContent === "APP · preview unavailable",
+    );
+
+    expect(port).toBeDefined();
     expect(port?.textContent).not.toMatch(/\d/);
   });
 

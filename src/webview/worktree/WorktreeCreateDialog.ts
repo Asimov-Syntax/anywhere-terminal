@@ -337,10 +337,8 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
   for (const port of model.ports) {
     rows.push({
       id: port.id,
-      // No number: allocation is WT-012.6's, and a placeholder here would read
-      // as an allocation nobody made.
       verb: "Allocate port",
-      subject: port.name,
+      subject: port.port === undefined ? `${port.name} · preview unavailable` : `${port.name}=${port.port}`,
       source: port.source,
       checked: true,
     });
