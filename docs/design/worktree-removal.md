@@ -139,8 +139,11 @@ Earlier drafts said a confirmation "permits rather than bypasses" the check. Tha
 - So `--force` is presented for what it is: **irrevocable deletion of everything under that path,
   whose contents may change after you confirm.** Not "you have reviewed the losses".
 
-Two rules follow, and they are what make this a safety model rather than a warning label:
+Three rules follow, and they are what make this a safety model rather than a warning label:
 
+- **Confirmation authority is not a force choice.** Every readable, non-refused report — clean or
+  risky — carries one attempt's fingerprint. The host re-evaluates after redemption and derives
+  ordinary versus forced git execution from the fresh evidence; the webview sends no force field.
 - **A newly appeared check failure re-prompts.** The confirmation is bound to the check set the
   user saw ([worktree-rpc.md](worktree-rpc.md) § 3.1). If execution-time re-evaluation finds a
   *different* failure — a live agent that was not there when they confirmed dirty files — the
