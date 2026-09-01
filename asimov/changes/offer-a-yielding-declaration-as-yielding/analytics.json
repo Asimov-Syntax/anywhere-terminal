@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "offer-a-yielding-declaration-as-yielding"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788294344588,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788294344588,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "build",
+          "from": 1788294344588
+        }
+      ],
+      "firstAt": 1788294344588,
+      "lastAt": 1788294344588,
+      "buckets": []
+    }
+  ]
+}

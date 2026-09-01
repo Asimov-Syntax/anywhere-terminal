@@ -3,7 +3,7 @@
 The apply refuses a held declaration on every volume. The dialog still checks it by default and
 counts it into "N copied", so the offer promises what the apply will refuse.
 
-- [ ] 1_1 Offer a yielding declaration unselected, and say why
+- [x] 1_1 Offer a yielding declaration unselected, and say why — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding, asimov/changes/award-a-contested-destination-or-refuse-it/.reviews/round-3.md#f007
   - **Acceptance**:
     - Outcome: A held contender is offered unselected and says it will be refused

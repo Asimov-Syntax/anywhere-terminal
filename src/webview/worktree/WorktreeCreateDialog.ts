@@ -314,13 +314,24 @@ interface BringRow {
   /**
    * Named partners this row may turn out to share a destination with.
    *
-   * Advisory, and deliberately not a claim that either row will land: the
-   * worktree does not exist while this is drawn, so nothing here can be proven
-   * (design D2). The row keeps its checkbox — withholding it was the
-   * alternative D3 rejected, because two spellings of one name is the ordinary
-   * macOS case and withholding both delivers nothing.
+   * Advisory about WHICH rows may share a destination — the worktree does not
+   * exist while this is drawn, so nothing here can be proven (design D2).
+   * Whether this row will be applied is `yields` below, not this.
    */
   contender?: readonly string[];
+  /**
+   * This row loses its destination to the repository's own declaration.
+   *
+   * The apply refuses a held member on EVERY volume — a destination that reads
+   * absent after the favoured member claimed cannot be told from that member's
+   * material having been removed — so leaving the row checked promised the user
+   * something that would be refused, and counted it into "N copied" first
+   * (`award-a-contested-destination-or-refuse-it/.reviews/round-3.md` F007).
+   *
+   * Offered unchecked rather than withheld: the user can still tick it, and
+   * unticking the repository's own is what makes it arrive.
+   */
+  yields?: string;
 }
 
 /**
@@ -330,6 +341,30 @@ interface BringRow {
  * (design D3); the paths are read back from the entries the ids name, which
  * keeps § 4.3 true — a row still displays the spelling its own file wrote.
  */
+/**
+ * Rows the apply will refuse, against the spelling that takes their place.
+ *
+ * Only a group with a favoured member has losers. A group with none is left
+ * alone: nothing decides between its members, and unselecting either would pick
+ * a winner the apply itself does not.
+ */
+function yieldsTo(model: WorktreeProvisionOffer["model"]): Map<string, string> {
+  const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
+  const losers = new Map<string, string>();
+  for (const group of model.contenders) {
+    const favoured = group.favoured === undefined ? undefined : pathOf.get(group.favoured);
+    if (favoured === undefined) {
+      continue;
+    }
+    for (const id of group.members) {
+      if (id !== group.favoured) {
+        losers.set(id, favoured);
+      }
+    }
+  }
+  return losers;
+}
+
 function contenderPartners(model: WorktreeProvisionOffer["model"]): Map<string, string[]> {
   const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
   const partners = new Map<string, string[]>();
@@ -361,16 +396,19 @@ function contenderPartners(model: WorktreeProvisionOffer["model"]): Map<string, 
 function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
   const rows: BringRow[] = [];
   const partners = contenderPartners(model);
+  const yielding = yieldsTo(model);
   for (const entry of model.entries) {
     const named = partners.get(entry.id);
+    const loses = yielding.get(entry.id);
     rows.push({
       id: entry.id,
       verb: entry.mode === "link" ? "Link" : "Copy",
       subject: entry.path,
       source: entry.source,
-      checked: true,
+      checked: loses === undefined,
       ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
       ...(named === undefined ? {} : { contender: named }),
+      ...(loses === undefined ? {} : { yields: loses }),
     });
   }
   for (const port of model.ports) {
@@ -568,6 +606,15 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     const note = document.createElement("span");
     note.className = "wt-brow-note";
     note.textContent = `may be the same file as ${row.contender.join(", ")}`;
+    meta.appendChild(note);
+  }
+  if (row.yields !== undefined) {
+    // Said, not merely unchecked: an unticked row with no reason reads as an
+    // oversight, and the reason is the one thing that tells the user ticking it
+    // will not work while its counterpart stays selected.
+    const note = document.createElement("span");
+    note.className = "wt-brow-note";
+    note.textContent = `refused while ${row.yields} is selected`;
     meta.appendChild(note);
   }
   if (row.excluded === true) {

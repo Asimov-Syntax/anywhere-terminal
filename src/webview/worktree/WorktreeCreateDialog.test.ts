@@ -3470,16 +3470,36 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     });
   }
 
-  it("keeps a checkbox on both members, unlike an excluded row", () => {
-    // Withholding the pair was the alternative D3 rejected: two spellings of
-    // one name is the ordinary macOS case, and offering neither delivers
-    // nothing where today the user gets something.
+  it("keeps a checkbox on both members, but only the repository's own is ticked", () => {
+    // Withholding the pair was the alternative D3 rejected, so both rows keep a
+    // checkbox the user can tick. Only the favoured one starts ticked: the
+    // apply refuses the other on every volume, and leaving it checked promised
+    // material that would be refused
+    // (`award-a-contested-destination-or-refuse-it/.reviews/round-3.md` F007).
     const { host } = withPair();
     const boxes = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
 
     expect(boxes.map((b) => b.value)).toEqual(["i1", "i2"]);
-    expect(boxes.every((b) => b.checked)).toBe(true);
+    expect(boxes.map((b) => b.checked)).toEqual([true, false]);
     expect(host.querySelectorAll(".wt-brow--excluded")).toHaveLength(0);
+  });
+
+  it("says why the yielding row is not ticked", () => {
+    const { host } = withPair();
+    const notes = Array.from(host.querySelectorAll(".wt-brow-note")).map((n) => n.textContent);
+
+    expect(notes).toContain("refused while MixedCase is selected");
+    // And only the loser says it — the favoured row is not refused by anyone.
+    expect(notes.filter((n) => n?.startsWith("refused while"))).toHaveLength(1);
+  });
+
+  it("leaves both ticked when no member is the repository's own", () => {
+    // Nothing decides between them, and unticking either would pick a winner
+    // the apply itself does not.
+    const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
+    const boxes = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+
+    expect(boxes.map((b) => b.checked)).toEqual([true, true]);
   });
 
   it("keeps each row's own spelling and declaring file", () => {
@@ -3499,7 +3519,9 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
 
   it("names the partner on each row, from the other row's own spelling", () => {
     const { host } = withPair();
-    const notes = Array.from(host.querySelectorAll(".wt-brow-note")).map((n) => n.textContent);
+    const notes = Array.from(host.querySelectorAll(".wt-brow-note"))
+      .map((n) => n.textContent)
+      .filter((n) => n?.startsWith("may be"));
 
     expect(notes).toEqual(["may be the same file as mixedcase", "may be the same file as MixedCase"]);
   });
@@ -3564,8 +3586,19 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked");
   });
 
-  it("submits both ids, because both were offered", () => {
+  it("submits only the repository's own, because the other is offered unticked", () => {
     const { q, submitted } = withPair();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision?.itemIds).toEqual(["i1"]);
+  });
+
+  it("still submits the yielding row when the user ticks it", () => {
+    // Unticked is an offer, not a refusal — the apply is what refuses, and the
+    // user can still ask for it.
+    const { q, submitted } = withPair();
+    Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"))[1]?.click();
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     q<HTMLButtonElement>(".wt-btn--primary").click();
 
