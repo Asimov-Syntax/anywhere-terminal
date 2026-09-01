@@ -3,7 +3,7 @@
 A deadline is built from two clocks that do not agree, so awaiting the wait it hands out and then
 reading it can be told it has not passed yet.
 
-- [ ] 1_1 Settle a deadline by its own wait as well as by the clock
+- [x] 1_1 Settle a deadline by its own wait as well as by the clock — verified: pnpm exec vitest run 'src/worktree/deadline.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: design.md#two-hard-requirements-over-one-observable, design.md#d1--the-flag-is-set-in-the-timer-callback-not-in-a-then-on-elapsed
   - **Acceptance**:
     - Outcome: A deadline reads expired once its own wait has completed
