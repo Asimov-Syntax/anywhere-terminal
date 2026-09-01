@@ -14,9 +14,13 @@ import type {
   BranchDeleteOffer,
   BranchDeleteRequest,
   DestinationDisposition,
+  ExtensionToWebViewMessage,
   ProvisionSelection,
+  ProvisionStepOutcome,
+  ProvisionStepResult,
   WorktreeAfterCreate,
   WorktreeCreateMode,
+  WorktreeProvisionResultMessage,
 } from "./messages";
 
 type Mode<K extends WorktreeCreateMode["kind"]> = Extract<WorktreeCreateMode, { kind: K }>;
@@ -140,6 +144,55 @@ const debris: DestinationDisposition = {
 };
 
 describe("the wire contract", () => {
+// --- A step result answers an id, and never carries a path back as authority --
+
+type Outcome<K extends ProvisionStepOutcome["kind"]> = Extract<ProvisionStepOutcome, { kind: K }>;
+
+const copied: Outcome<"copied"> = { kind: "copied" };
+const linked: Outcome<"linked"> = { kind: "linked" };
+const degraded: Outcome<"degradedToCopy"> = { kind: "degradedToCopy" };
+const skipped: Outcome<"skipped"> = { kind: "skipped", reason: "already there" };
+const refusedOutcome: Outcome<"refused"> = { kind: "refused", reason: "resolves outside the repository" };
+const failedOutcome: Outcome<"failed"> = { kind: "failed", reason: "EIO" };
+
+// The three outcomes that mean "nothing happened" each carry WHY. A bare kind
+// would render as an unexplained absence, which is what the spec forbids.
+// @ts-expect-error a refusal states its reason
+const refusedNoReason: Outcome<"refused"> = { kind: "refused" };
+
+// A successful copy has nothing to explain, so it takes no reason field.
+// @ts-expect-error a copy has no reason to give
+const copiedWithReason: Outcome<"copied"> = { kind: "copied", reason: "because" };
+
+const stepForFile: ProvisionStepResult = { id: "i3", path: ".env", outcome: copied };
+const stepForDirectory: ProvisionStepResult = {
+  id: "i4",
+  path: "config",
+  outcome: copied,
+  // A directory entry has one outcome and many nodes: the descendant a copy
+  // skipped has to be reportable (design.md D8).
+  details: [{ path: "config/local.json", reason: "already there" }],
+};
+
+const provisionResult: WorktreeProvisionResultMessage = {
+  type: "worktreeProvisionResult",
+  worktreeId: "w1",
+  steps: [stepForFile, stepForDirectory],
+};
+
+// It is an extension → webview message, so a panel switching on the union sees it.
+const provisionResultInUnion: ExtensionToWebViewMessage = provisionResult;
+
+// Provisioning never says whether the create succeeded — that is the create's
+// own result, and this message arrives after it (worktree-apply.md § 1).
+const provisionResultWithVerdict: WorktreeProvisionResultMessage = {
+  type: "worktreeProvisionResult",
+  worktreeId: "w1",
+  steps: [],
+  // @ts-expect-error a provision result carries no verdict on the create
+  ok: false,
+};
+
   it("is judged by pnpm run check-types, not by this assertion", () => {
     // The suite exists so the file is a valid Vitest module; the proofs above
     // are the acceptance, and they fail the build rather than this test.
@@ -163,5 +216,16 @@ describe("the wire contract", () => {
     expect(selection.itemIds).toHaveLength(2);
     expect([reuseWithBase, reattachWithBase, adoptWithBase, detachedWithBranch, detachedNoBase]).toHaveLength(5);
     expect([noneWithAgent, terminalWithWait, selectionWithCommand, selectionWithPath]).toHaveLength(4);
+    expect([copied, linked, degraded, skipped, refusedOutcome, failedOutcome].map((o) => o.kind)).toEqual([
+      "copied",
+      "linked",
+      "degradedToCopy",
+      "skipped",
+      "refused",
+      "failed",
+    ]);
+    expect(stepForDirectory.details).toHaveLength(1);
+    expect(provisionResultInUnion.type).toBe("worktreeProvisionResult");
+    expect([refusedNoReason, copiedWithReason, provisionResultWithVerdict]).toHaveLength(3);
   });
 });

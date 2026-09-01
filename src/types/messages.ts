@@ -1028,6 +1028,15 @@ export interface WorktreeCreateRequestMessage {
   mode: WorktreeCreateMode;
   disposition: DestinationDisposition;
   afterCreate: WorktreeAfterCreate;
+  /**
+   * Which of the host's own offered provisioning items the user left checked.
+   *
+   * Optional because a create carrying none is every create made before
+   * provisioning existed, and that is not an error — it provisions nothing.
+   * Carries ids, never paths and never command text: the host resolves them
+   * against the model it issued (worktree-rpc.md § 2.4).
+   */
+  provision?: ProvisionSelection;
 }
 
 /** WebView → Extension: start a fresh agent session in a worktree. */
@@ -2440,6 +2449,64 @@ export interface WorktreeProvisionOfferMessage {
 }
 
 /**
+ * What became of one offered provisioning item.
+ *
+ * `refused` and `failed` are separate answers on purpose. Refused means the
+ * extension decided not to and the reason is a rule the user can act on — an
+ * escaping path, a special file, a lockfile, `node_modules` as a link. Failed
+ * means it was allowed and it did not work. `skipped` is neither: nothing was
+ * wrong and, crucially, nothing was replaced.
+ */
+export type ProvisionStepOutcome =
+  | { readonly kind: "copied" }
+  | { readonly kind: "linked" }
+  /** Asked to link; the platform had no symlink to give, so the content was copied. */
+  | { readonly kind: "degradedToCopy" }
+  /** The destination was already there. Nothing written, nothing replaced. */
+  | { readonly kind: "skipped"; readonly reason: string }
+  /** A rule forbade it. */
+  | { readonly kind: "refused"; readonly reason: string }
+  /** It was allowed and it did not work. */
+  | { readonly kind: "failed"; readonly reason: string };
+
+/**
+ * One offered item's outcome, answering the id the offer issued.
+ *
+ * Documented at worktree-rpc.md § 2.2 since before there was a producer; this
+ * is its first definition.
+ */
+export interface ProvisionStepResult {
+  /** The offer item this answers. Opaque and per-offer — never a path. */
+  readonly id: string;
+  /** Repo-relative POSIX path, for display. Echoed from the host's own entry. */
+  readonly path: string;
+  readonly outcome: ProvisionStepOutcome;
+  /**
+   * Descendants of a directory entry that were skipped or refused, and why.
+   *
+   * A directory entry has ONE outcome but many nodes, and a file skipped inside
+   * an existing destination has to be reportable — which a single top-level
+   * `copied` cannot express. Bounded and display-ready; absent for a file entry.
+   */
+  readonly details?: readonly { readonly path: string; readonly reason: string }[];
+}
+
+/**
+ * Extension → WebView: what provisioning did, per item, after a create.
+ *
+ * Arrives AFTER the create's own result. Provisioning never changes whether the
+ * create succeeded (worktree-apply.md § 1), so this message never carries a
+ * verdict on the create itself.
+ *
+ * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
+ */
+export interface WorktreeProvisionResultMessage {
+  type: "worktreeProvisionResult";
+  worktreeId: string;
+  steps: readonly ProvisionStepResult[];
+}
+
+/**
  * Extension → WebView: the repository's open pull requests, or the one state
  * that says there are none to be had.
  *
@@ -2509,6 +2576,7 @@ export type ExtensionToWebViewMessage =
   | WorktreeCreateResolutionMessage
   | WorktreeDebrisAuthorizedMessage
   | WorktreeProvisionOfferMessage
+  | WorktreeProvisionResultMessage
   | InitMessage
   | OutputMessage
   | ExitMessage

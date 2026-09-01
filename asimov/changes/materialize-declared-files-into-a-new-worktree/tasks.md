@@ -2,7 +2,7 @@
 
 Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath it.
 
-- [ ] 1_1 Mint the per-step result contract the wire has documented but never defined
+- [x] 1_1 Mint the per-step result contract the wire has documented but never defined — verified: pnpm run check-types && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D8
   - **Acceptance**:
