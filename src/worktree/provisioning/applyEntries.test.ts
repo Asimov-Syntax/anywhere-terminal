@@ -233,16 +233,54 @@ describe("the walk is bounded", () => {
     }
   });
 
-  it("stops an entry whose deadline has already passed", async () => {
+  it("[F002] writes NOTHING for a deadline already spent, without being awaited first", async () => {
+    // The `await past.elapsed` this test used to open with is exactly what hid
+    // the defect: it drained the microtask that set the old boolean flag, so
+    // the walk saw an expired deadline for reasons the production caller never
+    // arranges. Reading the deadline synchronously is the fix, and removing
+    // that await is what makes this assertion able to fail.
     const past = afterDelay(0);
-    await past.elapsed;
     const { result, fs } = await apply(entry("big"), wide(), { deadline: past });
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.reason).toMatch(/too long|deadline|time/i);
     }
-    // It actually stopped, rather than reporting failure while still writing.
-    expect(fs.created.length).toBeLessThan(50);
+    expect(fs.created).toEqual([]);
+  });
+
+  it("[F002] refuses ONE file bigger than the whole byte budget", async () => {
+    // The cap used to be tested only after it had been spent, so a single node
+    // of any size passed: `bytes` was still 0 when the copy was authorized.
+    const huge: Record<string, FakeNode> = { "/repo/huge": { kind: "file", size: 5000 } };
+    const { result, fs } = await apply(entry("huge"), huge, { maxBytes: 2000 });
+    expect(result.outcome.kind).toBe("failed");
+    expect(fs.created).toEqual([]);
+  });
+
+  it("[F002] refuses a listing larger than the node budget before walking it", async () => {
+    // `readdir` materializes the whole listing in one operation. Charging one
+    // child at a time bounds the walk and not the read that produced it.
+    const { result, fs } = await apply(entry("big"), wide(), { maxNodes: 10 });
+    expect(result.outcome.kind).toBe("failed");
+    // The entry's own directory is made before the listing is read, so the
+    // assertion is that no CHILD was written — stopped at `readdir`, not after
+    // walking ten of fifty children.
+    expect(fs.created).toEqual(["/wt/feature/big"]);
+  });
+
+  it("[F008] caps the details it reports, and says how many it left out", async () => {
+    // `details` rides one postMessage and is documented display-ready; its only
+    // bound used to be maxNodes, which is thousands of rows.
+    const many: Record<string, FakeNode> = { "/repo/big": { kind: "dir" }, "/wt/feature/big": { kind: "dir" } };
+    for (let i = 0; i < 150; i += 1) {
+      many[`/repo/big/f${i}`] = { kind: "file", size: 1 };
+      // Already there, so every child reports a `skipped` detail row.
+      many[`/wt/feature/big/f${i}`] = { kind: "file", size: 1 };
+    }
+    const { result } = await apply(entry("big"), many);
+
+    expect(result.details?.length).toBeLessThanOrEqual(101);
+    expect(result.details?.at(-1)?.reason).toMatch(/more not listed/i);
   });
 
   it("leaves what it had already written when it stops partway", async () => {

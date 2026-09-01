@@ -535,6 +535,7 @@ describe("createSessionPreviewService", () => {
         elapsed: new Promise<void>((resolve) => {
           expiries.push(resolve);
         }),
+        expired: false,
         cancel: () => {},
       }),
     });
@@ -592,6 +593,7 @@ describe("createSessionPreviewService", () => {
         armed += 1;
         return {
           elapsed: new Promise<void>(() => {}), // no deadline fires in this case
+          expired: false,
           cancel: () => {
             armed -= 1;
           },
@@ -633,7 +635,7 @@ describe("createSessionPreviewService", () => {
       now: () => clock,
       recheckMs: 2000,
       cap: 2,
-      wait: () => ({ elapsed: new Promise<void>(() => {}), cancel: () => {} }),
+      wait: () => ({ elapsed: new Promise<void>(() => {}), expired: false, cancel: () => {} }),
     });
 
     for (let i = 0; i < 6; i++) {
@@ -755,7 +757,7 @@ describe("a look that outlives its deadline", () => {
         wait: () => {
           const gate = deferred<void>();
           expiries.push(gate.resolve);
-          return { elapsed: gate.promise, cancel: () => {} };
+          return { elapsed: gate.promise, expired: false, cancel: () => {} };
         },
       }),
     };

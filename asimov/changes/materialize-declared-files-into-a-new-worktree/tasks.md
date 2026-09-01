@@ -67,7 +67,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     5. `src/providers/WorktreeHost.actions.test.ts` and `src/worktree/worktreeMutationService.test.ts`: an apply that REJECTS still yields `ok` with a `failed` step — a fake returning a failed result does not exercise the outer arm and is not the witness for this; selected entries only; copy ordered before link; apply runs before `afterCreate`; a stale offer id creates nothing; a create with no `provision` field still succeeds and provisions nothing.
   - **Boundary**: the service receives entry values, never ids and never a store handle — it must not become able to resolve an offer
 
-- [ ] 2_1 Bound the walk per operation, and make the production binding the one under test
+- [x] 2_1 Bound the walk per operation, and make the production binding the one under test — verified: pnpm exec vitest run 'src/worktree/provisioning/applyEntries.node.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 1_5
   - **Refs**: design.md D5, D6, D10; .reviews/round-1.md F003, F002, F004, F008, F012, F013
   - **Acceptance**:

@@ -268,7 +268,17 @@ describe("the lock read is bounded", () => {
       fire = resolve;
     });
     queueMicrotask(fire);
-    return { elapsed, cancel: () => {} };
+    let expired = false;
+    void elapsed.then(() => {
+      expired = true;
+    });
+    return {
+      elapsed,
+      get expired() {
+        return expired;
+      },
+      cancel: () => {},
+    };
   };
 
   it("answers unproven when the stat never returns", async () => {

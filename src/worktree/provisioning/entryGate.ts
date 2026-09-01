@@ -98,6 +98,20 @@ function isAbsoluteSpelling(p: string): boolean {
 }
 
 /**
+ * A backslash is never a separator here, and never a filename either.
+ *
+ * `path.posix.basename("tools\\pnpm-lock.yaml")` is the whole string, so the
+ * lockfile and `node_modules` refusals below match nothing — while
+ * `path.resolve` on Windows DOES split it, so the entry then lands as
+ * `tools/pnpm-lock.yaml` after all. Two Acceptance clauses were bypassable by
+ * spelling (round-1 F004). Refused outright rather than normalized: a refusal
+ * cannot be half-right about which separator a platform honours.
+ */
+function hasBackslash(p: string): boolean {
+  return p.includes("\\");
+}
+
+/**
  * The material-class refusals, checked BEFORE mode is dispatched on so copy and
  * link cannot drift apart (design.md D7).
  *
@@ -132,6 +146,11 @@ export async function admitEntry(
   }
   if (isAbsoluteSpelling(entry.path)) {
     return { ok: false, reason: "an entry names a path relative to the repository, not an absolute one" };
+  }
+  // AFTER the absolute check, so a Windows absolute spelling still refuses with
+  // the reason that actually describes it rather than with this one.
+  if (hasBackslash(entry.path)) {
+    return { ok: false, reason: "a backslash is not a path separator here — declare entries with forward slashes" };
   }
 
   const source = path.resolve(roots.source.path, entry.path);

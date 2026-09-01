@@ -88,6 +88,14 @@ type NodeResult = { kind: "written" } | { kind: "skipped"; reason: string } | { 
 
 const WRITTEN: NodeResult = { kind: "written" };
 
+/**
+ * How many per-descendant rows one entry reports.
+ *
+ * The walk's node budget is in the thousands and this list is read by a human
+ * in a panel, so the two cannot share a bound.
+ */
+const MAX_DETAILS = 100;
+
 /** Thrown to stop a walk at once; carries the reason the entry reports. */
 class BudgetExceeded extends Error {}
 
@@ -131,43 +139,85 @@ export async function applyEntry(
   // union does not survive into one.
   const { source: entrySource, destination: entryDestination } = admitted;
 
-  // Poll-able rather than raced: racing reports a failure while the walk keeps
-  // writing, and the whole point of the budget is to stop holding the queue.
-  let expired = false;
-  const watch = budget.deadline.elapsed.then(() => {
-    expired = true;
-  });
-  void watch;
-
   const details: Detail[] = [];
+  let dropped = 0;
   let nodes = 0;
   let bytes = 0;
 
-  /** Falls back to the spelled path when it cannot resolve — the containment check then refuses it. */
+  /**
+   * `details` rides one `postMessage` and is documented display-ready, so its
+   * only bound cannot be `maxNodes` — nineteen thousand rows is not a list
+   * anybody reads. Overflow is COUNTED rather than dropped silently: a caller
+   * must be able to tell a short list from a trimmed one.
+   */
+  const note = (detail: Detail): void => {
+    if (details.length < MAX_DETAILS) {
+      details.push(detail);
+      return;
+    }
+    dropped += 1;
+  };
+
+  const reported = (): readonly Detail[] =>
+    dropped === 0 ? details : [...details, { path: entry.path, reason: `and ${dropped} more not listed` }];
+
+  /**
+   * Resolve a directory the way the KERNEL will when it walks it.
+   *
+   * The fallback is `fs.realpath`, not the spelled path — the same one
+   * `resolvedPathBoundary.ts` uses. Falling back to the spelling made an
+   * omitted dependency degrade silently into lexical resolution, which is
+   * exactly how round-1 F003 shipped: the test fake supplied `realpath` and
+   * `nodeApplyFsDeps` did not, so the suite proved a path production never ran.
+   *
+   * A path that cannot be resolved at all still answers with its spelling; the
+   * containment check downstream then refuses it.
+   */
   const realpath = async (p: string): Promise<string> => {
     try {
-      return (await deps.realpath?.(p)) ?? p;
+      return await (deps.realpath ?? ((q: string) => fs.realpath(q)))(p);
     } catch {
       return p;
     }
   };
 
-  const spend = (): void => {
-    nodes += 1;
-    if (expired) {
+  /**
+   * Charge the budget, then check it — for `extra` nodes about to be taken on.
+   *
+   * `extra` exists because a `readdir` materializes a whole listing in one
+   * operation: bounding it one child at a time bounds the walk but not the
+   * read that produced it.
+   */
+  const spend = (extra = 1): void => {
+    if (budget.deadline.expired) {
       throw new BudgetExceeded("provisioning took too long and was stopped partway");
     }
-    if (nodes > budget.maxNodes) {
+    if (nodes + extra > budget.maxNodes) {
       throw new BudgetExceeded(`too many files to bring over — stopped after ${budget.maxNodes}`);
     }
-    if (bytes > budget.maxBytes) {
+    nodes += extra;
+  };
+
+  /**
+   * Charge `size` bytes BEFORE the write that spends them.
+   *
+   * Checking afterwards bounds a sequence of copies and bounds no single one:
+   * one file of any size passed a budget that had not been spent yet, so the
+   * cap simply did not apply to a one-file entry (round-1 F002).
+   */
+  const spendBytes = (size: number): void => {
+    if (bytes + size > budget.maxBytes) {
       throw new BudgetExceeded(`too large to bring over — stopped after ${budget.maxBytes} bytes`);
     }
+    bytes += size;
   };
 
   /** Relative spelling of an absolute destination, for a `details` row. */
   const shown = (absolute: string): string =>
-    path.posix.join(entry.path, path.relative(entryDestination, absolute) || "");
+    // `path.relative` answers in the PLATFORM's separator and `path.posix.join`
+    // does not re-split it, so a Windows display path came out as one opaque
+    // segment in the one place the user reads to find out what was refused.
+    path.posix.join(entry.path, path.relative(entryDestination, absolute).split(path.sep).join("/") || "");
 
   /**
    * A symlink is recreated only when its target lands inside the main checkout
@@ -208,6 +258,61 @@ export async function applyEntry(
     return WRITTEN;
   }
 
+  /**
+   * `mkdir` one destination component, and say what was already there.
+   *
+   * Shared by the walk and by the parent-creation below so both answer EEXIST
+   * the same way: a symlink is a refusal, because an intermediate swap is the
+   * escape `O_CREAT | O_EXCL` structurally cannot see (D5).
+   */
+  async function makeDirectory(destination: string, mode: number): Promise<NodeResult> {
+    try {
+      await deps.mkdir(destination, mode);
+    } catch (error) {
+      if (codeOf(error) !== "EEXIST") {
+        throw error;
+      }
+      const existing = await deps.lstat(destination);
+      if (existing.isSymbolicLink()) {
+        return { kind: "refused", reason: "the destination is a symlink, and provisioning never writes through one" };
+      }
+      if (!existing.isDirectory()) {
+        return { kind: "skipped", reason: "a file is already there, so its contents were not brought over" };
+      }
+    }
+    return WRITTEN;
+  }
+
+  /**
+   * Make the directories an entry's own destination needs.
+   *
+   * A worktree git made seconds ago holds only tracked files, so a declared
+   * entry under an ignored directory — `apps/web/.env` — has no parent to land
+   * in and used to fail with a raw errno (round-1 F012). Each component is
+   * created through `makeDirectory`, so a planted symlink is refused here on
+   * the same rule the descent uses, and each is containment-checked, so this
+   * does not become a second way into the tree with weaker rules than the walk.
+   */
+  async function ensureParents(): Promise<NodeResult> {
+    const relative = path.relative(roots.destination.prepared.resolved, path.dirname(entryDestination));
+    if (relative === "" || relative.startsWith("..")) {
+      return WRITTEN;
+    }
+    let at = roots.destination.prepared.resolved;
+    for (const segment of relative.split(path.sep)) {
+      at = path.join(at, segment);
+      spend();
+      if (!(await isResolvedPathInsideRoot(at, roots.destination.prepared, deps))) {
+        return { kind: "refused", reason: "a parent directory of this entry resolves outside the worktree" };
+      }
+      const made = await makeDirectory(at, 0o755);
+      if (made.kind !== "written") {
+        return made;
+      }
+    }
+    return WRITTEN;
+  }
+
   async function walk(source: string, destination: string): Promise<NodeResult> {
     spend();
     const node = await deps.lstat(source);
@@ -218,8 +323,9 @@ export async function applyEntry(
     }
 
     if (node.isFile()) {
+      spendBytes(node.size);
       try {
-        bytes += await deps.copyFileNoFollow(source, destination, node.mode);
+        await deps.copyFileNoFollow(source, destination, node.mode);
       } catch (error) {
         if (codeOf(error) === "EEXIST") {
           return { kind: "skipped", reason: "already there" };
@@ -236,29 +342,21 @@ export async function applyEntry(
       };
     }
 
-    try {
-      await deps.mkdir(destination, node.mode);
-    } catch (error) {
-      if (codeOf(error) !== "EEXIST") {
-        throw error;
-      }
-      // EEXIST is not "fine, carry on". What is actually THERE decides whether
-      // there is anything to descend into — and a symlink there is the
-      // intermediate-component escape the exclusive primitive cannot see.
-      const existing = await deps.lstat(destination);
-      if (existing.isSymbolicLink()) {
-        return { kind: "refused", reason: "the destination is a symlink, and provisioning never writes through one" };
-      }
-      if (!existing.isDirectory()) {
-        return { kind: "skipped", reason: "a file is already there, so its contents were not brought over" };
-      }
+    // EEXIST is not "fine, carry on". What is actually THERE decides whether
+    // there is anything to descend into — and a symlink there is the
+    // intermediate-component escape the exclusive primitive cannot see.
+    const made = await makeDirectory(destination, node.mode);
+    if (made.kind !== "written") {
+      return made;
     }
 
-    for (const child of await deps.readdir(source)) {
+    const children = await deps.readdir(source);
+    spend(children.length);
+    for (const child of children) {
       const childDestination = path.join(destination, child);
       const result = await walk(path.join(source, child), childDestination);
       if (result.kind !== "written") {
-        details.push({ path: shown(childDestination), reason: result.reason });
+        note({ path: shown(childDestination), reason: result.reason });
       }
     }
     return WRITTEN;
@@ -291,6 +389,10 @@ export async function applyEntry(
   }
 
   try {
+    const parents = await ensureParents();
+    if (parents.kind !== "written") {
+      return step({ kind: parents.kind, reason: parents.reason }, reported());
+    }
     if (entry.mode === "link") {
       const linked = await makeLink();
       if (linked !== "degrade") {
@@ -303,23 +405,23 @@ export async function applyEntry(
       // user about, so neither a silent success nor a failure is honest here.
       const copied = await walk(entrySource, entryDestination);
       if (copied.kind !== "written") {
-        return step({ kind: copied.kind, reason: copied.reason }, details);
+        return step({ kind: copied.kind, reason: copied.reason }, reported());
       }
-      return step({ kind: "degradedToCopy" }, details);
+      return step({ kind: "degradedToCopy" }, reported());
     }
 
     const result = await walk(entrySource, entryDestination);
     if (result.kind === "skipped" || result.kind === "refused") {
-      return step({ kind: result.kind, reason: result.reason }, details);
+      return step({ kind: result.kind, reason: result.reason }, reported());
     }
     // The link branch above returns for every link entry, so what reaches here
     // is a copy — the mode ternary that used to sit here could not be false.
-    return step({ kind: "copied" }, details);
+    return step({ kind: "copied" }, reported());
   } catch (error) {
     if (error instanceof BudgetExceeded) {
-      return step({ kind: "failed", reason: error.message }, details);
+      return step({ kind: "failed", reason: error.message }, reported());
     }
-    return step({ kind: "failed", reason: messageOf(error) }, details);
+    return step({ kind: "failed", reason: messageOf(error) }, reported());
   } finally {
     budget.deadline.cancel();
   }
@@ -332,10 +434,14 @@ export async function applyEntry(
  * two halves of "follows nothing at either end". Putting them in wiring instead
  * would let them drift from the reasoning that needs them.
  */
-export const nodeApplyFsDeps: ApplyFsDeps = {
+export const nodeApplyFsDeps: ApplyFsDeps & ResolvedPathInsideDeps = {
   lstat: (p) => fs.lstat(p),
   readdir: (p) => fs.readdir(p),
   readlink: (p) => fs.readlink(p),
+  // Present because it was ABSENT: the walk's two-sided symlink check resolves
+  // through this, and omitting it is what made D6 run on lexical dirnames in
+  // production while every test ran the corrected path (round-1 F003).
+  realpath: (p) => fs.realpath(p),
   mkdir: async (p, mode) => void (await fs.mkdir(p, { mode })),
   symlink: (target, p) => fs.symlink(target, p),
   copyFileNoFollow: async (source, destination, mode) => {
@@ -343,6 +449,14 @@ export const nodeApplyFsDeps: ApplyFsDeps = {
     // rather than throwing, and the platform's own symlink story is why link
     // entries degrade to copies on it at all (D7).
     const source_ = await fs.open(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    // The streams own the handles from the moment they exist, and closing a
+    // handle a stream still holds NEVER SETTLES — `close()` waits on a
+    // reference `autoClose: false` guarantees is never released, so the
+    // original spelling of this function hung on the first byte of the first
+    // file and held the mutation queue behind it forever. Found by the
+    // real-filesystem suite; the injected fake copies without streams, so no
+    // amount of care over there could have reached it.
+    let unstreamed = true;
     try {
       const stat = await source_.stat();
       if (!stat.isFile()) {
@@ -351,17 +465,13 @@ export const nodeApplyFsDeps: ApplyFsDeps = {
         throw error;
       }
       const destination_ = await fs.open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
-      try {
-        await pipeline(
-          source_.createReadStream({ autoClose: false }),
-          destination_.createWriteStream({ autoClose: false }),
-        );
-      } finally {
-        await destination_.close();
-      }
+      unstreamed = false;
+      await pipeline(source_.createReadStream(), destination_.createWriteStream());
       return stat.size;
     } finally {
-      await source_.close();
+      if (unstreamed) {
+        await source_.close();
+      }
     }
   },
 };

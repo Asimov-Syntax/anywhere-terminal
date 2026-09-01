@@ -9,6 +9,16 @@
 export interface Deadline {
   /** Resolves once the deadline has passed. Never rejects. */
   elapsed: Promise<void>;
+  /**
+   * Whether the deadline has passed, readable WITHOUT awaiting anything.
+   *
+   * A deadline observable only through `elapsed` cannot be consulted by
+   * synchronous work: a `.then` watcher has not run yet at the first step of a
+   * loop that starts in the same tick, so an ALREADY-spent deadline lets that
+   * first step through (round-1 F002). Derived from the wall clock rather than
+   * set by the timer callback, so it is true the instant it is true.
+   */
+  readonly expired: boolean;
   /** Idempotent. Safe to call after `elapsed` has already resolved. */
   cancel(): void;
 }
@@ -21,6 +31,7 @@ export interface Deadline {
  * cancelled unfired.
  */
 export function afterDelay(ms: number): Deadline {
+  const at = Date.now() + ms;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const elapsed = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, ms);
@@ -28,6 +39,9 @@ export function afterDelay(ms: number): Deadline {
   });
   return {
     elapsed,
+    get expired() {
+      return Date.now() >= at;
+    },
     cancel: () => {
       if (timer !== undefined) {
         clearTimeout(timer);

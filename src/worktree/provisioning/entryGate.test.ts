@@ -194,3 +194,23 @@ describe("some material is refused however it was asked for", () => {
     expect(reasons.size).toBe(4);
   });
 });
+
+describe("[F004] a spelling cannot walk past a refusal", () => {
+  // `path.posix.basename` does not split a backslash, so every basename rule
+  // below matched nothing — while `path.resolve` on Windows DOES split it, so
+  // the entry landed anyway. Two Acceptance clauses were bypassable by
+  // spelling alone, on the platform where the separator is real.
+  it.each([
+    ["tools\\pnpm-lock.yaml", "a lockfile"],
+    ["vendor\\node_modules", "node_modules"],
+    ["a\\b\\.env", "an ordinary file"],
+  ])("refuses %s (%s)", async (spelling) => {
+    const deps = fs();
+    const verdict = await admitEntry(entry(spelling), await gate(deps), deps);
+
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.reason).toMatch(/backslash/i);
+    }
+  });
+});

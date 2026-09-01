@@ -24,3 +24,28 @@ describe("afterDelay", () => {
     expect(() => d.cancel()).not.toThrow();
   });
 });
+
+describe("[F002] a deadline can be read without awaiting it", () => {
+  // A deadline observable only through `elapsed` cannot be consulted by
+  // synchronous work: the `.then` watcher has not run at the first step of a
+  // loop that starts in the same tick, so an already-spent deadline let that
+  // first step through.
+  it("is not expired while it is still pending", () => {
+    const d = afterDelay(1000);
+    expect(d.expired).toBe(false);
+    d.cancel();
+  });
+
+  it("is expired the instant it is due, with no microtask drained first", () => {
+    const d = afterDelay(0);
+    expect(d.expired).toBe(true);
+    d.cancel();
+  });
+
+  it("stays expired after it has fired", async () => {
+    const d = afterDelay(1);
+    await d.elapsed;
+    expect(d.expired).toBe(true);
+    d.cancel();
+  });
+});
