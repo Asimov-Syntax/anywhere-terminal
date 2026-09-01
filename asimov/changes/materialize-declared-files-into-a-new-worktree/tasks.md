@@ -94,7 +94,8 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     2. `src/providers/WorktreeHost.ts`: an `isKnownProvision` runtime guard beside its three neighbours — the dispatch at `TerminalViewProvider.ts:1024-1031` returns before the `try`, so a malformed `provision` escapes into VS Code's callback rather than failing closed (F006).
     3. `src/extension.ts`: ONE budget for the whole apply, created once and threaded through the loop — a fresh `afterDelay` per entry multiplies D10's bound by the entry count (F007).
     4. `src/worktree/worktreeMutationService.ts`: a selection with no `applyProvision` binding reports a step per entry instead of dropping them silently into an outcome identical to "selected nothing" (F009); remove the duplicated `provision` spread (F010); normalize `worktreeId` through the helper the tree keys on (F015).
-    5. `src/worktree/provisioning/applyEntries.ts`, `src/worktree/clearDebris.ts`, `src/worktree/worktreeMutationService.ts`: one shared `messageOf` — the third copy has already drifted to `"unknown error"` where the other two answer `String(error)`, in a string the user reads (F011).
+    5. `src/worktree/errorMessage.ts` (new), `src/worktree/provisioning/applyEntries.ts`, `src/worktree/clearDebris.ts`, `src/worktree/worktreeMutationService.ts`: one shared `messageOf` — the third copy has already drifted to `"unknown error"` where the other two answer `String(error)`, in a string the user reads (F011).
+    6. `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.test.ts`: the stale offer's POSTED message, not only its absent create; a malformed `provision` refused without throwing; a selection with no binding reporting a step per entry; the id normalized.
   - **Boundary**: no new error arm — every refusal added here rides the `worktreeMutationResult` shape that already exists
 
 - [ ] 2_3 Land the two halves that make the flow reach a user
