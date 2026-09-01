@@ -39,3 +39,4 @@ Lane: light — XS, one primitive, no caller changes
 - The attack's NO-DELTA refutation is REBUTTED, with the reasoning recorded in specs/NO-DELTA.md rather than left implicit. Flag it at review.
 - The attack also refuted the test plan as probabilistic; the deterministic construction it proposed (pin `Date.now`, stub `setTimeout`, fire the captured callback before `at`) is adopted, and the existing 1 ms and 0 ms tests are kept as the independent arms.
 - Gate 2 taken under fastlane on the standing goal, with the user away.
+- Follow-up, NOT taken here: `ignoredMaterial.ts` derives `left` from `Date.now() - startedAt`, so a backwards clock step makes the budget itself wrong — the primitive can stop it becoming a long wait, but not stop it being the wrong number. Moving elapsed budgets onto a monotonic clock is its own change (round-1 F001, chair's second suggestion).

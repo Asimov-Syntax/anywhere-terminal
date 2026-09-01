@@ -1,7 +1,7 @@
 # No spec delta
 
-`Deadline` is an internal primitive, and no externally verifiable behavior or externally mandated
-constraint changes for any supported input or environment.
+`Deadline` is an internal primitive. One user-visible outcome CAN change — see below — but no
+accepted requirement is falsified by it, and no externally mandated constraint moves.
 
 **A plan attack refuted this and the refutation is rebutted, so the reasoning is recorded here
 rather than left implicit.** The attack found the one production site that reads the getter —

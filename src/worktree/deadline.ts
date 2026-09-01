@@ -5,6 +5,12 @@
 // round: deadline semantics with two owners drift, and one copy was already
 // subtly wrong about what its comparison admitted.
 
+/** The largest delay `setTimeout` can hold; above it Node silently uses 1ms. */
+const TIMER_MAX = 2_147_483_647;
+
+/** What Node itself uses for a delay outside the range, so both clocks agree. */
+const OUT_OF_RANGE = 1;
+
 /** A pending deadline, and the means to stop it holding a timer. */
 export interface Deadline {
   /** Resolves once the deadline has passed. Never rejects. */
@@ -38,11 +44,20 @@ export interface Deadline {
  * cancelled unfired.
  */
 export function afterDelay(ms: number): Deadline {
-  // ONE normalized delay, and both clocks derive from it. Node clamps a
-  // negative, non-finite or out-of-range delay to 1ms while plain arithmetic on
-  // `ms` would put `at` days away or nowhere at all, so handing the two clocks
-  // the raw number makes them disagree by more than any scheduling margin.
-  const delay = Number.isFinite(ms) ? Math.min(Math.max(Math.trunc(ms), 0), 2_147_483_647) : 0;
+  // ONE normalized delay, and both clocks derive from it. Plain arithmetic on
+  // `ms` would put `at` days away or nowhere at all while Node clamped the
+  // timer to 1ms, so handing the two clocks the raw number makes them disagree
+  // by more than any scheduling margin.
+  //
+  // The top end mirrors Node's OWN clamp rather than saturating: a delay above
+  // `2**31-1` is one this timer cannot express, and clamping it to `2**31-1`
+  // turns a caller's arithmetic slip into a 24.8-day wait — `ignoredMaterial`
+  // computes `left` from `Date.now() - startedAt`, so a backwards clock step
+  // alone produces such a number, and it held removal assessment open for weeks
+  // where Node's 1ms had failed it soft (.reviews/round-1.md F001). A deadline
+  // that cannot be expressed expires at once; it never waits longer than asked.
+  const asked = Number.isFinite(ms) ? Math.trunc(ms) : 0;
+  const delay = asked < 0 ? 0 : asked > TIMER_MAX ? OUT_OF_RANGE : asked;
   const at = Date.now() + delay;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Set in the callback, in the same job that resolves `elapsed`, so it is
