@@ -1495,7 +1495,13 @@ describe("the invariants that span the host and the webview", () => {
    * the answer these two tests are about.
    */
   function noProviderFiles(): void {
-    for (const rel of ["asimov/worktree.yaml", "orca.yaml", ".worktreeinclude", ".vscode/tasks.json"]) {
+    for (const rel of [
+      ".vscode/worktree.json",
+      "asimov/worktree.yaml",
+      "orca.yaml",
+      ".worktreeinclude",
+      ".vscode/tasks.json",
+    ]) {
       fs.rmSync(path.join(REPO, rel), { force: true });
     }
   }
@@ -1530,6 +1536,59 @@ describe("the invariants that span the host and the webview", () => {
     // The section is orca's alone; the comment line is the file's syntax, not a
     // path, and produced no row.
     expect(rows).toHaveLength(3);
+  });
+
+  it("[3_2] draws one merged, attributed list for a repository carrying both files", async () => {
+    // The module suites prove the merge. Only the entry point proves it is
+    // REACHED: a dispatcher that resolved `extends` perfectly and was never
+    // called from the shipped wiring is inert with every unit test green.
+    noProviderFiles();
+    fs.mkdirSync(path.join(REPO, "node_modules"), { recursive: true });
+    fs.mkdirSync(path.join(REPO, ".cache"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env.local"), "TOKEN=3\n");
+    fs.writeFileSync(
+      path.join(REPO, "orca.yaml"),
+      "worktree:\n  sharedDirectories:\n    - node_modules\n    - .cache\n",
+    );
+    fs.mkdirSync(path.join(REPO, ".vscode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(REPO, ".vscode", "worktree.json"),
+      `{
+  // Build on orca, take node_modules by copy instead, and drop the cache.
+  "extends": "orca.yaml",
+  "copy": ["node_modules", ".env.local"],
+  "exclude": [".cache"],
+}`,
+    );
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow").length > 0,
+      "the create form to offer the merged section",
+    );
+
+    const rows = [...document.querySelectorAll(".wt-bring-box .wt-brow")];
+    const row = (subject: string) =>
+      rows.find((r) => (r.querySelector(".wt-brow-code")?.textContent ?? "") === subject);
+
+    // The shared path: one row, the repository's own mode, its own file.
+    const shared = row("node_modules");
+    expect(rows.filter((r) => r.querySelector(".wt-brow-code")?.textContent === "node_modules")).toHaveLength(1);
+    expect(shared?.querySelector("b")?.textContent).toBe("Copy");
+    expect(shared?.querySelector(".wt-brow-src")?.textContent).toBe(".vscode/worktree.json");
+    // The native file's own addition.
+    expect(row(".env.local")?.querySelector(".wt-brow-src")?.textContent).toBe(".vscode/worktree.json");
+    // The removal, drawn as deliberate and still naming the file that declared
+    // it — not the file that removed it.
+    const dropped = row(".cache");
+    expect(dropped?.classList.contains("wt-brow--excluded")).toBe(true);
+    expect(dropped?.querySelector(".wt-brow-src")?.textContent).toBe("orca.yaml");
+    expect(dropped?.querySelector("input")).toBeNull();
+    expect(rows).toHaveLength(3);
+    // Both providers contributed, so neither offers to switch to itself.
+    expect(document.querySelectorAll(".wt-bring-switch")).toHaveLength(0);
+    expect(document.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied");
   });
 
   it("[3_4] takes a switch and redraws the section from the other source, creating nothing", async () => {

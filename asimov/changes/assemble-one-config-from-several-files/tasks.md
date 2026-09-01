@@ -87,7 +87,7 @@
     3. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` with a model carrying both offered and excluded paths, asserting the count and that no excluded id can be submitted.
   - **Boundary**: `docs/ui/create-worktree.html` and `docs/ui/worktree-create-dialog.css` are owned by an external design pass and may not be edited
 
-- [ ] 3_2 Prove the merge fills the section through the shipped wiring
+- [x] 3_2 Prove the merge fills the section through the shipped wiring — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: specs/worktree-panel/spec.md#a-repository-can-build-on-a-source-instead-of-replacing-it
   - **Acceptance**:
