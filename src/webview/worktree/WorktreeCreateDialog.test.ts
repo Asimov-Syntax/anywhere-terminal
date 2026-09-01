@@ -1223,6 +1223,70 @@ describe("Bring over — a repository that declares nothing, and a file that can
   });
 });
 
+describe("a path the repository removed is shown as deliberate", () => {
+  function withExcluded(over: Partial<ReturnType<typeof provisionModel>> = {}) {
+    return open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              excluded: [{ id: "i9", path: "node_modules", mode: "link", source: "orca.yaml" }],
+              ...over,
+            }),
+          }),
+        }),
+      ],
+    });
+  }
+
+  it("draws the removed path as its own row, naming the file that declared it", () => {
+    // Omitting it and showing it are different statements: a path that is simply
+    // absent looks like something the host failed to find.
+    const { host } = withExcluded();
+    const row = host.querySelector(".wt-brow--excluded");
+
+    expect(row?.querySelector(".wt-brow-code")?.textContent).toBe("node_modules");
+    // The file that ORIGINALLY declared it, not the one that removed it.
+    expect(row?.querySelector(".wt-brow-src")?.textContent).toBe("orca.yaml");
+    expect(row?.querySelector(".wt-brow-excluded")?.textContent).toBe("removed on purpose");
+  });
+
+  it("gives it no checkbox, so no state of the form can submit it", () => {
+    const { host, q, submitted } = withExcluded();
+    const row = host.querySelector(".wt-brow--excluded");
+    expect(row?.querySelector("input")).toBeNull();
+
+    // Every box ticked, then submitted: the excluded id is not among them
+    // because it never reached the DOM to be ticked.
+    for (const cb of Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"))) {
+      if (!cb.checked) {
+        cb.checked = true;
+        cb.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision?.itemIds).not.toContain("i9");
+    expect(submitted[0]?.provision?.itemIds).toHaveLength(5);
+  });
+
+  it("keeps it out of the section's totals", () => {
+    // "2 copied" must describe what the create will bring over. Counting a path
+    // the repository removed would overstate it by exactly the removal.
+    const { host } = withExcluded();
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied · 1 linked · 1 port · 1 setup step");
+  });
+
+  it("still says a repository declaring only removals configures nothing to bring", () => {
+    const { host } = withExcluded({ entries: [], ports: [], setup: [] });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Nothing configured");
+    expect(host.querySelectorAll(".wt-brow--excluded")).toHaveLength(1);
+  });
+});
+
 describe("[D5] a source that did not win stays visible and selectable", () => {
   const ORCA = { id: "orca" as const, files: ["orca.yaml", ".worktreeinclude"], active: false };
 

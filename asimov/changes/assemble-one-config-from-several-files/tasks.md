@@ -75,7 +75,7 @@
 
 ## 3. What the user sees
 
-- [ ] 3_1 Draw an excluded path as deliberate, and keep it out of the totals
+- [x] 3_1 Draw an excluded path as deliberate, and keep it out of the totals — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: specs/worktree-panel/spec.md#a-path-the-repository-removed-is-shown-as-deliberate; design.md#d6-nothing-is-built-to-expand-because-there-is-nothing-collapsed
   - **Acceptance**:

@@ -301,6 +301,16 @@ interface BringRow {
   checked: boolean;
   /** Linked rows only: writing through the link changes the main checkout. */
   warn?: string;
+  /**
+   * Removed by the repository's own `exclude`: drawn, never offered.
+   *
+   * Shown rather than omitted because the two are different statements — a path
+   * that is simply absent looks like something the host failed to find, and a
+   * user comparing the section against the file it came from would go looking
+   * for the difference. It carries no checkbox, so there is no state in which
+   * it can be submitted.
+   */
+  excluded?: boolean;
 }
 
 /**
@@ -344,6 +354,20 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
       // OFF. A command a provider file supplied is not consent because a
       // checkbox arrived pre-ticked (worktree-provisioning.md § 7).
       checked: false,
+    });
+  }
+  // Last, and after everything the section WILL do. `source` is the file that
+  // originally declared the path, never the file that removed it: the row says
+  // what was inherited and then dropped, and rewriting it would attribute the
+  // declaration to the wrong file (§ 4.3).
+  for (const entry of model.excluded) {
+    rows.push({
+      id: entry.id,
+      verb: "Excluded",
+      subject: entry.path,
+      source: entry.source,
+      checked: false,
+      excluded: true,
     });
   }
   return rows;
@@ -443,26 +467,12 @@ function switchRow(provider: WorktreeProvisionOffer["model"]["providers"][number
  */
 function bringRow(row: BringRow, index: number): HTMLElement {
   const el = document.createElement("div");
-  el.className = "wt-brow";
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.className = "wt-brow-cb";
-  cb.id = `wt-brow-${index}`;
-  // The host's own opaque id. Never the path: a value carrying one would make
-  // the webview the authority on what gets materialized (§ 4.0).
-  cb.value = row.id;
-  cb.checked = row.checked;
+  el.className = row.excluded === true ? "wt-brow wt-brow--excluded" : "wt-brow";
   const topId = `wt-brow-top-${index}`;
   const metaId = `wt-brow-meta-${index}`;
-  // The subject is what distinguishes one row from another, and it sits outside
-  // the label to keep the mockup's two-line shape — so five rows from one
-  // provider announced as five identical "Copy asimov/worktree.yaml"
-  // (.reviews/round-1.md W3). Both halves are named explicitly instead.
-  cb.setAttribute("aria-labelledby", `${topId} ${metaId}`);
   const top = document.createElement("label");
   top.className = "wt-brow-top";
   top.id = topId;
-  top.htmlFor = cb.id;
   const verb = document.createElement("b");
   verb.textContent = row.verb;
   top.appendChild(verb);
@@ -473,6 +483,14 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     warn.className = "wt-brow-warn";
     warn.textContent = row.warn;
     top.appendChild(warn);
+  }
+  if (row.excluded === true) {
+    // Says the removal was asked for. Without it the row reads as one more
+    // thing the create will do, which is the opposite of what it means.
+    const mark = document.createElement("span");
+    mark.className = "wt-brow-excluded";
+    mark.textContent = "removed on purpose";
+    top.appendChild(mark);
   }
   const src = document.createElement("span");
   src.className = "wt-brow-src";
@@ -485,6 +503,27 @@ function bringRow(row: BringRow, index: number): HTMLElement {
   code.className = "wt-brow-code";
   code.textContent = row.subject;
   meta.appendChild(code);
+  if (row.excluded === true) {
+    // No checkbox at all, rather than a disabled one: a disabled input is still
+    // an input, and the submit path collects `.wt-brow-cb` by class. An id that
+    // never reaches the DOM cannot reach the draft.
+    el.append(top, meta);
+    return el;
+  }
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "wt-brow-cb";
+  cb.id = `wt-brow-${index}`;
+  // The host's own opaque id. Never the path: a value carrying one would make
+  // the webview the authority on what gets materialized (§ 4.0).
+  cb.value = row.id;
+  cb.checked = row.checked;
+  // The subject is what distinguishes one row from another, and it sits outside
+  // the label to keep the mockup's two-line shape — so five rows from one
+  // provider announced as five identical "Copy asimov/worktree.yaml"
+  // (.reviews/round-1.md W3). Both halves are named explicitly instead.
+  cb.setAttribute("aria-labelledby", `${topId} ${metaId}`);
+  top.htmlFor = cb.id;
   el.append(cb, top, meta);
   return el;
 }
