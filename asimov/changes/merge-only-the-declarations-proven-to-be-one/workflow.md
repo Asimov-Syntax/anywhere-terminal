@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -31,7 +31,7 @@
 
 Blueprint: none
 Lane: full
-Planned at: 414b0aef
+Planned at: 43baba8b
 
 Blueprint: docs/PLAN.md task WT-012.17
 Lane: full — HIGH risk: this is the seventh mechanism proposed for one invariant and six are refuted; getting it wrong in the merging direction silently deletes a declaration the repository made | flags: new-api-contract
@@ -50,3 +50,5 @@ Lane: full — HIGH risk: this is the seventh mechanism proposed for one invaria
 - Knowledge candidate: `pnpm run test:unit` is intermittently red on unrelated timing tests independently of any diff | Surprise: it cost task 3_1 its three verify attempts, and the failing test differs almost every run — `src/extension.worktreeAssembly.test.ts` most often, also `src/vault/snapshotPool.test.ts`, `src/webview/vault/VaultPanel.test.ts`, `src/worktree/deadline.test.ts` — each of which passes in isolation | Evidence: detached worktree at base 414b0aef with this change absent — `pnpm run test:unit` × 3 gave 2 failures, both `extension.worktreeAssembly.test.ts > … > [2_5] reports what a clean removal would cost`; the same commit under bare `pnpm exec vitest run` × 6 was green, so the flake is sensitive to the command, not to the diff | Consumer: plan | Action: a PLAN task owns stabilising it; until then a verify failure confined to those files is checked against a clean tree before it is believed.
 - Verify Gate ticked with one failure: `src/worktree/deadline.test.ts > [F002] … > stays expired after it has fired`. Reproduced on a clean tree at base 414b0aef (1 failure in 25 runs) and `git diff 414b0aef..HEAD -- src/worktree/deadline.ts src/worktree/deadline.test.ts` is empty, so it is untouched by this change. Root cause found while confirming it, and it is a real latent defect rather than only load: `afterDelay` computes `at = Date.now() + ms` but resolves off `setTimeout(resolve, ms)` (src/worktree/deadline.ts), and Node's timer can fire up to a millisecond early against `Date.now()`, so with `ms = 1` the getter reads `expired === false` at the moment the promise resolves. Two clocks for one deadline. Owed as a PLAN task — outside this change's lease and a behavioural fix.
 - Owed as a separate PLAN task: a bundle gate asserting `dist/extension.js` holds no unresolved relative `require`. The `jsonc-parser` UMD `main` shipped an activation-breaking `require("./impl/format")` that every test suite missed, because vitest resolves the `module` field and never sees the bundle.
+- Round 1 rejected the change with four blockers, all reproduced independently before triage. F003 was the one that crossed the remediation boundary: nothing in the accepted artifacts said what a contender group NAMES, and the assumption that it can name ids came from an advisory plan step that is false here — every adapter calls `ids()` and each sequence restarts at `i1`. Handback taken, Gate 2 unticked, D7 and D8 written, Gate 2 re-earned under fastlane on the standing grant "cho phép rouund review mới hoặc tách change/ replan".
+- The collision in F003 was half-known and that is the lesson worth keeping: task 2_1 already identified the FAVOURED member by declaring file rather than by id, precisely because ids collide across adapters. The same reasoning was not carried to MEMBERSHIP twenty lines away. A hazard that has been worked around once is not a hazard that has been closed.

@@ -67,3 +67,39 @@
   - **Plan**:
     1. Extend `src/worktree/provisioning/oneOwner.test.ts` with a matcher over `readProvisioning.ts` asserting that the identity and exclusion helpers reach no dep hook — REACHABILITY, not naming. A helper that calls `inspect()` which calls `deps.realpath()` defeats a lexical match on the helper alone, and that is exactly the shape the seventh mechanism will have.
     2. Run it against two fixtures and confirm both fail: one that calls `deps.realpath` directly, and one that reaches it through a second helper.
+
+## 4. Round-1 blockers
+
+- [ ] 4_1 Mint identity once per read, fold per segment, and group on every branch
+  - **Deps**: 3_1
+  - **Refs**: design.md#d7-a-row-s-identity-is-minted-once-per-read-not-once-per-adapter, design.md#d8-folding-is-generous-per-segment-and-lowercase-is-not-folding, design.md#d4-detecting-a-contender-is-allowed-to-be-wrong-in-one-direction
+  - **Acceptance**:
+    - Outcome: Every pair a supported filesystem folds shares a group whose members are distinct rows
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. Thread the id sequence through the read on the object that already carries the budget, in `src/worktree/provisioning/providerKit.ts`. Every adapter takes its ids from there instead of calling `ids()` for itself: `src/worktree/provisioning/asimovProvider.ts`, `src/worktree/provisioning/orcaProvider.ts`, `src/worktree/provisioning/vscodeTasksProvider.ts`, `src/worktree/provisioning/nativeProvider.ts`.
+    2. Build the fold key per path segment rather than over the whole path, and fold with `NFKC` plus lowercasing plus the multi-character expansions lowercasing cannot reach. `entryGate.ts` computes the Win32 segment rule already — take the shared primitive from one owner rather than growing a second, since `oneOwner.test.ts` is there to catch exactly that.
+    3. Compute the groups on every branch that returns a model, not only through `assemble` — a framework winner and a switched provider return their adapter's model directly and today carry an empty list.
+    4. RED first, and prove it on this lane: `Straße`/`STRASSE`, `ﬀ`/`ff`, a dotted non-final segment, a framework-winner model, and a base row against a native row that both minted `i1`.
+  - **Boundary**: the group stays advisory — no code path may merge, drop or reorder an entry on the strength of membership
+
+- [ ] 4_2 Say how many rows a group holds, not that it holds two
+  - **Deps**: 4_1
+  - **Refs**: design.md#d3-a-contender-group-offered-in-full
+  - **Acceptance**:
+    - Outcome: A three-spelling group is not summarised as a pair
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. Derive the summary clause from each group's member count in `src/webview/worktree/WorktreeCreateDialog.ts`; the counts before it are rows OFFERED and stay as they are.
+    2. Assert it against the three-member fixture the suite already builds, which is the case that was never asserted.
+  - **Boundary**: no CSS file under `docs/ui/` is touched — both are owned by an external design pass
+
+- [ ] 4_3 Catch a filesystem reach in any callable shape, not only a top-level function
+  - **Deps**: 3_1
+  - **Refs**: design.md#obligation-ledger
+  - **Acceptance**:
+    - Outcome: An identity helper written as an arrow function reaching a dep hook fails the suite
+    - Verify: unit src/worktree/provisioning/oneOwner.test.ts
+  - **Plan**:
+    1. Walk the TypeScript AST in `src/worktree/provisioning/oneOwner.test.ts` instead of matching `function` at the left margin — arrow functions, methods and imported helpers are ordinary shapes and the gate must see all of them. `src/test/invariants/fsDeletionGate.ts` already drives a TypeScript Program for the same kind of check; reuse it rather than growing a second traversal.
+    2. Prove RED on each shape the current gate misses, not only on the one it catches.

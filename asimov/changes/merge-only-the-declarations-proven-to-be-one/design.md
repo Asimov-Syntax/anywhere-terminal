@@ -121,6 +121,47 @@ with its provenance and no checkbox, through `wt-brow--excluded` at `:470`, `:48
 contender marker is a second flag down that same path — it keeps the checkbox, and adds the note
 naming its partner. No new rendering pattern, and `oneOwner.test.ts` stays satisfied.
 
+## D7 — A row's identity is minted once per read, not once per adapter
+
+Round 1 F003. `ids()` restarts at `i1` for every adapter that calls it —
+`asimovProvider.ts:144`, `orcaProvider.ts:152`, `vscodeTasksProvider.ts:133`,
+`nativeProvider.ts:145` — so a base row and a native row that survive the merge can both be
+called `i1`. A contender group naming ids then names the same id twice, and `remint()`'s
+old-id-keyed map collapses the two into one: the group falls below its two-member contract and
+the first live entry is left outside it, silently.
+
+The collision itself is not new — task 2_1 already identifies the FAVOURED member by declaring
+file rather than by id for exactly this reason. What was wrong is that the same reasoning was not
+carried to MEMBERSHIP, and the assumption that a group can name ids came from an advisory plan
+step that is false about this codebase.
+
+Three answers were available. A group could name positions instead of ids, but the field is typed
+as ids and would hold positions until `remint` ran — a type that lies between two layers. The
+merged rows could be renumbered inside `assemble`, but that mints ids in a second place and
+`offerStore` already owns minting them. So: **the id sequence is threaded through one read, from
+the same object that already carries the budget.**
+
+That object is the right owner because it already has exactly the scope wanted. D9 gives one
+budget to every adapter consulted in one read, and `assemble` hands the same one to the base
+adapter it builds on. Ids taken from it are unique across every adapter in that read by
+construction, which is what every consumer already assumed. `remint()` keeps its own job unchanged
+— ids must not survive across offers — and stops being the only thing standing between a
+collision and a corrupt group.
+
+## D8 — Folding is generous per SEGMENT, and lowercase is not folding
+
+Round 1 F001. `foldable` ended in `normalize("NFC").toLowerCase()`, and simple lowercase mapping
+is not case folding: `Straße` lowercases to `straße` while `STRASSE` lowercases to `strasse`, and
+the ligature `ﬀ` never becomes `ff`. Both pairs are one file on APFS, which is the false-negative
+direction D4 forbids. Separately the Win32 loop stripped trailing dots and spaces from the end of
+the whole relative path, though Win32 strips them from every component, so `parent./child` and
+`parent/child` kept different keys.
+
+So the key is built per path segment, and the character fold is `NFKC` before lowercasing plus an
+explicit expansion of the multi-character folds lowercasing cannot reach. `NFKC` is chosen over
+`NFC` deliberately: it maps ligatures and other compatibility forms together and it over-groups
+elsewhere, which D4 permits and D4's other direction does not.
+
 ## Obligation ledger
 
 | Claim | Semantics | Defeater | Witness | Disposition |
@@ -132,6 +173,8 @@ naming its partner. No new rendering pattern, and `oneOwner.test.ts` stays satis
 | Group ids survive reminting | The ids a group names are the ids the offer actually issues | `offerStore.remint()` replaces every entry id (`offerStore.ts:91-99`) and leaves the group pointing at ids nobody holds | Offer-store test that reminting rewrites group member and favoured ids with the entries | supported |
 | A contender group is offered, not withheld | Both members receive offer ids and can be selected | A member without an id, or filtered from the offer | Offer-store / host test that both ids redeem. NOT `readProvisioning.test.ts` — it cannot see redemption, and asserting there would prove the wrong layer | supported |
 | The detector cannot cause a declaration to be lost | Grouping is advisory; no code path deletes or merges on the strength of group membership | Any merge keyed on the group | `rg` gate plus a test that a deliberately over-grouping detector still conserves the declaration count | supported |
+| A group never names one id twice | Across one read, no two rows carry the same id, so a group's member list has as many rows as ids | Two adapters each minting from their own sequence | Unit test that a base row and a native row surviving one merge carry different ids, and that a group built from them keeps two members through `remint()` | supported |
+| Every pair a supported filesystem folds shares a group | The relation is computed per segment over a fold that includes multi-character cases, on every branch that produces a model | A pair that is one file on APFS or Win32 and lands in no group | Grouping tests for `Straße`/`STRASSE`, `ﬀ`/`ff`, a dotted non-final segment, and a model produced by a framework winner rather than by `assemble` | supported |
 | Whether the favoured member actually wins the destination | WT-012.18's Acceptance, not this change's | Directory-against-directory merges rather than skips; native-link-against-inherited-copy collides with the accepted copy-before-link rule | None available here — the destination does not exist while this code runs | **unresolved**, deliberately, and NOT `n/a`: the spec delta no longer asserts any on-disk outcome, so nothing in THIS change depends on it, but the promise is real and it is owed by WT-012.18 before either ships |
 
 ## What this change does not do
