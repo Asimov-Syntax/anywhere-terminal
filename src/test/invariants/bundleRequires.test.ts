@@ -223,7 +223,6 @@ describe("[round-2 F002] a require whose callee minification renamed", () => {
   });
 });
 
-
 // [round-2 F001] A manifest is a POINTER, not a resolution. `main` can name a
 // file the VSIX does not carry, escape the artifact directory, or be missing
 // entirely — Node throws MODULE_NOT_FOUND for each, while stopping at "the
