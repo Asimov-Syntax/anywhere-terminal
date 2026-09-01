@@ -16,7 +16,7 @@
     5. Delete a surface's pending entry and rotation position in the existing detach path beside `surfaces.delete(surface)`.
     6. Add tests: alternating two worktrees behind a held `forceRebuild` enters the coordinator once and the single reply carries the last request's token and worktreeId; a request arriving mid-job produces exactly one further job; `N` attach-ask-detach cycles leave at most one queued job; two surfaces asking continuously are each served rather than one starving.
 
-- [ ] 1_2 Supersede a repeated ask in the panel instead of refusing it
+- [x] 1_2 Supersede a repeated ask in the panel instead of refusing it — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm exec vitest run exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#asking-to-remove-again-always-asks-again; design.md D4
   - **Acceptance**:

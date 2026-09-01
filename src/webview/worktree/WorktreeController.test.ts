@@ -3139,14 +3139,62 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("[D10] posts one request while one is still outstanding for that worktree", () => {
-    // Each assess holds the host's per-repo mutation queue across two forced
-    // rebuilds and the reads between them, so an unbounded request door made the
-    // "one human click" cost model false rather than merely optimistic.
+  it("[D4] asks again rather than refusing, so a dropped answer costs a click and not the row", () => {
+    // REPLACES the round-4 guard that dropped a same-worktree repeat. That guard
+    // could never bound host work — it saw one surface and one worktree id, so
+    // alternating rows walked straight past it (round-6 B5) — and refusing the
+    // repeat is what made a lost reply permanent: the one gesture that would
+    // recover the row was the one thing it suppressed (round-6 W6). The bound
+    // now lives on the host, per repository.
     const h = ready();
     menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
     menuActions(h).removeWorktree?.(worktree({ id: VALIDATOR }));
 
-    expect(h.posts.filter((m) => m.type === "worktreeRemoveAssess")).toHaveLength(1);
+    const asks = h.posts.filter((m) => m.type === "worktreeRemoveAssess");
+    expect(asks).toHaveLength(2);
+    // Distinct tokens, or the panel could not tell the two answers apart and
+    // D11's ordering would be back where W4 found it.
+    expect(new Set(asks.map((m) => (m as { token: string }).token)).size).toBe(2);
+  });
+
+  it("[D4] opens the later answer and never the one it superseded", () => {
+    const h = ready();
+    const first = ask(h);
+    const second = ask(h);
+    expect(second).not.toBe(first);
+
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      token: first,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+    expect(document.querySelector('[role="dialog"]'), "the superseded answer opened a report").toBeNull();
+
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      token: second,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it("[W6] still opens a report after an answer that never arrived", () => {
+    // The strand round-6 W6 describes: the host posted, the transport dropped
+    // it, and nothing will ever clear the slot. The recovery is the user's next
+    // click, which the old guard refused.
+    const h = ready();
+    ask(h);
+
+    const retried = ask(h);
+    h.controller.handleRemoveAssessment({
+      type: "worktreeRemoveAssessment",
+      worktreeId: VALIDATOR,
+      token: retried,
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+    });
+
+    expect(document.querySelector('[role="dialog"]'), "the row stayed dead after a dropped reply").not.toBeNull();
   });
 });

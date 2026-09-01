@@ -163,12 +163,11 @@ export function worktreeMenuActions(
    */
   onResumeHere?: (row: WorktreeAgentRow) => void,
   /**
-   * Mint the token this request will be answered under, or `null` to drop it
-   * because one is already outstanding for the same worktree (D10, D11). Absent
-   * → a bare token that no controller is ordering answers against, which is the
-   * right shape for a menu built with no controller behind it.
+   * Mint the token this request will be answered under (D11). Absent → a bare
+   * token that no controller is ordering answers against, which is the right
+   * shape for a menu built with no controller behind it.
    */
-  beginAssess?: (worktreeId: string) => string | null,
+  beginAssess?: (worktreeId: string) => string,
 ): WorktreeMenuActions {
   return {
     ...(onCreate === undefined ? {} : { createWorktree: onCreate }),
@@ -190,13 +189,12 @@ export function worktreeMenuActions(
     // `worktreeRemove` this used to post deleted a clean worktree outright,
     // because the host reports only from the path that already attempted the
     // deletion — the whole of round-3 B1 (design.md D6).
-    removeWorktree: (info) => {
-      const token = beginAssess === undefined ? "" : beginAssess(info.id);
-      if (token === null) {
-        return;
-      }
-      post({ type: "worktreeRemoveAssess", worktreeId: info.id, token });
-    },
+    removeWorktree: (info) =>
+      post({
+        type: "worktreeRemoveAssess",
+        worktreeId: info.id,
+        token: beginAssess === undefined ? "" : beginAssess(info.id),
+      }),
     // Repo-scoped: a prune drops stale REGISTRATIONS, which belong to the
     // repository rather than to the worktree the menu was opened on. The count
     // is the one the confirmation named, and the host abandons the prune if it
@@ -1351,15 +1349,21 @@ export class WorktreeController {
   }
 
   /**
-   * Claim the one live assess slot for `worktreeId`, or refuse a duplicate.
+   * Mint the token this request will be answered under, replacing whatever was
+   * live (design.md D4).
+   *
+   * It REFUSES NOTHING. A same-worktree repeat used to be dropped here, as the
+   * bound on host work; the panel could never be that bound — it sees one
+   * surface and one worktree id, so alternating rows walked past it (round-6
+   * B5) — and refusing the repeat is what made a dropped reply permanent,
+   * because the re-ask that would recover the row was the thing suppressed
+   * (round-6 W6). Admission is the host's, per repository.
    *
    * The token orders answers and authorizes nothing: a reply carrying a stale
-   * one is discarded rather than trusted for any part of itself (D11).
+   * one is discarded rather than trusted for any part of itself (D11), and
+   * `liveAssess` is one field, so at most one is ever live.
    */
-  private beginAssess(worktreeId: string): string | null {
-    if (this.liveAssess !== null && this.liveAssess.worktreeId === worktreeId) {
-      return null;
-    }
+  private beginAssess(worktreeId: string): string {
     this.assessSeq += 1;
     const token = `assess-${this.assessSeq}`;
     this.liveAssess = { token, worktreeId };
@@ -1368,11 +1372,7 @@ export class WorktreeController {
 
   /** Ask what a removal would cost, under a token this surface can recognise. */
   private askRemoval(worktreeId: string): void {
-    const token = this.beginAssess(worktreeId);
-    if (token === null) {
-      return;
-    }
-    this.deps.postMessage({ type: "worktreeRemoveAssess", worktreeId, token });
+    this.deps.postMessage({ type: "worktreeRemoveAssess", worktreeId, token: this.beginAssess(worktreeId) });
   }
 
   /** One notice per scope and verb, wherever the outcome came from. */
