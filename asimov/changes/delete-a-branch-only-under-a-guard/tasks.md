@@ -25,7 +25,7 @@
 
 ## 2. The guarded delete
 
-- [ ] 2_1 Delete a branch only inside a verified ref transaction
+- [x] 2_1 Delete a branch only inside a verified ref transaction — verified: pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D2, D3, D4, D5; specs/worktree-panel/spec.md#{the-branch-is-deleted-only-if-nothing-it-was-proven-against-has-moved, a-branch-in-use-or-the-default-branch-is-never-deleted}
   - **Acceptance**:
@@ -33,6 +33,7 @@
     - Verify: unit src/worktree/deleteBranch.test.ts
   - **Plan**:
     1. Add `src/worktree/deleteBranch.ts` exporting a function taking the evidence and an injected git runner, mirroring the injected-runner shape `src/worktree/orphanProofs.ts` uses.
+    1a. In `src/worktree/gitCommandRunner.ts` and `src/worktree/gitCommandRunner.test.ts`, add a per-call stdin option: the accepted transaction is `git update-ref --stdin`, and the existing argv-only runner otherwise cannot execute it. Preserve the runner's bounded, never-rejecting result contract.
     2. Re-read `git worktree list --porcelain` immediately before the transaction and refuse when the target branch is checked out in any worktree — `update-ref` does NOT carry `git branch -d`'s guard, so this check is the only one there is (design.md D3).
     3. Re-derive the default branch and refuse when the target equals it.
     4. Issue `start` / `verify refs/heads/<default> <baseOid>` / `delete refs/heads/<branch> <branchOid>` / `commit` on one `git update-ref --stdin`, and treat a non-zero exit as a refusal that deleted nothing.
@@ -64,7 +65,7 @@
     3. Send `deleteBranch` on the remove request only when it is ticked.
 
 - [ ] 3_2 Wire the binding at the host
-  - **Deps**: 3_1
+  - **Deps**: 3_1, 4_4
   - **Refs**: design.md D2
   - **Acceptance**:
     - Outcome: The opt-in reaches the guarded delete with the report's own evidence

@@ -42,6 +42,8 @@ export interface GitRunOptions {
   maxBufferBytes?: number;
   /** Kills the child when it aborts. The cancellable path the authority asks for. */
   signal?: AbortSignal;
+  /** Bytes written to stdin and then closed; required by commands such as `update-ref --stdin`. */
+  input?: string | Buffer;
 }
 
 export interface GitCommandRunner {
@@ -83,7 +85,7 @@ export function createGitCommandRunner(options: GitCommandRunnerOptions = {}): G
           // cannot be the user's. PATH and the rest of the environment stay.
           env: { ...process.env, LC_ALL: "C", LANG: "C" },
         };
-        execFile(executable, [...args], options, (error, stdout, stderr) => {
+        const child = execFile(executable, [...args], options, (error, stdout, stderr) => {
           const out = Buffer.isBuffer(stdout) ? stdout : Buffer.alloc(0);
           const errText = (Buffer.isBuffer(stderr) ? stderr : Buffer.alloc(0)).toString();
           if (!error) {
@@ -104,6 +106,12 @@ export function createGitCommandRunner(options: GitCommandRunnerOptions = {}): G
             failedToSpawn: failure.code === "ENOENT" || failure.code === "EACCES" || failure.code === "EPERM",
           });
         });
+        if (runOptions?.input !== undefined) {
+          // A child can exit before the write completes; its command result is
+          // still reported by the callback, so EPIPE must not escape the runner.
+          child.stdin?.on("error", () => {});
+          child.stdin?.end(runOptions.input);
+        }
       });
     },
   };
