@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -115,3 +115,9 @@ BLOCKED after round 3 (cycle 2, final automatic round): F001 case-equivalent pat
 the authorized `extends` snapshot behind a second containment check. Both accepted, both reproduced,
 and both now need amended decisions rather than remediation — F002's fix changes `ProviderAdapter.read`,
 which is D1. Round 4 needs an explicit user grant. Do not archive.
+
+Round-3 handback executed (thrash-stop option 1, the only one needing no user grant — it cuts no
+scope, admits nothing speculative and accepts no risk, so fastlane may choose it). D1 amended and
+D11 added, Gate 2 re-earned, tasks 5_1 and 5_2 added. This does NOT reopen the review: round 3 was
+the final automatic round and round 4 still needs an explicit user grant. The change must not
+archive. The work is done so that a granted round 4 has something to review.

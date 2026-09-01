@@ -50,6 +50,27 @@ open could name a different file than the one whose inline keys were parsed.
 Keeping the native file inside `DETECTION_ORDER` rather than special-casing it before the loop is
 what keeps presence probing, `prefer`, and the `providers[]` rows uniform across all four.
 
+**AMENDED after round 3 (F002).** `read` also takes an optional map of already-authorized files, and
+`openProviderFile` answers from that map instead of opening when the map holds `ctx.file`:
+
+```ts
+type Authorized = ReadonlyMap<string, OpenedProviderFile>;
+read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget, authorized?: Authorized): Promise<AdapterRead | null>;
+```
+
+Round 1 closed F002 by wrapping `deps.readFile` instead, deliberately, to stay inside this decision
+rather than change it. Round 3 proved that insufficient and the reason is structural:
+`openProviderFile` re-runs root preparation and the containment check BEFORE it reaches `readFile`,
+so a target that resolves outside the checkout on the adapter's own re-open never consumes the
+pinned bytes at all — the named file drops out of the offer while its unnamed sibling still
+contributes paths and a shell command. Pinning below the check cannot fix a defect in the check's
+own re-execution. The authorization has to cross the boundary as a RESULT, which is a change to this
+interface and is why it took a Gate 2 reopen.
+
+Only the exact named file is authorized. Every sibling the adapter reads is opened live and checked
+on its own, because D2 rule 3 wants the whole adapter and an adapter reading a stale sibling would
+be a different defect.
+
 **This is not suite-preserving.** `orcaProvider.test.ts` and `vscodeTasksProvider.test.ts` call
 `adapter.read` and use the result as a `ProvisionModel`; both must unwrap `.model`. 1_2 declares the
 suite change rather than claiming the suites pass untouched.
@@ -192,6 +213,32 @@ The losing inherited `x` does **not** appear in `excluded`. It was superseded by
 excluded by the user, and listing it as "deliberately excluded" would attribute to the user a choice
 they did not make. `excluded` holds only paths the user removed and did not re-declare.
 
+### D11: identity is the destination, and folds exactly when the filesystem folds
+
+Added after round 3 (F001). `§ 4.2`'s "dedupe by `path`" and the spec's "exactly one row SHALL be
+offered for that path" both mean a place on disk, not a spelling — round-1 triage already settled
+that much, and lexical normalization closed the dot-segment half of it.
+
+It did not close case. On a case-insensitive volume — the macOS default, and the reviewer reproduced
+it on this host — `mixedcase` and `MixedCase` are one file, so an inherited link and a native copy
+for that one destination were both offered and `exclude` matched neither.
+
+Folding unconditionally is wrong in the other direction: on a case-sensitive volume they are two
+genuinely different files, and merging them would drop a row the repository asked for. So identity
+is `path.posix.normalize` plus trailing-slash strip, then lower-cased **only when the repository's
+own filesystem is case-insensitive**.
+
+That is decided once per read, by asking whether a file already proven to exist also answers under a
+case-toggled spelling of its own name. It uses `lstat`, falling back to `realpath`, both already on
+`ProviderDeps` — no new capability reaches the read path, which is what keeps `readOnly.test.ts`'s
+property intact. Both are optional on that interface; when neither is supplied the answer is
+case-SENSITIVE, because that is the conservative direction: it offers a row too many rather than
+silently dropping one the user declared.
+
+The probe is on the read, not on the entry, so it costs one stat per offer rather than one per path.
+Display is untouched: § 4.3 still forbids rewriting what a row shows or names, and folding is for
+identity only.
+
 ## Obligation ledger
 
 Dispositions were written by the plan attack. Two rows were narrowed and one added in response.
@@ -200,6 +247,8 @@ Dispositions were written by the plan attack. Two rows were narrowed and one add
 |---|---|---|---|---|
 | A native entry that was admitted wins any path it shares with the inherited model, including its mode | For every path declared by both where the native entry is within the row cap, exactly one entry is offered and it is the native one | Native-first ordering alone does not save an overlap declared past row 199 of the native file's own list — the cap refuses it and the inherited copy too, so ZERO rows are offered for that path | Test: inherited file declaring more than the cap, native declaring one shared path early — assert one row, native's mode. Second test: native declaring the shared path past its own cap — assert the documented zero-row outcome and the cap diagnostic | supported (narrowed — the unnarrowed claim was refuted) |
 | An entry's `source` is never rewritten | For every entry in `entries` and `excluded`, `source` equals the file its adapter read | Dedupe keeps the loser's source; exclusion re-stamps the native file as the source of what it removed | Test asserting source per row across merge, dedupe and exclusion; the excluded row keeps the ORIGINAL declaring file | supported |
+| Identity is the destination on disk, on either kind of filesystem | Two declarations naming one file are one row and one exclusion target, whether they differ by dot-segment or by case, and two declarations naming two files stay two rows | A case-insensitive volume where `MixedCase` and `mixedcase` split into two rows and `exclude` matches neither; a case-SENSITIVE volume where unconditional folding merges two real files into one | Tests on both filesystem answers: folded identity dedupes and excludes when the probe says insensitive, and leaves both rows when it says sensitive (D11) | supported (added after round 3 refuted the lexical-only version) |
+| The authorized `extends` file is the file the base adapter reads | The bytes that passed the check are the bytes consumed, and the named file's material appears in the offer whenever the base contributes at all | Pinning below the containment check: `openProviderFile` re-runs root prep and containment first, so a target resolving outside on the re-open never reaches the pinned read while the sibling still contributes | Test where the named file resolves outside the checkout on the adapter's own re-open — assert its material is present and the sibling did not answer alone (D1 as amended) | supported (round 1's deps-wrapper was refuted by round 3) |
 | `extends` reaches only a present file of a framework adapter, inside the repository | The named path is inside the root, belongs to § 3.1–3.3, and is itself present; otherwise `missingExtends` | `../` or a symlink out of tree; a path naming the native file itself, which self-merges or loops; `orca.yaml` named while only `.worktreeinclude` exists, which inherits a file nobody named | `contained()` reused not re-derived; tests for `../`, an out-of-tree symlink, `extends` naming `.vscode/worktree.json`, and each orca file named while only the other is present | supported (D2 rules 1 and 2 were added because the loose version was refuted) |
 | One read spends at most `MAX_MODEL_ROWS` rows and `MAX_SCAN` names across every file it touches | Both accounts are shared by the native draft, the inherited draft, and every presence probe | A second `newBudget()`; an append that charges without enforcing; **an early-return problem path that builds `problems: []` directly and charges nothing** | Test: native draft driven to exactly the cap, then an inherited file that is malformed — assert the total never exceeds `MAX_MODEL_ROWS`. D9 routes every early return through `report()` | supported (D9 was added because the unrouted early returns refuted this) |
 | Setup steps are neither deduped nor reordered | The offered steps are the base's in file order, then the native's in file order, duplicates intact | A `Set` or a path-keyed map used for setup as it is for entries | Test: identical command in both files; assert two rows and their order | supported |

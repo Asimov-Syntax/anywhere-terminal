@@ -114,3 +114,30 @@
     5. Extend `src/worktree/provisioning/readProvisioning.test.ts` and `src/worktree/provisioning/nativeProvider.test.ts` with a witness per finding, each confirmed failing against this round's HEAD.
   - **Boundary**: no new problem reason, and no change to what any row displays as its `path` or names as its `source`
 
+## 5. Round-3 handback
+
+- [ ] 5_1 Carry the authorized `extends` file across the adapter boundary
+  - **Deps**: 4_1
+  - **Refs**: design.md#d1-read-answers-a-record-not-a-model; .reviews/round-3.md#f002
+  - **Acceptance**:
+    - Outcome: The named file's material is offered even when it resolves outside on a re-open
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/providerKit.ts`, let `openProviderFile` answer from a map of already-authorized files, and widen `ProviderAdapter.read` to accept that map.
+    2. Thread the map through `src/worktree/provisioning/asimovProvider.ts`, `src/worktree/provisioning/orcaProvider.ts`, `src/worktree/provisioning/vscodeTasksProvider.ts` and `src/worktree/provisioning/nativeProvider.ts`, each authorizing only the file it was handed.
+    3. In `src/worktree/provisioning/readProvisioning.ts`, replace the `readFile` wrapper with the authorized map holding the exact `extends` target, leaving every sibling live.
+    4. Extend `src/worktree/provisioning/readProvisioning.test.ts` with the containment case round 1's ENOENT witness could not reach.
+  - **Boundary**: only the exact named file is authorized — a sibling is never served from the map
+
+- [ ] 5_2 Fold path identity exactly when the filesystem folds
+  - **Deps**: 5_1
+  - **Refs**: design.md#d11-identity-is-the-destination-and-folds-exactly-when-the-filesystem-folds; .reviews/round-3.md#f001
+  - **Acceptance**:
+    - Outcome: Case-variant spellings are one row on a case-insensitive filesystem and two on a sensitive one
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/readProvisioning.ts`, decide once per read whether the repository's filesystem folds case, by asking whether a file already proven present answers under a case-toggled spelling.
+    2. In `src/worktree/provisioning/readProvisioning.ts`, fold `pathKey` on that answer alone, for dedupe, exclusion and the D10 contradiction check.
+    3. Extend `src/worktree/provisioning/readProvisioning.test.ts` with both filesystem answers, and with the absent-probe default.
+  - **Boundary**: no row's displayed `path` or `source` changes, on either filesystem
+
