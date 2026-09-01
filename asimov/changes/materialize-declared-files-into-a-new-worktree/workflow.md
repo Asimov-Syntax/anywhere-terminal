@@ -132,3 +132,16 @@ content identity. D3 builds the safety half; neither missing half is in WT-012.2
   permission denied on the containing directory, not the platform saying it has no symlink to give,
   and degrading on it would hand the user a copy where a failure is the honest answer. The design's
   three codes stand.
+- F002's LISTING half stays open and is not a ledger row: `readdir` materializes the whole listing in
+  one operation before anything can charge it, so the deadline cannot interrupt the read that
+  produced the children. `opendir` would close it and would change `ApplyFsDeps` for every caller and
+  the fake. The in-flight COPY half is closed (an `AbortSignal` driven by the deadline).
+- F022 has no runtime witness and does not need one: making `realpath` required on `ApplyFsDeps` is a
+  compile-time fact, and the behaviour it protects is round-1 F003's node test, which runs the
+  production binding verbatim against a real tree.
+- Round 2's F017 turned out to have TWO halves, and only the first was visible from the finding. The
+  service supplying a `worktreeId` is not enough: `WorktreeController.rescope` DROPS an id the tree
+  does not carry yet, and a worktree created a moment ago is exactly that until the next rebuild
+  lands — so the merge key missed on every real create anyway. Found by writing the assembly witness
+  rather than by reading the fix, which is the fourth time in this change that a seam exercised only
+  through a fake read as verified.
