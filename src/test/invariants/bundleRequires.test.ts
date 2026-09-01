@@ -293,7 +293,6 @@ describe("[round-2 F003] a config the extractor cannot read is refused", () => {
   });
 });
 
-
 // [round-3 F004/F005/F007] Lexical identity comes from TypeScript's binder, so a
 // callee is judged by what it RESOLVES to. `declarations === null` is the exact
 // ambient test; a local binding that merely spells `require` has a declaration.
@@ -307,10 +306,29 @@ describe("[round-3] a callee is judged by what it resolves to", () => {
   });
 
   it("does not report a declared local that merely spells require", () => {
-    expect(requiredSpecifiers(`function outer(require){ return require("./local-cb"); } outer(function (x) { return x; });`)).toEqual([]);
+    expect(
+      requiredSpecifiers(`function outer(require){ return require("./local-cb"); } outer(function (x) { return x; });`),
+    ).toEqual([]);
   });
 
   it("still reports the ambient require", () => {
     expect(requiredSpecifiers(`require("./direct");`)).toEqual(["./direct"]);
+  });
+});
+
+// [round-3 F001] A malformed manifest is fatal to the directory. Accepting a
+// sibling index first let a directory both Node 18 and Node 24 throw on pass.
+describe("[round-3 F001] a manifest is read before its sibling index", () => {
+  const isDir = (p: string) => p === "/repo/dist/pkg";
+  const both = (p: string) => isDir(p) || p === "/repo/dist/pkg/index.js" || p === "/repo/dist/pkg/package.json";
+
+  it("fails an index sitting beside a manifest that does not parse", () => {
+    const v = one(`require("./pkg")`, both, isDir, () => "{not json");
+    expect(v).toMatchObject({ ok: false });
+    expect(v.why).toContain("parse");
+  });
+
+  it("still falls back to the index for a valid manifest with no main", () => {
+    expect(verdicts(`require("./pkg")`, both, isDir, () => "{}")).toEqual([]);
   });
 });

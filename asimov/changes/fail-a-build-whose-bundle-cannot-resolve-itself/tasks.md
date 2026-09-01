@@ -89,7 +89,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     5. Change the source-only uninvoked-factory witness in `src/test/invariants/bundleRequires.test.ts` to an invoked one, and add witnesses for the alias, function-declaration, and declared-local-named-require cases.
     6. Record the gate's wall-clock cost on the real `dist/extension.js` in the change's workflow.md Notes.
 
-- [ ] 4_2 Read a directory manifest before accepting its sibling index
+- [x] 4_2 Read a directory manifest before accepting its sibling index — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md D4
   - **Acceptance**:

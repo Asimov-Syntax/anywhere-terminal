@@ -342,7 +342,10 @@ function resolveManifest(target, root, { exists, isDirectory, readFile }) {
   try {
     main = JSON.parse(readFile(at)).main;
   } catch {
-    return { ok: false, why: `resolves to ${target}, whose package.json does not parse` };
+    // FATAL to the directory: Node 18 and Node 24 both throw resolving a
+    // directory whose manifest will not parse, so a sibling index cannot rescue
+    // it (.reviews/round-3.md F001).
+    return { ok: false, fatal: true, why: `resolves to ${target}, whose package.json does not parse` };
   }
   if (typeof main !== "string" || main.trim() === "") {
     return { ok: false, why: `resolves to ${target}, whose package.json declares no main and which has no index` };
@@ -376,13 +379,23 @@ function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile
     }
   }
   if (exists(target) && isDirectory(target)) {
+    // The manifest is read FIRST. Taking the index first let a directory
+    // holding both an index and a manifest that will not parse pass this gate
+    // while Node throws on it (.reviews/round-3.md F001). Node's index fallback
+    // still applies to a VALID manifest whose main is absent or unresolved.
+    const viaManifest = file(path.join(target, "package.json"))
+      ? resolveManifest(target, root, { exists, isDirectory, readFile })
+      : undefined;
+    if (viaManifest?.ok === true || viaManifest?.fatal === true) {
+      return { ok: viaManifest.ok, why: viaManifest.why };
+    }
     for (const candidate of ["index.js", "index.json", "index.node"].map((n) => path.join(target, n))) {
       if (file(candidate)) {
         return { ok: true, why: "resolves to a directory index beside the bundle" };
       }
     }
-    if (file(path.join(target, "package.json"))) {
-      return resolveManifest(target, root, { exists, isDirectory, readFile });
+    if (viaManifest !== undefined) {
+      return { ok: false, why: viaManifest.why };
     }
     return { ok: false, why: `resolves to ${target}, a directory with no index and no package.json` };
   }
