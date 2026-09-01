@@ -4,16 +4,16 @@
 
 - [ ] 1_1 Merge only spellings that are equal, and prove nothing is asked of the filesystem
   - **Deps**: none
-  - **Refs**: design.md#d1-the-read-path-stops-trying-to-prove-it, specs/worktree-panel/spec.md#{a-repository-s-own-declaration-wins-the-path-it-shares, the-extension-never-asks-a-filesystem-which-spellings-are-one-file}
+  - **Refs**: design.md#d1-the-read-path-stops-trying-to-prove-it, specs/worktree-panel/spec.md#{two-declarations-are-one-path-only-when-they-are-spelled-alike, the-extension-never-asks-a-filesystem-which-spellings-are-one-file}
   - **Acceptance**:
     - Outcome: Only equal spellings merge, and no declared path reaches the filesystem
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
     1. In `src/worktree/provisioning/readProvisioning.ts`, drop the platform fold from `identityOf` so the key is the normalized spelling and nothing else; remove the now-unused `platformFoldsFilenameCase` import.
-    2. Leave `platformFoldsFilenameCase` in `src/worktree/provisioning/providerKit.ts` — `entryGate.ts` still owns a legitimate use of it for the lockfile refusal, and deleting it would be a second change to a rule this task is not touching.
+    2. Rename `platformFoldsFilenameCase` in `src/worktree/provisioning/providerKit.ts` to name what its ONE remaining caller actually asks it — `entryGate.ts` lowercases unconditionally and uses this flag only for Win32 trailing dots, spaces and `::$DATA`, so "folds filename case" stops being true the moment this task lands. Behaviour unchanged; the name and its comment are the change.
     3. Extend `src/worktree/provisioning/readProvisioning.test.ts` with an instrumented `ProviderDeps` that records every path handed to every hook, and assert the recorded list holds nothing that came from a declared path or an `exclude` spelling.
-    4. Assert the declaration count is conserved across `entries` + `excluded` for the pairs the fold used to collapse: `İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ`, and `mixedcase`/`MixedCase`.
-    5. Confirm the count assertion FAILS against the pre-change `toLowerCase` identity before committing — on Windows semantics it collapsed those pairs, and a test that passes either way proves nothing.
+    4. Assert the declaration count is conserved across `entries` + `excluded` for the pairs the fold used to collapse: `İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ`, `mixedcase`/`MixedCase` and `foo`/`foo.`.
+    5. The RED step must INJECT Win32 semantics: the old fold only fired when `path.sep === "\\"`, so on this darwin lane the count assertion passes against the pre-change code and proves nothing. Drive the identity through an injected platform flag, and confirm the assertion fails with that flag set before committing.
   - **Boundary**: no change to what a row displays or to its `source` — § 4.3 forbids rewriting either
 
 - [ ] 1_2 Report an exclusion that matched nothing
@@ -36,11 +36,12 @@
     - Outcome: Foldable spellings travel as one group naming the native declaration as favoured
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
-    1. Add the contender relation to `ProvisionModel` in `src/types/messages.ts` as a list of groups, each naming its member ids and the favoured id — ids only, so the wire carries no second copy of a path.
+    1. Add the contender relation to `ProvisionModel` in `src/types/messages.ts` as a list of groups, each naming its member ids and an OPTIONAL favoured id — ids only, so the wire carries no second copy of a path.
     2. In `src/worktree/provisioning/readProvisioning.ts`, build the groups after the merge from a generous detector: ASCII case folding unioned with Unicode case folding over the normalized spelling. Never use it to merge.
-    3. Favour the native member; a group with no native member has no favoured id and is still a group, because WT-012.18 still needs the ordering.
-    4. Assert group construction for native+inherited, inherited+inherited and native+native.
-    5. Assert both members receive offer ids and both appear in the offer — the failure this guards is withholding a row, which was the rejected alternative in D3.
+    3. Favour the native member only when there is exactly one; a group with none, or with several, carries no favoured id and is still a group, because WT-012.18 still needs the ordering. Groups are connected components, so three spellings of one name are one group, not three pairs.
+    4. In `src/worktree/provisioning/offerStore.ts`, rewrite group member and favoured ids inside `remint()` alongside the entries it already remints — a group naming pre-remint ids points at ids nobody holds, which is silent and total.
+    5. Assert group construction for native+inherited, inherited+inherited, native+native, and a three-member component (`Straße`/`STRASSE`/`strasse`).
+    6. Assert redemption at the offer-store layer, not in `readProvisioning.test.ts` — that suite cannot see an id redeem, so asserting there would prove the wrong layer. The failure guarded is withholding a row, the alternative D3 rejected.
   - **Boundary**: the group is advisory ordering data only; no code path may merge, drop or reorder an entry on the strength of membership in this change
 
 - [ ] 2_2 Draw the pair so it reads as deliberate
@@ -52,7 +53,7 @@
   - **Plan**:
     1. Carry the group through `bringRows` in `src/webview/worktree/WorktreeCreateDialog.ts` as a marker on the rows it names, keeping `checked` as it is — this is not `excluded`, which drops the checkbox.
     2. Render the note through the existing row-meta path rather than a new element, so `wt-brow` keeps one rendering owner.
-    3. Assert both rows carry a checkbox, and that the section's summary counts both — a group is two offers until the filesystem says otherwise.
+    3. Assert both rows carry a checkbox. `bringSummary` says what the section WILL do and composes its count before anything is applied, so for a group it must not promise both — say what is offered, not what will land.
   - **Boundary**: no CSS file under `docs/ui/` is touched — both are owned by an external design pass
 
 ## 3. The gate that keeps it true
@@ -64,5 +65,5 @@
     - Outcome: An identity path that reaches a dep hook fails the suite
     - Verify: unit src/worktree/provisioning/oneOwner.test.ts
   - **Plan**:
-    1. Extend `src/worktree/provisioning/oneOwner.test.ts` with a matcher over `readProvisioning.ts` asserting that the identity and exclusion helpers name no dep hook.
-    2. Run the matcher against a fixture that reintroduces a `realpath` call and confirm it fails — six mechanisms died here, and the next one will arrive as an innocent-looking helper.
+    1. Extend `src/worktree/provisioning/oneOwner.test.ts` with a matcher over `readProvisioning.ts` asserting that the identity and exclusion helpers reach no dep hook — REACHABILITY, not naming. A helper that calls `inspect()` which calls `deps.realpath()` defeats a lexical match on the helper alone, and that is exactly the shape the seventh mechanism will have.
+    2. Run it against two fixtures and confirm both fail: one that calls `deps.realpath` directly, and one that reaches it through a second helper.

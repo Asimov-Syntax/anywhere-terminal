@@ -68,18 +68,44 @@ Offering both is correct because the apply side can settle it without a proof:
   (`asimov/specs/worktree-panel/spec.md:1870`) skips the loser — the native mode wins.
 - If they are TWO destinations, both are created, each in its own mode.
 
-Neither branch needs the question answered in advance. That is the whole point of moving it.
+Neither branch needs the question answered in advance — but the apply side does NOT get this for
+free, and D3 originally claimed it did. Two states break the simple story, and both are WT-012.18's
+to settle with a `D#` of its own:
+
+- **Directory against directory.** `makeDirectory` returns `written` for a destination that was
+  already a real directory (`applyEntries.ts:349-372`), and the walk then descends and MERGES the
+  loser's children in (`:485-503`). For directory entries the loser is not skipped at all, so
+  ordering alone does not produce native-wins.
+- **A native link against an inherited copy.** "Copying SHALL happen before linking" is an accepted
+  requirement (`asimov/specs/worktree-panel/spec.md:1810-1815`), so letting the native link claim
+  the slot first violates it. Native-wins and copy-before-link constrain the same state and one of
+  them must yield; WT-012.18 owns writing both as predicates over one model and showing a
+  construction that satisfies them, or naming the one that gives way.
+
+This change therefore commits only to what it can witness: the group travels, and it names the
+favoured member. Whether the favoured member actually lands is WT-012.18's Acceptance.
 
 ## D4 — Detecting a contender is allowed to be wrong in one direction
 
-Membership of a contender group is a **hint for ordering**, never an identity claim. A false
-positive costs an ordering constraint on two entries that never collide — no observable difference.
-A false negative reverts that pair to today's behaviour.
+Membership of a contender group is a **hint for ordering**, never an identity claim. A false positive
+costs an ordering constraint on two entries that never collide, plus the note D6 draws — visible, but
+it cannot delete material. A false negative reverts that pair to today's defect, so that is the
+direction that still loses a guarantee and the direction the detector is tuned against.
 
-So the detector is deliberately generous and deliberately not a proof: ASCII case folding plus
-Unicode case folding, unioned, over the normalized spelling. It may group pairs that are distinct on
-disk; it must not miss a pair that a common filesystem would fold. It is never used to merge, so its
-errors cannot delete a declaration.
+So the detector is deliberately generous and deliberately not a proof. Over the normalized spelling
+it unions:
+
+- ASCII case folding and Unicode case folding;
+- Win32 filename semantics — trailing dots and spaces, and a `::$DATA` suffix — which
+  `entryGate.ts:134-175` already computes for its lockfile refusal and which pure case folding
+  misses entirely (`foo` and `foo.` are one object to Win32);
+- Unicode canonical equivalence, NFC against NFD, which case folding also does not close
+  (composed `é` against `e` + combining acute).
+
+It may group pairs that are distinct on disk; it must not miss a pair a common filesystem folds. It
+is never used to merge, so its errors cannot delete a declaration — but a false positive is NOT
+unobservable, because D6 draws a note naming the partner and that note can change which box a user
+ticks. The defensible claim is only that a false positive cannot delete material.
 
 ## D5 — `exclude` matches on D1's rule
 
@@ -99,13 +125,14 @@ naming its partner. No new rendering pattern, and `oneOwner.test.ts` stays satis
 
 | Claim | Semantics | Defeater | Witness | Disposition |
 |---|---|---|---|---|
-| The read path performs no filesystem I/O for identity | For every declared path and every `exclude` spelling, no `realpath`/`lstat`/`stat`/`access` call is made on its behalf | Any identity code path reaching a dep hook | Instrumented `ProviderDeps` recording every path passed to every hook; the assertion is that the recorded list is empty for a model built from declarations alone | supported |
-| Merging never deletes a declaration | Every declared path appears in exactly one of `entries`, `excluded`, or a contender group; the total is conserved | A comparison that maps two distinct declarations to one key | Property test over generated declaration pairs including `İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ`, `Straße`/`STRASSE`, `ﬀ`/`ff`, `mixedcase`/`MixedCase`: input count equals output count across all three buckets | supported |
+| The read path performs no filesystem I/O for identity | For every declared path and every `exclude` spelling, no `realpath`/`lstat`/`stat`/`access` call is made on its behalf | Any identity code path reaching a dep hook | Instrumented `ProviderDeps` recording every path passed to every hook; the assertion is that no recorded path DERIVES from a declaration or an exclusion. Not "the list is empty" — provider files are legitimately opened, so an empty-list assertion could never hold and would be quietly weakened later | supported |
+| Merging never deletes a declaration whose spelling differs | Two declarations with DISTINCT normalized spellings always yield two rows across `entries` + `excluded`; the total is conserved | A comparison that maps two distinct spellings to one key | Property test over `İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ`, `Straße`/`STRASSE`, `ﬀ`/`ff`, `mixedcase`/`MixedCase`, `foo`/`foo.` | supported |
 | A contender group never changes what a row displays | Each row's `path` and `source` are the ones its own file wrote | Marking a group rewriting either field | Assert displayed spelling and `source` are byte-equal to the declaration for every member of a group (§ 4.3) | supported |
-| The favoured member is the repository's own declaration | For every contender group with a native member, the favoured id is that member's | A group built from two inherited declarations, or from two native ones | Unit test on group construction for native+inherited, inherited+inherited, native+native | supported |
-| A contender group is offered, not withheld | Both members receive offer ids and can be selected | A member without an id, or filtered from the offer | Assert both members appear in the offer and both ids redeem | supported |
+| A group names at most one favoured member | A group with exactly one native member favours it; a group with none or with several has NO favoured member and says so, rather than picking one | Two native declarations differing only in spelling; two inherited ones | Unit test on group construction for native+inherited, inherited+inherited, native+native, and a three-member component (`Straße`/`STRASSE`/`strasse`) | supported |
+| Group ids survive reminting | The ids a group names are the ids the offer actually issues | `offerStore.remint()` replaces every entry id (`offerStore.ts:91-99`) and leaves the group pointing at ids nobody holds | Offer-store test that reminting rewrites group member and favoured ids with the entries | supported |
+| A contender group is offered, not withheld | Both members receive offer ids and can be selected | A member without an id, or filtered from the offer | Offer-store / host test that both ids redeem. NOT `readProvisioning.test.ts` — it cannot see redemption, and asserting there would prove the wrong layer | supported |
 | The detector cannot cause a declaration to be lost | Grouping is advisory; no code path deletes or merges on the strength of group membership | Any merge keyed on the group | `rg` gate plus a test that a deliberately over-grouping detector still conserves the declaration count | supported |
-| Whether the favoured member actually wins the destination | Out of scope here — it is WT-012.18's Acceptance | — | — | n/a — the temporal boundary in D2 is why this change cannot witness it |
+| Whether the favoured member actually wins the destination | WT-012.18's Acceptance, not this change's | Directory-against-directory merges rather than skips; native-link-against-inherited-copy collides with the accepted copy-before-link rule | None available here — the destination does not exist while this code runs | **unresolved**, deliberately, and NOT `n/a`: the spec delta no longer asserts any on-disk outcome, so nothing in THIS change depends on it, but the promise is real and it is owed by WT-012.18 before either ships |
 
 ## What this change does not do
 

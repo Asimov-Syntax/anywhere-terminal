@@ -1,19 +1,17 @@
 # Spec Delta: worktree-panel — merge-only-the-declarations-proven-to-be-one
 
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: A repository's own declaration wins the path it shares
+### Requirement: Two declarations are one path only when they are spelled alike
 
-WHERE the repository's own configuration and a source it builds on declare the same path, the
-section SHALL show one row carrying the repository's own mode and its own declaring file. Two
-declarations are the same path only WHERE their written spellings match after normalization.
+Two declared paths SHALL count as the same path only WHERE their written spellings match after the
+extension's own normalization. A pair whose spellings differ SHALL NOT be treated as one path,
+whatever relation a filesystem might hold between them.
 
 #### Scenario: One path, declared twice, spelled the same
 
-- **WHEN** the repository's own configuration and the source it builds on declare the same path with
-  the same spelling, and the two ask for different modes
-- **THEN** the section shows one row for that path, carrying the repository's own mode, and naming
-  the repository's own file as its source
+- **WHEN** two sources declare the same path with the same spelling and ask for different modes
+- **THEN** the section shows one row for that path
 
 #### Scenario: The same file, declared under two spellings
 
@@ -22,26 +20,11 @@ declarations are the same path only WHERE their written spellings match after no
 - **THEN** neither is discarded, neither is merged into the other, and each keeps the spelling its
   own file wrote
 
-## ADDED Requirements
-
 ### Requirement: Declarations that may name one destination are offered together, favouring the repository's own
 
 WHERE two declarations differ in spelling but may name one destination, the section SHALL show and
 offer both, each with its own spelling and declaring file, and SHALL record the repository's own as
 the one the merge rule favours. Neither SHALL be withheld because the pair could not be told apart.
-
-#### Scenario: Two spellings of one name, one destination
-
-- **WHEN** a repository declares a path in one letter case with one mode, the source it builds on
-  declares the same path in another letter case with a different mode, and the two names turn out to
-  be one destination
-- **THEN** the destination holds the repository's own material in the repository's own mode, and the
-  other declaration is reported as skipped rather than silently dropped
-
-#### Scenario: Two spellings, two destinations
-
-- **WHEN** the same pair turns out to name two distinct destinations
-- **THEN** both are materialized, each in the mode its own file asked for
 
 #### Scenario: Both spellings are visible before the worktree exists
 
