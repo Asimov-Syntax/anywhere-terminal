@@ -397,6 +397,35 @@ describe("[round-4 D6] a relative specifier is resolved however it is called", (
   });
 });
 
+// [round-5 F014] The sweep recognised only `./` and `../`, so four spellings
+// Node accepts walked past it. The predicate covers every relative prefix, and
+// excludes the six strings that are a prefix and nothing more (design.md D6).
+describe("[round-5 F014] every relative spelling Node accepts is swept", () => {
+  const swept = (bundle: string) => verdicts(bundle).map((v) => v.specifier);
+
+  it("reports a posix relative request", () => {
+    expect(swept(`var r = require; r("./posix");`)).toContain("./posix");
+  });
+
+  it("reports a posix parent request", () => {
+    expect(swept(`var r = require; r("../parent");`)).toContain("../parent");
+  });
+
+  it("reports a win32 relative request", () => {
+    expect(swept(`var r = require; r(".\\\\win");`)).toContain(".\\win");
+  });
+
+  it("reports a win32 parent request", () => {
+    expect(swept(`var r = require; r("..\\\\winup");`)).toContain("..\\winup");
+  });
+
+  it("does not sweep a string that is a relative prefix and nothing more", () => {
+    for (const bare of [".", "..", "./", "../", ".\\", "..\\"]) {
+      expect(swept(`var probe = ${JSON.stringify(bare)};`)).not.toContain(bare);
+    }
+  });
+});
+
 // [round-4 F006] The rescan loop re-walked every edge whenever one fact landed,
 // so a reverse forwarding chain cost edges x facts: 2000 links took ~2.0s and
 // 4000 took ~8.3s. The worklist processes each edge once.

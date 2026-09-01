@@ -308,6 +308,26 @@ function requireLiteral(node, isTainted) {
  * is paid for — explicitly, one reviewed entry at a time, rather than by
  * weakening the rule. It is not a place to silence a real finding.
  */
+/** The relative prefixes Node accepts, POSIX and Win32 (design.md D6). */
+export const RELATIVE_PREFIXES = ["./", "../", ".\\", "..\\"];
+
+/**
+ * The six strings that are exactly a relative prefix and nothing more.
+ *
+ * Legal requests, but in a bundle they are overwhelmingly path DATA: 95
+ * occurrences on the real artifact and never one as a specifier. Excluded by
+ * VALUE because that is a property of these six strings, not of where they sit
+ * — the position-based exemption drafted here instead was refuted, since
+ * `require("".concat("./x"))` puts a real specifier in a String method's
+ * argument (design.md D6).
+ */
+const BARE_PREFIXES = new Set([".", "..", ...RELATIVE_PREFIXES]);
+
+/** Whether a decoded string is a relative request with something after the prefix. */
+export function isRelativeRequest(text) {
+  return RELATIVE_PREFIXES.some((prefix) => text.startsWith(prefix)) && !BARE_PREFIXES.has(text);
+}
+
 export const NOT_SPECIFIERS = new Set([
   // `t.startsWith("../")` — a path-prefix test in the workspace path helpers.
   // The only relative literal the production bundle carries.
@@ -329,7 +349,7 @@ export function relativeLiterals(bundleSource) {
       return;
     }
     const text = node.text;
-    if ((text.startsWith("./") || text.startsWith("../")) && !NOT_SPECIFIERS.has(text)) {
+    if (isRelativeRequest(text) && !NOT_SPECIFIERS.has(text)) {
       seen.add(text);
     }
   });

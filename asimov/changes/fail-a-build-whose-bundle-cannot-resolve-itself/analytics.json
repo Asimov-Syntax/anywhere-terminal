@@ -26,7 +26,7 @@
         },
         {
           "from": 1788303937947,
-          "to": null
+          "to": 1788304409966
         }
       ],
       "phases": [
@@ -37,22 +37,26 @@
         {
           "phase": "build",
           "from": 1788303963131
+        },
+        {
+          "phase": "plan",
+          "from": 1788304201626
         }
       ],
       "firstAt": 1788298172203,
-      "lastAt": 1788304014822,
+      "lastAt": 1788304404314,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "plan",
           "agent": "asm-review-master",
           "model": "gpt-5.6-sol",
-          "messages": 79,
-          "inputTokens": 475615,
-          "outputTokens": 47263,
+          "messages": 81,
+          "inputTokens": 509545,
+          "outputTokens": 51687,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 7702528,
+          "cacheReadTokens": 8114176,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -65,15 +69,15 @@
           "phase": "plan",
           "agent": "asm-review-contracts",
           "model": "claude-sonnet-5",
-          "messages": 30,
-          "inputTokens": 59,
-          "outputTokens": 5989,
+          "messages": 31,
+          "inputTokens": 61,
+          "outputTokens": 5992,
           "reasoningTokens": 2811,
-          "cacheWriteTokens": 179078,
-          "cacheReadTokens": 1925642,
+          "cacheWriteTokens": 193806,
+          "cacheReadTokens": 1956253,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 179078,
+            "cacheWrite1hTokens": 193806,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -137,15 +141,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 93,
-          "inputTokens": 186,
-          "outputTokens": 76558,
-          "reasoningTokens": 17902,
-          "cacheWriteTokens": 110519,
-          "cacheReadTokens": 24078300,
+          "messages": 101,
+          "inputTokens": 202,
+          "outputTokens": 88915,
+          "reasoningTokens": 21234,
+          "cacheWriteTokens": 125852,
+          "cacheReadTokens": 26615437,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 110519,
+            "cacheWrite1hTokens": 125852,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -155,15 +159,15 @@
           "phase": "plan",
           "agent": "asm-review-logic",
           "model": "claude-opus-5",
-          "messages": 16,
-          "inputTokens": 32,
-          "outputTokens": 1790,
+          "messages": 17,
+          "inputTokens": 34,
+          "outputTokens": 1791,
           "reasoningTokens": 1569,
-          "cacheWriteTokens": 152993,
-          "cacheReadTokens": 926405,
+          "cacheWriteTokens": 167877,
+          "cacheReadTokens": 951138,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 152993,
+            "cacheWrite1hTokens": 167877,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -191,15 +195,15 @@
           "phase": "build",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 3,
-          "inputTokens": 6,
-          "outputTokens": 1619,
-          "reasoningTokens": 164,
-          "cacheWriteTokens": 2837,
-          "cacheReadTokens": 869887,
+          "messages": 12,
+          "inputTokens": 24,
+          "outputTokens": 12778,
+          "reasoningTokens": 3176,
+          "cacheWriteTokens": 21252,
+          "cacheReadTokens": 3583759,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 2837,
+            "cacheWrite1hTokens": 21252,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

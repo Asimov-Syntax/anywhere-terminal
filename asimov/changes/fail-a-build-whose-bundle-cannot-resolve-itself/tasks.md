@@ -138,7 +138,7 @@ the extension failed to activate. No suite could catch it, because every suite i
 
 ## 6. Round-5 handback — a sound relative predicate, and a warning where no guarantee exists
 
-- [ ] 6_1 Recognise every relative spelling Node accepts
+- [x] 6_1 Recognise every relative spelling Node accepts — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D6, .reviews/round-5.md F014
   - **Acceptance**:
