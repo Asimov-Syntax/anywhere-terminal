@@ -232,7 +232,9 @@ export async function applyProvisioning(
     // and the notice renders `path: reason`, so a reason that names only the
     // counterparty leaves the user unable to tell which config files are in
     // dispute (.reviews/round-1.md F004).
-    const everyone = [member, contest.favoured].map(declaredAs).join(", ");
+    const everyone = [member, contest.favoured, ...contest.held.filter((other) => other !== member)]
+      .map(declaredAs)
+      .join(", ");
     const claimed = answered.get(contest.favoured)?.outcome.kind;
     const why =
       claimed === "copied" || claimed === "linked" || claimed === "degradedToCopy"

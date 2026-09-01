@@ -281,6 +281,48 @@ describe("a collision this apply cannot attribute to its own write", () => {
   });
 });
 
+describe("a contest larger than a pair", () => {
+  // `contendersOf` groups any number of members, and a refusal built from the
+  // current member and the favoured one hides every other declaration in the
+  // dispute (.reviews/round-2.md F004).
+  const THIRD = "tools/worktree.yaml";
+  const TRIO = [
+    entry("MixedCase", "copy", NATIVE, "i1"),
+    entry("mixedcase", "copy", INHERITED, "i2"),
+    entry("MIXEDCASE", "copy", THIRD, "i3"),
+  ];
+  const TRIO_MATERIAL = { ...CONTESTED, [`${MAIN}/MIXEDCASE`]: { kind: "file", size: 33 } as const };
+
+  it("names all three in every refusal, after the repository's own claimed it", async () => {
+    const { steps } = await applyTo(TRIO_MATERIAL, TRIO);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "refused", "refused"]);
+    for (const refused of steps.slice(1)) {
+      for (const declaration of [
+        "MixedCase (declared in .vscode/worktree.json)",
+        "mixedcase (declared in asimov/worktree.yaml)",
+        "MIXEDCASE (declared in tools/worktree.yaml)",
+      ]) {
+        expect(refused.outcome).toMatchObject({ reason: expect.stringContaining(declaration) });
+      }
+    }
+  });
+
+  it("names all three when the repository's own never claimed it", async () => {
+    const { steps } = await applyTo({}, TRIO);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["failed", "refused", "refused"]);
+    for (const refused of steps.slice(1)) {
+      expect(refused.outcome).toMatchObject({
+        reason: expect.stringContaining("MIXEDCASE (declared in tools/worktree.yaml)"),
+      });
+      expect(refused.outcome).toMatchObject({
+        reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
+      });
+    }
+  });
+});
+
 describe("absence is established, never assumed", () => {
   it("refuses the contest when an earlier uncontested copy created the destination first", async () => {
     // One reading, taken before the ordered pass, proves only what was in the

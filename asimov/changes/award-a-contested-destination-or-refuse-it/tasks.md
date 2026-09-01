@@ -100,7 +100,7 @@
     1. `src/worktree/provisioning/applyProvisioning.ts` settles every held member as a refusal, dropping the post-claim read that authorized the write.
     2. `src/worktree/provisioning/applyProvisioning.test.ts` replaces the witness that expected the second member to land on a non-folding volume with one asserting it is refused there too, naming both declarations.
 
-- [ ] 5_3 Name every member of a contest larger than a pair
+- [x] 5_3 Name every member of a contest larger than a pair — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_2
   - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, .reviews/round-2.md#f004
   - **Acceptance**:
