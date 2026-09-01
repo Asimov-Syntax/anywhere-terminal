@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -33,7 +33,7 @@ Blueprint: none
 Blueprint: docs/PLAN.md task WT-012.4
 Lane: full (standard) — MEDIUM risk: two untrusted checked-in files combined into one model a
 later task hands to a shell | flags: new-api-contract, user-visible-ui
-Planned at: 094728c0 (re-earned for task 4_1; originally 49c4365e)
+Planned at: b0552e78 (re-earned for task 4_1; originally 49c4365e)
 - Admission screen: ONE new invariant owner — the merge (extends resolution, native-wins dedupe,
   exclude, provenance). The native file is a FOURTH instance of the shipped `ProviderAdapter`
   pattern, and the dialog's excluded rendering extends an owner WT-012.1 already has. One
@@ -148,3 +148,13 @@ it diffs from predates WT-012.2's round-5 commits, which landed test edits on th
 between. The task itself touched `readProvisioning.test.ts` alone. Same artefact as 4_4's record.
 Verify gate re-run after the handback: check-types clean, biome 3 errors / 14 warnings / 1 info
 (baseline), 6599 tests pass.
+
+Round-5 handback, and the last one this change makes on D11. Five mechanisms were refuted, the last
+two before they were built. The goal's instruction to consult orca/cmux/t3code is what settled it:
+`orca/src/relay/git-handler-worktree-ops.ts:140-146` and
+`t3code/apps/mobile/src/features/files/filePath.ts:80-82` independently ship the same answer — fold
+case on the PLATFORM's path semantics and never probe a volume — and this repository already made
+that call for the lockfile rule in `entryGate.ts`. D11 takes it, shares the predicate rather than
+spelling it twice, and records the volume-level question as its own change. That reopens round-3 F001
+as a visible residual and closes round-5 F009, F010 and F011 by construction, since the identity path
+stops touching the filesystem entirely.

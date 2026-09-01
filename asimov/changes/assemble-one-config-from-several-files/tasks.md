@@ -155,3 +155,18 @@
     2. `src/worktree/provisioning/readProvisioning.ts`: `mergeEntries` and `applyExclude` keep taking one `pathKey`; only its construction changes, so dedupe, exclusion and the D10 contradiction check stay one rule.
     3. `src/worktree/provisioning/readProvisioning.test.ts`: replace the two probe-answer tests, which encode a mechanism that no longer exists, with the four the amended D11 names — one resolved destination merges, two resolved destinations stay two rows, an unresolvable path keys lexically, and no `realpath` keys everything lexically. Add the oracle's symlink-alias case: a case-toggled symlink to the native file must not make two genuinely distinct declarations merge.
   - **Boundary**: nothing on the identity path lower-cases — the filesystem's fold is the only fold, and no row's displayed `path` or `source` changes
+
+## 7. Round-5 handback
+
+- [ ] 7_1 Fold identity where the platform folds, and stop asking the filesystem
+  - **Deps**: 6_1
+  - **Refs**: design.md#d11-identity-is-the-declared-path-normalized-folded-where-the-platform-folds; .reviews/round-5.md#f008; .reviews/round-5.md#f009; .reviews/round-5.md#f010; .reviews/round-5.md#f011
+  - **Acceptance**:
+    - Outcome: Two declarations are one row on the platform's own naming rules, with no filesystem call
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. `src/utils/pathBoundary.ts`: one exported predicate for "this platform's filenames fold case". `entryGate.ts` already decides this for the lockfile rule and `readProvisioning.ts` now needs the same answer; two spellings of one platform question is the shape that drifts.
+    2. `src/worktree/provisioning/entryGate.ts`: consume that predicate instead of its own local constant, unchanged in behaviour.
+    3. `src/worktree/provisioning/readProvisioning.ts`: replace `identityOf` with a key that normalizes lexically and lower-cases only under that predicate. No `realpath`, no `lstat`, no containment call, no bound — the identity path stops touching the filesystem, which is what closes F009, F010 and F011 rather than fixing them.
+    4. `src/worktree/provisioning/readProvisioning.test.ts`: the volume fakes go; assert the dot-segment cases on every platform, the case cases per platform answer, and that a read performs NO filesystem call for identity — including for an `exclude` spelled `../outside`, which is F009's witness.
+  - **Boundary**: no row's displayed `path` or `source` changes, and nothing on the identity path opens, stats or resolves anything
