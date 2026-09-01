@@ -322,3 +322,4 @@ Verify Gate re-run after the amendment (2026-09-01, HEAD 39099132): check-types 
 14 warnings / 1 info baseline. `verify-status` exit 0, all 16 tasks. No source file was touched by
 this Gate 2 pass — the suite grew from 6254 to 6262 because the child change's tests are on this
 branch, not because anything here was rebuilt.
+- Round-1 B1 RESOLVED by the user on 2026-09-01, verbatim: "Luôn hỏi trước khi xoá" — every removal returns a fingerprint-bound assessment and executes only after the dialog's confirmation callback; a clean worktree gets the ordinary confirmation instead of a one-click delete. This is the first of B1's two remedies, so the change reopens Gate 2: it needs a host-side owner for the new seam and a changed D#. The alternative (cut the ordinary control) was declined. Build does NOT resume until asimov-plan re-earns Gate 2.
