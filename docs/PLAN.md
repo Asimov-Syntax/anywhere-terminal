@@ -552,13 +552,27 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Acceptance** | An orca repo populates the section from `orca.yaml` and `.worktreeinclude` with the right copy/link modes; a repo whose only config is a `worktreeCreated` task populates its setup rows; detection follows the recorded order and the first hit supplies the model; a second detected provider appears as one quiet row offering to switch, never as a merge and never hidden; a JSONC file with comments and trailing commas parses; orca keys outside the two that map are ignored without reporting the repo as misconfigured |
 | **Status** | done |
 
+### [WT-012.17] Two Spellings, One Destination Slot
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Decide when two declared paths name one destination, so the merge rule's winner is the entry that actually lands, on a volume that folds names and on one that does not |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.2, § 4.3; [worktree-apply.md](design/worktree-apply.md) § 2.1, § 2.2 |
+| **Depends On** | WT-012.2 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | new-api-contract |
+| **Notes** | Split out of WT-012.4 after its review reopened the question a sixth time. Six mechanisms are already refuted and the counterexamples are recorded in that change's design.md attack log — a single-file case probe (a case-toggled symlink answers for the wrong volume), `realpath` per path (two aliases, one answer, two slots), `lstat` dev+ino per path (two hard links share an inode; a symlinked parent defeats no-follow; Windows `st_ino` collides past 2^53 without `{ bigint: true }`), and lexical folding on platform alone. That last one is what shipped and what round 7 refuted on BOTH axes: on a folding POSIX volume `mixedcase` and `MixedCase` stay two default-selected rows, copy is applied before link, and the second is charged EEXIST, so the inherited mode wins a destination the merge rule awards to the native entry; on Windows `toLowerCase()` merges `İ` with `i̇` and `ẞ` with `ß`, which NTFS keeps distinct through its own `$UpCase` table with no normalization, silently dropping a declaration. Node exposes no no-follow canonical-directory-entry-name primitive, so a conservative proof that leaves uncertain pairs visible is likely to beat one that merges them |
+| **Acceptance** | Two declarations that name one destination on a case-folding volume produce one entry whose mode and provenance are the ones the merge rule awards, and creating the worktree materializes that mode; two declarations that name two distinct destinations stay two entries on every supported platform, including Unicode spellings a case-insensitive Windows directory keeps apart; a pair the rule cannot prove either way is surfaced rather than merged, and never silently discards a declaration; each row still displays the spelling its own file wrote and names its own source; no identity decision reads a path the repository root does not contain |
+| **Status** | todo |
+
 ### [WT-012.4] One Configuration Assembled From Several Files
 
 | Field | Value |
 |-------|-------|
 | **Goal** | Support `.vscode/worktree.json` with `extends`, inline keys and `exclude`, rendering per-entry provenance for a merged model and naming a config that could not be read |
 | **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 3.4, § 4.2, § 4.3, § 9; [worktree-create.md](design/worktree-create.md) § 4.3 |
-| **Depends On** | WT-012.3 |
+| **Depends On** | WT-012.3, WT-012.17 |
 | **Stage** | 9 |
 | **Size** | L |
 | **Labels** | new-api-contract, user-visible-ui |

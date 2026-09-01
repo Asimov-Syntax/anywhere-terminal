@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved — no real fork: § 3.4, § 4.1 and § 4.2 fix the format, the order and the merge; the calls this change made are D2's three resolution rules and D5's native preference _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -173,3 +173,4 @@ platform reading and records the residual.
 - D11's recorded residual was WRONG, not merely optimistic. It claimed the POSIX-volume case split costs only a duplicate visible row. At the materialization boundary both rows arrive default-selected, copy is applied before link, and the second is charged EEXIST -> skipped: the inherited mode wins a destination the accepted contract awards to the native entry. Withdrawn.
 - The identity question is now known to need a destination-slot owner on BOTH axes: F001 (two spellings, one slot, POSIX folding volume) and F013 (two distinct NTFS names, one `toLowerCase()` key). Six mechanisms have now been refuted for one invariant. It is not this change's owner to mint.
 - F012 (`__proto__` supplies hidden native keys, both JSONC providers) and F014 (unreadable `extends` diagnosed as missing) are fixable inside the accepted contract and are independent of the identity question. They are carried into the replan as tasks rather than built in a closed loop.
+- Gates unticked for the round-7 handback: Gate 2, All tasks done, and the Verify gate. WT-012.17 was added to docs/PLAN.md as the destination-slot owner on the user's approval, and this change now Depends On it. The replan scopes the integration seam plus F012 and F014.
