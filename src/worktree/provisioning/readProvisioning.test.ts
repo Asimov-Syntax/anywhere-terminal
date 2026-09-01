@@ -683,3 +683,100 @@ describe("[round-3 F002] authorization is a result, not a byte source", () => {
     expect(model.providers.find((p) => p.id === "orca")?.active).toBe(true);
   });
 });
+
+describe("[round-3 F001] identity is the destination, and folds exactly when the filesystem folds", () => {
+  // One destination declared twice, once per file, differing only in case.
+  const CASE_REPO: Repo = {
+    native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+    orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+  };
+  const TOGGLED = `${ROOT}/.vscode/WORKTREE.JSON`;
+
+  /** A volume that answers to the native file under a case-toggled spelling. */
+  function insensitive(spec: Repo = CASE_REPO): ProviderDeps {
+    return fs(spec);
+  }
+
+  /** The same repository on a volume where that spelling is nothing. */
+  function sensitive(spec: Repo = CASE_REPO): ProviderDeps {
+    return {
+      ...fs(spec),
+      lstat: async (p) => {
+        if (p === TOGGLED) {
+          throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+        }
+        return {};
+      },
+    };
+  }
+
+  it("offers one row for one destination when the filesystem folds case", async () => {
+    // The reviewer reproduced this on the shipping macOS default: `MixedCase`
+    // and `mixedcase` are ONE file, and offering an inherited link beside a
+    // native copy for it is two rows for one place on disk.
+    const model = await readProvisioning(insensitive(), ROOT);
+
+    expect(model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([["MixedCase", "copy", NATIVE_PROVIDER_FILE]]);
+  });
+
+  it("keeps both rows when the filesystem does not fold case", async () => {
+    // Folding unconditionally is the same defect pointing the other way: here
+    // they are two genuinely different files, and merging them drops a row the
+    // repository asked for.
+    const model = await readProvisioning(sensitive(), ROOT);
+
+    expect(model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([
+      ["mixedcase", "link", ORCA_YAML_FILE],
+      ["MixedCase", "copy", NATIVE_PROVIDER_FILE],
+    ]);
+  });
+
+  it("matches an exclusion against the destination, not the spelling", async () => {
+    const model = await readProvisioning(
+      insensitive({
+        native: `{"extends": "orca.yaml", "exclude": ["MIXEDCASE"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries).toEqual([]);
+    // The excluded row keeps the spelling and the source its own file wrote —
+    // folding is for identity, never for display (§ 4.3).
+    expect(model.excluded.map((e) => [e.path, e.source])).toEqual([["mixedcase", ORCA_YAML_FILE]]);
+  });
+
+  it("still reports the contradiction when the two spellings are the file's own", async () => {
+    const model = await readProvisioning(
+      insensitive({ native: `{"copy": ["MixedCase"], "exclude": ["mixedcase"]}` }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["MixedCase"]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
+    expect(model.excluded).toEqual([]);
+  });
+
+  it("asks `realpath` when the interface carries no `lstat`", async () => {
+    // Both are optional and either can answer. With neither, the probe has
+    // nothing to ask and the answer is case-SENSITIVE — but that interface
+    // never gets this far, because the root itself resolves through the same
+    // two, so the reachable default is this fallback.
+    const { lstat, ...deps } = fs(CASE_REPO);
+    void lstat;
+    const model = await readProvisioning(
+      {
+        ...deps,
+        realpath: async (p) => {
+          if (p === TOGGLED) {
+            throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+          }
+          return p;
+        },
+      },
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["mixedcase", "MixedCase"]);
+  });
+});

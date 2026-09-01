@@ -129,7 +129,7 @@
     4. Extend `src/worktree/provisioning/readProvisioning.test.ts` with the containment case round 1's ENOENT witness could not reach.
   - **Boundary**: only the exact named file is authorized — a sibling is never served from the map
 
-- [ ] 5_2 Fold path identity exactly when the filesystem folds
+- [x] 5_2 Fold path identity exactly when the filesystem folds — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: design.md#d11-identity-is-the-destination-and-folds-exactly-when-the-filesystem-folds; .reviews/round-3.md#f001
   - **Acceptance**:

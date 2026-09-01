@@ -155,13 +155,64 @@ async function baseFor(
  * (.reviews/round-1.md F001). The spec says exactly one row is offered for that
  * PATH, and a path is a destination, not a spelling.
  *
+ * Lexical normalization alone was refuted: on a case-insensitive volume — the
+ * macOS default, reproduced on the reviewer's own host — `MixedCase` and
+ * `mixedcase` are ONE file, so both were offered and `exclude` matched neither
+ * (.reviews/round-3.md F001). Folding unconditionally is the same defect
+ * inverted: on a case-sensitive volume they are two real files, and merging them
+ * drops a row the repository asked for. So the fold is the filesystem's own
+ * answer, not a platform guess (design.md D11).
+ *
  * Used for identity only. What a row DISPLAYS and what it names as its `source`
  * are never touched — § 4.3 forbids rewriting either, and a row that showed the
  * canonical form would be telling the user something their file does not say.
  */
-function pathKey(declared: string): string {
-  const normalized = path.posix.normalize(declared);
-  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+function keyer(fold: boolean): (declared: string) => string {
+  return (declared) => {
+    const normalized = path.posix.normalize(declared);
+    const trimmed = normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+    return fold ? trimmed.toLowerCase() : trimmed;
+  };
+}
+
+/** The same name with every letter of its last segment in the other case. */
+function toggleCase(relPath: string): string {
+  const cut = relPath.lastIndexOf("/");
+  const head = relPath.slice(0, cut + 1);
+  const tail = relPath.slice(cut + 1);
+  return head + [...tail].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join("");
+}
+
+/**
+ * Does this repository's filesystem treat two spellings as one file?
+ *
+ * Asked of the volume rather than of `process.platform`: a case-sensitive
+ * volume mounted on macOS and a case-insensitive one on Linux are both ordinary,
+ * and a platform guess is wrong for each. The question is put to a file already
+ * PROVEN present — the native file, which is the only reason assembly is
+ * running — so a "yes" can only mean the volume folded, never that something
+ * else happens to be there under that name.
+ *
+ * Once per read, not per path. `lstat` and `realpath` are both optional on the
+ * interface and either answers; with neither there is nothing to ask and the
+ * answer is case-SENSITIVE, which errs toward a visible extra row rather than a
+ * silently dropped one (design.md D11).
+ */
+async function foldsCase(deps: ProviderDeps, repoRoot: string, present: string): Promise<boolean> {
+  const toggled = toggleCase(present);
+  if (toggled === present) {
+    return false;
+  }
+  const ask = deps.lstat ?? deps.realpath;
+  if (ask === undefined) {
+    return false;
+  }
+  try {
+    await ask(path.resolve(repoRoot, toggled));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -175,6 +226,7 @@ function pathKey(declared: string): string {
 function mergeEntries(
   base: readonly ProvisionEntry[],
   native: readonly ProvisionEntry[],
+  pathKey: (declared: string) => string,
 ): { entries: ProvisionEntry[]; inline: Set<string> } {
   const inline = new Set(native.map((e) => pathKey(e.path)));
   // Superseded, not excluded: a losing inherited row is dropped rather than
@@ -196,6 +248,7 @@ function applyExclude(
   inline: ReadonlySet<string>,
   exclude: readonly string[],
   draft: Draft,
+  pathKey: (declared: string) => string,
 ): { kept: ProvisionEntry[]; excluded: ProvisionEntry[] } {
   const removed = new Set<string>();
   for (const declared of exclude) {
@@ -243,8 +296,11 @@ async function assemble(
   const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
   const baseModel = inherited?.model ?? emptyModel();
 
-  const merged = mergeEntries(baseModel.entries, native.model.entries);
-  const { kept, excluded } = applyExclude(merged.entries, merged.inline, native.exclude ?? [], draft);
+  // The probe is on the READ, not on the entry: one stat per offer rather than
+  // one per declared path.
+  const pathKey = keyer(await foldsCase(deps, repoRoot, NATIVE_PROVIDER_FILE));
+  const merged = mergeEntries(baseModel.entries, native.model.entries, pathKey);
+  const { kept, excluded } = applyExclude(merged.entries, merged.inline, native.exclude ?? [], draft, pathKey);
 
   return {
     model: {
