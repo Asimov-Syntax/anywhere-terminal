@@ -238,7 +238,7 @@
     4. `src/webview/worktree/WorktreeController.test.ts`: prove the posted request contains the fingerprint and no force choice.
   - **Boundary**: host/service behavior was established in 4_1; this task removes the dead client vocabulary rather than adding a second force decision
 
-- [ ] 4_4 Prove both shipped entry doors stop at the report
+- [x] 4_4 Prove both shipped entry doors stop at the report — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=1 exit 0
   - **Deps**: 4_3
   - **Refs**: specs/worktree-panel/spec.md#a-removal-is-reported-before-anything-is-deleted; design.md D6, D7
   - **Acceptance**:
@@ -247,5 +247,6 @@
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts`: keep the existing clean menu walk, require its report to carry authority, and prove its confirmation still invokes ordinary `git worktree remove` rather than `--force`.
     2. Same file: drive a raw fingerprint-free `worktreeRemove` for the published row through the assembled extension seam, assert it runs no removal and renders the blocked notice, open the report from that notice's action, then answer its dialog and assert exactly one removal runs.
-    3. Same file: keep the failed-confirmable walk and prove the same callback reaches `--force`; mutation-check the two load-bearing negatives — restoring the clean fallthrough or mapping fingerprint presence directly to force must fail this file.
+    3. Same file: keep the failed-confirmable walk and prove the same callback reaches `--force`.
+    4. `src/worktree/worktreeMutationService.ts`: temporarily restore the clean fingerprint-free fallthrough, then map fingerprint presence directly to force; each mutation must fail this assembly file, and both are restored before verification.
   - **Boundary**: no production behaviour is added here; this is the menu-to-git and direct-message-to-git witness round-1 B1 was missing

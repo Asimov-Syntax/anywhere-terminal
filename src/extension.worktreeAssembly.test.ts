@@ -741,15 +741,42 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(dialog, "the menu click opened no report").not.toBeNull();
     // A report, not a bare "are you sure": every check the host evaluated is named.
     expect([...(dialog?.querySelectorAll("[data-check]") ?? [])].length).toBeGreaterThan(0);
+    const answer = posted.find((message) => message.type === "worktreeRemoveAssessment");
+    expect(answer, "the clean report carried no host answer").toBeDefined();
+    if (answer?.type !== "worktreeRemoveAssessment" || answer.result.kind !== "assessed") {
+      throw new Error("the clean assessment did not produce a confirmable report");
+    }
+    expect(answer.result.fingerprint).toEqual(expect.any(String));
     expect(gitCalls("remove"), "git ran before the user had answered anything").toEqual([]);
 
-    // Nothing at risk, so the host issued no fingerprint and the ordinary control
-    // is what is offered — a typed confirmation here would mean force authority
-    // was minted for a healthy worktree (design.md D7).
+    // Confirmation authority is universal; the report's checks still choose the
+    // ordinary control, while fresh host evidence chooses ordinary Git execution.
     expect(dialog?.querySelector("#wt-confirm-name")).toBeNull();
     confirmRemoval("feature");
     await settle();
 
+    expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
+  });
+
+  it("[4_4] turns a raw removal intent into a report before one ordinary removal", async () => {
+    const { host, surface } = await assemble();
+
+    void host.handleMessage(surface, { type: "worktreeRemove", worktreeId: LINKED });
+    await settle();
+
+    expect(gitCalls("remove"), "a fingerprint-free request reached git").toEqual([]);
+    const openReport = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      /force remove/i.test(button.textContent ?? ""),
+    );
+    expect(openReport, "the blocked notice offered no report opener").toBeDefined();
+
+    openReport?.click();
+    await settle();
+    expect(document.querySelector('[role="dialog"]'), "the notice action opened no report").not.toBeNull();
+    expect(gitCalls("remove"), "opening the report reached git").toEqual([]);
+
+    confirmRemoval("feature");
+    await settle();
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
 
