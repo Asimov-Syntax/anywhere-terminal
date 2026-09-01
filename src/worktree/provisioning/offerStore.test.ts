@@ -7,7 +7,7 @@ function model(path: string): ProvisionModel {
     entries: [{ id: "i1", path, mode: "copy", source: "asimov/worktree.yaml" }],
     setup: [],
     ports: [],
-    providers: [{ id: "asimov", file: "asimov/worktree.yaml", active: true }],
+    providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
     excluded: [],
     problems: [],
   };
@@ -145,8 +145,8 @@ describe("ids are scoped to the offer, not to the adapter (round-2 W4)", () => {
       ports: [{ id: "i2", name: "APP", source: ".vscode/worktree.json" }],
       setup: [{ id: "i1", kind: "shell", script: "pnpm install", source: ".vscode/worktree.json" }],
       providers: [
-        { id: "asimov", file: "asimov/worktree.yaml", active: true },
-        { id: "vscodeTasks", file: ".vscode/worktree.json", active: false },
+        { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+        { id: "vscodeTasks", files: [".vscode/worktree.json"], active: false },
       ],
       excluded: [],
       problems: [],

@@ -72,9 +72,9 @@ import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
 import { applyEntry, nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
-import { readAsimovProvisioning } from "./worktree/provisioning/asimovProvider";
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
+import { readProvisioning } from "./worktree/provisioning/readProvisioning";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { checksFor } from "./worktree/removalChecks";
 import { readPullRequests } from "./worktree/repoPullRequests";
@@ -838,7 +838,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
-    readProvisioning: (mainWorktree) => readAsimovProvisioning(createProvisioningDeps(), mainWorktree),
+    readProvisioning: (mainWorktree) => readProvisioning(createProvisioningDeps(), mainWorktree),
     // Same reason as the offer above: without this the create form never
     // receives a branch list and the combobox is a plain text field in the
     // shipped extension, with every module test green against its own fake.

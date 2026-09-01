@@ -22,8 +22,12 @@ import {
   entriesFor,
   full,
   ids,
+  newBudget,
   newDraft,
+  type OpenedProviderFile,
   openProviderFile,
+  type ProviderAdapter,
+  type ProviderBudget,
   type ProviderContext,
   type ProviderDeps,
   problem,
@@ -45,6 +49,8 @@ const ASIMOV: ProviderContext = { id: "asimov", file: ASIMOV_PROVIDER_FILE };
 /** The four keys § 3.1 maps. Anything else is reported rather than ignored. */
 const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);
 
+const PROVIDERS = [{ id: "asimov" as const, files: [ASIMOV_PROVIDER_FILE], active: true }];
+
 /**
  * The repository's own provisioning file, as the normalized model.
  *
@@ -54,21 +60,58 @@ const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);
  * and nothing executes from this model in this change anyway.
  */
 export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot: string): Promise<ProvisionModel> {
-  const providers = [{ id: "asimov" as const, file: ASIMOV_PROVIDER_FILE, active: true }];
   const opened = await openProviderFile(deps, repoRoot, ASIMOV);
+  if (opened.kind === "absent") {
+    // No provider file is not a problem — it is the ordinary case for most
+    // repositories, and the section says what the worktree will lack anyway.
+    return emptyModel();
+  }
+  return fromOpened(opened, deps, repoRoot, newBudget());
+}
+
+export const asimovAdapter: ProviderAdapter = {
+  id: "asimov",
+  files: [ASIMOV_PROVIDER_FILE],
+
+  /**
+   * `null` for an absent file and a model for every other outcome.
+   *
+   * The distinction the plain reader does not make: it answers an empty model
+   * for a file that is not there AND for one that declares nothing, which are
+   * the same section but not the same detection answer. Falling through a
+   * present-but-empty file would offer another tool's answer to a question this
+   * repository has already answered (design.md D3).
+   */
+  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<ProvisionModel | null> {
+    const opened = await openProviderFile(deps, repoRoot, ASIMOV);
+    if (opened.kind === "absent" || (opened.kind === "problem" && opened.at === "root")) {
+      return null;
+    }
+    return fromOpened(opened, deps, repoRoot, budget);
+  },
+};
+
+/**
+ * Everything after the file has been authorized and opened.
+ *
+ * Split out so the adapter and the plain reader each open the file exactly once
+ * and then agree on every other outcome — a second open is a second chance for
+ * the file to change under the check.
+ */
+async function fromOpened(
+  opened: Exclude<OpenedProviderFile, { kind: "absent" }>,
+  deps: ProviderDeps,
+  repoRoot: string,
+  budget: ProviderBudget,
+): Promise<ProvisionModel> {
   if (opened.kind === "problem") {
     // A root that will not resolve is not this provider being present, so it is
     // the one problem reported without a providers row.
     return {
       ...emptyModel(),
-      ...(opened.at === "root" ? {} : { providers }),
+      ...(opened.at === "root" ? {} : { providers: PROVIDERS }),
       problems: [opened.problem],
     };
-  }
-  if (opened.kind === "absent") {
-    // No provider file is not a problem — it is the ordinary case for most
-    // repositories, and the section says what the worktree will lack anyway.
-    return emptyModel();
   }
   const root = opened.root;
 
@@ -78,23 +121,23 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
   } catch (error) {
     return {
       ...emptyModel(),
-      providers,
+      providers: PROVIDERS,
       problems: [problem(ASIMOV, "malformed", error instanceof Error ? error.message : String(error))],
     };
   }
   if (parsed === null || parsed === undefined) {
-    return { ...emptyModel(), providers };
+    return { ...emptyModel(), providers: PROVIDERS };
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     return {
       ...emptyModel(),
-      providers,
+      providers: PROVIDERS,
       problems: [problem(ASIMOV, "malformed", "The file is not a mapping of keys.")],
     };
   }
 
   const nextId = ids();
-  const draft: Draft = newDraft(ASIMOV);
+  const draft: Draft = newDraft(ASIMOV, budget);
   const record = parsed as Record<string, unknown>;
 
   for (const key of Object.keys(record)) {
@@ -156,7 +199,7 @@ export async function readAsimovProvisioning(deps: AsimovProviderDeps, repoRoot:
     entries: draft.entries,
     setup: draft.setup,
     ports: draft.ports,
-    providers,
+    providers: PROVIDERS,
     excluded: [],
     problems: draft.problems,
   };

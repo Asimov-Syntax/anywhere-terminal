@@ -897,8 +897,15 @@ export interface ProvisionPort extends ProvisionItemId {
 
 export interface ProvisionProvider {
   readonly id: "asimov" | "orca" | "vscodeTasks" | "native";
-  /** Repo-relative file that produced it. */
-  readonly file: string;
+  /**
+   * Repo-relative files it reads, in read order. Non-empty.
+   *
+   * A list rather than one name because orca is one provider over two files by
+   * its own design, and with both present no single value truthfully answers
+   * "which file said so" — the row the user sees names what it read (design.md
+   * D8). A row's `source` still names ONE file: that is a different question.
+   */
+  readonly files: readonly string[];
   /** True for the provider whose model the native file extended or detection chose. */
   readonly active: boolean;
 }

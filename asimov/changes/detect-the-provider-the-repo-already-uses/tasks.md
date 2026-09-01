@@ -57,14 +57,14 @@
 
 ## 3. Detection and the choice it leaves open
 
-- [ ] 3_1 Choose one source by a fixed order and record the rest
+- [x] 3_1 Choose one source by a fixed order and record the rest — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1, 2_2
   - **Refs**: specs/worktree-panel/spec.md#{exactly-one-detected-source-supplies-the-offer, a-present-source-answers-even-when-its-answer-is-nothing}; design.md D3, D8, D9
   - **Acceptance**:
     - Outcome: The first source whose file is present supplies the rows; later ones are listed inactive
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
-    1. Change `ProvisionProvider.file: string` to `files: readonly string[]` in `src/types/messages.ts` per design.md D8, and update every construction site the type check names.
+    1. Change `ProvisionProvider.file: string` to `files: readonly string[]` in `src/types/messages.ts` per design.md D8, and update every construction site the type check names, including the shared fixtures in `src/webview/worktree/worktreeFixtures.ts`.
     2. Create `src/worktree/provisioning/readProvisioning.ts` exporting `DETECTION_ORDER` as a module constant holding the asimov, orca and tasks adapters in that order, and `readProvisioning(deps, repoRoot, prefer?)`.
     3. In `src/worktree/provisioning/readProvisioning.ts`, take the first adapter whose `read` is non-null as the model, append every later adapter whose files are present to `providers[]` with `active: false`, and pass one `newBudget()` to every adapter it calls.
     4. In `src/worktree/provisioning/readProvisioning.ts`, honour `prefer` by trying that adapter first and leaving the rest of the order intact; an unknown or absent `prefer` falls back to the plain order.

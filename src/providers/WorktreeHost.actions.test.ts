@@ -2536,7 +2536,7 @@ describe("the provisioning offer the create form is given", () => {
       entries: [{ id: "i1", path, mode: "copy", source: "asimov/worktree.yaml" }],
       setup: [],
       ports: [],
-      providers: [{ id: "asimov", file: "asimov/worktree.yaml", active: true }],
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
       problems: [],
     };
@@ -4806,7 +4806,7 @@ describe("the provisioning a create is actually given", () => {
       ],
       setup: [],
       ports: [],
-      providers: [{ id: "asimov", file: "asimov/worktree.yaml", active: true }],
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
       problems: [],
     };
