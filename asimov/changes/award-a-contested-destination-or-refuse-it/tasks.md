@@ -48,7 +48,7 @@
 
 ## 4. Round-1 blockers
 
-- [ ] 4_1 Establish absence before writing, and read it twice
+- [x] 4_1 Establish absence before writing, and read it twice — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: design.md#d3-absence-is-observed-twice-and-only-enoent-establishes-it, design.md#d4-the-adjudication, .reviews/round-1.md#f001, .reviews/round-1.md#f002
   - **Acceptance**:

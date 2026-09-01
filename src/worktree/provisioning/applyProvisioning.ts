@@ -68,6 +68,19 @@ function contestsOf(entries: readonly ProvisionEntry[]): Contest[] {
 }
 
 /**
+ * What one observation of a destination established (design.md D3).
+ *
+ * Not a boolean. Collapsing `unreadable` into `absent` lets a transient
+ * `EACCES` authorize the write path after failing to prove the destination
+ * free, and collapsing `inadmissible` into `present` reports a collision
+ * nobody observed while discarding the refusal the gate actually had
+ * (.reviews/round-1.md F002).
+ */
+type Reading = "absent" | "present" | "unreadable" | "inadmissible";
+
+const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code;
+
+/**
  * Apply every selected entry, and answer for every one of them.
  *
  * The answer is in the order the entries ARRIVED, not the order they ran: the
@@ -87,50 +100,61 @@ export async function applyProvisioning(
     outcome: { kind: "refused", reason },
   });
 
-  /** Where an entry lands, asked of the one gate that owns the answer. */
-  const destinationOf = async (entry: ProvisionEntry): Promise<string | null> => {
+  /**
+   * Observe one member's destination — the fact, not its contents.
+   *
+   * The gate owns where an entry lands, so this asks it rather than resolving
+   * the path a second way.
+   */
+  const read = async (entry: ProvisionEntry): Promise<Reading> => {
     const admitted = await admitEntry(entry, roots, deps);
-    return admitted.ok ? admitted.destination : null;
-  };
-
-  /** Present, not its contents. `undefined` for a destination the gate refuses. */
-  const present = async (entry: ProvisionEntry): Promise<boolean | undefined> => {
-    const destination = await destinationOf(entry);
-    if (destination === null) {
-      return undefined;
+    if (!admitted.ok) {
+      return "inadmissible";
     }
     try {
-      await deps.lstat(destination);
-      return true;
-    } catch {
-      return false;
+      await deps.lstat(admitted.destination);
+      return "present";
+    } catch (error) {
+      return codeOf(error) === "ENOENT" ? "absent" : "unreadable";
+    }
+  };
+
+  /**
+   * A contest whose destination nobody can prove free is refused, not written
+   * into. Anything but `absent` — including a gate refusal, which reaches the
+   * filesystem itself and so cannot be told apart from an unreadable
+   * destination (`resolvedPathBoundary.ts:117-121`).
+   */
+  const contended = (readings: readonly Reading[]): boolean => readings.some((reading) => reading !== "absent");
+
+  /** Refuse every member that is still claiming, naming the whole contest. */
+  const refuseContest = async (contest: Contest, why: string): Promise<void> => {
+    const members = [contest.favoured, ...contest.held];
+    for (const member of members) {
+      if (answered.has(member)) {
+        continue;
+      }
+      answered.set(member, step(member, `${members.map(declaredAs).join(", ")} ${why}`));
     }
   };
 
   const contests = contestsOf(entries);
   const held = new Map<ProvisionEntry, Contest>();
+  const live = new Map<ProvisionEntry, Contest>();
 
-  // BEFORE the ordered pass, so what it reads is what was already there rather
-  // than what this apply has since written (design.md D3). `EEXIST` cannot make
-  // the distinction: `makeDirectory` answers `written` for a directory that was
-  // already there and the walk then merges into it.
+  // BEFORE the ordered pass, so what it reads is what was already in the
+  // worktree rather than what this apply has since written (design.md D3).
   for (const contest of contests) {
     const members = [contest.favoured, ...contest.held];
-    const readings = await Promise.all(members.map(present));
-    if (readings.some((reading) => reading === true)) {
+    if (contended(await Promise.all(members.map(read)))) {
       // The whole group, not only the loser: leaving the favoured member to run
-      // would merge it into a destination it did not create and install neither
-      // its material nor its mode, while only the loser was reported.
-      for (const member of members) {
-        const others = members
-          .filter((other) => other !== member)
-          .map(declaredAs)
-          .join(", ");
-        const already = `${others} may name this same destination, and something was already there`;
-        answered.set(member, step(member, already));
-      }
+      // would merge it into a destination it did not create — `makeDirectory`
+      // answers `written` for an existing directory — installing neither its
+      // material nor its mode, while only the loser was reported.
+      await refuseContest(contest, "may name this same destination, and it could not be shown to be free before the apply began");
       continue;
     }
+    live.set(contest.favoured, contest);
     for (const member of contest.held) {
       held.set(member, contest);
     }
@@ -140,6 +164,22 @@ export async function applyProvisioning(
     if (answered.has(entry) || held.has(entry)) {
       continue;
     }
+    const contest = live.get(entry);
+    if (contest !== undefined) {
+      // AGAIN, immediately before this member's own turn. Between the reading
+      // above and here, an earlier uncontested entry can have created the name
+      // — a copy of `MixedCase/seed` has to create `MixedCase` — and the
+      // favoured member would then merge into a destination an unrelated writer
+      // owns while reporting that it claimed it (.reviews/round-1.md F001).
+      const members = [contest.favoured, ...contest.held];
+      if (contended(await Promise.all(members.map(read)))) {
+        await refuseContest(contest, "may name this same destination, and it could not be shown to be free at this entry own turn");
+        for (const member of contest.held) {
+          held.delete(member);
+        }
+        continue;
+      }
+    }
     answered.set(entry, await applyEntry(entry, roots, budget, deps));
   }
 
@@ -147,13 +187,16 @@ export async function applyProvisioning(
   // deferred copy starves nothing: a link entry points OUT of the worktree, and
   // a symlink recreated inside a copied tree resolves within that tree.
   for (const [member, contest] of held) {
+    if (answered.has(member)) {
+      continue;
+    }
     const claimed = answered.get(contest.favoured)?.outcome.kind;
     if (claimed !== "copied" && claimed !== "linked" && claimed !== "degradedToCopy") {
       const unclaimed = `${declaredAs(contest.favoured)} may name this same destination and did not claim it`;
       answered.set(member, step(member, unclaimed));
       continue;
     }
-    if ((await present(member)) !== false) {
+    if ((await read(member)) !== "absent") {
       // It may be the favoured member's own material under a folded name, a
       // descendant another entry's directory copy wrote, or a name another
       // process created — and nothing here tells those apart. Reporting it as

@@ -68,11 +68,13 @@ An observation is one of four states, never a boolean:
 | `absent` | `lstat` rejects with `ENOENT` | and only then is the destination free |
 | `present` | `lstat` resolves | something is there |
 | `unreadable` | `lstat` rejects with anything else — `EACCES`, `EIO`, `ELOOP` | absence was NOT established |
-| `inadmissible` | the entry gate refuses the entry outright | this member claims nothing; it is not a collision |
+| `inadmissible` | the entry gate refuses the entry outright | absence was NOT established either |
 
-Collapsing `unreadable` into `absent` is what lets a transient failure authorize the merge path,
-and collapsing `inadmissible` into `present` reports a collision that was never observed while
-discarding the refusal the gate actually had.
+Collapsing `unreadable` into `absent` is what lets a transient failure authorize the merge path.
+`inadmissible` is kept separate because the refusal the gate has is truer than any this could
+invent — but it is not evidence of absence: the gate reaches the filesystem itself
+(`src/utils/resolvedPathBoundary.ts:117-121` calls `realpath` and `lstat`), so an `EACCES` on the
+destination and a naming rule are the same answer from here. Only `ENOENT` frees a destination.
 
 ### D4 — The adjudication
 
@@ -80,13 +82,14 @@ For a contested group `G` with favoured `f` and each other selected member `m`:
 
 | What the apply observes | Outcome |
 |---|---|
-| Any member reads `present` or `unreadable` in either D3 reading | `f` and every `m` are `refused`, naming each other; nothing is written for the group |
+| Any member reads anything but `absent` in either D3 reading | `f` and every `m` are `refused`, naming each other; nothing is written for the group |
 | `f` did not claim — refused, skipped or failed | `m` is `refused`, naming both declarations |
 | `f` claimed and `m` does not read `absent` afterwards | `m` is `refused`, naming both declarations |
 | `f` claimed and `m` reads `absent` afterwards | `m` is applied, in the deferred position D2 gives it |
 
-An `inadmissible` member is none of these: it is applied in its ordinary place so the gate reports
-the refusal it actually has, and it never refuses anyone else.
+An `inadmissible` member outside a contest is untouched by all of this: it is applied in its
+ordinary place and the gate reports the refusal it actually has. Inside a contest it refuses the
+group like any other unproven destination, per row 1.
 
 Row 3 is one row on purpose. A destination that appeared during the apply may be `f`'s own
 material under a folded name, a descendant another entry's directory copy wrote, or a name another

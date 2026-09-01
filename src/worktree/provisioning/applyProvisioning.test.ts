@@ -186,13 +186,12 @@ describe("a destination two declarations may both name", () => {
       { folds: true },
     );
 
-    // What the uncontested entry gets is the outcome it has today. The favoured
-    // LINK loses its own slot to the directory `MixedCase/seed` had to create —
-    // a third entry, not the inherited declaration, which is still refused. The
-    // ledger claims the inherited declaration never WINS, not that the favoured
-    // one always does; promoting it is what the witness above rules out.
+    // The uncontested entry keeps the outcome it has today. The contest itself
+    // is refused rather than settled: `MixedCase/seed` had to create the
+    // directory, so no member can claim that destination by its own write, and
+    // neither declaration is written into what a third entry owns.
     expect(steps.map((s) => [s.path, s.outcome.kind])).toEqual([
-      ["MixedCase", "skipped"],
+      ["MixedCase", "refused"],
       ["mixedcase", "refused"],
       ["MixedCase/seed", "copied"],
     ]);
@@ -258,5 +257,66 @@ describe("a collision this apply cannot attribute to its own write", () => {
       kind: "refused",
       reason: expect.stringContaining("was not put there by this apply"),
     });
+  });
+});
+
+describe("absence is established, never assumed", () => {
+  it("refuses the contest when an earlier uncontested copy created the destination first", async () => {
+    // One reading, taken before the ordered pass, proves only what was in the
+    // worktree then. `makeDirectory` answers `written` for a directory that was
+    // already there and the walk merges into it, so the favoured member reported
+    // `copied` for a destination an unrelated entry owned, top-level mode and
+    // all (.reviews/round-1.md F001).
+    const tree = {
+      [`${MAIN}/MixedCase`]: { kind: "dir" } as const,
+      [`${MAIN}/MixedCase/inner`]: { kind: "file", size: 11 } as const,
+      [`${MAIN}/mixedcase`]: { kind: "file", size: 22 } as const,
+      [`${MAIN}/other`]: { kind: "dir" } as const,
+      [`${MAIN}/other/seed`]: { kind: "file" } as const,
+    };
+    const { steps, fs } = await applyTo(
+      tree,
+      [
+        entry("MixedCase/seed", "copy", INHERITED, "i3"),
+        entry("MixedCase", "copy", NATIVE, "i1"),
+        entry("mixedcase", "copy", INHERITED, "i2"),
+      ],
+      { folds: true },
+    );
+
+    expect(steps.map((s) => [s.path, s.outcome.kind])).toEqual([
+      ["MixedCase/seed", "failed"],
+      ["MixedCase", "refused"],
+      ["mixedcase", "refused"],
+    ]);
+    // The favoured member's material is NOT merged into what the other entry made.
+    expect(fs.nodes.get(`${WT}/MixedCase/inner`)).toBeUndefined();
+  });
+
+  it("refuses the contest when the destination cannot be read at all", async () => {
+    // `EACCES` is not `ENOENT`. Read as absence it authorizes the write path
+    // after failing to prove the destination free — the one direction this
+    // check must never fail in (.reviews/round-1.md F002).
+    const fs = fakeFs({ [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...CONTESTED }, { folds: true });
+    fs.beforeLstat = (p) => {
+      if (p === `${WT}/mixedcase`) {
+        const error = new Error(`EACCES: ${p}`) as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+    };
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("the fake could not prepare its roots");
+    }
+    const deadline = afterDelay(60_000);
+    try {
+      const steps = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+
+      expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
+      expect(fs.created).toEqual([]);
+    } finally {
+      deadline.cancel();
+    }
   });
 });
