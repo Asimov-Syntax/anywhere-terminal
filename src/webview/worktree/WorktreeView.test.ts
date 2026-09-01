@@ -2506,14 +2506,46 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     });
     const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
 
+    // Once each, in the contest's own line — not rebuilt per row, which is the
+    // quadratic this change removed from the wire and must not reintroduce
+    // here (.reviews/round-1.md F001).
     for (const declaration of [
       "MixedCase (declared in .vscode/worktree.json)",
       "mixedcase (declared in asimov/worktree.yaml)",
       "MIXEDCASE (declared in tools/worktree.yaml)",
     ]) {
-      expect(text).toContain(declaration);
+      expect(text.split(declaration)).toHaveLength(2);
     }
-    expect(text).toContain("it was claimed by the repository's own declaration");
+    // And EVERY refused row points into it, asserted per row rather than
+    // against the combined notice, where one row can supply the other's
+    // strings (F005).
+    const lines = (view.element.querySelector(".wt-reason")?.textContent ?? "").split("\n");
+    for (const path of ["mixedcase", "MIXEDCASE"]) {
+      const row = lines.find((line) => line.startsWith(`${path}:`));
+      expect(row).toBeDefined();
+      expect(row).toContain("it was claimed by the repository's own declaration");
+      expect(row).toContain("[contest 1]");
+    }
+  });
+
+  it("says so when a row cites a contest the report did not carry", () => {
+    // Falling back to the bare reason removes every declaring file exactly
+    // where the obligation to name them lives (.reviews/round-1.md F002).
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          worktreeId: "/wt/feature",
+          outcome: "ok",
+          provisioned: [{ id: "i2", path: "mixedcase", outcome: { kind: "refused", reason: "it lost" }, contest: 3 }],
+          provisionContests: [],
+        },
+      ],
+    });
+
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("was not reported");
   });
 
   it("[F018] names what was left INSIDE a directory that itself copied", () => {

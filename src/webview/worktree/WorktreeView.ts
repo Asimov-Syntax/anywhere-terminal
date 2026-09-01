@@ -1813,20 +1813,40 @@ function provisionSummary(
   contests: readonly ProvisionResultContest[] = [],
 ): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
   /**
-   * A refused row, and everyone else who named its destination.
+   * Which contest a row belongs to — a marker, never the membership.
    *
-   * The membership arrives once per contest and a step points at it by index,
-   * so this is where the two are put back together — the reason itself never
-   * repeats it (`carry-a-contest-membership-once`).
+   * Rebuilding the full list per row put the `O(N²)` the wire had just shed
+   * straight back into the notice and the DOM (.reviews/round-1.md F001). The
+   * membership is listed once, below the rows, and each row carries only a
+   * number into it.
+   *
+   * An index that does not resolve is SAID rather than dropped: silently
+   * falling back to the bare reason removes every declaring file exactly where
+   * the obligation to name them lives (F002).
    */
+  const cited = new Set<number>();
   const withContest = (step: ProvisionStepResult, reason: string): string => {
-    const members = step.contest === undefined ? undefined : contests[step.contest]?.members;
-    if (members === undefined || members.length === 0) {
+    if (step.contest === undefined) {
       return reason;
     }
-    const named = members.map((member) => `${member.path} (declared in ${member.source})`).join(", ");
-    return `${named} may name this same destination — ${reason}`;
+    const members = contests[step.contest]?.members;
+    if (members === undefined || members.length === 0) {
+      return `${reason} [contest ${step.contest + 1}, which was not reported]`;
+    }
+    cited.add(step.contest);
+    return `${reason} [contest ${step.contest + 1}]`;
   };
+
+  /** Each cited contest's membership, once, in index order. */
+  const contestLines = (): readonly string[] =>
+    [...cited]
+      .sort((a, b) => a - b)
+      .map(
+        (at) =>
+          `Contest ${at + 1}, one destination these may all name: ${(contests[at]?.members ?? [])
+            .map((member) => `${member.path} (declared in ${member.source})`)
+            .join(", ")}`,
+      );
   if (steps === undefined || steps.length === 0) {
     return undefined;
   }
@@ -1863,6 +1883,8 @@ function provisionSummary(
         (s) => `${s.path}: ${withContest(s, "reason" in s.outcome ? s.outcome.reason : s.outcome.kind)}`,
       ),
       ...inside.map((d) => `${d.path}: ${d.reason}`),
+      // After the rows, because it explains them.
+      ...contestLines(),
     ].join("\n"),
   };
 }

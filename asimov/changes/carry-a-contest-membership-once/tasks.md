@@ -36,7 +36,7 @@ of result text over a wire whose input is capped at `T`. The membership travels 
 
 ## 2. Round-1 blockers
 
-- [ ] 2_1 Render the membership once, not once per row
+- [x] 2_1 Render the membership once, not once per row — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: .reviews/round-1.md#f001, .reviews/round-1.md#f002, .reviews/round-1.md#f005
   - **Acceptance**:
