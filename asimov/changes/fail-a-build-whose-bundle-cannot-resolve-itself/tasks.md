@@ -75,7 +75,7 @@ the extension failed to activate. No suite could catch it, because every suite i
 
 ## 4. Round-3 handback — delegate lexical identity to the binder
 
-- [ ] 4_1 Resolve callees through TypeScript's binder instead of a hand-rolled scope walk
+- [x] 4_1 Resolve callees through TypeScript's binder instead of a hand-rolled scope walk — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D2, D3
   - **Acceptance**:

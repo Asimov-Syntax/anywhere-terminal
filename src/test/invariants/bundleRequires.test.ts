@@ -95,9 +95,12 @@ describe("[round-1 F003] the externals come from the bundle's own build", () => 
 
 describe("[round-1 F002] a require is a call, not a piece of text", () => {
   it("catches the relative require a UMD factory left behind", () => {
-    expect(requiredSpecifiers(`function(require, exports){ var f = require("./impl/format"); }`)).toEqual([
-      "./impl/format",
-    ]);
+    // INVOKED. The uninvoked spelling this once used is source-only — it never
+    // reaches a bundle — and keeping it forced a spelling seed that falsely
+    // rejected a legitimate local binding named `require` (round-3 F007).
+    expect(
+      requiredSpecifiers(`(function(require, exports){ var f = require("./impl/format"); })(require, {});`),
+    ).toEqual(["./impl/format"]);
   });
 
   it("does not report one written inside a comment", () => {
@@ -287,5 +290,27 @@ describe("[round-2 F003] a config the extractor cannot read is refused", () => {
 
   it("still reads the plain literal shape the repo actually has", () => {
     expect([...declaredExternals(ESBUILD, OUT)]).toEqual(["vscode", "node-pty"]);
+  });
+});
+
+
+// [round-3 F004/F005/F007] Lexical identity comes from TypeScript's binder, so a
+// callee is judged by what it RESOLVES to. `declarations === null` is the exact
+// ambient test; a local binding that merely spells `require` has a declaration.
+describe("[round-3] a callee is judged by what it resolves to", () => {
+  it("follows a scalar alias of require", () => {
+    expect(requiredSpecifiers(`var r = require; r("./alias");`)).toEqual(["./alias"]);
+  });
+
+  it("follows a factory declared with a function declaration", () => {
+    expect(requiredSpecifiers(`function factory(req){ req("./decl"); } factory(require);`)).toEqual(["./decl"]);
+  });
+
+  it("does not report a declared local that merely spells require", () => {
+    expect(requiredSpecifiers(`function outer(require){ return require("./local-cb"); } outer(function (x) { return x; });`)).toEqual([]);
+  });
+
+  it("still reports the ambient require", () => {
+    expect(requiredSpecifiers(`require("./direct");`)).toEqual(["./direct"]);
   });
 });
