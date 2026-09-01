@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as tsmod from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -206,45 +207,83 @@ describe("one owner for the lockfile rule", () => {
  * `deps.realpath()` defeats a lexical match on the helper alone, and that is
  * exactly the shape the eighth mechanism will have.
  *
- * Two limits, stated rather than hidden. The walk follows CALL SITES, so a
- * helper handed across as a bare value — `mergeEntries(a, b, probe)` — is an
- * edge it cannot see; that is why every root is walked on its own instead of
- * relying on one graph to cover the others, and why dropping a root from this
- * list silently drops a guarantee. And it reads one file: a hook reached
- * through an imported helper is caught only because passing `deps` to that
- * helper is visible in the caller's own body, which is what the pattern below
- * matches first.
+ * Round 1 F005 replaced the regex this started as. That version recognised only
+ * `function` at the left margin, so an arrow-function helper — the ordinary way
+ * anyone would write one — walked straight past a gate whose whole job is to
+ * stop the next mechanism. It also followed CALL sites only, so a helper handed
+ * across as a bare value was an invisible edge. Both are closed by parsing:
+ * every named callable form is a node, and every identifier REFERENCE is an
+ * edge, whether or not it is called where it is named.
+ *
+ * What it still does not do is cross a module boundary, and that is why the
+ * pattern below matches `deps` itself: handing the deps to an imported helper
+ * is the only way one can reach a hook, and that hand-off is visible here.
  */
 const IDENTITY_ROOTS = ["identityOf", "foldable", "mergeEntries", "applyExclude", "contendersOf"] as const;
 
 /** Every dep hook, plus the value that carries them and the keyword they need. */
 const CONSULTS_A_FILESYSTEM = /\bdeps\b|\bawait\b|\.(?:readFile|readdir|realpath|lstat)\s*\(/;
 
-/** `function name(` at the left margin, and everything up to the next one. */
-function topLevelFunctions(source: string): Map<string, string> {
-  const marks = [...source.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)];
-  const bodies = new Map<string, string>();
-  marks.forEach((mark, i) => {
-    const start = mark.index ?? 0;
-    const end = i + 1 < marks.length ? (marks[i + 1]?.index ?? source.length) : source.length;
-    const name = mark[1];
-    if (name !== undefined) {
-      bodies.set(name, source.slice(start, end));
+/** `ts.sys` is undefined when the namespace import is used directly under bun. */
+const ts: typeof tsmod = (tsmod as { default?: typeof tsmod }).default ?? tsmod;
+
+/**
+ * Every named callable in the file, whatever form it was written in.
+ *
+ * Declarations, `const f = () => {}`, `const f = function () {}`, and object or
+ * class methods. Nesting is walked too: a helper declared inside another
+ * function is still a helper.
+ */
+function callablesOf(source: string): Map<string, tsmod.Node> {
+  const file = ts.createSourceFile("probe.ts", source, ts.ScriptTarget.Latest, true);
+  const found = new Map<string, tsmod.Node>();
+
+  const visit = (node: tsmod.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name !== undefined) {
+      found.set(node.name.text, node);
+    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+      const init = node.initializer;
+      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+        found.set(node.name.text, init);
+      }
+    } else if ((ts.isMethodDeclaration(node) || ts.isPropertyAssignment(node)) && ts.isIdentifier(node.name)) {
+      const body = ts.isMethodDeclaration(node) ? node : node.initializer;
+      if (
+        body !== undefined &&
+        (ts.isMethodDeclaration(body) || ts.isArrowFunction(body) || ts.isFunctionExpression(body))
+      ) {
+        found.set(node.name.text, body);
+      }
     }
-  });
-  return bodies;
+    ts.forEachChild(node, visit);
+  };
+
+  visit(file);
+  return found;
+}
+
+/** Every identifier a node mentions — a reference, not only a call. */
+function referencesOf(node: tsmod.Node): Set<string> {
+  const names = new Set<string>();
+  const visit = (child: tsmod.Node): void => {
+    if (ts.isIdentifier(child)) {
+      names.add(child.text);
+    }
+    ts.forEachChild(child, visit);
+  };
+  visit(node);
+  return names;
 }
 
 /**
- * The roots and everything they call, transitively.
+ * The roots and everything they reach, transitively.
  *
- * A name that resolves to an import rather than a local function is not in the
- * map and cannot be walked — which is why the pattern above matches `deps`
- * itself. Handing the deps to somebody else is the only way an import can reach
- * a hook, and that hand-off is visible in the caller's own body.
+ * A name that resolves to an import rather than a local callable is not in the
+ * map and cannot be walked, which is the one limit left and the reason the
+ * pattern matches `deps` itself.
  */
 function reachableFrom(source: string, roots: readonly string[]): Set<string> {
-  const bodies = topLevelFunctions(source);
+  const callables = callablesOf(source);
   const seen = new Set<string>();
   const queue = [...roots];
   for (;;) {
@@ -252,32 +291,37 @@ function reachableFrom(source: string, roots: readonly string[]): Set<string> {
     if (name === undefined) {
       return seen;
     }
-    const body = bodies.get(name);
-    if (body === undefined || seen.has(name)) {
+    const node = callables.get(name);
+    if (node === undefined || seen.has(name)) {
       continue;
     }
     seen.add(name);
-    for (const other of bodies.keys()) {
-      if (other !== name && new RegExp(`\\b${other}\\s*\\(`).test(body)) {
+    for (const other of referencesOf(node)) {
+      if (other !== name && callables.has(other)) {
         queue.push(other);
       }
     }
   }
 }
 
+/** The source of one reachable callable, comments stripped like everything else here. */
+function bodyOf(source: string, name: string): string {
+  const node = callablesOf(source).get(name);
+  return node === undefined ? "" : node.getText();
+}
+
 describe("identity never reaches a filesystem", () => {
   const source = sourceOf("readProvisioning.ts");
 
   it("names roots that all still exist, so the walk below is not vacuous", () => {
-    const bodies = topLevelFunctions(source);
+    const callables = callablesOf(source);
 
-    expect(IDENTITY_ROOTS.filter((root) => !bodies.has(root))).toEqual([]);
+    expect(IDENTITY_ROOTS.filter((root) => !callables.has(root))).toEqual([]);
   });
 
-  it.each(IDENTITY_ROOTS)("%s reaches no dep hook, directly or through a helper", (root) => {
-    const bodies = topLevelFunctions(source);
+  it.each(IDENTITY_ROOTS)("%s reaches no dep hook, in any callable shape", (root) => {
     const offenders = [...reachableFrom(source, [root])].filter((name) =>
-      CONSULTS_A_FILESYSTEM.test(bodies.get(name) ?? ""),
+      CONSULTS_A_FILESYSTEM.test(bodyOf(source, name)),
     );
 
     expect(offenders).toEqual([]);
@@ -290,26 +334,72 @@ describe("identity never reaches a filesystem", () => {
       "}",
     ].join("\n");
 
-    expect(reachableFrom(direct, ["identityOf"]).size).toBe(1);
-    expect(CONSULTS_A_FILESYSTEM.test(topLevelFunctions(direct).get("identityOf") ?? "")).toBe(true);
+    expect(CONSULTS_A_FILESYSTEM.test(bodyOf(direct, "identityOf"))).toBe(true);
   });
 
-  it("catches a root that reaches one through a second helper", () => {
-    // The root itself is clean here. A check that read only the root's own body
-    // would pass this, which is the whole reason the walk exists.
-    const indirect = [
+  it("[round-1 F005] catches an ARROW helper, which the regex walk could not see", () => {
+    // The shape anyone would actually write. The old walk matched `function` at
+    // the left margin, so this file was green while the hook was one hop away.
+    const arrow = [
       "function identityOf(declared: string, io: Io): string {",
       "  return inspect(declared, io);",
       "}",
-      "async function inspect(declared: string, deps: ProviderDeps): Promise<string> {",
+      "const inspect = async (declared: string, deps: ProviderDeps): Promise<string> => {",
       "  return deps.realpath(declared);",
-      "}",
+      "};",
     ].join("\n");
-    const bodies = topLevelFunctions(indirect);
-    const reached = reachableFrom(indirect, ["identityOf"]);
+    const reached = reachableFrom(arrow, ["identityOf"]);
 
-    expect(CONSULTS_A_FILESYSTEM.test(bodies.get("identityOf") ?? "")).toBe(false);
-    expect([...reached].filter((n) => CONSULTS_A_FILESYSTEM.test(bodies.get(n) ?? ""))).toEqual(["inspect"]);
+    expect(CONSULTS_A_FILESYSTEM.test(bodyOf(arrow, "identityOf"))).toBe(false);
+    expect([...reached].filter((n) => CONSULTS_A_FILESYSTEM.test(bodyOf(arrow, n)))).toEqual(["inspect"]);
+  });
+
+  it("[round-1 F005] catches a helper handed across as a value rather than called", () => {
+    // `mergeEntries(a, b, probe)` never writes `probe(`, so a call-site walk
+    // sees no edge at all. Every identifier reference is an edge now.
+    const passed = [
+      "function identityOf(declared: string, io: Io): string {",
+      "  return mergeEntries(declared, io, probe);",
+      "}",
+      "const probe = async (declared: string, deps: ProviderDeps): Promise<string> => {",
+      "  return deps.realpath(declared);",
+      "};",
+    ].join("\n");
+
+    expect(reachableFrom(passed, ["identityOf"]).has("probe")).toBe(true);
+  });
+
+  it("[round-1 F005] catches a hook reached through an object method", () => {
+    const method = [
+      "function identityOf(declared: string): string {",
+      "  return probes.resolve(declared);",
+      "}",
+      "const probes = {",
+      "  resolve(declared: string) {",
+      "    return deps.realpath(declared);",
+      "  },",
+      "};",
+    ].join("\n");
+    const reached = reachableFrom(method, ["identityOf"]);
+
+    expect([...reached].filter((n) => CONSULTS_A_FILESYSTEM.test(bodyOf(method, n)))).toEqual(["resolve"]);
+  });
+
+  it("[round-1 F005] proves the shapes above are ones the lexical walk could not see", () => {
+    // Non-vacuity for the three tests before this. The walk this replaced found
+    // callables with `^(?:export )?(?:async )?function NAME`, so if that pattern
+    // still matched them the AST would be doing no work worth having.
+    const LEFT_MARGIN_FUNCTION = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm;
+    const shapes = [
+      "const inspect = async (declared: string, deps: ProviderDeps): Promise<string> => {\n  return deps.realpath(declared);\n};",
+      "const probe = async (declared: string, deps: ProviderDeps) => deps.realpath(declared);",
+      "const probes = {\n  resolve(declared: string) {\n    return deps.realpath(declared);\n  },\n};",
+    ];
+
+    for (const shape of shapes) {
+      expect(shape.match(LEFT_MARGIN_FUNCTION)).toBeNull();
+      expect(callablesOf(shape).size).toBeGreaterThan(0);
+    }
   });
 
   it("does not fire on a helper that only reads the declared spelling", () => {
@@ -318,8 +408,7 @@ describe("identity never reaches a filesystem", () => {
       "  return path.posix.normalize(declared).replace(/\\/+$/, '');",
       "}",
     ].join("\n");
-    const bodies = topLevelFunctions(clean);
 
-    expect(CONSULTS_A_FILESYSTEM.test(bodies.get("identityOf") ?? "")).toBe(false);
+    expect(CONSULTS_A_FILESYSTEM.test(bodyOf(clean, "identityOf"))).toBe(false);
   });
 });

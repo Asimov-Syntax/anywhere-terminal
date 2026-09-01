@@ -94,7 +94,7 @@
     2. Assert it against the three-member fixture the suite already builds, which is the case that was never asserted.
   - **Boundary**: no CSS file under `docs/ui/` is touched — both are owned by an external design pass
 
-- [ ] 4_3 Catch a filesystem reach in any callable shape, not only a top-level function
+- [x] 4_3 Catch a filesystem reach in any callable shape, not only a top-level function — verified: pnpm exec vitest run 'src/worktree/provisioning/oneOwner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md#obligation-ledger
   - **Acceptance**:
