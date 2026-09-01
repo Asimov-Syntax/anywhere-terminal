@@ -7,7 +7,7 @@
 ## Plan
 
 - [-] Gate 1: direction approved — no real fork: the seam, the roots and the refusals are all fixed by worktree-apply.md § 2.1-2.3 and the PLAN Acceptance
-- [ ] `asm change validate` passes
+- [x] `asm change validate` passes
 - [x] Gate 2: plan approved
 
 ## Implement
@@ -154,3 +154,10 @@ content identity. D3 builds the safety half; neither missing half is in WT-012.2
   than ticks, the next round is a DISCOVERY round in a new cycle. Round 4 needs the user's grant, so
   the change parks here with all 12 round-2 findings fixed, mutation-checked and green but
   unadjudicated.
+- Gate 2 re-earned for the 3_1/3_2 task delta, which round 3's Route required and which the original
+  Gate 2 (`3f3c8418`) predates — the scaffold landed at `da95a7e4`, after it. No `D#` moved and no
+  invariant owner was minted: both tasks remediate accepted round-2 findings inside the accepted
+  contract, and their implementation (`1dc745ef`, `cecab7c8`) is built, verified and green.
+  `asm change validate` reports 0 errors; its 3 warnings are pre-existing and sit on tasks already
+  ticked. Fastlane auto-approves. Round 4 therefore opens as cycle 2 DISCOVERY over the cumulative
+  change, with all 12 round-2 findings and the 11 round-3 left unadjudicated.
