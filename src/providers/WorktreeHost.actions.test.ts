@@ -4872,6 +4872,76 @@ describe("the provisioning a create is actually given", () => {
     dispose();
   });
 
+  it("[F001] says WHY it refused a stale offer, on the arm the panel already reads", async () => {
+    // The absent create was the only thing the first version of this test
+    // asserted, and it is exactly half the contract: D3 says the refusal is
+    // stated "on the existing worktreeMutationResult error arm". A Create
+    // button that silently does nothing teaches the user nothing about the one
+    // recovery that works.
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    host.handleMessage(view, {
+      ...REQ,
+      provision: { offerId: `${offer.offerId}-stale`, itemIds: offer.model.entries.map((e) => e.id) },
+    });
+    await settle();
+
+    expect(creates(calls)).toEqual([]);
+    const refusal = (view.posts as ExtensionToWebViewMessage[]).find((m) => m.type === "worktreeMutationResult") as
+      | WorktreeMutationResultMessage
+      | undefined;
+    expect(refusal).toMatchObject({ verb: "create", repoId: REPO, result: { kind: "error" } });
+    expect(refusal?.result.kind === "error" && refusal.result.message).toMatch(/reopen the dialog/i);
+    dispose();
+  });
+
+  it.each([
+    ["item ids that are not a list", (o: string) => ({ offerId: o, itemIds: "all" })],
+    ["item ids that are not strings", (o: string) => ({ offerId: o, itemIds: [1, 2] })],
+    ["a field nobody declared", (o: string) => ({ offerId: o, itemIds: [], andAlso: "/etc/passwd" })],
+    ["no offer id at all", () => ({ itemIds: [] })],
+    ["nothing that is even an object", () => "nope"],
+  ])("[F006] refuses a selection with %s, and says nothing about it", async (_label, build) => {
+    // Built on the LIVE offer id, which is the whole point. The first version
+    // of this test used a made-up id, so every case was refused by the stale-
+    // offer branch one line below and the guard could be deleted with the suite
+    // still green — it witnessed the wrong layer. With the live id, only the
+    // shape check stands between these messages and a create.
+    //
+    // Two assertions, because "no create" alone does not separate the two
+    // refusals: a stale offer is a state the user can recover from and SAYS so,
+    // a malformed message is a protocol violation that fails closed in silence
+    // (worktree-rpc.md § 4).
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    view.posts.length = 0;
+    expect(() =>
+      host.handleMessage(view, { ...REQ, provision: build(offer.offerId) } as unknown as Parameters<
+        typeof host.handleMessage
+      >[1]),
+    ).not.toThrow();
+    await settle();
+
+    expect(creates(calls)).toEqual([]);
+    expect((view.posts as ExtensionToWebViewMessage[]).filter((m) => m.type === "worktreeMutationResult")).toEqual([]);
+    dispose();
+  });
+
+  it("[F006] throws nothing for item ids that are not iterable at all", async () => {
+    // `new Set(null)` throws, and this handler is reached from a dispatch that
+    // returns BEFORE its try — so without the guard this one escaped into VS
+    // Code's message callback rather than failing closed.
+    const { host, view, calls, offer, dispose } = await formWithOffer();
+    expect(() =>
+      host.handleMessage(view, {
+        ...REQ,
+        provision: { offerId: offer.offerId, itemIds: null },
+      } as unknown as Parameters<typeof host.handleMessage>[1]),
+    ).not.toThrow();
+    await settle();
+
+    expect(creates(calls)).toEqual([]);
+    dispose();
+  });
+
   it("creates NOTHING against an offer the store no longer holds", async () => {
     // D3, and the reason it is a refusal rather than a downgrade: honouring a
     // stale id would provision from a model the user has stopped looking at,

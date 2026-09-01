@@ -575,18 +575,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           // (worktree-apply.md § 1). A link is only ever to material the copy
           // pass may have just put there.
           const ordered = [...entries].sort((a, b) => Number(a.mode === "link") - Number(b.mode === "link"));
-          for (const entry of ordered) {
-            steps.push(
-              await applyEntry(
-                entry,
-                roots,
-                { maxNodes: 20_000, maxBytes: 512 * 1024 * 1024, deadline: afterDelay(60_000) },
-                nodeApplyFsDeps,
-              ),
-            );
+          // ONE budget for the whole apply, shared by every entry. Minting it
+          // per iteration multiplied D10's bound by the entry count — against
+          // the provider's own row cap that is hours of wall clock and a
+          // hundred gigabytes, all of it holding the mutation queue that every
+          // removal for this repository is waiting in (round-1 F007).
+          const budget = {
+            maxNodes: 20_000,
+            maxBytes: 512 * 1024 * 1024,
+            deadline: afterDelay(60_000),
+          };
+          try {
+            for (const entry of ordered) {
+              steps.push(await applyEntry(entry, roots, budget, nodeApplyFsDeps));
+            }
+          } finally {
+            budget.deadline.cancel();
           }
           return steps;
         },
+        // The SAME call the tree's own `normalize` makes at `:648`. Spelled
+        // identically on purpose: two normalizations of one path are two ids.
+        normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
         runner: worktreeTreeDeps.runner,
         forceRebuild: bindings.forceRebuild,
         resolve: bindings.resolve,

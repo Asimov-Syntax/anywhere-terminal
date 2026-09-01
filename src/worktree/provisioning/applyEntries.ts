@@ -31,6 +31,7 @@ import { pipeline } from "node:stream/promises";
 import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
 import { isResolvedPathInsideRoot, type ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
 import type { Deadline } from "../deadline";
+import { messageOf } from "../errorMessage";
 import { admitEntry, type EntryGateRoots } from "./entryGate";
 
 /** The subset of `fs.Stats` this walk turns on. */
@@ -108,9 +109,6 @@ class BudgetExceeded extends Error {}
 const NO_SYMLINK: ReadonlySet<string> = new Set(["EPERM", "ENOSYS", "UNKNOWN"]);
 
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code;
-
-const messageOf = (error: unknown): string =>
-  error instanceof Error ? error.message : typeof error === "string" ? error : "unknown error";
 
 /**
  * Apply one entry, and never throw for it.

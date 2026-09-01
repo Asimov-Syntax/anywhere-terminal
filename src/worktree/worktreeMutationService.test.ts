@@ -4,6 +4,7 @@
 // against the target the id names AFTER the rebuild.
 
 import { describe, expect, it, vi } from "vitest";
+import type { ProvisionStepResult } from "../types/messages";
 import type { ClearDebrisDeps } from "./clearDebris";
 import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
@@ -1854,8 +1855,37 @@ describe("provisioning rides the create without ever costing it", () => {
   });
   const okOutcome = (h: ReturnType<typeof harness>) =>
     h.outcomes.find((o) => (o as { verb?: string }).verb === "create") as
-      | { kind: string; provision?: { path: string; steps: readonly { id: string }[] } }
+      | { kind: string; provision?: { path: string; steps: readonly ProvisionStepResult[] } }
       | undefined;
+
+  it("[F009] says a selection was not applied rather than dropping it into a silent success", async () => {
+    // A host with no binding cannot provision. Returning `provision: undefined`
+    // produced an outcome byte-identical to "the user ticked nothing", which is
+    // the one answer indistinguishable from the truth — the user is told the
+    // worktree was made and never told their files were not brought over.
+    const h = harness({ applyProvision: undefined });
+    await h.service.createWorktree(create({ provision: entries }));
+    const outcome = okOutcome(h);
+
+    expect(outcome?.kind).toBe("ok");
+    expect(outcome?.provision?.steps.map((s) => s.outcome.kind)).toEqual(["failed", "failed"]);
+    expect(outcome?.provision?.steps.map((s) => s.id)).toEqual(["i1", "i2"]);
+  });
+
+  it("[F015] reports the id the tree keys on, not the path git was handed", async () => {
+    const h = harness({ normalizeWorktreeId: async () => "/normalized/feat" });
+    await h.service.createWorktree(create({ provision: entries }));
+
+    expect(okOutcome(h)?.provision?.path).toBe("/normalized/feat");
+  });
+
+  it("[F015] falls back to the resolved path when nothing can normalize it", async () => {
+    const h = harness({ normalizeWorktreeId: async () => null });
+    await h.service.createWorktree(create({ provision: entries }));
+
+    expect(okOutcome(h)?.provision?.path).toBeTypeOf("string");
+    expect(okOutcome(h)?.provision?.path).not.toBe("/normalized/feat");
+  });
 
   it("keeps the create successful when apply REJECTS, not merely when it reports a failure", async () => {
     // The witness the plan attack asked for. A fake that RETURNS a failed step

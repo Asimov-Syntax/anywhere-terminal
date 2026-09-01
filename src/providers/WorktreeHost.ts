@@ -15,6 +15,7 @@ import type {
   ProbeBase,
   ProvisionEntry,
   ProvisionModel,
+  ProvisionSelection,
   ResolvedDisposition,
   ResolvedMode,
   WebViewToExtensionMessage,
@@ -1388,6 +1389,24 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * variant here would let an inbound message weaken the destination rule with
    * an authorization nobody ever granted (round-1 B1).
    */
+  /**
+   * A selection is two fields and nothing else: an offer id, and the ids ticked
+   * in it. Both are strings the webview chose, so both are checked here rather
+   * than downstream — the resolution below reads them the moment this returns.
+   */
+  function isKnownProvision(provision: unknown): provision is ProvisionSelection {
+    if (typeof provision !== "object" || provision === null || !onlyKeys(provision, ["offerId", "itemIds"])) {
+      return false;
+    }
+    const p = provision as { offerId?: unknown; itemIds?: unknown };
+    return (
+      typeof p.offerId === "string" &&
+      p.offerId.length > 0 &&
+      Array.isArray(p.itemIds) &&
+      p.itemIds.every((id) => typeof id === "string")
+    );
+  }
+
   function isKnownDisposition(disposition: unknown): disposition is DestinationDisposition {
     if (typeof disposition !== "object" || disposition === null) {
       return false;
@@ -1882,8 +1901,31 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // dialog.
         let selected: readonly ProvisionEntry[] | undefined;
         if (msg.provision !== undefined) {
+          // Checked at RUNTIME like its three neighbours above. It was the one
+          // field that got only a `!== undefined` before `.offerId` and
+          // `new Set(.itemIds)` were read off it — and the worktree dispatch at
+          // `TerminalViewProvider.ts:1024-1031` returns BEFORE its `try`, so a
+          // malformed message escaped into VS Code's callback instead of
+          // failing closed (round-1 F006).
+          if (!isKnownProvision(msg.provision)) {
+            return;
+          }
           const offered = offers.lookup({ surface: surfaceKey(surface), repoId: msg.repoId }, msg.provision.offerId);
           if (offered === undefined) {
+            // Refused OUT LOUD. D3 says a stale offer refuses the create "with
+            // a stated reason, on the existing error arm"; returning bare left
+            // the user with a Create button that did nothing and no way to
+            // learn that reopening the dialog is the recovery (round-1 F001).
+            surface.post({
+              type: "worktreeMutationResult",
+              verb: "create",
+              repoId: msg.repoId,
+              result: {
+                kind: "error",
+                message:
+                  "the list of files to bring over is out of date — close and reopen the dialog, then create again",
+              },
+            });
             return;
           }
           const wanted = new Set(msg.provision.itemIds);

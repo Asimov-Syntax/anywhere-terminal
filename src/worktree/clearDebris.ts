@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { isPathInside, normalizePathForCompare } from "../utils/pathBoundary";
 import { type ComponentWalk, identityOf, type LstatLike, walkComponentsSync } from "./createPath";
 import { type GitEntryProbe, probeGitEntry } from "./debrisClassification";
+import { messageOf } from "./errorMessage";
 
 export interface ClearDebrisDeps {
   /**
@@ -217,8 +218,4 @@ function refuseWalk(walk: ComponentWalk): string | null {
       // "could not tell" is a refusal rather than a pass.
       return "That directory could not be read, so it will not be cleared.";
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

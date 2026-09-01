@@ -83,7 +83,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     7. `src/worktree/provisioning/applyEntries.test.ts`, `src/worktree/provisioning/entryGate.test.ts`: one invariant-level falsifier per boundary — a single oversized file, an oversized listing, an already-expired deadline, a backslash spelling of each refused basename, a truncated `details`, a missing destination parent.
   - **Boundary**: no deletion primitive may appear in this module — the D9 report-don't-unwind rule and the I10 gate both still hold
 
-- [ ] 2_2 Say what happened, on every arm that can happen
+- [x] 2_2 Say what happened, on every arm that can happen — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D3, D8, D10; .reviews/round-1.md F001, F006, F007, F009, F010, F011, F015
   - **Acceptance**:

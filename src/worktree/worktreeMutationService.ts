@@ -20,6 +20,7 @@ import {
   type DebrisAuthorizationStore,
   type DebrisIssueResult,
 } from "./debrisAuthorization";
+import { messageOf } from "./errorMessage";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
@@ -204,6 +205,15 @@ export interface MutationServiceDeps {
     worktreePath: string,
     entries: readonly ProvisionEntry[],
   ): Promise<readonly ProvisionStepResult[]>;
+
+  /**
+   * The identity the TREE gives a worktree path — `WorktreeInfo.id`.
+   *
+   * Optional for the same reason `applyProvision` is: a caller without it
+   * reports the resolved path, which is what every caller did before. Answers
+   * null for a path it cannot normalize, and the path is used then.
+   */
+  normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
 
   runner: GitCommandRunner;
   /**
@@ -933,15 +943,27 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // SUCCESSFUL git create as a create error — the defect the plan
             // attack found by reading that arm rather than this line.
             let provisioned: readonly ProvisionStepResult[] | undefined;
-            if (request.provision !== undefined && request.provision.length > 0 && deps.applyProvision !== undefined) {
-              provisioned = await deps.applyProvision(repoPath, check.path, request.provision).catch((error: unknown) =>
-                request.provision?.map((entry) => ({
+            const wanted = request.provision ?? [];
+            if (wanted.length > 0) {
+              const failed = (reason: string): readonly ProvisionStepResult[] =>
+                wanted.map((entry) => ({
                   id: entry.id,
                   path: entry.path,
-                  outcome: { kind: "failed" as const, reason: messageOf(error) },
-                })),
-              );
+                  outcome: { kind: "failed" as const, reason },
+                }));
+              provisioned =
+                deps.applyProvision === undefined
+                  ? // A host with no binding cannot provision, but it CAN say so.
+                    // Dropping the selection produced an outcome byte-identical
+                    // to "the user selected nothing", which is the one answer
+                    // nobody can tell from the truth (round-1 F009).
+                    failed("this window cannot bring files over")
+                  : await deps.applyProvision(repoPath, check.path, wanted).catch((error) => failed(messageOf(error)));
             }
+            // The id the tree will key this worktree on, not the path git was
+            // handed — a result message whose `worktreeId` is only USUALLY the
+            // one consumers hold is a latent mismatch (round-1 F015).
+            const provisionedAt = (await deps.normalizeWorktreeId?.(check.path)) ?? check.path;
             // The worktree is already made. Whatever this rejects with, it
             // reports as a launch that did not happen — it never unmakes it.
             await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
@@ -955,8 +977,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               ...(openFailure === null ? {} : { openFailed: openFailure }),
               // A repair provisions nothing, so this rides the create branch only:
               // a reattach rewrites a link to a directory git already registered.
-              ...(provisioned === undefined ? {} : { provision: { path: check.path, steps: provisioned } }),
-              ...(provisioned === undefined ? {} : { provision: { path: check.path, steps: provisioned } }),
+              ...(provisioned === undefined ? {} : { provision: { path: provisionedAt, steps: provisioned } }),
               // Only a SURFACE can open a terminal — it needs a view id and a
               // webview (D2). The host performs it on the origin.
               ...(request.afterCreate.kind === "terminal" ? { openTerminalAt: check.path } : {}),
@@ -1046,8 +1067,4 @@ function sourceOf(mode: WorktreeCreateMode): CreateSource {
     case "adopt":
       throw new Error(`"${mode.kind}" is not a git worktree add; it has no CreateSource.`);
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
