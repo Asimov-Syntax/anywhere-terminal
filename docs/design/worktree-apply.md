@@ -53,6 +53,26 @@ copied from main describes main's dependency tree, and the entire point of a per
 is that this branch's lockfile is authoritative. A provider entry naming one is reported as a
 skipped step with that reason.
 
+The rule is over the **resolved destination**, not the spelling the provider wrote, and it applies
+at every depth: a lockfile found inside a copied directory, and a symlink named like one whose
+target lands inside the repository, are both refused. A rule over the spelling would refuse
+`scratch./../.env`, whose offending segment resolution has already discarded; a rule over the top
+level alone lets the same file arrive one directory down.
+
+The name is compared as the **filesystem's own identity for it**. Case is folded everywhere.
+Trailing dots, trailing spaces and a `::$DATA` suffix are folded only under Win32 path semantics,
+where they name the same object; on POSIX they are literal bytes in a filename and folding them
+would refuse a file the rule was never about.
+
+The whole apply is **bounded, and the bound is shared across every entry**: a node count, a byte
+count and a deadline. One selected directory can hold a million files, and this runs inside the
+per-repository mutation queue, so an unbounded walk delays the create result and every mutation
+behind it. A transfer is bounded **while it runs** rather than audited afterwards — a size read
+before the open is an estimate, and a source that grows between the two would otherwise pass a
+check that had not been spent yet. A transfer that fails after writing part of a file is charged
+for what it wrote: those bytes are in the worktree, because a failed step is never rolled back
+(§ 2.5), and a later entry must not be able to spend them again.
+
 ### 2.2 Link
 
 A relative symlink from the worktree to the main checkout.
@@ -72,6 +92,10 @@ lockfiles and corrupts installs that run concurrently. The supported answer is p
 `virtualStoreType: global` plus a per-worktree `pnpm install` in `setup` — cheap, because the
 global store is already populated. An entry naming `node_modules` with `mode: "link"` is reported
 as a refused step naming this rule.
+
+The refusal is about **sharing a dependency tree**, so it is scoped to a root named `node_modules`
+in `link` mode. A `node_modules` directory found inside a copied tree shares nothing and is copied
+like anything else; refusing it would make a copied dependency tree unreachable.
 
 ### 2.3 Ports
 
@@ -204,7 +228,13 @@ appears in `git status`, and git's own removal takes it with the worktree.
   outside — is **refused and reported**, never clamped into range. Clamping turns a suspicious
   entry into a silently different one.
 - Copy never follows a symlink out of the repository; a symlinked source resolving outside is
-  refused under the same rule as an escaping path.
+  refused under the same rule as an escaping path. Both ends are opened **no-follow**: an `lstat`
+  saying "regular file" is not a promise the path is still one when the open happens, so the source
+  is opened `O_RDONLY | O_NOFOLLOW` and the destination exclusively, and each descent re-checks.
+- **The intermediate-component window is named, not closed.** Validating `/wt/cfg/secret`, then
+  having something replace `cfg` with a symlink out of the worktree before the write, escapes
+  through a component that is neither end. Node exposes no `openat`, so no walk written in Node can
+  close it; the per-descent check narrows it and the exclusive create protects the final component.
 - A setup command runs only because the user left its checkbox ticked, and what runs is the
   host-held model the offer names — never text the webview supplied, and never a re-read of the
   provider file after submit ([worktree-provisioning.md](worktree-provisioning.md) § 4.0, § 7).
@@ -217,6 +247,9 @@ appears in `git status`, and git's own removal takes it with the worktree.
 | Symlink unavailable on the platform | Degrades to copy and says so (§ 2.2) |
 | `node_modules` declared as a link | Refused with the reason (§ 2.2) |
 | Lockfile declared in copy or link | Skipped with the reason (§ 2.1) |
+| Lockfile found inside a copied directory, or named by a symlink | Refused with the same reason (§ 2.1) |
+| `node_modules` inside a copied tree | Copied — the rule is about sharing a root (§ 2.2) |
+| Apply exceeds its node, byte or time bound | Stops and reports; what already landed stands (§ 2.1) |
 | Port taken between preview and apply | Applied number wins and the change is reported, never silently swapped (§ 2.3) |
 | Port claimed by a sibling worktree's `.env.worktree` | Excluded from the probe (§ 2.3) |
 | Setup step fails | Remaining steps stop; worktree stands; row carries retry (§ 2.5) |

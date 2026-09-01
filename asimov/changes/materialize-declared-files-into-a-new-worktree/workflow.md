@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -189,3 +189,15 @@ content identity. D3 builds the safety half; neither missing half is in WT-012.2
 - Round 5 is a cycle 3 DISCOVERY round and needs the user's grant. Under the cycle cap it is also the
   last fix window: a third cycle never opens another fix loop, so anything it finds is fixed once and
   then the change either exits or hands back to planning for a designed fix.
+
+Round 5 (cycle 3, discovery) returned 0 gating blockers — F021, F017 and F002 WARN, F028 and F029
+SUGGEST. Re-review is required only when a BLOCK was fixed or rebutted, so the cycle ends at
+Re-Verify. F021, F017, F028 and F029 are fixed in tasks 5_1 and 5_2; F002 stays the recorded
+residual, triaged as accepted by both chairs.
+
+Two tests OUTSIDE this change flake under the load `verify-task` produces by running vitest twice
+back to back, and passed on a clean `HEAD` worktree and on ten unloaded runs here:
+`src/extension.worktreeAssembly.test.ts` waits on any `.wt-notice` while the panel also carries an
+unrelated one, and `src/worktree/deadline.test.ts` reads `expired` after `afterDelay(1)`, which
+`setTimeout` may fire fractionally early. Neither is touched by this change and neither is a defect
+this change introduced; both are worth a task of their own.

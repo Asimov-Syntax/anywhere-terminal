@@ -536,7 +536,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | security-privacy, cross-boundary |
 | **Notes** | The destructive-adjacent half of the phase: it writes files into a new directory from paths a checked-in file supplied. Containment is `isPathInside` / `isResolvedPathInside` from `src/utils/pathBoundary.ts` — this code must not spell its own test. An escaping entry is refused and reported, never clamped into range, because clamping turns a suspicious entry into a silently different one |
 | **Acceptance** | Copy runs before link and no entry runs out of order; an existing destination is never overwritten and that holds for every descendant of a directory copy, not only its top-level name; source and destination are validated against different roots; special files are refused; a symlink inside the repository is preserved rather than dereferenced and one resolving outside is refused; an entry resolving outside the repository is refused rather than clamped; validation is redone immediately before each operation; a lockfile is refused with its reason whether it was named for copy or for link; a `node_modules` link is refused with its reason; where the platform cannot symlink, the entry degrades to a copy and says so per entry; a failed entry leaves the worktree and every earlier entry standing |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.3] The Section Reads Whatever the Repo Already Uses
 
