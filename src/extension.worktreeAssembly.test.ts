@@ -1487,6 +1487,93 @@ describe("the invariants that span the host and the webview", () => {
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
   });
 
+  /**
+   * The provider files the assembly's repository carries, cleared.
+   *
+   * `REPO` outlives a test, so a file another walk wrote is still there — and
+   * detection is about which files EXIST, so a leftover would silently decide
+   * the answer these two tests are about.
+   */
+  function noProviderFiles(): void {
+    for (const rel of ["asimov/worktree.yaml", "orca.yaml", ".worktreeinclude", ".vscode/tasks.json"]) {
+      fs.rmSync(path.join(REPO, rel), { force: true });
+    }
+  }
+
+  it("[3_4] fills the section from an orca repository, through the shipped wiring", async () => {
+    // The module suites prove the adapter reads orca. Only the entry point
+    // proves the adapter is REACHED: WT-012.1's binding named the asimov reader
+    // directly, and a detection order nothing calls is inert with every unit
+    // test green.
+    noProviderFiles();
+    fs.writeFileSync(
+      path.join(REPO, "orca.yaml"),
+      "worktree:\n  sharedDirectories:\n    - node_modules\n\nscripts:\n  setup: |\n    pnpm install\n",
+    );
+    fs.writeFileSync(path.join(REPO, ".worktreeinclude"), "# what a fresh checkout needs\n.env\n");
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow").length > 0,
+      "the create form to offer orca's files",
+    );
+
+    const rows = [...document.querySelectorAll(".wt-bring-box .wt-brow")];
+    const subjects = rows.map((r) => r.querySelector(".wt-brow-meta")?.textContent ?? "");
+    expect(subjects.some((t) => t.includes("node_modules"))).toBe(true);
+    expect(subjects.some((t) => t.includes(".env"))).toBe(true);
+    // Each row names the file it came from, and orca's two are told apart.
+    const sources = rows.map((r) => r.querySelector(".wt-brow-src")?.textContent ?? "");
+    expect(sources).toContain("orca.yaml");
+    expect(sources).toContain(".worktreeinclude");
+    // The section is orca's alone; the comment line is the file's syntax, not a
+    // path, and produced no row.
+    expect(rows).toHaveLength(3);
+  });
+
+  it("[3_4] takes a switch and redraws the section from the other source, creating nothing", async () => {
+    noProviderFiles();
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    fs.writeFileSync(path.join(REPO, "orca.yaml"), "worktree:\n  sharedDirectories:\n    - node_modules\n");
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow").length > 0,
+      "the create form to offer the first source's file",
+    );
+
+    // asimov wins the fixed order, and orca is named rather than hidden.
+    const first = [...document.querySelectorAll(".wt-bring-box .wt-brow-meta")].map((m) => m.textContent ?? "");
+    expect(first.some((t) => t.includes(".env"))).toBe(true);
+    expect(first.some((t) => t.includes("node_modules"))).toBe(false);
+    const offered = [...document.querySelectorAll(".wt-bring-switch")];
+    expect(offered).toHaveLength(1);
+    expect(offered[0]?.querySelector(".wt-bring-switch-files")?.textContent).toBe("orca.yaml, .worktreeinclude");
+
+    const noticesBefore = document.querySelectorAll(".wt-notice").length;
+    document.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
+    await settleUntil(
+      () =>
+        [...document.querySelectorAll(".wt-bring-box .wt-brow-meta")].some((m) =>
+          (m.textContent ?? "").includes("node_modules"),
+        ),
+      "the switch to redraw the section from orca",
+    );
+
+    // Replaced, not merged: the asimov row is gone, and the row that offers to
+    // switch is now the source that just lost.
+    const after = [...document.querySelectorAll(".wt-bring-box .wt-brow-meta")].map((m) => m.textContent ?? "");
+    expect(after.some((t) => t.includes("node_modules"))).toBe(true);
+    expect(after.some((t) => t.includes(".env"))).toBe(false);
+    expect(document.querySelector(".wt-bring-switch-files")?.textContent).toBe("asimov/worktree.yaml");
+    // Taking a switch submits nothing and creates nothing.
+    expect(document.querySelectorAll(".wt-notice")).toHaveLength(noticesBefore);
+    expect(document.querySelector("#wt-branch")).not.toBeNull();
+  });
+
   it("[3_2] carries the retirement from the dialog's Cancel to the shipped host", async () => {
     // The signal only exists if it travels. A retirement the panel posts and no
     // route delivers is the same defect as one never posted — and it is the

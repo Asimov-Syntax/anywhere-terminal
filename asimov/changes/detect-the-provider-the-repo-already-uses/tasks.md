@@ -97,7 +97,7 @@
     3. In `src/webview/worktree/WorktreeController.ts`, post `worktreeProvisionSwitch` from that dep, carrying the opening the form was composed in.
     4. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`: an inactive provider draws exactly one row naming both of an orca pair's files; an active provider draws none; taking it posts the message with an increasing sequence and submits nothing; a redrawn offer replaces the rows rather than appending.
 
-- [ ] 3_4 Prove the section fills from a real repository through the shipped wiring
+- [x] 3_4 Prove the section fills from a real repository through the shipped wiring — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_3
   - **Refs**: specs/worktree-panel/spec.md#{a-repository-is-read-through-whichever-provisioning-file-it-already-keeps, a-source-that-did-not-supply-the-offer-stays-visible-and-selectable}
   - **Acceptance**:
