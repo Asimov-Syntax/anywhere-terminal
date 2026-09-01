@@ -249,3 +249,14 @@ recorded in this file after cycle 1 | Consumer: build | Action: after any artifa
 the next review as the new cycle's DISCOVERY round; never as a verification round, whatever the fix
 loop's step 7 says about re-review.
 
+DEPENDENCY RECORDED (2026-09-01). The round-6 remedy was scaffolded as its own change,
+`coalesce-assessment-requests-at-the-host`, per the remediation boundary — B5 needs a semantically
+changed `D#` and mints an admission discipline for queued read work that no accepted plan owns.
+Nothing was folded into this change's tasks.md and no ticked task was rewritten. This change stays
+PARKED and now depends on that one; when it is approved, this change's next review scopes the
+integration seam rather than the subsystem.
+
+Two of the round-6 items travelled with it rather than staying here, because they are the same
+question: W6's dropped-reply strand (the panel guard that blocks the re-ask is the guard B5 refutes)
+and S2's assembly-walk overclaim, which that change's task 3_1 strengthens rather than correcting
+this change's ticked 3_4 title.
