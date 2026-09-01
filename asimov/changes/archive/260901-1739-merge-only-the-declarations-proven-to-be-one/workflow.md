@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -29,11 +29,8 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
-Lane: full
-Planned at: 5f21abae
-
 Blueprint: docs/PLAN.md task WT-012.17
+Planned at: 5f21abae
 Lane: full — HIGH risk: this is the seventh mechanism proposed for one invariant and six are refuted; getting it wrong in the merging direction silently deletes a declaration the repository made | flags: new-api-contract
 - Scoped by an oracle attack before planning, not after. Its boundary result is why WT-012.17 was split: the read path can prove only spelling-level identity, because git creates the worktree AFTER the offer is drawn and the folding rule belongs to that directory. WT-012.18 owns the apply-time half.
 - Refuted before this change starts, do not re-propose: lexical-only normalization; a single-file case probe (a case-toggled symlink answers for the wrong volume); a two-spelling resolution probe; `realpath` per path (two aliases, one answer, two slots); `lstat` dev+ino per path (two hard links share an inode, a symlinked parent defeats no-follow, Windows `st_ino` collides past 2^53 without `{ bigint: true }`); `toLowerCase()` on Windows path semantics (over-merges `İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ`, which NTFS keeps apart through `$UpCase` with no normalization).

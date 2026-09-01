@@ -110,8 +110,17 @@ export interface ProvisionModel {
   readonly providers: readonly ProvisionProvider[];
   /** Entries an `exclude` rule removed, kept so the UI can show them as deliberate. */
   readonly excluded: readonly ProvisionEntry[];
+  /** Advisory: spellings a volume may resolve to one destination (§ 4.4). */
+  readonly contenders: readonly ProvisionContenders[];
   /** Populated when a provider file was found but could not be read. */
   readonly problems: readonly ProvisionProblem[];
+}
+
+export interface ProvisionContenders {
+  /** Entry ids in one connected component of the folding key — two or more. */
+  readonly members: readonly string[];
+  /** The repository's own declaration, when exactly one member is it. */
+  readonly favoured?: string;
 }
 
 export interface ProvisionProvider {
@@ -299,10 +308,19 @@ When `.vscode/worktree.json` declares `extends`:
 
 1. Start with the extended provider's model.
 2. Append the native file's inline entries.
-3. Dedupe by `path`. **The native entry wins**, including its `mode` — this is how a path the
-   framework links becomes a path this repo copies.
-4. Apply `exclude`: any entry whose `path` matches moves from `entries` to `excluded`, keeping its
-   original `source`. `exclude` never matches an inline entry; removing something you just added
+3. Dedupe by **identity**: the declared path normalized lexically — separators, `.` and `..`
+   segments, a trailing slash — and nothing else. Two declarations merge only when their
+   identities are exactly equal, and then **the native entry wins**, including its `mode` — this
+   is how a path the framework links becomes a path this repo copies. Identity reads no
+   filesystem, on any platform: every probe that would answer the question properly
+   (`realpath`, `lstat` dev+ino, a case-toggled test file) answers for the wrong volume, the
+   wrong moment, or two aliases at once, and the worktree the answer belongs to does not exist
+   yet when the offer is drawn.
+4. Apply `exclude` on that same identity, so a pattern cannot match one spelling of a path and
+   miss the row the merge kept. Any entry that matches moves from `entries` to `excluded`,
+   keeping its original `source`. An `exclude` entry that matches nothing is reported as a
+   problem rather than dropped — a pattern that silently matches nothing looks identical to one
+   that worked. `exclude` never matches an inline entry; removing something you just added
    is a contradiction to surface, not a rule to implement, so it produces an `unknownKey`-class
    problem naming the path.
 5. `setup` steps are appended, never deduped — two providers may legitimately want the same
@@ -317,6 +335,29 @@ the section exists to carry.
 An entry's `source` is set by the adapter that produced it and is never rewritten — not by merge,
 not by dedupe (the winner keeps its own source), not by exclusion. A glob expands into several
 entries that all carry the glob's source file.
+
+### 4.4 Spellings that may be one destination
+
+Case and Unicode folding is a property of the volume, not of the paths, so two declarations that
+differ only by folding can be one file on APFS and two on NTFS. Neither answer is safe to assume:
+merging deletes a declaration the repository made, and splitting leaves two default-selected rows
+whose apply order decides which `mode` lands.
+
+So they are neither merged nor discarded. Both stay offered, each with the spelling and `source`
+its own file wrote, and the model carries a **contender group** naming them — a connected
+component over the folding key, not a pair, since three spellings can collide. When one member is
+the repository's own declaration, the group records it as `favoured`: the row the merge rule would
+have awarded the destination to.
+
+The folding key is per path segment: NFKC, lowercase, the Win32 trailing-dot/space and `::$DATA`
+fold, then **uppercase, then NFKC again**. Uppercase last is load-bearing — it is what performs the
+multi-character expansions (`ß` → `SS`) that lowercase alone leaves apart — and the closing NFKC
+repairs the sequences uppercasing decomposes. The key is deliberately over-inclusive: a group is
+advisory, so grouping two rows that a volume would keep apart costs a marker, while missing a pair
+costs a declaration.
+
+The relation is filled at the one point every model is assembled, so a model read directly from an
+adapter carries it exactly as an assembled one does.
 
 ## 5. Applying the model — see worktree-apply.md
 
