@@ -124,16 +124,24 @@ describe("a destination two declarations may both name", () => {
     });
   });
 
-  it("lands BOTH when this filesystem keeps the two spellings apart", async () => {
-    // The folding key is over-inclusive on purpose, so a group is a question,
-    // not a verdict. Refusing the loser unconditionally would delete a
-    // declaration the repository made — the failure this whole line of work
-    // exists to prevent.
+  it("refuses the held member even where this filesystem keeps the two spellings apart", async () => {
+    // The volume here is non-folding, so the held destination reads absent
+    // after the favoured member wrote — which is exactly the reading that used
+    // to authorize the write. It is indistinguishable from the favoured
+    // member's object having been unlinked on a FOLDING volume, where the same
+    // write hands the destination to the inherited declaration
+    // (.reviews/round-2.md F005). Refusing costs this member its material and
+    // is the only settlement that cannot lose the destination.
     const { steps, fs } = await applyTo(CONTESTED, PAIR);
 
-    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "copied"]);
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "refused"]);
     expect(fs.nodes.get(`${WT}/MixedCase`)).toMatchObject({ size: 11 });
-    expect(fs.nodes.get(`${WT}/mixedcase`)).toMatchObject({ size: 22 });
+    expect(fs.nodes.has(`${WT}/mixedcase`)).toBe(false);
+    expect(steps[1]?.outcome).toMatchObject({
+      reason: expect.stringContaining(
+        "mixedcase (declared in asimov/worktree.yaml), MixedCase (declared in .vscode/worktree.json)",
+      ),
+    });
   });
 
   it("refuses BOTH when the destination was already there, and writes nothing", async () => {
@@ -265,7 +273,7 @@ describe("a collision this apply cannot attribute to its own write", () => {
     // non-creator is the same unfounded causal claim as naming a creator.
     expect(steps[1]?.outcome).toMatchObject({
       kind: "refused",
-      reason: expect.stringContaining("cannot be attributed to either"),
+      reason: expect.stringContaining("claimed by the repository's own declaration"),
     });
     expect(steps[1]?.outcome).toMatchObject({
       reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
@@ -339,10 +347,7 @@ describe("absence is established, never assumed", () => {
     // `makeDirectory` answers `written` for a directory that is already there,
     // so the declaration was reported as the owner of another writer's
     // directory, its mode and its children (.reviews/round-2.md F001).
-    const fs = fakeFs(
-      { [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...CONTESTED },
-      { folds: true },
-    );
+    const fs = fakeFs({ [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...CONTESTED }, { folds: true });
     let taken = false;
     fs.beforeLstat = (p) => {
       // The source lstat that opens the favoured member's own walk, which is

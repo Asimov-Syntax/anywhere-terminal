@@ -207,34 +207,38 @@ export async function applyProvisioning(
     answered.set(entry, applied);
   }
 
-  // The held members, once the favoured one has had its ordinary turn. A
-  // deferred copy starves nothing: a link entry points OUT of the worktree, and
-  // a symlink recreated inside a copied tree resolves within that tree.
+  // The held members, once the favoured one has had its ordinary turn — and
+  // none of them is ever written.
+  //
+  // A held member's destination reading `absent` here looks like proof that
+  // this volume keeps the two spellings apart. It is equally the signature of
+  // the favoured member's just-written object being unlinked underneath the
+  // apply: on a folding volume both spellings then read `ENOENT`, and writing
+  // the held member there makes the INHERITED declaration the owner of the
+  // destination this whole rule exists to give the repository's own. No
+  // primitive tells those two states apart — rechecking and then writing is
+  // not atomic, an open handle proves the object still exists but not that the
+  // name still binds it, and checking afterwards is too late for an apply that
+  // owns no deletion (.reviews/round-2.md F005, design.md D4).
+  //
+  // So it refuses. On a genuinely case-sensitive volume that costs the held
+  // declaration its material, which is the price of never handing the
+  // destination to the wrong one.
   for (const [member, contest] of held) {
     if (answered.has(member)) {
       continue;
     }
-    // Both declarations, in every reason. A step result carries only the
-    // member's own path, and the notice renders `path: reason`, so a reason
-    // that names only the counterparty leaves the user unable to tell which
-    // two config files are in dispute (.reviews/round-1.md F004).
-    const both = [member, contest.favoured].map(declaredAs).join(", ");
+    // Every member, in every reason. A step result carries only its own path
+    // and the notice renders `path: reason`, so a reason that names only the
+    // counterparty leaves the user unable to tell which config files are in
+    // dispute (.reviews/round-1.md F004).
+    const everyone = [member, contest.favoured].map(declaredAs).join(", ");
     const claimed = answered.get(contest.favoured)?.outcome.kind;
-    if (claimed !== "copied" && claimed !== "linked" && claimed !== "degradedToCopy") {
-      answered.set(member, step(member, `${both} may name this same destination, and it was never claimed`));
-      continue;
-    }
-    if ((await read(member)) !== "absent") {
-      // It may be the favoured member's own material under a folded name, a
-      // descendant another entry's directory copy wrote, or a name another
-      // process created — and nothing here tells those apart. Naming a
-      // non-creator is the same unfounded causal claim as naming a creator
-      // (design.md D4).
-      const unattributable = `${both} may name this same destination, and what is there now cannot be attributed to either`;
-      answered.set(member, step(member, unattributable));
-      continue;
-    }
-    answered.set(member, await applyEntry(member, roots, budget, deps));
+    const why =
+      claimed === "copied" || claimed === "linked" || claimed === "degradedToCopy"
+        ? "may name this same destination, and it was claimed by the repository's own declaration"
+        : "may name this same destination, and it was never claimed";
+    answered.set(member, step(member, `${everyone} ${why}`));
   }
 
   // Insertion order IS production order, and an entry that reached neither

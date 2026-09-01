@@ -90,7 +90,7 @@
     2. `src/worktree/provisioning/applyProvisioning.ts` turns that answer into a refusal of the whole contest.
     3. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses it with a fake that creates the destination between the second reading and the write, and `src/worktree/provisioning/applyEntries.test.ts` witnesses that an uncontested directory still merges.
 
-- [ ] 5_2 Refuse every held member once the favoured one has run
+- [x] 5_2 Refuse every held member once the favoured one has run — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: design.md#d4-the-adjudication, .reviews/round-2.md#f005
   - **Acceptance**:
