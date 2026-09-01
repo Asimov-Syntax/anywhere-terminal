@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -33,3 +33,4 @@ Blueprint: docs/PLAN.md task WT-012.6
 Lane: full (standard) — cross-process allocation mutates shared repository state and a worktree-local claim file | flags: cross-boundary
 Reference check: orca, cmux and t3code contain no reusable Node port-claim allocator; this repo's existing LockedFile owns the reusable lock and staged-write semantics.
 Planned at: 1f4819b7497b5a226485dbd046c480f411254021
+Verify baseline: project Biome remains at 3 errors / 14 warnings / 1 info in src/agentHooks/AgentHookController.test.ts, src/agentHooks/install/ClaudeHookInstaller.test.ts, src/cursor/CursorHookInstaller.test.ts, and unrelated warning/info files; the clean baseline reproduces it, while all 24 change-owned source files pass.
