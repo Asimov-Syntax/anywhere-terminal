@@ -135,3 +135,14 @@
     6. F007 — add `modelFromDraft` to `src/worktree/provisioning/providerKit.ts` and consume it from `src/worktree/provisioning/asimovProvider.ts`, `src/worktree/provisioning/orcaProvider.ts` and `src/worktree/provisioning/vscodeTasksProvider.ts`.
     7. F006 — in `src/webview/worktree/WorktreeCreateDialog.ts`, name each switch button by its provider's files. Witness in `src/webview/worktree/WorktreeCreateDialog.test.ts`.
   - **Boundary**: remediation only — no new `D#`, no new invariant owner, and no change to any accepted Acceptance
+
+- [x] 4_2 Give the two reuse fixes the witnesses 4_1 claimed for them — verified: pnpm exec vitest run 'src/worktree/provisioning/oneOwner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: .reviews/round-2.md#f008
+  - **Acceptance**:
+    - Outcome: A second quoting helper or model assembly here fails the suite
+    - Verify: unit src/worktree/provisioning/oneOwner.test.ts
+  - **Plan**:
+    1. Create `src/worktree/provisioning/oneOwner.test.ts` asserting no module in this directory spells its own POSIX single-quote escape, and that only `providerKit.ts` assembles a `ProvisionModel` literal.
+    2. In `src/worktree/provisioning/oneOwner.test.ts`, run each matcher over a violating fixture so a typo in a pattern cannot pass as a clean directory.
+  - **Boundary**: structural assertions only — no production behaviour changes in this task

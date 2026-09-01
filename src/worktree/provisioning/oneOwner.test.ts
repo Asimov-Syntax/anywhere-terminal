@@ -1,0 +1,81 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { describe, expect, it } from "vitest";
+
+/**
+ * Two round-1 findings were about ownership, not behaviour: a second POSIX
+ * quoting helper (F004) and a third copy of the model assembly (F007). Both
+ * were fixed, and neither fix had a test that could fail — the D4 rendering
+ * assertions passed happily while the duplicate existed, because a duplicate
+ * produces the SAME output. That is exactly why duplication is dangerous and
+ * exactly why a behavioural test cannot see it (.reviews/round-2.md F008).
+ *
+ * So these are structural, like `readOnly.test.ts` next door. The property is
+ * "one owner", and the only way to state it is over the source.
+ */
+const SHIPPED = fs
+  .readdirSync(__dirname)
+  .filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))
+  .sort();
+
+/** Source with comments stripped — the claim is about code, not about prose. */
+function sourceOf(file: string): string {
+  return fs
+    .readFileSync(path.join(__dirname, file), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "");
+}
+
+/**
+ * The apostrophe-escape sequence, however it is spelled.
+ *
+ * `'\''` is the whole of POSIX single-argument quoting, so any module that
+ * contains it is quoting for itself. Written to match both the `replaceAll`
+ * form the shared helper uses and the `split`/`join` form the adapter had.
+ */
+const QUOTE_ESCAPE = /'\\\\''|"'\\\\''"|`'\\\\''`/;
+
+/** A model built from a literal rather than from the one assembly point. */
+const MODEL_LITERAL = /providers:\s*(\[\]|PROVIDERS)\s*,\s*\n?\s*excluded:/;
+
+describe("one owner for the quoting rule", () => {
+  it.each(SHIPPED)("%s does not spell its own POSIX escape", (file) => {
+    expect(QUOTE_ESCAPE.test(sourceOf(file))).toBe(false);
+  });
+
+  it("catches a module that spells it", () => {
+    // Without this the check above passes just as happily against a typo in the
+    // pattern as against a clean directory.
+    expect(QUOTE_ESCAPE.test(`return \`'\${word.split("'").join(\`'\\\\''\`)}'\`;`)).toBe(true);
+    expect(QUOTE_ESCAPE.test(`return \`'\${value.replaceAll("'", "'\\\\''")}'\`;`)).toBe(true);
+  });
+
+  it("does not fire on a module that merely calls the shared helper", () => {
+    expect(QUOTE_ESCAPE.test("words.push(posixShellQuote(value));")).toBe(false);
+  });
+});
+
+describe("one owner for the model assembly", () => {
+  it("is providerKit alone", () => {
+    const assemblers = SHIPPED.filter((file) => MODEL_LITERAL.test(sourceOf(file)));
+
+    // An adapter that assembles its own is how a field added to ProvisionModel
+    // reaches two adapters and misses the third.
+    expect(assemblers).toEqual(["providerKit.ts"]);
+  });
+
+  it("catches an adapter that assembles its own", () => {
+    const copied = [
+      "  return {",
+      "    entries: draft.entries,",
+      "    setup: draft.setup,",
+      "    ports: draft.ports,",
+      "    providers: [],",
+      "    excluded: [],",
+      "    problems: draft.problems,",
+      "  };",
+    ].join("\n");
+
+    expect(MODEL_LITERAL.test(copied)).toBe(true);
+  });
+});

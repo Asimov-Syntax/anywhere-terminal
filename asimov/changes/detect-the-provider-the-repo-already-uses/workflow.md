@@ -112,3 +112,23 @@ Round 1 remediation:
   budget instead of naming a directory too large to scan, because nothing measured that directory.
   1_2's assertion was updated for that reason and declared with `--test-change`.
 
+Round 2 (cycle 2, discovery) — WARN, 0 blockers. All seven round-1 findings confirmed fixed, and
+the disclosed `break` mutant was ruled not a finding: provider input is capped at 256 KiB and the
+load-bearing output bound is enforced by `addRow`.
+
+- F008 accepted, and the CLAIM was fixed rather than the wording narrowed. 4_1's Outcome said every
+  finding had a witness that fails before the fix, which was untrue of F004 and F007 — a duplicate
+  produces the same output, so the D4 assertions passed while the duplicate existed. That is why
+  duplication is dangerous and why a behavioural test cannot see it. 4_2 adds the structural
+  witnesses instead, confirmed failing against the round-1 source state before being committed.
+- F009 accepted as a FOLLOW-UP, not remediation. Now that every adapter answers `null` for an
+  unresolvable root, the dispatcher returns `emptyModel()` and the root diagnostic is dropped, so an
+  uninspectable checkout looks like an unconfigured one. Carrying it needs an owner for "no provider
+  elected, and here is why" — a new invariant owner, past the remediation boundary, and landing it
+  as a fix would supersede this cycle. NEEDS ITS OWN PLAN TASK.
+
+Follow-ups for the blueprint, needing their own PLAN tasks (not done here):
+- F009 above.
+- rpc § 2.4's two missing halves: re-presenting a fresh model after a stale offer, and detecting
+  provider files that change under a still-held offer.
+
