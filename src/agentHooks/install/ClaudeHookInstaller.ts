@@ -8,7 +8,7 @@ import {
   reconcileClaudeSettings,
   resolveClaudeConfigPath,
 } from "./claudeConfig";
-import { isNotFound, LockedFile, type LockedFileSystem, type Platform } from "./lockedJsonFile";
+import { isNotFound, LockedFile, type LockedFileSystem, type Platform } from "../../utils/lockedFile";
 
 /**
  * D7: the one frozen POSIX shell literal registered on Darwin and Linux. It consumes stdin,

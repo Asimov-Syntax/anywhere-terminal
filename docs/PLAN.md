@@ -592,7 +592,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | cross-boundary |
 | **Notes** | Sequenced before setup because setup consumes the values. The lock is what makes the guarantee real — two VS Code windows scanning the same sibling set and probing independently can both pick the same port, so a file scan without a lock proves nothing. The guarantee is bounded on purpose and the acceptance says so: it covers worktrees this extension creates, not unrelated processes |
 | **Acceptance** | Reading claims, choosing values and writing the claim happen under one lock taken in the repository's common git directory, so two windows creating worktrees concurrently never claim the same port; a value already written in any sibling worktree's port file is never handed out; an existing port file in the new checkout is parsed and reused rather than overwritten or ignored, and allocation is skipped where it already covers every name; the port file is added to the repository-local exclude rather than `.gitignore`; a number that differs from what the dialog previewed is reported rather than silently swapped; one name failing to allocate does not prevent the others; the acceptance records that an unrelated process may still bind the port before setup runs |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.7] One Box for Every Way a Worktree Starts
 
