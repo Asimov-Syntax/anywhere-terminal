@@ -778,10 +778,10 @@ refused outright.
 | **Design Ref** | [worktree-removal.md](design/worktree-removal.md) § 1, § 2.1, § 2.3, § 2.4, § 3, § 4 |
 | **Depends On** | WT-013.1, WT-013.2 |
 | **Stage** | 10 |
-| **Size** | M |
-| **Labels** | user-visible-ui |
+| **Size** | L |
+| **Labels** | user-visible-ui, new-api-contract, security-privacy, cross-boundary |
 | **Notes** | Split from the assessment because a check taxonomy and a dialog are different failures with different tests. The class travels on the wire so the typed-confirmation rule is not re-derived in the webview — a safety rule implemented in two places is a safety rule that will disagree with itself |
-| **Acceptance** | Every check renders with its outcome including the ones that passed, the ordinary checks and the orphan proofs alike; an unproven check never renders as passed and `notApplicable` never renders as either; typed confirmation appears only when a confirmable risk failed or could not be evaluated, and a withheld proof-gated option never triggers it; a hard refusal renders as a refusal with no confirmation control present at all; the confirmation names every failed check at once; the report states that panes inside the worktree are left running rather than closed |
+| **Acceptance** | Every check renders with its outcome including the ones that passed, the ordinary checks and the orphan proofs alike; an unproven check never renders as passed and `notApplicable` never renders as either; typed confirmation appears only when a confirmable risk failed or could not be evaluated, and a withheld proof-gated option never triggers it; a hard refusal renders as a refusal with no confirmation control present at all; the confirmation names every failed check at once; the report states that panes inside the worktree are left running rather than closed; every removal presents this report before deletion, including a clean worktree, and no removal executes until the report's confirmation is answered |
 | **Status** | in_progress |
 
 ---

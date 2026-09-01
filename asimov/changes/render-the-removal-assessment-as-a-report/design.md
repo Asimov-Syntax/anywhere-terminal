@@ -113,7 +113,7 @@ where there are panes, and name the branch only where there is one.
 
 | Resource | Answer |
 |---|---|
-| The removal itself (irreversible directory deletion) | Not owned here. The dialog authorizes; the host performs and re-evaluates. The confirmation re-sends the fingerprint the user was shown, unchanged from today — a typed confirmation is a stronger gesture over the same authorization, not a wider one |
+| The removal itself (irreversible directory deletion) | The dialog returns the report fingerprint; the host re-evaluates, redeems it once, and alone chooses ordinary or forced Git execution. A request with no fingerprint reports and cannot execute. Partial-failure classification remains outside this change |
 | Assessment state | n/a — the dialog holds one assessment for its lifetime and is disposed on answer. A newer assessment arrives as a new dialog |
 | Durable stores, caches, locks, spawned processes | n/a — this change writes nothing outside the DOM |
 | Two racing hosts | n/a — the fingerprint already binds an authorization to the set it was granted over, and worktree-panel's "A confirmation authorizes only the risks it was shown" is the contract |
@@ -145,39 +145,57 @@ what the message does not do — it does not act — and left unstated *against 
 The answer is now D10's: the same forced-rebuild barrier a mutation takes, and still no mutation
 result published. Read D6 and D10 together; where the two disagree D10 governs.
 
-**Rejected — make every unforced removal report first.** The user would then need a way to say "I
-have seen it", which is either a second unforced request the host cannot tell from the first, or new
-per-worktree host state. That is more machinery than a read-only message, and it fuses "ask" with
-"act" in the one place this change exists to separate them.
+**Superseded by D7.** This decision first rejected making every fingerprint-free removal report,
+because the host could not distinguish a second unforced request from the first without new state.
+The user's scope decision requires that invariant. D7 supplies the distinction without host session
+state: absence of a fingerprint is always an ask, and presence is the answered report.
 
-### D7 — The fingerprint's PRESENCE is the force authority, and the panel never mints it
+### D7 — A fingerprint authorizes the confirmed attempt; the host chooses force
+
+**Amended after the user's 2026-09-01 decision, “Luôn hỏi trước khi xoá”.** The first version made
+fingerprint presence synonymous with force authority: a clean report carried `null`, its callback
+posted an unforced removal, and the service deleted when its fresh assessment was clean. That made
+confirmation a panel convention rather than a host invariant — the callback's request was
+indistinguishable from a direct fingerprint-free request that had crossed no dialog.
+
+The two questions are now separate:
 
 ```
-fingerprint: string  →  confirm posts  worktreeRemove { force: true, fingerprint }
-fingerprint: null    →  confirm posts  worktreeRemove { force: false }
+worktreeRemove { worktreeId }                 → unconfirmed intent: assessment state, never execute
+worktreeRemove { worktreeId, fingerprint }    → confirmed attempt: re-assess and redeem
+                                                   │
+                                                   └─ host computes atRisk(current evidence)
+                                                        false → ordinary git removal
+                                                        true  → forced git removal
 ```
 
-The assessment carries `fingerprint: string | null`, non-null under **exactly** the predicate the
-blocked path already uses — `atRisk(assessment.evidence)` at `worktreeMutationService.ts:467`. A
-refusal carries `null`, as the blocked path already sends (`:461`). A clean or `notApplicable`
-assessment carries `null` and its confirmation therefore goes down the **existing unforced path**,
-which re-evaluates and blocks if the worktree stopped being clean in the meantime.
+Every readable, non-refused assessment receives a fingerprint, including an all-passed or
+`notApplicable` one. A refusal carries none and mounts no control; an unavailable assessment is not a
+report. The assessment-only message remains the menu's read-only, coalesced path, while the mutation
+service makes the same rule hold for a direct `worktreeRemove`: for a host-published target, absence
+of a fingerprint returns assessment state but can never reach git. A wholly unknown id remains a
+silent fail-closed pre-flight, because it has no repository or panel row to answer against.
 
-**Which worktree the token is bound to.** `fingerprints.issue` keys on `worktreeId` plus evidence,
-never on the registration the report described — deliberately, because round-2 B5 established that no
-available field can identify an incarnation uniquely. The binding is `forget`, and D10 is what makes
-it fire before the token is minted rather than after. Without D10 this line mints authority over
-whatever now occupies the path.
+The request no longer carries `force`. The panel forwards only the fingerprint the report carried,
+and the service re-evaluates, redeems, then derives Git's mode from the current evidence with the one
+existing `atRisk` definition. A clean confirmation therefore remains unforced; a risky confirmation
+uses force; a newly appeared risk re-prompts through the existing subset verdict. A risk that cleared
+may narrow to the ordinary path. The webview cannot request force and fingerprint presence does not
+imply it.
 
-So assessing a healthy worktree mints no force authority. The alternative — issue on every assess,
-for symmetry, which is what round-3 B1's SuggestedFix proposes — is **rejected**: it would make "ask
-what this would cost" a deletion-authority door on a worktree where nothing is wrong. This project
-shipped exactly that door twice, at round-1 B2 and round-3 B2 of WT-012.16, both walked back through
-by a replayed message.
+**Which worktree the token is bound to is unchanged.** `fingerprints.issue` keys on `worktreeId` plus
+evidence. Round-2 B5 established that no available incarnation field is unique across a same-path,
+same-commit recreation, so `FingerprintStore.forget` remains the binding and D10 remains what makes
+it fire before authority is minted. The user decision changes which reports receive an attempt token;
+it does not reopen the rejected incarnation claim, widen the subset rule, or change the token's TTL
+and one-shot spend.
 
-This needs `WorktreeRemoveDialogDeps.onConfirm` to widen from `(fingerprint: string)` to
-`(fingerprint: string | null)`. That widening is the mechanism: the dialog forwards the authority it
-was handed and cannot manufacture one it was not.
+This matches the useful part of Orca's cleanup flow: confirmation is required independently of risk,
+then fresh host evidence chooses ordinary versus forced removal. It deliberately rejects t3code's
+shape of confirming clean work and then always forcing it. It also rejects three local alternatives:
+keeping a client-supplied `force` bit leaves contradictory payloads representable; treating every
+fingerprint as force removes Git's late clean check; and retaining host-side “confirmed” state adds a
+second authorization store when the fingerprint already owns target, evidence, expiry and spend.
 
 ### D8 — An assessment that could not be made is not a refusal
 
@@ -342,8 +360,9 @@ The last row is the second half of W4: a re-scoped `unavailable` result loses it
 `onRetryAction` then silently does nothing while the button is still on screen. A control that cannot
 act is not offered.
 
-The token orders answers; it is **not** an authority. Force authority remains D7's fingerprint, and a
-reply carrying a stale token is discarded rather than trusted for anything.
+The token orders answers; it is **not** an authority. Removal authority remains D7's fingerprint,
+and the host derives force independently; a reply carrying a stale token is discarded rather than
+trusted for anything.
 
 ### D12 — A failed assessment is answered, not swallowed
 
@@ -388,10 +407,10 @@ from a served request is silent — which is the part a design here can actually
 | Claim | Semantics | Defeater | Witness / check | Disposition |
 |---|---|---|---|---|
 | Asking for a report removes, modifies or deletes nothing | For every `worktreeRemoveAssess`, no destructive call is reached | A handler that shares a path with `removeWorktree` and falls through to it | The handler calls `assessRemoval` — read-only at `WorktreeHost.ts:3017`, and the orphan proofs it runs are read-only at `orphanProofs.ts:87-93`, `:142-200` — and posts. A test asserts the removal capability is never invoked for an assess. `pnpm run gate:fs-deletion` runs in this change's Verify Gate | supported |
-| Assessing mints force authority under exactly the conditions that already minted it, and no others | `fingerprint !== null` ⟺ `atRisk(evidence)`, the same predicate and the same call the blocked path makes | Issuing unconditionally "for symmetry"; a clean confirm posting `force: true` | D7. Tests: an all-passed assessment carries `null` and its confirm posts `force: false`; a `notApplicable` one does the same; a failed-confirmable one carries a fingerprint and its confirm posts `force: true`; a refusal carries `null` and mounts no control | supported |
-| The report→confirm window is not lengthened by moving the report earlier | The user gesture count and the elapsed window between issue and redemption are unchanged | An assess issued long before any intent to remove — e.g. on hover, on selection, or eagerly per row | The only caller is the Remove Worktree action itself, so the sequence is click→read→confirm where it was click→blocked→read→force. One issue per explicit remove intent, as today | supported |
+| No removal executes without authority bound to an issued report | Every readable non-refused report carries a one-shot fingerprint; a fingerprint-free `worktreeRemove` for a host-published target returns assessment state but cannot reach git; refusal and unavailable carry no executable authority | A direct fingerprint-free request reaches the current clean fallthrough; or a confirmable report carries no token and its callback recreates that request | D7. Task 4_1 drives the raw request through the host/service and task 4_4 drives the shipped menu through the dialog callback. The oracle refuted the stronger wording “proves the user answered”: a same-trust-domain client can replay an issued fingerprint, while the assembled UI test is the witness that production execution starts from the callback | supported — narrowed after plan attack |
+| The shipped menu's report→confirm window is not lengthened by moving the report earlier | `worktreeRemoveAssess` is issued only by the Remove Worktree action, immediately before the dialog it answers | An assess issued on hover, selection, or eagerly per row | The menu sequence remains click→read→confirm. The plan attack correctly found that the defensive raw `worktreeRemove` fallback still travels blocked notice→report and therefore holds its token longer; that compatibility path is outside this narrower gesture-count claim and task 4_4 names it rather than pretending it opens directly | supported — narrowed after plan attack |
 | A worktree that could not be read cannot be rendered as refusing removal | An `unavailable` assessment reaches no code path that computes `confirmationFor` | A flat reply shape that erases the kind, leaving every check `unproven` | D8's discriminant. A test sends `kind: "unavailable"` and asserts the retry surface, not a report, and that no confirmation control exists | supported |
-| The panel cannot manufacture force authority | The dialog forwards `fingerprint` and never synthesises one | `onConfirm` defaulting a null to a string, or the controller posting `force: true` when it holds no fingerprint | D7's nullable `onConfirm`. A test drives a null-fingerprint confirm and asserts the posted message is `force: false` with no `fingerprint` key | supported |
+| The panel cannot choose or manufacture Git's execution mode | The removal request carries a report fingerprint and no `force` field; the service derives force from the fresh assessment after redemption | Retaining the client bit; treating fingerprint presence as force; or defaulting a missing fingerprint into an executable request | D7. Type checks reject a client force choice; controller tests assert it forwards only the fingerprint; service and assembly tests show clean confirmation invokes ordinary Git while a confirmed risk invokes forced Git | supported |
 | Redemption cannot be satisfied by evidence the user never saw | — | Lock reason A → unlock → lock reason B between report and confirm redeems, because `isIdentityPreservingSubset` (`worktreeBlockers.ts:35-36`) compares the lock as a BOOLEAN and the digest (`worktreeFingerprint.ts:179-189`) omits `lockReason`. Second schedule: the 150 ms presence projection cap can leave pane rows stale while an agent has begun running, and redemption compares pane IDENTITY, not activity | **Not a claim this change makes.** Both defeaters are properties of the shipped force path, reachable today through blocked→force, and neither is introduced or widened here — see the window row above. Recorded so it is not mistaken for something this change closed | n/a — pre-existing; needs its own PLAN task, named in workflow.md Notes |
 | Assessing is no weaker than the removal path it reports for | The assess resolves its target behind the same forced-rebuild barrier, from the same coordinator body, as the shipped `blocked` → force path | Assessing straight off the cache, so `forget` (`worktreeFingerprint.ts:44-53`) has not fired for a path already removed and recreated | D10. `coordinator.run` awaits `gate.request(force: true)` before `resolve`. Test: a deferred `forceRebuild` proves neither `resolve` nor the assessment runs before the barrier releases, and a registration replaced ACROSS the barrier is assessed as the replacement | supported |
 | A registration replaced DURING the assessment's own reads cannot be told apart | — | Barrier resolves A; the async status, ignored and proof reads (`WorktreeHost.ts:3084-3110`) then read the path while A is replaced by B; `stillObserved` (`:3116`) sees no change because the deferred watcher has landed no rebuild; a token is minted over B's evidence | **Not a claim this change makes.** The shipped `blocked` → force path issues from inside the same body after the same reads and holds the identical window; round-4 B3 measured this path against that one, and parity is what it asked for. Named rather than dressed as closed — a re-resolve comparing `incarnation` was rejected in D10 because `head:branch` repeats on the recreate that motivates it (round-2 B5) | n/a — pre-existing and shared with blocked→force; needs its own PLAN task, named in workflow.md Notes |

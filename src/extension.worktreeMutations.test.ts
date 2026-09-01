@@ -217,7 +217,7 @@ describe("an outcome comes back to the surface that started it (design.md D17)",
     it(`routes every mutating capability's outcome back to the ${name} that asked`, async () => {
       const origin = surface(name);
       await drive(async (a) => {
-        await a.removeWorktree?.({ repoId: REPO, worktreeId: WT, origin }, false, undefined);
+        await a.removeWorktree?.({ repoId: REPO, worktreeId: WT, origin }, undefined);
         await a.lockWorktree?.({ repoId: REPO, worktreeId: WT, origin }, undefined);
         await a.unlockWorktree?.({ repoId: REPO, worktreeId: WT, origin });
         await a.pruneRepo?.(REPO, 0, origin);

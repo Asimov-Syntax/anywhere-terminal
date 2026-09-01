@@ -346,7 +346,7 @@ export interface WorktreeActions {
     provision?: readonly ProvisionEntry[];
     origin?: WorktreeSurface;
   }): Promise<void>;
-  removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
+  removeWorktree?(target: WorktreeMutationTarget, fingerprint: string | undefined): Promise<void>;
   /**
    * What removing this worktree WOULD cost, without removing it.
    *
@@ -2058,19 +2058,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // a fail-fast so an id the host never published spawns nothing at all;
         // it is not the resolution the action acts on (B2).
         const gate = actionPath(msg.worktreeId, true);
-        // A force with no fingerprint authorizes nothing, and an unforced call
-        // carrying one is a payload we did not issue — both refused here rather
-        // than deeper, where a partial check could act on the wrong half.
-        if (msg.force !== (msg.fingerprint !== undefined)) {
-          return;
-        }
         // Deliberately NOT pre-resolved: the capability re-resolves this id
         // after its own forced rebuild (B2). A `missing` worktree still
         // resolves there — `git worktree remove` is how its stale registration
         // gets pruned (worktree-rpc.md:241).
+        //
+        // The host forwards confirmation authority, not Git's execution mode.
+        // No fingerprint means "report this target"; only the service owns the
+        // fresh evidence that can choose ordinary versus forced execution (D7).
         const repoId = repoIdOf(msg.worktreeId);
         if (remove && repoId !== undefined && gate !== undefined) {
-          perform(() => remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.force, msg.fingerprint));
+          perform(() => remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint));
         }
         return;
       }

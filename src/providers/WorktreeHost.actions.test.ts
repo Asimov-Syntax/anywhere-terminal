@@ -925,53 +925,49 @@ describe("mutating actions resolve their own target", () => {
   });
 });
 
-describe("removal resolves its target and refuses an unauthorized force", () => {
-  it("[I10] removes the worktree git named, unforced", async () => {
+describe("removal resolves its target and forwards only report authority", () => {
+  it("[I10] delegates a fingerprint-free request so the service can report it", async () => {
     const { host, view, calls, dispose } = await builtHost();
     host.handleMessage(view, { type: "worktreeRemove", worktreeId: RAW_ID, force: false });
     await settle();
 
-    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: RAW_ID, origin: view }, false, undefined]]);
+    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: RAW_ID, origin: view }, undefined]]);
     dispose();
   });
 
-  it("passes a force through with the fingerprint that authorized it", async () => {
+  it("passes the fingerprint through without a client-selected Git mode", async () => {
     const { host, view, calls, dispose } = await builtHost();
     host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: true, fingerprint: "fp-1" });
     await settle();
 
-    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, true, "fp-1"]]);
+    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, "fp-1"]]);
     dispose();
   });
 
-  it("acts on nothing when a force carries no fingerprint", async () => {
-    // A force authorizes exactly the blocker set the user saw; with no
-    // identifier there is no set, so there is nothing to authorize.
+  it("ignores the transitional force bit when no fingerprint exists", async () => {
     const { host, view, calls, dispose } = await builtHost();
     host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: true });
     await settle();
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, undefined]]);
     dispose();
   });
 
-  it("acts on nothing when an unforced removal carries a fingerprint we never issued for it", async () => {
+  it("ignores the transitional force bit when a fingerprint exists", async () => {
     const { host, view, calls, dispose } = await builtHost();
     host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: false, fingerprint: "fp-1" });
     await settle();
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, "fp-1"]]);
     dispose();
   });
 
-  it("still removes a worktree whose directory is gone, because that is how the registration is pruned", async () => {
+  it("still delegates a missing worktree because Git prunes its registration after confirmation", async () => {
     const { host, view, calls, dispose } = await builtHost([windowRow()], true);
     host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: false });
     await settle();
 
-    expect(calls).toEqual([
-      ["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, false, undefined],
-    ]);
+    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, undefined]]);
     dispose();
   });
 });
@@ -4837,7 +4833,7 @@ describe("a removal is reported without being performed", () => {
     dispose();
   });
 
-  it("carries the fingerprint the service issued, and carries none when it issued none", async () => {
+  it("carries confirmation authority for risky and clean reports", async () => {
     const withRisk = await builtHost([windowRow()], false, { assessReport: REPORT("fp-9") });
     withRisk.host.handleMessage(withRisk.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
@@ -4847,16 +4843,15 @@ describe("a removal is reported without being performed", () => {
     ).toBe("fp-9");
     withRisk.dispose();
 
-    // D7: a clean report is not a weaker version of the same message, it is one
-    // that authorizes nothing. Asserted separately so a change that started
-    // issuing unconditionally fails here rather than passing both cases.
-    const clean = await builtHost([windowRow()], false, { assessReport: REPORT(null) });
+    // Clean reports carry confirmation authority too; only the service's fresh
+    // evidence decides whether redeeming it invokes Git with force.
+    const clean = await builtHost([windowRow()], false, { assessReport: REPORT("fp-clean") });
     clean.host.handleMessage(clean.view, { type: "worktreeRemoveAssess", worktreeId: RAW_ID, token: "t-1" });
     await settle();
     const post = clean.view.posts[0];
     expect(
       post?.type === "worktreeRemoveAssessment" && post.result.kind === "assessed" && post.result.fingerprint,
-    ).toBe(null);
+    ).toBe("fp-clean");
     clean.dispose();
   });
 
