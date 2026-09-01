@@ -116,8 +116,12 @@ export interface ProvisionModel {
 
 export interface ProvisionProvider {
   readonly id: "asimov" | "orca" | "vscodeTasks" | "native";
-  /** Repo-relative file that produced it. */
-  readonly file: string;
+  /**
+   * Repo-relative files this provider reads. Plural because orca is one
+   * provider over two files, and naming either alone would tell the user
+   * something other than what was read.
+   */
+  readonly files: readonly string[];
   /** True for the provider whose model the native file extended or detection chose. */
   readonly active: boolean;
 }
@@ -161,9 +165,13 @@ Two files, one provider, because orca splits what asimov keeps together.
 
 | Source | Maps to |
 |---|---|
-| `orca.yaml` → `scripts.setup` | `setup[] { kind: "shell" }` — a single block scalar, split on newlines, blank lines dropped |
+| `orca.yaml` → `scripts.setup` | `setup[] { kind: "shell" }` — ONE step, trailing whitespace trimmed, never split |
 | `orca.yaml` → `worktree.sharedDirectories[]` | `entries[] { mode: "link" }` |
 | `.worktreeinclude` | `entries[] { mode: "copy" }` — line-delimited, `#` comments and blank lines dropped |
+
+`scripts.setup` is one shell program and becomes one step. Splitting it on newlines — as an
+earlier draft of this section said — turns `if [ -f package.json ]; then / pnpm install / fi` into
+three steps, two of which are syntax errors on their own, and orca itself runs the block as one.
 
 `sharedDirectories` is link-only by orca's own definition, and orca additionally requires the
 directory to exist and be gitignored. The adapter **records the intent without enforcing orca's
@@ -177,8 +185,15 @@ provisioning, and reporting them would make every orca repo look misconfigured.
 ### 3.3 VS Code tasks — `.vscode/tasks.json`
 
 Tasks whose `runOptions.runOn` is `"worktreeCreated"` map to `setup[] { kind: "shell" }`, in file
-order, carrying the task entry's `command` — plus its `args`, joined with the shell quoting § 2.4
-already applies — as the step's `script`.
+order, carrying the task entry's `command` — plus its `args`, joined with the shell quoting
+defined just below — as the step's `script`.
+
+**Quoting.** Each `args` word is quoted as a single POSIX argument. The `command` is quoted too,
+UNLESS the entry declares `"type": "shell"`. A `type: "process"` task runs with no shell, so
+`./bin/build; touch /tmp/x` is a legal executable name there — rendering it verbatim into text a
+later task hands to `sh -c` would turn one reviewed task into two commands. The quoting itself is
+`src/utils/posixShellQuote.ts`, the repository's one implementation of the rule; this document
+previously deferred to a "§ 2.4" that does not exist.
 
 **Task identity is not preserved, and cannot be.** The design carried a `task` variant for exactly
 that purpose until it was measured: a `vscode.Task` scoped to a directory that is not an open

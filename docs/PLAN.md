@@ -550,7 +550,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | The tasks.json adapter honours `runOn: "worktreeCreated"` as a **convention read from the file** — the enum that would expose it to an extension is a proposed API a published extension cannot enable, and its dispatcher is core-internal and never fires for our worktrees. tasks.json is JSONC, so comments and trailing commas must parse; there is no JSONC dependency in the tree today |
 | **Acceptance** | An orca repo populates the section from `orca.yaml` and `.worktreeinclude` with the right copy/link modes; a repo whose only config is a `worktreeCreated` task populates its setup rows; detection follows the recorded order and the first hit supplies the model; a second detected provider appears as one quiet row offering to switch, never as a merge and never hidden; a JSONC file with comments and trailing commas parses; orca keys outside the two that map are ignored without reporting the repo as misconfigured |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.4] One Configuration Assembled From Several Files
 
