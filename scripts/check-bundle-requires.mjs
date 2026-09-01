@@ -27,7 +27,13 @@ for (const required of [bundle, esbuild]) {
 }
 
 const { bundleSource, esbuildSource } = readBuild({ bundle, esbuild });
-const bad = unresolvableRequires(bundleSource, { esbuildSource, resolvesFrom: path.dirname(bundle) });
+const bad = unresolvableRequires(bundleSource, {
+  esbuildSource,
+  // The bundle names its own config, so the externals cannot come from the
+  // webview build that sits beside it in esbuild.js.
+  outfile: "./dist/extension.js",
+  resolvesFrom: path.dirname(bundle),
+});
 
 if (bad.length > 0) {
   console.error(`[bundle-requires] FAIL: ${bad.length} require(s) the runtime cannot satisfy:`);

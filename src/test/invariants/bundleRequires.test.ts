@@ -6,7 +6,6 @@
 // reintroduced deliberately — WT-011.12's acceptance requires that — without a
 // test ever editing the build config it audits.
 import { describe, expect, it } from "vitest";
-// @ts-expect-error — a build script, deliberately outside the typed source tree
 import {
   classify,
   declaredExternals,
@@ -14,53 +13,148 @@ import {
   unresolvableRequires,
 } from "../../../scripts/bundleRequires.mjs";
 
+const OUT = "./dist/extension.js";
+
+/** Both configs, because esbuild.js really does carry two. */
 const ESBUILD = `
+const extensionConfig = {
+  entryPoints: ["./src/extension.ts"],
+  outfile: "./dist/extension.js",
   external: [
     "vscode", // Provided by VS Code runtime
-    "node-pty", // Loaded dynamically from VS Code internals
+    "node-pty",
+    // "removed-package"
   ],
+};
+const webviewConfig = {
+  outfile: "./media/webview.js",
+  external: ["never-allowlist-me"],
+};
 `;
 
-/** Nothing is on disk, so a relative require resolves only if this says so. */
-const nothingThere = (_p: string) => false;
-const only =
+const DIST = "/repo/dist";
+const nowhere = (_p: string) => false;
+const notADirectory = (_p: string) => false;
+
+/** Files that exist, as absolute paths; everything else is absent. */
+const files =
   (...present: string[]) =>
   (p: string) =>
-    present.some((q) => p.endsWith(q));
+    present.includes(p);
 
-const verdicts = (bundle: string, exists: (p: string) => boolean = nothingThere) =>
-  unresolvableRequires(bundle, { esbuildSource: ESBUILD, resolvesFrom: "/repo/dist", exists });
+const verdicts = (
+  bundle: string,
+  exists: (p: string) => boolean = nowhere,
+  isDirectory: (p: string) => boolean = notADirectory,
+) => unresolvableRequires(bundle, { esbuildSource: ESBUILD, outfile: OUT, resolvesFrom: DIST, exists, isDirectory });
 
-describe("the requires a built bundle still carries", () => {
-  it("reads the externals the build declares, rather than a copy of them", () => {
-    expect([...declaredExternals(ESBUILD)]).toEqual(["vscode", "node-pty"]);
+const one = (bundle: string, exists?: (p: string) => boolean, isDirectory?: (p: string) => boolean) =>
+  verdicts(bundle, exists, isDirectory)[0];
+
+describe("[round-1 F003] the externals come from the bundle's own build", () => {
+  it("reads them off the config whose outfile is the bundle", () => {
+    expect([...declaredExternals(ESBUILD, OUT)]).toEqual(["vscode", "node-pty"]);
   });
 
-  it("refuses to judge a build whose externals it cannot find", () => {
-    // Silently allowing nothing would turn every real failure into a pass.
-    expect(() => declaredExternals("const x = 1;")).toThrow(/external/);
+  it("does not take the other build's externals", () => {
+    // The webview config sits in the same file; allowlisting its externals for
+    // the extension bundle is the drift D2 exists to prevent.
+    expect(declaredExternals(ESBUILD, OUT).has("never-allowlist-me")).toBe(false);
+    expect(verdicts(`require("never-allowlist-me")`)).toHaveLength(1);
   });
 
-  it("finds each specifier once, however esbuild spaced the call", () => {
-    expect(requiredSpecifiers(`require("a");require( 'b' );require(  "a"  )`)).toEqual(["a", "b"]);
+  it("does not count a commented-out entry as declared", () => {
+    // A comment is not a member of an array. The text scan thought it was, so
+    // an external REMOVED from the build stayed allowlisted in the gate.
+    expect(declaredExternals(ESBUILD, OUT).has("removed-package")).toBe(false);
+  });
+
+  it("refuses to judge a build it cannot find, or cannot tell apart", () => {
+    expect(() => declaredExternals("const x = 1;", OUT)).toThrow(/exactly one/);
+    expect(() => declaredExternals(`${ESBUILD}${ESBUILD}`, OUT)).toThrow(/found 2/);
+  });
+
+  it("refuses a computed externals list rather than reading past it", () => {
+    const computed = `const c = { outfile: "./dist/extension.js", external: [NAMES] };`;
+    expect(() => declaredExternals(computed, OUT)).toThrow(/computed/);
   });
 });
 
-describe("[WT-011.12] the defect this gate exists for", () => {
+describe("[round-1 F002] a require is a call, not a piece of text", () => {
   it("catches the relative require a UMD factory left behind", () => {
-    const bundle = `function(require, exports){ var f = require("./impl/format"); }`;
-
-    expect(verdicts(bundle)).toEqual([expect.objectContaining({ specifier: "./impl/format", ok: false })]);
+    expect(requiredSpecifiers(`function(require, exports){ var f = require("./impl/format"); }`)).toEqual([
+      "./impl/format",
+    ]);
   });
 
-  it("says where it would have resolved, which is the whole diagnosis", () => {
-    expect(verdicts(`require("./impl/format")`)[0]?.why).toContain("/repo/dist/impl/format");
+  it("does not report one written inside a comment", () => {
+    expect(requiredSpecifiers(`// require("./missing")\n/* require("./missing") */`)).toEqual([]);
   });
 
-  it("passes the same require once that file is actually beside the bundle", () => {
-    // Not every relative require is the defect — one esbuild emitted for a
-    // chunk it really wrote is fine.
-    expect(verdicts(`require("./chunk")`, only("/repo/dist/chunk.js"))).toEqual([]);
+  it("does not report one quoted inside a diagnostic string", () => {
+    expect(requiredSpecifiers(`var msg = "Cannot find module: require(\\"./missing\\")";`)).toEqual([]);
+  });
+
+  it("does not report a method that merely shares the name", () => {
+    // `loader.require(...)` is a property access, not this `require`.
+    expect(requiredSpecifiers(`loader.require("./missing"); mod.require("./missing");`)).toEqual([]);
+  });
+
+  it("still catches a call the old spelling would have missed", () => {
+    expect(requiredSpecifiers(`require\n(\n  /* here */ "./spaced"\n)`)).toEqual(["./spaced"]);
+  });
+
+  it("ignores a computed require, which is the stated limit", () => {
+    expect(requiredSpecifiers("require(name); require(a + b);")).toEqual([]);
+  });
+});
+
+describe("[round-1 F001] resolution is what the PACKAGED extension could load", () => {
+  it("fails the defect's own require when nothing is beside the bundle", () => {
+    expect(one(`require("./impl/format")`)).toMatchObject({ specifier: "./impl/format", ok: false });
+    expect(one(`require("./impl/format")`).why).toContain("/repo/dist/impl/format");
+  });
+
+  it("passes a chunk esbuild really wrote", () => {
+    expect(verdicts(`require("./chunk")`, files("/repo/dist/chunk.js"))).toEqual([]);
+  });
+
+  it("does not accept a file that exists only in the checkout", () => {
+    // `scripts/` is not in the VSIX, so its presence on the build machine says
+    // nothing about what the installed extension can load.
+    const inCheckout = files("/repo/scripts/check-bundle-size.mjs");
+    expect(one(`require("../scripts/check-bundle-size.mjs")`, inCheckout)).toMatchObject({ ok: false });
+    expect(one(`require("../scripts/check-bundle-size.mjs")`, inCheckout).why).toContain("outside the packaged");
+  });
+
+  it("does not accept a bare directory as a module", () => {
+    // Node throws MODULE_NOT_FOUND for a directory with no index and no
+    // package.json; existence alone is not resolution.
+    const emptyDir = (p: string) => p === "/repo/dist/empty";
+    expect(one(`require("./empty")`, emptyDir, emptyDir)).toMatchObject({ ok: false });
+    expect(one(`require("./empty")`, emptyDir, emptyDir).why).toContain("no index");
+  });
+
+  it("accepts a directory that has an index or its own package.json", () => {
+    const isDir = (p: string) => p === "/repo/dist/pkg";
+    const withIndex = (p: string) => isDir(p) || p === "/repo/dist/pkg/index.js";
+    expect(verdicts(`require("./pkg")`, withIndex, isDir)).toEqual([]);
+    const withManifest = (p: string) => isDir(p) || p === "/repo/dist/pkg/package.json";
+    expect(verdicts(`require("./pkg")`, withManifest, isDir)).toEqual([]);
+  });
+
+  it("accepts the other extensions Node really resolves", () => {
+    expect(verdicts(`require("./n")`, files("/repo/dist/n.node"))).toEqual([]);
+    expect(verdicts(`require("./j")`, files("/repo/dist/j.json"))).toEqual([]);
+  });
+
+  it("refuses an absolute path even when it exists on this machine", () => {
+    expect(one(`require("/repo/dist/real.js")`, files("/repo/dist/real.js"))).toMatchObject({ ok: false });
+    expect(one(`require("/repo/dist/real.js")`, files("/repo/dist/real.js")).why).toContain("build machine");
+  });
+
+  it("refuses traversal out of the artifact directory", () => {
+    expect(one(`require("../../etc/passwd")`, () => true)).toMatchObject({ ok: false });
   });
 });
 
@@ -74,13 +168,12 @@ describe("[WT-011.12] what the gate must not report", () => {
   });
 
   it("fails a bare specifier that was never bundled", () => {
-    // It resolves against a node_modules the VSIX does not carry.
     expect(verdicts(`require("lodash")`)).toEqual([expect.objectContaining({ specifier: "lodash", ok: false })]);
   });
 
   it("does not treat a builtin as an external, nor the reverse", () => {
-    const externals = declaredExternals(ESBUILD);
-    expect(classify("node:fs", { externals, resolvesFrom: "/repo/dist" }).why).toBe("node builtin");
-    expect(classify("vscode", { externals, resolvesFrom: "/repo/dist" }).why).toBe("declared external");
+    const externals = declaredExternals(ESBUILD, OUT);
+    expect(classify("node:fs", { externals, resolvesFrom: DIST }).why).toBe("node builtin");
+    expect(classify("vscode", { externals, resolvesFrom: DIST }).why).toBe("declared external");
   });
 });

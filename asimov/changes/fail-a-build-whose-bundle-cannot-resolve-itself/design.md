@@ -22,18 +22,41 @@ let this ship: the source is fine, the bundle is not.
 
 ## D2 — What counts as a require the runtime cannot satisfy
 
-Every `require("<literal>")` surviving in the bundle is classified by its specifier:
+Requires are found **syntactically**, by walking a TypeScript AST for a bare `require` identifier
+called with one string-literal argument. `typescript` is already a direct devDependency and already
+carries a gate here (`src/test/invariants/fsDeletionGate.ts`), so this is the repo's own idiom rather
+than a new one.
+
+A text scan was tried first and was wrong in both directions (.reviews/round-1.md F002): it reported
+`require("./x")` written inside a comment or quoted in a diagnostic STRING, and it reported
+`loader.require("./x")` — a method that merely shares the name. It also missed a call whose `require`
+and `(` were separated. Each surviving specifier is then classified:
 
 | Specifier | Verdict | Why |
 |---|---|---|
 | A node builtin (`node:fs`, `process`, `buffer`, …) | ok | Always present |
 | A declared `external` from `esbuild.js` (`vscode`, `node-pty`) | ok | Supplied by the host, deliberately unbundled |
-| Relative or absolute (`./…`, `../…`, `/…`) | **fail unless it resolves from `dist/`** | This is the shipped defect |
+| Absolute (`/…`) | **fail** | A machine path baked into a shipped bundle names the BUILD machine |
+| Relative (`./…`, `../…`) | **fail unless it resolves to a shipped file** | This is the shipped defect |
 | Any other bare specifier | **fail** | It should have been bundled; at runtime it resolves against a `node_modules` the VSIX does not carry |
 
 The externals are READ FROM `esbuild.js` rather than copied here. A second hand-maintained list is a
 list that drifts, and the drift direction is silent: an external removed from the build but left in
 the gate's allowlist turns a real failure into a pass.
+
+They are read off the config object whose `outfile` is the extension bundle, and the gate throws
+unless exactly one such object exists. `esbuild.js` configures the extension AND the webview, so
+taking the first `external:` array in the file allowlists the wrong build's externals; and a
+commented-out entry is not a member of an array, though a text scan counted it as one — which
+allowlisted a package the build had STOPPED declaring external (.reviews/round-1.md F003).
+
+**Resolution is what the PACKAGED extension could load, not what exists on the build machine**
+(.reviews/round-1.md F001). Two things the builder's filesystem cannot answer directly: `scripts/`
+and `node_modules/` exist in the checkout and are not in the VSIX, so their presence proves nothing;
+and a directory that merely exists is not a module — Node throws `MODULE_NOT_FOUND` for one with no
+index and no `package.json`. So a relative specifier resolves only to a real FILE (`.js`, `.json`,
+`.node`, a directory `index.*`, or a directory carrying its own `package.json`) that lies INSIDE the
+artifact directory.
 
 Builtins come from `node:module`'s `builtinModules`, not a literal list, so a new builtin in a future
 Node does not become a false failure.
@@ -56,8 +79,16 @@ build broken.
 
 ## Known limit, stated rather than hidden
 
-Only `require()` with a STRING LITERAL is detected. A computed require — `require(x)` — is exactly
-what defeated esbuild in the first place, and it defeats a text scan for the same reason. This gate
-catches the surviving literal call the UMD factory emits, which is the observable the failure
-actually had. It is a tripwire, not a proof of loadability; the proof would be loading the bundle in
-a real extension host, which is `vscode-test`'s job and a different task.
+Only `require()` with a STRING LITERAL is detected. A computed require — `require(x)` — cannot be
+resolved without evaluating the program, and this repo has a legitimate one: the lazy `node-pty`
+load goes through `module.require(fullPath)`.
+
+That limit is about the ARGUMENT, and the first draft of this paragraph quietly used it to excuse a
+text scan whose problem was different: a scan cannot tell a call from a comment, a string, or a
+method of the same name, and that is not a limit of static analysis — it is a limit of not parsing.
+The AST removes it. What remains is the honest limit: a computed specifier is invisible.
+
+That is acceptable here because the shipped failure left a DIRECT literal call —
+`require("./impl/format")` — which is the observable the defect actually had. This is a tripwire, not
+a proof of loadability; the proof would be loading the bundle in a real extension host, which is
+`vscode-test`'s job and a different task.
