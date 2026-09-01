@@ -11,7 +11,15 @@
 
 import * as nodePath from "node:path";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
-import type { ProvisionEntry, ProvisionStepResult, WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
+import type {
+  ProvisionEntry,
+  ProvisionPort,
+  ProvisionPortResult,
+  ProvisionPortWarning,
+  ProvisionStepResult,
+  WorktreeAfterCreate,
+  WorktreeCreateMode,
+} from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type ClearDebrisDeps, clearDebris, nodeClearDebrisDeps } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
@@ -77,13 +85,18 @@ export type MutationOutcome =
        */
       openFailed?: string;
       /**
-       * What provisioning did, per entry, and the worktree it did it in.
+       * What provisioning did, per entry and selected port, and the worktree it did it in.
        *
        * Rides the create's OWN outcome so ordering is structural: the create is
        * reported first and this follows it. Provisioning never decides whether
        * the create succeeded (worktree-apply.md § 1).
        */
-      provision?: { path: string; steps: readonly ProvisionStepResult[] };
+      provision?: {
+        path: string;
+        steps: readonly ProvisionStepResult[];
+        ports: readonly ProvisionPortResult[];
+        portWarnings?: readonly ProvisionPortWarning[];
+      };
     }
   /**
    * Something is at risk, so the removal has NOT run and is waiting on a
@@ -205,6 +218,12 @@ export interface MutationServiceDeps {
     worktreePath: string,
     entries: readonly ProvisionEntry[],
   ): Promise<readonly ProvisionStepResult[]>;
+  applyPorts?(input: {
+    repoId: string;
+    repoPath: string;
+    worktreePath: string;
+    ports: readonly ProvisionPort[];
+  }): Promise<{ ports: readonly ProvisionPortResult[]; warnings: readonly ProvisionPortWarning[] }>;
 
   /**
    * The identity the TREE gives a worktree path — `WorktreeInfo.id`.
@@ -297,7 +316,11 @@ export interface MutationServiceDeps {
    * repo-root-relative; the absolute one this used to pass matched nothing at
    * all, so D8 had never taken effect (round-3 B10).
    */
-  gitExcludeDirFor(repoPath: string, createdPath: string): { gitDir: string; relativePath: string } | null;
+  gitExcludeDirFor(
+    repoId: string,
+    repoPath: string,
+    createdPath: string,
+  ): { gitDir: string; relativePath: string } | null;
   addToGitExclude(gitDir: string, entry: string): Promise<void>;
   now(): number;
   fingerprints?: FingerprintStore;
@@ -930,7 +953,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             // D8: a root inside the main worktree must not dirty the parent's
             // status. A failure here is reported, never fatal to the create.
-            const exclude = deps.gitExcludeDirFor(repoPath, check.path);
+            const exclude = deps.gitExcludeDirFor(request.repoId, repoPath, check.path);
             if (exclude !== null) {
               await deps.addToGitExclude(exclude.gitDir, excludePatternFor(exclude.relativePath));
             }
@@ -943,6 +966,8 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // SUCCESSFUL git create as a create error — the defect the plan
             // attack found by reading that arm rather than this line.
             let provisioned: readonly ProvisionStepResult[] | undefined;
+            let allocatedPorts: readonly ProvisionPortResult[] | undefined;
+            let portWarnings: readonly ProvisionPortWarning[] = [];
             let provisionedAt: string | undefined;
             const wanted = request.provision ?? [];
             if (wanted.length > 0) {
@@ -960,6 +985,26 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                     // nobody can tell from the truth (round-1 F009).
                     failed("this window cannot bring files over")
                   : await deps.applyProvision(repoPath, check.path, wanted).catch((error) => failed(messageOf(error)));
+            }
+            const wantedPorts = request.ports ?? [];
+            if (wantedPorts.length > 0) {
+              const failed = (reason: string): readonly ProvisionPortResult[] =>
+                wantedPorts.map((port) => ({
+                  id: port.id,
+                  name: port.name,
+                  ...(port.port === undefined ? {} : { preview: port.port }),
+                  outcome: { kind: "failed" as const, reason },
+                }));
+              const applied =
+                deps.applyPorts === undefined
+                  ? { ports: failed("this window cannot allocate ports"), warnings: [] }
+                  : await deps
+                      .applyPorts({ repoId: request.repoId, repoPath, worktreePath: check.path, ports: wantedPorts })
+                      .catch((error) => ({ ports: failed(messageOf(error)), warnings: [] }));
+              allocatedPorts = applied.ports;
+              portWarnings = applied.warnings;
+            }
+            if (provisioned !== undefined || allocatedPorts !== undefined) {
               // The id the tree will key this worktree on, not the path git was
               // handed — a result message whose `worktreeId` is only USUALLY
               // the one consumers hold is a latent mismatch (round-1 F015).
@@ -987,9 +1032,17 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               // create notice carried no `worktreeId` at all, so the merge key
               // the provisioning message arrives under matched nothing and every
               // real create grew a second, invented notice (round-2 F017).
-              ...(provisioned === undefined || provisionedAt === undefined
+              ...(provisionedAt === undefined
                 ? {}
-                : { worktreeId: provisionedAt, provision: { path: provisionedAt, steps: provisioned } }),
+                : {
+                    worktreeId: provisionedAt,
+                    provision: {
+                      path: provisionedAt,
+                      steps: provisioned ?? [],
+                      ports: allocatedPorts ?? [],
+                      ...(portWarnings.length === 0 ? {} : { portWarnings }),
+                    },
+                  }),
               // Only a SURFACE can open a terminal — it needs a view id and a
               // webview (D2). The host performs it on the origin.
               ...(request.afterCreate.kind === "terminal" ? { openTerminalAt: check.path } : {}),

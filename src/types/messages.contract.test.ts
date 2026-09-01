@@ -213,6 +213,13 @@ const provisionResult: WorktreeProvisionResultMessage = {
   portWarnings: ["lockReleaseFailed", "excludeFailed"],
 };
 
+// @ts-expect-error every producer states the complete per-port result list, including an empty one
+const _provisionResultWithoutPorts: WorktreeProvisionResultMessage = {
+  type: "worktreeProvisionResult",
+  worktreeId: "w1",
+  steps: [],
+};
+
 // It is an extension → webview message, so a panel switching on the union sees it.
 const provisionResultInUnion: ExtensionToWebViewMessage = provisionResult;
 
@@ -262,6 +269,12 @@ describe("the wire contract", () => {
     expect(stepForDirectory.details).toHaveLength(1);
     expect(provisionResult.ports?.map((port) => port.outcome.kind)).toEqual(["allocated", "reused", "failed"]);
     expect(provisionResultInUnion.type).toBe("worktreeProvisionResult");
-    expect([refusedNoReason, copiedWithReason, failedPortWithoutReason, portWithPath, provisionResultWithVerdict]).toHaveLength(5);
+    expect([
+      refusedNoReason,
+      copiedWithReason,
+      failedPortWithoutReason,
+      portWithPath,
+      provisionResultWithVerdict,
+    ]).toHaveLength(5);
   });
 });

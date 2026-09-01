@@ -765,6 +765,7 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       type: "worktreeProvisionResult",
       worktreeId: "/wt/feat",
       steps: [],
+      ports: [],
     });
 
     expect(handled).toEqual(["/wt/feat"]);
@@ -2361,6 +2362,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [],
     });
 
     expect(results(h)).toHaveLength(1);
@@ -2392,6 +2394,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [],
     });
     // The premise, so the assertion below is not passing for the wrong reason:
     // the merged notice really is repository-scoped at this point.
@@ -2453,6 +2456,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [],
     });
 
     expect(results(h)).toHaveLength(1);
@@ -2472,6 +2476,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId: "/wt/gone",
       steps: [{ id: "i1", path: ".env", outcome: { kind: "refused", reason: "a lockfile is never brought over" } }],
+      ports: [],
     });
 
     expect(results(h)).toHaveLength(1);

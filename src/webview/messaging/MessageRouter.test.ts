@@ -150,6 +150,7 @@ describe("createMessageRouter", () => {
       type: "worktreeProvisionResult",
       worktreeId: "/wt/feat",
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [],
     });
 
     expect(onWorktreeProvisionResult).toHaveBeenCalledTimes(1);

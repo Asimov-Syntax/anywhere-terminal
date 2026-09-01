@@ -643,8 +643,8 @@ describe("what the create writes into info/exclude", () => {
     const written: Array<[string, string]> = [];
     const h = harness({
       repoPath: () => "/repo",
-      gitExcludeDirFor: (repoPath, createdPath) => ({
-        gitDir: `${repoPath}/.git`,
+      gitExcludeDirFor: (repoId, repoPath, createdPath) => ({
+        gitDir: repoId,
         relativePath: createdPath.slice(repoPath.length + 1),
       }),
       addToGitExclude: async (gitDir, entry) => {
@@ -674,9 +674,9 @@ describe("what the create writes into info/exclude", () => {
     // same root are one entry, which is what keeps info/exclude bounded.
     const written: [string, string][] = [];
     const h = harness({
-      gitExcludeDirFor: (repoPath, createdPath) => {
+      gitExcludeDirFor: (repoId, repoPath, createdPath) => {
         const root = createdPath.slice(0, createdPath.lastIndexOf("/"));
-        return { gitDir: `${repoPath}/.git`, relativePath: root.slice(repoPath.length + 1) };
+        return { gitDir: repoId, relativePath: root.slice(repoPath.length + 1) };
       },
       addToGitExclude: async (gitDir, entry) => {
         written.push([gitDir, entry]);
@@ -1845,6 +1845,10 @@ describe("provisioning rides the create without ever costing it", () => {
     { id: "i1", path: ".env", mode: "copy" as const, source: "asimov/worktree.yaml" },
     { id: "i2", path: "data", mode: "link" as const, source: "asimov/worktree.yaml" },
   ];
+  const ports = [
+    { id: "p1", name: "APP", source: "asimov/worktree.yaml", port: 5183 },
+    { id: "p2", name: "DB", source: "asimov/worktree.yaml", port: 5432 },
+  ];
   const create = (over: Record<string, unknown> = {}) => ({
     repoId: REPO,
     path: "/repo/wt/new",
@@ -1855,7 +1859,16 @@ describe("provisioning rides the create without ever costing it", () => {
   });
   const okOutcome = (h: ReturnType<typeof harness>) =>
     h.outcomes.find((o) => (o as { verb?: string }).verb === "create") as
-      | { kind: string; worktreeId?: string; provision?: { path: string; steps: readonly ProvisionStepResult[] } }
+      | {
+          kind: string;
+          worktreeId?: string;
+          provision?: {
+            path: string;
+            steps: readonly ProvisionStepResult[];
+            ports?: readonly { id: string; outcome: { kind: string } }[];
+            portWarnings?: readonly string[];
+          };
+        }
       | undefined;
 
   it("[F009] says a selection was not applied rather than dropping it into a silent success", async () => {
@@ -1930,11 +1943,93 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(seen).toEqual(["provision", "afterCreate"]);
   });
 
+  it("applies files, then ports, then launches", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      applyProvision: async () => {
+        seen.push("files");
+        return [];
+      },
+      applyPorts: async () => {
+        seen.push("ports");
+        return { ports: [], warnings: [] };
+      },
+      afterCreate: async () => {
+        seen.push("afterCreate");
+      },
+    });
+
+    await h.service.createWorktree(create({ provision: entries, ports }));
+
+    expect(seen).toEqual(["files", "ports", "afterCreate"]);
+  });
+
+  it("applies and reports ports when they are the only selected items", async () => {
+    const normalized = vi.fn(async () => "/normalized/feat");
+    const applied = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["applyPorts"]>>[0]) => ({
+      ports: input.ports.map((item) => ({
+        id: item.id,
+        name: item.name,
+        preview: item.port,
+        outcome: { kind: "allocated" as const, port: (item.port ?? 0) + 1 },
+      })),
+      warnings: ["excludeFailed" as const],
+    }));
+    const h = harness({ applyPorts: applied, normalizeWorktreeId: normalized });
+
+    await h.service.createWorktree(create({ ports }));
+    const outcome = okOutcome(h);
+
+    expect(applied).toHaveBeenCalledWith({ repoId: REPO, repoPath: "/repo", worktreePath: "/repo/wt/new", ports });
+    expect(outcome?.kind).toBe("ok");
+    expect(outcome?.worktreeId).toBe("/normalized/feat");
+    expect(outcome?.provision?.path).toBe("/normalized/feat");
+    expect(outcome?.provision?.steps).toEqual([]);
+    expect(outcome?.provision?.ports?.map((item) => item.outcome.kind)).toEqual(["allocated", "allocated"]);
+    expect(outcome?.provision?.portWarnings).toEqual(["excludeFailed"]);
+    expect(normalized).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps create successful and reports every port when allocation rejects", async () => {
+    const h = harness({
+      applyPorts: async () => {
+        throw new Error("lock unavailable");
+      },
+    });
+
+    await h.service.createWorktree(create({ ports }));
+    const outcome = okOutcome(h);
+
+    expect(outcome?.kind).toBe("ok");
+    expect(outcome?.provision?.ports?.map((item) => item.id)).toEqual(["p1", "p2"]);
+    expect(outcome?.provision?.ports?.map((item) => item.outcome.kind)).toEqual(["failed", "failed"]);
+  });
+
+  it("preserves partial port success and batch warnings", async () => {
+    const h = harness({
+      applyPorts: async () => ({
+        ports: [
+          { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated" as const, port: 5184 } },
+          { id: "p2", name: "DB", preview: 5432, outcome: { kind: "failed" as const, reason: "no port" } },
+        ],
+        warnings: ["lockReleaseFailed" as const],
+      }),
+    });
+
+    await h.service.createWorktree(create({ ports }));
+    const outcome = okOutcome(h);
+
+    expect(outcome?.provision?.ports?.map((item) => item.outcome.kind)).toEqual(["allocated", "failed"]);
+    expect(outcome?.provision?.portWarnings).toEqual(["lockReleaseFailed"]);
+  });
+
   it("provisions nothing, and reports nothing, for a create that carried no selection", async () => {
     const applied = vi.fn(async () => []);
-    const h = harness({ applyProvision: applied });
+    const appliedPorts = vi.fn(async () => ({ ports: [], warnings: [] }));
+    const h = harness({ applyProvision: applied, applyPorts: appliedPorts });
     await h.service.createWorktree(create());
     expect(applied).not.toHaveBeenCalled();
+    expect(appliedPorts).not.toHaveBeenCalled();
     expect(okOutcome(h)?.kind).toBe("ok");
     expect(okOutcome(h)?.provision).toBeUndefined();
   });

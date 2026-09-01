@@ -88,6 +88,7 @@ import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
 import type { MutationOutcome } from "./worktree/worktreeMutationService";
 import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
 import { worktreeHeadOid } from "./worktree/worktreeMutations";
+import { allocateWorktreePorts, previewWorktreePorts } from "./worktree/worktreePorts";
 
 /**
  * What the worktree panel's read-only actions need from the world, injected so
@@ -594,6 +595,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           }
           return steps;
         },
+        applyPorts: (input) =>
+          allocateWorktreePorts(input, {
+            listWorktrees: async (repoPath) => {
+              const listing = await listRepoWorktrees(repoPath, worktreeTreeDeps);
+              return {
+                worktrees: listing.worktrees.map((worktree) => ({ id: worktree.id, path: worktree.displayPath })),
+                reasons: listing.reasons,
+                skipped: listing.skipped,
+                ...(listing.degraded === undefined ? {} : { degraded: listing.degraded }),
+              };
+            },
+          }),
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
@@ -651,7 +664,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         },
         // D8: a create under a root INSIDE the main worktree would otherwise
         // show up as an untracked directory in the parent's status.
-        gitExcludeDirFor: (repoPath, createdPath) => {
+        gitExcludeDirFor: (repoId, repoPath, createdPath) => {
           if (!isPathInside(createdPath, repoPath)) {
             return null;
           }
@@ -662,7 +675,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const root = path.dirname(createdPath);
           // Unless the root IS the repository — excluding that hides everything.
           const dir = isPathInside(root, repoPath) ? root : createdPath;
-          return { gitDir: path.join(repoPath, ".git"), relativePath: path.relative(repoPath, dir) };
+          return { gitDir: repoId, relativePath: path.relative(repoPath, dir) };
         },
         addToGitExclude: async (gitDir, entry) => {
           // Reported, never fatal: the worktree exists either way, and failing
@@ -690,6 +703,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     type: "worktreeProvisionResult" as const,
                     worktreeId: outcome.provision.path,
                     steps: outcome.provision.steps,
+                    ports: outcome.provision.ports,
+                    ...(outcome.provision.portWarnings === undefined
+                      ? {}
+                      : { portWarnings: outcome.provision.portWarnings }),
                   },
                 }
               : {}),
@@ -839,6 +856,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
     readProvisioning: (mainWorktree, prefer) => readProvisioning(createProvisioningDeps(), mainWorktree, prefer),
+    previewProvisioningPorts: (ports, worktreePaths) => previewWorktreePorts(ports, worktreePaths),
     // Same reason as the offer above: without this the create form never
     // receives a branch list and the combobox is a plain text field in the
     // shipped extension, with every module test green against its own fake.

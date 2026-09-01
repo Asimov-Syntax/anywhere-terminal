@@ -9,11 +9,12 @@
 // actually hands the host.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorktreeActions, WorktreeSurface } from "./providers/WorktreeHost";
+import type { WorktreeActions, WorktreeHostOptions, WorktreeSurface } from "./providers/WorktreeHost";
 import type { MutationOutcome, MutationServiceDeps } from "./worktree/worktreeMutationService";
 
 const received: {
   actions?: WorktreeActions;
+  previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
   deps?: MutationServiceDeps;
   reports: { outcome: MutationOutcome; origin: WorktreeSurface | undefined }[];
 } = { reports: [] };
@@ -50,8 +51,9 @@ vi.mock("./providers/WorktreeHost", async (importOriginal) => {
   const real = await importOriginal<typeof import("./providers/WorktreeHost")>();
   return {
     ...real,
-    createWorktreeHost: (options: { actions: WorktreeActions }) => {
+    createWorktreeHost: (options: WorktreeHostOptions) => {
       received.actions = options.actions;
+      received.previewProvisioningPorts = options.previewProvisioningPorts;
       const host = real.createWorktreeHost(options as never);
       if (!forceUndegraded) {
         return host;
@@ -129,6 +131,7 @@ describe("the shipped extension supplies its mutating capabilities", () => {
 
     // Named individually: a `toBeDefined` on the object would pass on the very
     // shape B1 found, where the object existed and the five keys did not.
+    expect(typeof received.previewProvisioningPorts).toBe("function");
     expect(typeof received.actions?.createWorktree).toBe("function");
     expect(typeof received.actions?.removeWorktree).toBe("function");
     expect(typeof received.actions?.lockWorktree).toBe("function");
@@ -139,6 +142,7 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     // lazily, so something has to ask for it first.
     received.actions?.reconcileFingerprints?.([]);
     expect(typeof received.deps?.observation).toBe("function");
+    expect(typeof received.deps?.applyPorts).toBe("function");
   });
 });
 

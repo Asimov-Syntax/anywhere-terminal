@@ -22,7 +22,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import type { WorktreeHost, WorktreeSurface } from "./providers/WorktreeHost";
 import { type PaneEvidenceStore, TURN_FRESHNESS_MS } from "./session/PaneEvidenceStore";
-import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "./types/messages";
+import type {
+  ExtensionToWebViewMessage,
+  WebViewToExtensionMessage,
+  WorktreeProvisionResultMessage,
+} from "./types/messages";
 import type { VaultSessionEntry } from "./vault/types";
 import type { CreateSessionOptions } from "./vault/VaultLauncher";
 import { createMessageRouter, type MessageHandlers } from "./webview/messaging/MessageRouter";
@@ -1428,8 +1432,16 @@ describe("the invariants that span the host and the webview", () => {
     // is whatever `normalizeWorktreeId` returns for the path the host resolved.
     fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
     fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
-    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
-    await assemble();
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\nports:\n  APP: 5183\n");
+    const { surface } = await assemble();
+    const provisionResults: WorktreeProvisionResultMessage[] = [];
+    const deliver = surface.post;
+    surface.post = (message: ExtensionToWebViewMessage) => {
+      if (message.type === "worktreeProvisionResult") {
+        provisionResults.push(message);
+      }
+      return deliver(message);
+    };
 
     clickItem(openMenu("feature"), /new worktree/i);
     await settleUntil(
@@ -1448,12 +1460,14 @@ describe("the invariants that span the host and the webview", () => {
     branch.dispatchEvent(new Event("change", { bubbles: true }));
     await settle();
 
-    const box = document.querySelector<HTMLInputElement>(".wt-bring-box .wt-brow-cb");
-    if (box === null) {
-      throw new Error("the form offered no file to bring over");
+    const boxes = [...document.querySelectorAll<HTMLInputElement>(".wt-bring-box .wt-brow-cb")];
+    if (boxes.length !== 2) {
+      throw new Error("the form did not offer both the file and port");
     }
-    box.checked = true;
-    box.dispatchEvent(new Event("change", { bubbles: true }));
+    for (const box of boxes) {
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     await settle();
 
     // git is a recorder here, so nothing materializes the destination. The
@@ -1474,8 +1488,14 @@ describe("the invariants that span the host and the webview", () => {
     );
     await settle();
 
-    // The file actually arrived, through the production binding.
+    // The file and port claim actually arrived, through the production bindings.
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
+    expect(fs.readFileSync(path.join(destination, ".env.worktree"), "utf8")).toMatch(/^APP=[1-9][0-9]{0,4}\n$/);
+    expect(provisionResults).toHaveLength(1);
+    expect(provisionResults[0]?.steps).toHaveLength(1);
+    expect(provisionResults[0]?.ports).toHaveLength(1);
+    expect(provisionResults[0]?.ports[0]?.outcome.kind).toBe("allocated");
+    expect(fs.readFileSync(path.join(REPO, ".git", "info", "exclude"), "utf8")).toContain("/.env.worktree\n");
     // ONE notice. Two means the provisioning message found no create to land on
     // and made its own — which is what shipped.
     // ONE create notice. The panel also carries an unrelated "not being watched"

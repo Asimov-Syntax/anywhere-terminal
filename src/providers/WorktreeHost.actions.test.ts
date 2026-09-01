@@ -5472,6 +5472,7 @@ describe("the provisioning a create is actually given", () => {
         type: "worktreeProvisionResult",
         worktreeId: "/trees/feat",
         steps: [{ id: "a", path: ".env", outcome: { kind: "copied" } }],
+        ports: [],
       },
     });
 

@@ -65,7 +65,7 @@ The lock extraction and result skeleton can start together. Everything after the
     2. `src/providers/WorktreeHost.ts`: resolve checked ids against both `offered.entries` and `offered.ports`, passing the two host-held arrays separately on the create capability request.
     3. `src/providers/WorktreeHost.test.ts` and `src/providers/WorktreeHost.actions.test.ts`: preview success or failure once per issued offer, switched-provider previews, superseded offers, selected ports only, duplicate names retained as ids, and malformed inbound selections refused.
 
-- [ ] 1_6 Apply ports after files and carry their outcomes on the successful create
+- [x] 1_6 Apply ports after files and carry their outcomes on the successful create — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit -- --maxWorkers=4 exit 0
   - **Deps**: 1_5
   - **Refs**: design.md D1, design.md D8, design.md D9; specs/worktree-panel/spec.md#{a-named-port-carries-a-numeric-preview, every-selected-port-gets-its-own-outcome, a-committed-allocation-stays-successful-when-lock-cleanup-fails, the-port-claim-file-stays-local-to-the-repository}
   - **Acceptance**:
@@ -75,8 +75,9 @@ The lock extraction and result skeleton can start together. Everything after the
     1. `src/worktree/worktreeMutationService.ts`: add the selected-port request and `applyPorts` dependency, execute it after copied and linked entries and before `afterCreate`, and invoke it when ports are the only selected items.
     2. `src/worktree/worktreeMutationService.ts`: keep create `ok` through allocator rejection, lock timeout and warning outcomes; normalize the result worktree id once when either material or ports produced a report; route create-root exclusion through common-dir `repoId`.
     3. `src/extension.ts`: bind both offer previews and authoritative allocation to `worktreePorts.ts`; use current paths for previews and a fresh complete git listing plus common-dir `repoId` for apply; include ports and warnings after the create result.
-    4. `src/worktree/worktreeMutationService.test.ts`: assert file materialization before ports before launch, ports-only apply, all-port failure with create success, partial success, warnings, common-dir exclusion, normalized identity, and absent-selection behavior.
-    5. `src/extension.worktreeMutations.test.ts` and `src/extension.worktreeAssembly.test.ts`: prove production supplies both bindings and delivers port results and warnings after the create result.
+    4. `src/types/messages.ts`, `src/types/messages.contract.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/webview/messaging/MessageRouter.test.ts`, and `src/webview/worktree/WorktreeController.test.ts`: make port results required after every production result producer carries them, and update typed fixtures with explicit empty results.
+    5. `src/worktree/worktreeMutationService.test.ts`: assert file materialization before ports before launch, ports-only apply, all-port failure with create success, partial success, warnings, common-dir exclusion, normalized identity, and absent-selection behavior.
+    6. `src/extension.worktreeMutations.test.ts` and `src/extension.worktreeAssembly.test.ts`: prove production supplies both bindings and delivers port results and warnings after the create result.
 
 - [ ] 1_7 Render port movement and failure without naming unchanged successes
   - **Deps**: 1_6

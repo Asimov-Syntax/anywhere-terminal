@@ -2561,8 +2561,7 @@ export interface WorktreeProvisionResultMessage {
   type: "worktreeProvisionResult";
   worktreeId: string;
   steps: readonly ProvisionStepResult[];
-  /** Optional until the create producer lands; required by WT-012.6's final assembly. */
-  ports?: readonly ProvisionPortResult[];
+  ports: readonly ProvisionPortResult[];
   portWarnings?: readonly ProvisionPortWarning[];
 }
 
