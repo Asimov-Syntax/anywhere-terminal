@@ -2351,6 +2351,41 @@ describe("what a mutation did comes back to the panel", () => {
     });
   });
 
+  it("[F017] folds it onto a create the tree does not carry YET, which every real create is", () => {
+    // The test above picks a worktree already in the tree, so `rescope` leaves
+    // its id alone and the merge key matches. A worktree made a moment ago is
+    // in no tree until the next rebuild lands: `rescope` moves its id to the
+    // orphaned label, and keying on `worktreeId` alone then missed on every
+    // real create — which is why F017 survived a green suite.
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/brand-new";
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    // The premise: the notice really was re-scoped, so this is not asserting
+    // the same thing the test above does under a different name.
+    expect(results(h)[0]).toMatchObject({ orphanedLabel: worktreeId });
+    expect(results(h)[0]).not.toHaveProperty("worktreeId");
+
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+
+    expect(results(h)).toHaveLength(1);
+    expect(results(h)[0]).toMatchObject({
+      action: "create",
+      repoId: REPO,
+      outcome: "ok",
+      provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+  });
+
   it("[F005] reports provisioning on its own when the create notice is already gone", () => {
     // Dismissed, or re-scoped away. Saying nothing would leave the user unable
     // to tell "nothing was brought over" from "nobody looked".

@@ -1855,7 +1855,7 @@ describe("provisioning rides the create without ever costing it", () => {
   });
   const okOutcome = (h: ReturnType<typeof harness>) =>
     h.outcomes.find((o) => (o as { verb?: string }).verb === "create") as
-      | { kind: string; provision?: { path: string; steps: readonly ProvisionStepResult[] } }
+      | { kind: string; worktreeId?: string; provision?: { path: string; steps: readonly ProvisionStepResult[] } }
       | undefined;
 
   it("[F009] says a selection was not applied rather than dropping it into a silent success", async () => {
@@ -1937,6 +1937,44 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(applied).not.toHaveBeenCalled();
     expect(okOutcome(h)?.kind).toBe("ok");
     expect(okOutcome(h)?.provision).toBeUndefined();
+  });
+
+  it("[F017] carries the id its provisioning message will arrive under", async () => {
+    // The panel merges the two messages on this id. Without it the create
+    // notice had none at all, so the merge missed and every real create grew a
+    // second notice with a fabricated `outcome: "ok"`.
+    const h = harness({ normalizeWorktreeId: async () => "/normalized/feat" });
+    await h.service.createWorktree(create({ provision: entries }));
+    const outcome = okOutcome(h);
+
+    expect(outcome?.worktreeId).toBe("/normalized/feat");
+    expect(outcome?.worktreeId).toBe(outcome?.provision?.path);
+  });
+
+  it("[F023] never reads the tree for a create that provisions nothing", async () => {
+    const normalized = vi.fn(async () => "/normalized/feat");
+    const h = harness({ normalizeWorktreeId: normalized });
+    await h.service.createWorktree(create());
+
+    expect(normalized).not.toHaveBeenCalled();
+    expect(okOutcome(h)?.worktreeId).toBeUndefined();
+  });
+
+  it("[F023] keeps the create successful when normalizing REJECTS", async () => {
+    // It was the one unguarded await left in the body D1 exists to protect: a
+    // rejection here reached the outer arm and reported a successful git create
+    // as a create error, having already made the worktree.
+    const h = harness({
+      normalizeWorktreeId: async () => {
+        throw new Error("EIO: the registry read blew up");
+      },
+    });
+    await h.service.createWorktree(create({ provision: entries }));
+    const outcome = okOutcome(h);
+
+    expect(outcome?.kind).toBe("ok");
+    expect(outcome?.provision?.path).toBe("/repo/wt/new");
+    expect(outcome?.worktreeId).toBe("/repo/wt/new");
   });
 
   it("does not provision a repair, which brings nothing over", async () => {

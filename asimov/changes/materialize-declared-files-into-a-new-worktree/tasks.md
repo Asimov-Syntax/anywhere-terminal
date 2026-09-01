@@ -127,7 +127,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     5. `src/worktree/provisioning/entryGate.test.ts`, `src/worktree/provisioning/applyEntries.test.ts`, `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/applyEntries.fake.ts`: acceptance per SPELLING rather than per rule — every variant the chair ran against both material rules; the node budget at its exact boundary; a refunded skip; an aborted in-flight copy.
   - **Boundary**: no deletion primitive may appear in this module — D9 and the I10 gate both still hold
 
-- [ ] 3_2 Give the create notice the id its own result carries
+- [x] 3_2 Give the create notice the id its own result carries — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D1; .reviews/round-2.md F017, F018, F023
   - **Acceptance**:
@@ -136,6 +136,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
   - **Plan**:
     1. `src/worktree/worktreeMutationService.ts`: the create outcome carries the normalized `worktreeId` it already computes. Without it the merge key never matches and every real create synthesizes a second notice with a fabricated `outcome: "ok"` (F017).
     2. `src/worktree/worktreeMutationService.ts`: compute `provisionedAt` inside the selection guard and under its own `.catch()`. It was the one unguarded await in the body D1 exists to protect, and it ran on reattaches too (F023).
-    3. `src/webview/worktree/WorktreeView.ts`: render the `details` rows the host bounds and sends — a directory reporting `copied` currently hides every skipped descendant, which is what D8 minted the field for (F018).
-    4. `src/worktree/worktreeMutationService.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeView.test.ts`: the merge witness rebuilt from what the service actually emits rather than from a literal — the round-2 finding names my own fixture as the reason the defect survived.
+    3. `src/webview/worktree/WorktreeController.ts`: merge on the identity the create notice ARRIVED under, not the one it was left holding — `rescope` drops a `worktreeId` the tree has not seen yet, and a worktree created seconds ago is exactly that, so the id-only key missed on every real create even once the service supplied it (F017, second half, found by the assembly witness).
+    4. `src/webview/worktree/WorktreeView.ts`: render the `details` rows the host bounds and sends — a directory reporting `copied` currently hides every skipped descendant, which is what D8 minted the field for (F018).
+    5. `src/worktree/worktreeMutationService.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/extension.worktreeAssembly.test.ts`: the merge witness rebuilt from what the service actually emits rather than from a literal — the round-2 finding names my own fixture as the reason the defect survived. The end-to-end half runs in the assembly lane, where the id is produced rather than written down; round 2 recorded that the webview side of this change had no such witness at all.
   - **Boundary**: no new notice — provisioning reports on the create's own result, never beside it

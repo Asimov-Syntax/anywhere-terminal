@@ -1363,7 +1363,14 @@ export class WorktreeController {
    * brought over" from "nobody looked".
    */
   handleProvisionResult(msg: WorktreeProvisionResultMessage): void {
-    const existing = this.actionResults.find((r) => r.action === "create" && r.worktreeId === msg.worktreeId);
+    // Matched on the id the create ARRIVED under. `rescope` drops a `worktreeId`
+    // the tree does not carry yet and keeps it as the orphaned label, and a
+    // worktree made a moment ago is precisely that until the next rebuild lands
+    // — so the id-only key missed on every real create, which is what made the
+    // service supplying an id (round-2 F017) only half the fix.
+    const existing = this.actionResults.find(
+      (r) => r.action === "create" && (r.worktreeId ?? r.orphanedLabel) === msg.worktreeId,
+    );
     this.showActionResult({
       ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
       provisioned: msg.steps,

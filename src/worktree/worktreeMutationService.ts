@@ -943,6 +943,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // SUCCESSFUL git create as a create error — the defect the plan
             // attack found by reading that arm rather than this line.
             let provisioned: readonly ProvisionStepResult[] | undefined;
+            let provisionedAt: string | undefined;
             const wanted = request.provision ?? [];
             if (wanted.length > 0) {
               const failed = (reason: string): readonly ProvisionStepResult[] =>
@@ -959,11 +960,15 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                     // nobody can tell from the truth (round-1 F009).
                     failed("this window cannot bring files over")
                   : await deps.applyProvision(repoPath, check.path, wanted).catch((error) => failed(messageOf(error)));
+              // The id the tree will key this worktree on, not the path git was
+              // handed — a result message whose `worktreeId` is only USUALLY
+              // the one consumers hold is a latent mismatch (round-1 F015).
+              //
+              // Inside the guard and inside its own catch: it was the one
+              // unguarded await left in the body D1 exists to protect, and it
+              // ran on reattaches that provision nothing (round-2 F023).
+              provisionedAt = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
             }
-            // The id the tree will key this worktree on, not the path git was
-            // handed — a result message whose `worktreeId` is only USUALLY the
-            // one consumers hold is a latent mismatch (round-1 F015).
-            const provisionedAt = (await deps.normalizeWorktreeId?.(check.path)) ?? check.path;
             // The worktree is already made. Whatever this rejects with, it
             // reports as a launch that did not happen — it never unmakes it.
             await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
@@ -977,7 +982,14 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               ...(openFailure === null ? {} : { openFailed: openFailure }),
               // A repair provisions nothing, so this rides the create branch only:
               // a reattach rewrites a link to a directory git already registered.
-              ...(provisioned === undefined ? {} : { provision: { path: provisionedAt, steps: provisioned } }),
+              //
+              // The id travels WITH the steps, on one outcome. Without it the
+              // create notice carried no `worktreeId` at all, so the merge key
+              // the provisioning message arrives under matched nothing and every
+              // real create grew a second, invented notice (round-2 F017).
+              ...(provisioned === undefined || provisionedAt === undefined
+                ? {}
+                : { worktreeId: provisionedAt, provision: { path: provisionedAt, steps: provisioned } }),
               // Only a SURFACE can open a terminal — it needs a view id and a
               // webview (D2). The host performs it on the origin.
               ...(request.afterCreate.kind === "terminal" ? { openTerminalAt: check.path } : {}),

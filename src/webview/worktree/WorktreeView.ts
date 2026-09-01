@@ -1815,12 +1815,20 @@ function provisionSummary(
   }
   const bad = steps.filter((s) => s.outcome.kind === "refused" || s.outcome.kind === "failed");
   const arrived = steps.length - bad.length;
-  if (bad.length === 0) {
+  // A directory entry has one outcome and many nodes: it reports `copied` while
+  // descendants inside it were skipped or refused. Counting only the top level
+  // told the user everything arrived when some of it had not (round-2 F018).
+  const inside = steps.flatMap((s) => s.details ?? []);
+  if (bad.length === 0 && inside.length === 0) {
     return { body: `${arrived} of ${steps.length} brought over.`, tone: "neutral" };
   }
+  const body = `${arrived} of ${steps.length} brought over.`;
   return {
-    body: `${arrived} of ${steps.length} brought over.`,
+    body: inside.length === 0 ? body : `${body} ${inside.length} inside them did not arrive.`,
     tone: "warn",
-    reason: bad.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`).join("\n"),
+    reason: [
+      ...bad.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
+      ...inside.map((d) => `${d.path}: ${d.reason}`),
+    ].join("\n"),
   };
 }

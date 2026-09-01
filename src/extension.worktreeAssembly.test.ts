@@ -1419,6 +1419,74 @@ describe("the invariants that span the host and the webview", () => {
     ]);
   });
 
+  it("[3_2] brings a ticked file over and reports it on the create's OWN notice", async () => {
+    // Round-2 F017, end to end. The create outcome carried no `worktreeId`, so
+    // the merge key the provisioning message arrives under matched nothing and
+    // the panel invented a SECOND notice with a fabricated `outcome: "ok"`. My
+    // round-1 witness could not see it: it built the create message by hand,
+    // with an id production never emits. Here nothing is written down — the id
+    // is whatever `normalizeWorktreeId` returns for the path the host resolved.
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow-cb").length > 0,
+      "the create form to offer the provider's file",
+    );
+
+    // The branch first: the host re-resolves the destination from it, so a path
+    // read before this one is the default the form opened on.
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.value = "feat/bring";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    const box = document.querySelector<HTMLInputElement>(".wt-bring-box .wt-brow-cb");
+    if (box === null) {
+      throw new Error("the form offered no file to bring over");
+    }
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    // git is a recorder here, so nothing materializes the destination. The
+    // walk is real and would otherwise fail on a directory that is not there,
+    // which would prove the merge and nothing about the copy.
+    const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
+    fs.mkdirSync(destination, { recursive: true });
+
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => /create worktree/i.test(b.textContent ?? ""))
+      ?.click();
+    await settleUntil(
+      () => document.querySelectorAll(".wt-notice").length > 0,
+      "the create to report something back to the panel",
+    );
+    await settle();
+
+    // The file actually arrived, through the production binding.
+    expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
+    // ONE notice. Two means the provisioning message found no create to land on
+    // and made its own — which is what shipped.
+    // ONE create notice. The panel also carries an unrelated "not being watched"
+    // notice in this assembly, so the count is taken over the create's own.
+    const notices = [...document.querySelectorAll(".wt-notice")].filter((n) =>
+      (n.textContent ?? "").includes("Create done."),
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
+  });
+
   it("[3_2] carries the retirement from the dialog's Cancel to the shipped host", async () => {
     // The signal only exists if it travels. A retirement the panel posts and no
     // route delivers is the same defect as one never posted — and it is the

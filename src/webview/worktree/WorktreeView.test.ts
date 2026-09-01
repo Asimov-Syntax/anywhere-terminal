@@ -2424,6 +2424,42 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").toContain("a lockfile is never brought over");
   });
 
+  it("[F018] names what was left INSIDE a directory that itself copied", () => {
+    // A directory entry has one outcome and many nodes. Counting only the top
+    // level said "1 of 1 brought over" while descendants had been skipped — the
+    // exact thing D8 minted `details` to carry, sent by the host and rendered
+    // by nobody.
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          provisioned: [
+            {
+              id: "i1",
+              path: "config",
+              outcome: { kind: "copied" },
+              details: [
+                { path: "config/secrets.key", reason: "already there" },
+                { path: "config/sock", reason: "not a file, a directory or a link" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+
+    expect(notice?.textContent ?? "").toContain("1 of 1 brought over.");
+    expect(notice?.textContent ?? "").toContain("config/secrets.key");
+    expect(notice?.textContent ?? "").toContain("not a file, a directory or a link");
+    // And the notice says so rather than reading as an unqualified success.
+    expect(notice?.className ?? "").toContain("wt-notice--warn");
+  });
+
   it("[F005] says nothing about provisioning on a create that provisioned nothing", () => {
     const { view } = mount();
     view.setData({
