@@ -158,14 +158,14 @@
 
 ## 7. Round-5 handback
 
-- [ ] 7_1 Fold identity where the platform folds, and stop asking the filesystem
+- [x] 7_1 Fold identity where the platform folds, and stop asking the filesystem — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_1
   - **Refs**: design.md#d11-identity-is-the-declared-path-normalized-folded-where-the-platform-folds; .reviews/round-5.md#f008; .reviews/round-5.md#f009; .reviews/round-5.md#f010; .reviews/round-5.md#f011
   - **Acceptance**:
     - Outcome: Two declarations are one row on the platform's own naming rules, with no filesystem call
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
-    1. `src/utils/pathBoundary.ts`: one exported predicate for "this platform's filenames fold case". `entryGate.ts` already decides this for the lockfile rule and `readProvisioning.ts` now needs the same answer; two spellings of one platform question is the shape that drifts.
+    1. `src/worktree/provisioning/providerKit.ts`: one exported predicate for "this platform's filenames fold case". NOT `pathBoundary.ts`, which is deliberately node-free so a browser bundle can share its lexical rule, and this predicate needs `node:path`. `entryGate.ts` already decides this for the lockfile rule and `readProvisioning.ts` now needs the same answer; two spellings of one platform question is the shape that drifts.
     2. `src/worktree/provisioning/entryGate.ts`: consume that predicate instead of its own local constant, unchanged in behaviour.
     3. `src/worktree/provisioning/readProvisioning.ts`: replace `identityOf` with a key that normalizes lexically and lower-cases only under that predicate. No `realpath`, no `lstat`, no containment call, no bound — the identity path stops touching the filesystem, which is what closes F009, F010 and F011 rather than fixing them.
     4. `src/worktree/provisioning/readProvisioning.test.ts`: the volume fakes go; assert the dot-segment cases on every platform, the case cases per platform answer, and that a read performs NO filesystem call for identity — including for an `exclude` spelled `../outside`, which is F009's witness.

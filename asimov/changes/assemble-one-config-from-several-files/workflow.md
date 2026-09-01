@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -158,3 +158,13 @@ that call for the lockfile rule in `entryGate.ts`. D11 takes it, shares the pred
 spelling it twice, and records the volume-level question as its own change. That reopens round-3 F001
 as a visible residual and closes round-5 F009, F010 and F011 by construction, since the identity path
 stops touching the filesystem entirely.
+
+Verify gate after 7_1: check-types clean, biome 3 errors / 14 warnings / 1 info (baseline, restored
+by hand — the fold predicate's default argument and three import orders regressed it and were fixed
+without `--write`), I10 gate ok, 6596 tests pass.
+
+FOLLOW-UP, not closed here and owed a PLAN task of its own: "two declarations name one destination
+slot on a volume that folds names". Five mechanisms refuted across rounds 3-5 plus two pre-build
+oracle attacks; the invariant needs a no-follow canonical-directory-entry-name primitive that Node
+does not expose, which is a different owner and a different acceptance story. This change ships the
+platform reading and records the residual.

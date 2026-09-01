@@ -26,6 +26,7 @@ import {
   prepareResolvedRoot,
   type ResolvedPathInsideDeps,
 } from "../../utils/resolvedPathBoundary";
+import { platformFoldsFilenameCase } from "./providerKit";
 
 /** A root an entry's repo-relative spelling joins onto, resolved once for the pass. */
 export interface GateRoot {
@@ -157,16 +158,6 @@ const LOCKFILE_REASON = "a lockfile is never brought over — this branch's own 
  * has already discarded, which is the raw-versus-resolved disagreement round-2
  * F004 removed.
  */
-/**
- * Whether this platform's filenames are Win32 filenames.
- *
- * `path` is the platform-bound module, so its separator is the plainest true
- * statement about which naming rules the kernel underneath will apply. Asked of
- * the platform rather than of a mount, which is the same narrowing D11's own
- * case probe already accepts.
- */
-const ON_WIN32 = path.sep === "\\";
-
 function filesystemIdentity(base: string, win32: boolean): string {
   const name = base.toLowerCase();
   if (!win32) {
@@ -191,7 +182,10 @@ function filesystemIdentity(base: string, win32: boolean): string {
  * mode because it is about sharing a dependency tree, and a descendant of a
  * copy shares nothing (design.md D6, D7).
  */
-export function refusedLockfile(resolvedDestination: string, win32: boolean = ON_WIN32): string | null {
+export function refusedLockfile(
+  resolvedDestination: string,
+  win32: boolean = platformFoldsFilenameCase(),
+): string | null {
   return LOCKFILES.has(filesystemIdentity(path.basename(resolvedDestination), win32)) ? LOCKFILE_REASON : null;
 }
 
@@ -204,7 +198,7 @@ function refusedMaterial(resolvedDestination: string, mode: ProvisionEntry["mode
   if (lockfile !== null) {
     return lockfile;
   }
-  const base = filesystemIdentity(path.basename(resolvedDestination), ON_WIN32);
+  const base = filesystemIdentity(path.basename(resolvedDestination), platformFoldsFilenameCase());
   if (base === "node_modules" && mode === "link") {
     return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";
   }

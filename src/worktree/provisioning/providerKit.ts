@@ -729,3 +729,33 @@ export interface ProviderAdapter {
     authorized?: Authorized,
   ): Promise<AdapterRead | null>;
 }
+
+/**
+ * Does this platform treat two case spellings of a filename as one name?
+ *
+ * A PLATFORM question, deliberately, and never a question about a volume. Two
+ * shipped implementations of the same problem answer it this way and neither
+ * probes a filesystem: `orca/src/relay/git-handler-worktree-ops.ts` compares
+ * worktree paths case-insensitively only when both are Windows-spelled, and
+ * `t3code/apps/mobile/src/features/files/filePath.ts` does the same for
+ * workspace-relative paths.
+ *
+ * Asking the volume was tried five times here and refuted five times, in the
+ * same direction each time: every probe that reads a filesystem OBJECT — does a
+ * toggled spelling exist, do two spellings resolve alike, do two paths share
+ * `dev` and `ino` — answers "one object" when the question is "one name". Hard
+ * links, symlink aliases and symlinked parents are each two names for one
+ * object, and merging them silently discards a declaration the user made. A
+ * platform answer can only be wrong the visible way: on a case-insensitive POSIX
+ * volume, two spellings of one file stay two rows, which the user can see and
+ * remove (design.md D11).
+ *
+ * The exception it accepts, named rather than hidden: a Windows directory with
+ * per-directory case sensitivity enabled holds two real files this folds to one.
+ *
+ * `path.sep` is the plainest true statement about which naming rules the kernel
+ * underneath applies, and `path` here is the platform-bound module.
+ */
+export function platformFoldsFilenameCase(): boolean {
+  return path.sep === "\\";
+}

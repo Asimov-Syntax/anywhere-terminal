@@ -19,7 +19,6 @@ import {
   type Authorized,
   type Draft,
   emptyModel,
-  MAX_MODEL_ROWS,
   newBudget,
   newDraft,
   openProviderFile,
@@ -27,6 +26,7 @@ import {
   type ProviderBudget,
   type ProviderContext,
   type ProviderDeps,
+  platformFoldsFilenameCase,
   problem,
   report,
 } from "./providerKit";
@@ -147,83 +147,43 @@ async function baseFor(
 }
 
 /**
- * Which destination on disk each declared path names.
+ * Which destination a declared path names.
  *
  * Two files spelling one destination differently — `node_modules` against
  * `./node_modules`, or `a/../node_modules` — compared as raw strings stayed two
  * rows, so an inherited LINK survived beside the native COPY for the same place,
  * and `exclude: ["./x"]` matched an inherited `x` not at all
- * (.reviews/round-1.md F001). The spec says exactly one row is offered for that
- * PATH, and a path is a destination, not a spelling.
+ * (.reviews/round-1.md F001). Normalization closes that on every platform.
  *
- * Lexical normalization alone was refuted on a case-insensitive volume — the
- * macOS default — where `MixedCase` and `mixedcase` are ONE file, so both were
- * offered and `exclude` matched neither (.reviews/round-3.md F001). What
- * replaced it was refuted twice more, and both refutations were of the same
- * idea: probe ONE file, then apply the answer to every other path.
+ * Case is folded on the PLATFORM's answer and nothing else. Five mechanisms that
+ * asked the FILESYSTEM instead were each refuted, always in the same direction:
+ * a probe reads an OBJECT, and the question is about a NAME. Existence is not
+ * folding (round-4 F005); a case-toggled symlink makes two spellings resolve
+ * alike on a volume that folds nothing; `realpath` dereferences, so two symlink
+ * aliases to one file collapsed into one row and a declared row vanished
+ * (round-5 F008); `dev`+`ino` is object identity, so two hard links and a
+ * symlinked parent collapse the same way. Merging is the direction that DISCARDS
+ * something the repository asked for, and no available primitive can prove two
+ * names are one destination slot (design.md D11).
  *
- * - Asking whether a case-toggled spelling EXISTS proves existence, not folding:
- *   on a case-sensitive volume both spellings can be two real files
- *   (.reviews/round-4.md F005).
- * - Asking whether both spellings RESOLVE ALIKE is fooled by a case-toggled
- *   symlink to the probed file, answers for a volume other than the one a given
- *   destination lives on — case sensitivity is per-volume, and on Windows
- *   per-directory — and still leaves `toLowerCase` doing a fold no filesystem
- *   performs: `Straße` and `STRASSE` are one file on APFS and two keys in
- *   JavaScript. All three were reproduced by the oracle attack on design.md D11.
+ * So this reads nothing. The identity path makes no filesystem call at all,
+ * which is also why a raw `exclude` spelling can no longer reach outside the
+ * checkout (round-5 F009) and why there is nothing here to bound (F010).
  *
- * So nothing here folds anything. Each DISTINCT declared path is resolved under
- * the repository root, and two declarations are one destination exactly when the
- * filesystem hands back one path for them. A nested volume answers for itself; a
- * Unicode equivalence is whatever the volume says it is.
- *
- * A path that does not resolve — the ordinary case for a destination the
- * repository declares but does not carry — keys by its spelling, so two
- * case-variant spellings of an absent file stay two rows: a visible extra row
- * rather than a silently dropped one, which is the direction this decision takes
- * throughout. The two kinds of key are namespaced apart, because a resolved
- * answer is an absolute path and a declaration could spell one too.
- *
- * One resolution per distinct path rather than one per read, bounded by
- * `MAX_MODEL_ROWS`: entries are capped, but `exclude` is a raw list off the file
- * and is capped nowhere else. Past the bound the remainder keys lexically, which
- * splits rather than merges.
+ * The residual is a case-insensitive POSIX volume, where two spellings of one
+ * file are offered as two rows. The user sees both. That is round-3 F001, held
+ * open deliberately, and the volume-level question belongs to its own change.
  *
  * Used for identity only. What a row DISPLAYS and what it names as its `source`
  * are never touched — § 4.3 forbids rewriting either, and a row that showed the
  * canonical form would be telling the user something their file does not say.
  */
-async function identityOf(
-  deps: ProviderDeps,
-  repoRoot: string,
-  declared: readonly string[],
-): Promise<(path: string) => string> {
-  const lexical = (raw: string): string => {
-    const normalized = path.posix.normalize(raw);
-    return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
-  };
-  const resolved = new Map<string, string>();
-  const ask = deps.realpath;
-  if (ask !== undefined) {
-    let spent = 0;
-    for (const spelling of new Set(declared.map(lexical))) {
-      if (spent >= MAX_MODEL_ROWS) {
-        break;
-      }
-      spent += 1;
-      try {
-        resolved.set(spelling, await ask(path.resolve(repoRoot, spelling)));
-      } catch {
-        // Not there, or not reachable. Keyed by its spelling below — this is a
-        // read that must not fail on a declaration the repository has not made
-        // true yet.
-      }
-    }
-  }
-  return (raw) => {
-    const spelling = lexical(raw);
-    const answer = resolved.get(spelling);
-    return answer === undefined ? `spelling\u0000${spelling}` : `resolved\u0000${answer}`;
+function identityOf(): (declared: string) => string {
+  const fold = platformFoldsFilenameCase();
+  return (declared) => {
+    const normalized = path.posix.normalize(declared);
+    const trimmed = normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+    return fold ? trimmed.toLowerCase() : trimmed;
   };
 }
 
@@ -308,13 +268,8 @@ async function assemble(
   const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
   const baseModel = inherited?.model ?? emptyModel();
 
-  // Asked about the paths being merged, not about a probe file whose answer
-  // would then be generalized to them (design.md D11).
-  const pathKey = await identityOf(deps, repoRoot, [
-    ...baseModel.entries.map((e) => e.path),
-    ...native.model.entries.map((e) => e.path),
-    ...(native.exclude ?? []),
-  ]);
+  // The platform's own naming rule, asked once and of nothing on disk.
+  const pathKey = identityOf();
   const merged = mergeEntries(baseModel.entries, native.model.entries, pathKey);
   const { kept, excluded } = applyExclude(merged.entries, merged.inline, native.exclude ?? [], draft, pathKey);
 
