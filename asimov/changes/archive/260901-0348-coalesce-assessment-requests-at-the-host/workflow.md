@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(cycle 1 round 1, discovery — APPROVE, 0 findings)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — `Blueprint: none`; WT-013.4 is the parent change's task and it syncs it
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -29,15 +29,18 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none — this change was minted by the remediation boundary, not by a PLAN task. It is the
-child of `render-the-removal-assessment-as-a-report` (docs/PLAN.md WT-013.4), which is PARKED
-complete-but-unapproved and DEPENDS on this one: its round-6 B5 and W6 are this change's whole
-subject. docs/PLAN.md was deliberately not edited — minting a task there needs the user.
+Blueprint: none
 Lane: full (standard) — MEDIUM risk | flags: security-privacy (the assessment is the read that mints
 force authority for an irrevocable deletion). `new-api-contract` was recorded at scaffold time for a
 `postCritical` member on `WorktreeSurface`; the plan attack cut that decision, no wire message or
 shared interface changed, and the flag is withdrawn rather than left standing over nothing.
 Planned at: a72bc499
+- No PLAN task, and that is deliberate: this change was minted by the remediation boundary rather
+  than by the blueprint. It is the child of `render-the-removal-assessment-as-a-report`
+  (docs/PLAN.md WT-013.4), which is PARKED complete-but-unapproved and DEPENDS on this one — its
+  round-6 B5 and W6 are this change's whole subject, and WT-013.4's own Status stays with the parent,
+  which syncs it on its own approval. docs/PLAN.md was deliberately not edited: minting a task there
+  needs the user.
 - Owner test run at Stage 1 and it lands on `own change`, both signals of the remediation boundary:
   the remedy needs a semantically changed `D#` (the parent's accepted D10 claim "a burst cannot back
   up the mutation queue" is false), and it mints an admission/serialization discipline for queued
@@ -127,3 +130,13 @@ appended a duplicate and the fairness list grew without bound | Evidence:
 review | Consumer: build | Action: when a structure is both a membership set and an order, assert the
 membership against the ORDER, and write one test whose expected sequence differs under the
 alternative policy.
+
+- Review cycle 1 round 1 (discovery) returned APPROVE with 0 BLOCK, 0 WARN, 0 SUGGEST across six
+  specialists. It adjudicated independently the two things I flagged for attack rather than hid: R1
+  survives the `finally` schedule with no lost wakeup or second job, and the detach sweep is prompt
+  retention cleanup rather than correctness machinery — the reasoning I recorded, confirmed rather
+  than taken on trust. A specialist's constant-time rotation-membership proposal was rejected by the
+  chair, since the scan is bounded by attached surfaces rather than by request history.
+- `asm-review-reuse` reported to me directly as well as through the chair. Both say no findings, and
+  the round file records the agent and its scope — checked, because a specialist result has gone
+  missing from a chair report in this project before.
