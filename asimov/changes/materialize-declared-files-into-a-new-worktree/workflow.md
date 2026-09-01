@@ -145,3 +145,12 @@ content identity. D3 builds the safety half; neither missing half is in WT-012.2
   lands — so the merge key missed on every real create anyway. Found by writing the assembly witness
   rather than by reading the fix, which is the fourth time in this change that a seam exercised only
   through a fake read as verified.
+- Round 3 superseded without adjudicating anything, and the round type was the mistake. The fix-task
+  entries 3_1/3_2 were committed artifact-only in `da95a7e4`, BEFORE the two implementation commits,
+  which is the remedy that has been recorded for this trap — and the chair ruled it insufficient:
+  "placing it before the two implementation commits does not put it outside the verification delta".
+  It cannot be made to work, because a verification range must start at the previous round's Head and
+  a fix-task scaffold is authored after it. Whenever remediation needs new tasks.md ENTRIES rather
+  than ticks, the next round is a DISCOVERY round in a new cycle. Round 4 needs the user's grant, so
+  the change parks here with all 12 round-2 findings fixed, mutation-checked and green but
+  unadjudicated.
