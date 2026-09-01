@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -39,3 +39,5 @@ Lane: light — S, one new gate script plus wiring | flags: infra
 - The gate was proven against the REAL artifact, not only fixtures: appending `require("./impl/format")` to `dist/extension.js` made it exit 1 naming the path it would have resolved to, and restoring the file returned it to 0. `dist/` is build output and was left byte-identical.
 Round 3 was opened by an `asm review round-start` run made to read the trajectory; no round-3 review ran. The cycle closes as superseded by the round-2 F002 handback, not by that round.
 Handback (round 2 F002): design.md D2 detects a BARE `require` identifier, and the "Known limit" section asserts the shipped defect left a direct literal call. Both are false for the artifact the gate inspects — production esbuild renames the UMD factory's `require` parameter, so the defect ships as `e("./impl/format")`. Reproduced locally with a UMD fixture under `--bundle --platform=node --minify`. D2's mechanism has to change, so this is not remediation.
+Verify gate: one unit test failed on the first run and passed on two consecutive re-runs with no intervening edit — the same infra flake seen earlier in this branch, not reproduced on a clean tree.
+The gate was also run against the real production artifact, not only fixtures: `node scripts/check-bundle-requires.mjs` exits 0 on the 1 MB `dist/extension.js`, and reports `./impl/format` when the minified UMD shape is appended to that same file.
