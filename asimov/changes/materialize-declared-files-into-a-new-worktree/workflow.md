@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
+- [-] Gate 1: direction approved — no real fork: the seam, the roots and the refusals are all fixed by worktree-apply.md § 2.1-2.3 and the PLAN Acceptance
 - [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,12 +31,12 @@
 
 Blueprint: none
 Lane: full
-Planned at: 50e6428d
+Planned at: 027f0064
 
 Blueprint: docs/PLAN.md task WT-012.2
 Lane: full (standard) — HIGH risk: writes files into a directory that did not exist a moment ago,
 from paths a checked-in file supplied | flags: security-privacy, cross-boundary, new-api-contract
-Planned at: 50e6428d
+Planned at: 027f0064
 - `new-api-contract` added beyond PLAN's two labels: `ProvisionStepResult` and
   `worktreeProvisionResult` are documented at worktree-rpc.md § 2.2 line 115 and defined NOWHERE in
   `src/`, and `WorktreeCreateRequestMessage` grows `provision?`. Three wire additions is a contract
