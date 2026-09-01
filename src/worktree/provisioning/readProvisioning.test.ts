@@ -818,6 +818,25 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.excluded.map((e) => [e.path, e.source])).toEqual([["mixedcase", ORCA_YAML_FILE]]);
   });
 
+  it("reports an exclusion that matched nothing, and keeps the row it missed", async () => {
+    // Both halves. Reporting alone would be noise; keeping the row alone is the
+    // old silent behaviour. Under D1 the spelling IS the identity, so a rule
+    // spelled one way against an entry spelled another does nothing at all, and
+    // the only thing that tells the user is this report.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "exclude": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["mixedcase"]);
+    expect(model.excluded).toEqual([]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
+    expect(model.problems[0]?.detail).toContain("MixedCase");
+  });
+
   it("still reports the contradiction when one file both declares and excludes a path", async () => {
     const model = await readProvisioning(fs({ native: `{"copy": ["x"], "exclude": ["./x"]}` }), ROOT);
 

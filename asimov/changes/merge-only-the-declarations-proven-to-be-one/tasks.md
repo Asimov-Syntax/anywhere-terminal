@@ -16,7 +16,7 @@
     5. The RED step must INJECT Win32 semantics: the old fold only fired when `path.sep === "\\"`, so on this darwin lane the count assertion passes against the pre-change code and proves nothing. Drive the identity through an injected platform flag, and confirm the assertion fails with that flag set before committing.
   - **Boundary**: no change to what a row displays or to its `source` — § 4.3 forbids rewriting either
 
-- [ ] 1_2 Report an exclusion that matched nothing
+- [x] 1_2 Report an exclusion that matched nothing — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md#d5-exclude-matches-on-d1s-rule, specs/worktree-panel/spec.md#an-exclusion-matches-on-the-same-rule-the-merge-uses
   - **Acceptance**:

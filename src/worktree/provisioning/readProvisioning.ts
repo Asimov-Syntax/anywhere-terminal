@@ -225,6 +225,7 @@ function applyExclude(
   draft: Draft,
   pathKey: (declared: string) => string,
 ): { kept: ProvisionEntry[]; excluded: ProvisionEntry[] } {
+  const declaredKeys = new Set(entries.map((e) => pathKey(e.path)));
   const removed = new Set<string>();
   for (const declared of exclude) {
     const key = pathKey(declared);
@@ -233,6 +234,20 @@ function applyExclude(
         draft,
         `\`${declared}\``,
         problem(NATIVE, "unknownKey", `\`${declared}\` is both declared and excluded here; the row is kept.`),
+      );
+      continue;
+    }
+    // An exclusion that removes nothing is reported rather than dropped. It
+    // used to pass in silence, which was survivable while identity folded case
+    // — a differently-spelled rule still hit its entry. Now that spelling is
+    // the whole of identity (D1, D5), a rule spelled `Foo` against an entry
+    // spelled `foo` quietly does nothing, and the user's only evidence would
+    // have been the row they thought they had removed still sitting there.
+    if (!declaredKeys.has(key)) {
+      report(
+        draft,
+        `\`${declared}\``,
+        problem(NATIVE, "unknownKey", `\`${declared}\` is excluded here but nothing declares it; the rule did nothing.`),
       );
       continue;
     }
