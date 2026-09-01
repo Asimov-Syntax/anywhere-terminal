@@ -311,6 +311,42 @@ interface BringRow {
    * it can be submitted.
    */
   excluded?: boolean;
+  /**
+   * Named partners this row may turn out to share a destination with.
+   *
+   * Advisory, and deliberately not a claim that either row will land: the
+   * worktree does not exist while this is drawn, so nothing here can be proven
+   * (design D2). The row keeps its checkbox — withholding it was the
+   * alternative D3 rejected, because two spellings of one name is the ordinary
+   * macOS case and withholding both delivers nothing.
+   */
+  contender?: readonly string[];
+}
+
+/**
+ * Each grouped row against the spellings it may collide with, by id.
+ *
+ * The group travels as ids so the wire carries no second copy of a path
+ * (design D3); the paths are read back from the entries the ids name, which
+ * keeps § 4.3 true — a row still displays the spelling its own file wrote.
+ */
+function contenderPartners(model: WorktreeProvisionOffer["model"]): Map<string, string[]> {
+  const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
+  const partners = new Map<string, string[]>();
+  for (const group of model.contenders) {
+    for (const id of group.members) {
+      const named = group.members
+        .filter((other) => other !== id)
+        .flatMap((other) => {
+          const path = pathOf.get(other);
+          return path === undefined ? [] : [path];
+        });
+      if (named.length > 0) {
+        partners.set(id, named);
+      }
+    }
+  }
+  return partners;
 }
 
 /**
@@ -324,7 +360,9 @@ interface BringRow {
  */
 function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
   const rows: BringRow[] = [];
+  const partners = contenderPartners(model);
   for (const entry of model.entries) {
+    const named = partners.get(entry.id);
     rows.push({
       id: entry.id,
       verb: entry.mode === "link" ? "Link" : "Copy",
@@ -332,6 +370,7 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
       source: entry.source,
       checked: true,
       ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
+      ...(named === undefined ? {} : { contender: named }),
     });
   }
   for (const port of model.ports) {
@@ -395,6 +434,14 @@ function bringSummary(model: WorktreeProvisionOffer["model"]): string {
   }
   if (model.setup.length > 0) {
     parts.push(`${model.setup.length} setup step${model.setup.length === 1 ? "" : "s"}`);
+  }
+  if (model.contenders.length > 0) {
+    // The counts above are ROWS OFFERED. A contender group offers two rows that
+    // may turn out to be one destination, so leaving the counts unqualified
+    // would promise a file that never lands — and which one gives way cannot be
+    // known before the worktree exists (design D2).
+    const n = model.contenders.length;
+    parts.push(`${n} pair${n === 1 ? "" : "s"} may be one file`);
   }
   if (parts.length > 0) {
     return parts.join(" \u00b7 ");
@@ -503,6 +550,16 @@ function bringRow(row: BringRow, index: number): HTMLElement {
   code.className = "wt-brow-code";
   code.textContent = row.subject;
   meta.appendChild(code);
+  if (row.contender !== undefined) {
+    // Inside the meta line the subject already owns, not a sibling block: the
+    // note is about THIS spelling, and `wt-brow` keeps one rendering owner.
+    // The partner spelling is provider-file text like any other subject, so it
+    // is set with `textContent`.
+    const note = document.createElement("span");
+    note.className = "wt-brow-note";
+    note.textContent = `may be the same file as ${row.contender.join(", ")}`;
+    meta.appendChild(note);
+  }
   if (row.excluded === true) {
     // No checkbox at all, rather than a disabled one: a disabled input is still
     // an input, and the submit path collects `.wt-brow-cb` by class. An id that

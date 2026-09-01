@@ -3445,3 +3445,101 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
     expect(h.branch().value).toBe(before);
   });
 });
+
+describe("[2_2] a pair that may name one destination is drawn, not withheld", () => {
+  const PAIR = [
+    { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i2", path: "mixedcase", mode: "link", source: "orca.yaml" },
+  ] as const;
+
+  function withPair(over: Partial<ReturnType<typeof provisionModel>> = {}) {
+    return open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              entries: [...PAIR],
+              ports: [],
+              setup: [],
+              contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+              ...over,
+            }),
+          }),
+        }),
+      ],
+    });
+  }
+
+  it("keeps a checkbox on both members, unlike an excluded row", () => {
+    // Withholding the pair was the alternative D3 rejected: two spellings of
+    // one name is the ordinary macOS case, and offering neither delivers
+    // nothing where today the user gets something.
+    const { host } = withPair();
+    const boxes = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+
+    expect(boxes.map((b) => b.value)).toEqual(["i1", "i2"]);
+    expect(boxes.every((b) => b.checked)).toBe(true);
+    expect(host.querySelectorAll(".wt-brow--excluded")).toHaveLength(0);
+  });
+
+  it("keeps each row's own spelling and declaring file", () => {
+    // § 4.3 forbids rewriting either. A grouped row is still the row its own
+    // file wrote — the group changes what is SAID about it, never what it says.
+    const { host } = withPair();
+    const drawn = Array.from(host.querySelectorAll<HTMLElement>(".wt-brow")).map((r) => [
+      r.querySelector(".wt-brow-code")?.textContent,
+      r.querySelector(".wt-brow-src")?.textContent,
+    ]);
+
+    expect(drawn).toEqual([
+      ["MixedCase", ".vscode/worktree.json"],
+      ["mixedcase", "orca.yaml"],
+    ]);
+  });
+
+  it("names the partner on each row, from the other row's own spelling", () => {
+    const { host } = withPair();
+    const notes = Array.from(host.querySelectorAll(".wt-brow-note")).map((n) => n.textContent);
+
+    expect(notes).toEqual(["may be the same file as mixedcase", "may be the same file as MixedCase"]);
+  });
+
+  it("names every partner of a three-spelling group, not just one", () => {
+    const { host } = withPair({
+      entries: [...PAIR, { id: "i3", path: "MIXEDCASE", mode: "copy", source: "orca.yaml" }],
+      contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
+    });
+    const first = host.querySelector(".wt-brow-note")?.textContent;
+
+    expect(first).toBe("may be the same file as mixedcase, MIXEDCASE");
+  });
+
+  it("draws no note on a row that is in no group", () => {
+    const { host } = withPair({ contenders: [] });
+
+    expect(host.querySelectorAll(".wt-brow-note")).toHaveLength(0);
+  });
+
+  it("stops the summary promising both members will land", () => {
+    // The counts are ROWS OFFERED. Saying "1 copied · 1 linked" unqualified
+    // promises two files where one may be all that lands, and which one gives
+    // way cannot be known before the worktree exists (D2).
+    const { host } = withPair();
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked · 1 pair may be one file");
+  });
+
+  it("leaves the summary alone when nothing is grouped", () => {
+    const { host } = withPair({ contenders: [] });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked");
+  });
+
+  it("submits both ids, because both were offered", () => {
+    const { q, submitted } = withPair();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision?.itemIds).toEqual(["i1", "i2"]);
+  });
+});

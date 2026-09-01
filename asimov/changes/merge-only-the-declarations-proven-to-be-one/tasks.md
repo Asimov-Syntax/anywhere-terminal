@@ -44,7 +44,7 @@
     6. Assert redemption at the offer-store layer, not in `readProvisioning.test.ts` — that suite cannot see an id redeem, so asserting there would prove the wrong layer. The failure guarded is withholding a row, the alternative D3 rejected.
   - **Boundary**: the group is advisory ordering data only; no code path may merge, drop or reorder an entry on the strength of membership in this change
 
-- [ ] 2_2 Draw the pair so it reads as deliberate
+- [x] 2_2 Draw the pair so it reads as deliberate — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md#d6-reuse-the-row-that-is-already-drawn-but-not-offered
   - **Acceptance**:

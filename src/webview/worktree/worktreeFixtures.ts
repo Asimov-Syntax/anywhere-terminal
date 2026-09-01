@@ -358,8 +358,15 @@ export function provisionOffer(over: Partial<WorktreeProvisionOffer> = {}): Work
 
 /** A repository that declares nothing — no provider file at all, not a failed read. */
 export function emptyProvisionModel(): ProvisionModel {
-  return { entries: [], ports: [], setup: [], providers: [], excluded: [],
-    contenders: [], problems: [] };
+  return {
+    entries: [],
+    ports: [],
+    setup: [],
+    providers: [],
+    excluded: [],
+    contenders: [],
+    problems: [],
+  };
 }
 
 /** A provider file that is present and unusable. The model survives; the file is named. */
