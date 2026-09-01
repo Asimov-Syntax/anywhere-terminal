@@ -1085,7 +1085,7 @@ describe("Bring over — what the new worktree will lack", () => {
     expect(checked).toEqual([true, true, true, true, false]);
   });
 
-  it("renders a supplied port preview as NAME=number while source keeps the badge", () => {
+  it("renders a supplied port number as an explicit preview while source keeps the badge", () => {
     const { host } = withOffer({
       model: provisionModel({
         entries: [],
@@ -1095,7 +1095,7 @@ describe("Bring over — what the new worktree will lack", () => {
     });
     const port = rows(host)[0];
 
-    expect(port?.querySelector(".wt-brow-code")?.textContent).toBe("APP=5183");
+    expect(port?.querySelector(".wt-brow-code")?.textContent).toBe("APP=5183 · preview");
     expect(port?.querySelector(".wt-brow-src")?.textContent).toBe("asimov/worktree.yaml");
   });
 

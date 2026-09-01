@@ -90,3 +90,15 @@ The lock extraction and result skeleton can start together. Everything after the
     2. `src/webview/worktree/WorktreeController.ts`: merge all fields from `WorktreeProvisionResultMessage` onto the existing create notice under the same normalized worktree id.
     3. `src/webview/worktree/WorktreeView.ts`: include port results and warnings in the render signature; count ordinary allocated and reused results; coalesce duplicate ids by name; and name only changed or failed variables with authoritative and preview values.
     4. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: changed and unchanged filtering, duplicate-name coalescing, failed names, preview absence, lock-release and exclude warnings, result merging, and unchanged-push DOM coverage.
+
+- [x] 1_8 Close review round 1's authorization, persistence, budget, and reporting findings — verified: pnpm exec vitest run 'src/worktree/worktreePorts.test.ts' 'src/worktree/WorktreeDiscovery.listRepo.test.ts' 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 exit 0
+  - **Deps**: 1_7
+  - **Refs**: design.md D1, design.md D5, design.md D6, design.md D9; specs/worktree-panel/spec.md#{a-named-port-carries-a-numeric-preview, existing-non-conflicting-assignments-are-reused, every-selected-port-gets-its-own-outcome}; .reviews/round-1.md F001, F002, F003, F004, F005
+  - **Acceptance**:
+    - Outcome: Port results remain truthful and bounded when checkout roots, retained claims, listings, reads, previews, or publication fail
+    - Verify: command pnpm exec vitest run 'src/worktree/worktreePorts.test.ts' 'src/worktree/WorktreeDiscovery.listRepo.test.ts' 'src/webview/worktree/WorktreeCreateDialog.test.ts'
+  - **Plan**:
+    1. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: authorize and recheck worktree-root identity around claim reads and publication; downgrade retained successes when their source proof fails; bound claim reads before buffering; apply one preview and allocation deadline to listing, claim reads, source proof, and probes; and distinguish lock, proof, source-change, staging, publication, and unexpected failures with regression witnesses.
+    2. `src/worktree/WorktreeDiscovery.ts` and `src/worktree/WorktreeDiscovery.listRepo.test.ts`: accept an optional bounded-listing request, apply one remaining timeout across capability fallback, cap Git output, and reject over-cap records before normalization or missing probes.
+    3. `src/extension.ts`: pass the allocator's listing bounds into the production Git listing.
+    4. `src/webview/worktree/WorktreeCreateDialog.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`: visibly qualify numeric values as previews.

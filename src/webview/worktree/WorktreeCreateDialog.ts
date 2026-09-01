@@ -338,7 +338,7 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
     rows.push({
       id: port.id,
       verb: "Allocate port",
-      subject: port.port === undefined ? `${port.name} · preview unavailable` : `${port.name}=${port.port}`,
+      subject: port.port === undefined ? `${port.name} · preview unavailable` : `${port.name}=${port.port} · preview`,
       source: port.source,
       checked: true,
     });

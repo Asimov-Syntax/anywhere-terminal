@@ -70,6 +70,12 @@ export interface RepoListing {
   degraded?: string;
 }
 
+export interface RepoListingOptions {
+  readonly timeoutMs?: number;
+  readonly maxBufferBytes?: number;
+  readonly maxWorktrees?: number;
+}
+
 function describeFailure(result: GitCommandResult): string {
   return describeGitFailure(result, "git worktree list");
 }
@@ -78,18 +84,29 @@ function describeFailure(result: GitCommandResult): string {
 async function runListing(
   rootPath: string,
   deps: WorktreeListingDeps,
+  options: RepoListingOptions | undefined,
 ): Promise<{ result: GitCommandResult; nulDelimited: boolean }> {
+  const deadline = options?.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+  const run = (args: readonly string[]) => {
+    if (options === undefined) {
+      return deps.runner.run(args, rootPath);
+    }
+    return deps.runner.run(args, rootPath, {
+      ...(deadline === undefined ? {} : { timeoutMs: Math.max(1, deadline - Date.now()) }),
+      ...(options.maxBufferBytes === undefined ? {} : { maxBufferBytes: options.maxBufferBytes }),
+    });
+  };
   return deps.capabilities.runWithFallback<{ result: GitCommandResult; nulDelimited: boolean }>(
     "worktree-list-z",
     async () => {
-      const result = await deps.runner.run(["worktree", "list", "--porcelain", "-z"], rootPath);
+      const result = await run(["worktree", "list", "--porcelain", "-z"]);
       if (isUnsupportedZResult(result)) {
         return { supported: false };
       }
       return { supported: true, value: { result, nulDelimited: true } };
     },
     async () => ({
-      result: await deps.runner.run(["worktree", "list", "--porcelain"], rootPath),
+      result: await run(["worktree", "list", "--porcelain"]),
       nulDelimited: false,
     }),
   );
@@ -119,13 +136,25 @@ async function annotateMissing(worktrees: WorktreeInfo[], deps: WorktreeListingD
  * List one repository's worktrees. A failure is confined here as `degraded` —
  * it never throws, and never empties or disturbs another repository.
  */
-export async function listRepoWorktrees(rootPath: string, deps: WorktreeListingDeps): Promise<RepoListing> {
-  const { result, nulDelimited } = await runListing(rootPath, deps);
+export async function listRepoWorktrees(
+  rootPath: string,
+  deps: WorktreeListingDeps,
+  options?: RepoListingOptions,
+): Promise<RepoListing> {
+  const { result, nulDelimited } = await runListing(rootPath, deps, options);
   if (result.code !== 0) {
     return { worktrees: [], reasons: [], skipped: 0, degraded: describeFailure(result) };
   }
 
   const parsed = parseWorktreeList(result.stdout, { nulDelimited });
+  if (options?.maxWorktrees !== undefined && parsed.worktrees.length > options.maxWorktrees) {
+    return {
+      worktrees: [],
+      reasons: [],
+      skipped: 0,
+      degraded: `git worktree list exceeded the ${options.maxWorktrees}-worktree limit`,
+    };
+  }
   const reasons = new Set(parsed.reasons);
   const worktrees: WorktreeInfo[] = [];
   let skipped = parsed.skipped;

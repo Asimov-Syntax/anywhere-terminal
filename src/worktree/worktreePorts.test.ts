@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, open, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, open, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -76,6 +76,17 @@ describe("previewWorktreePorts", () => {
       probe: probes([5184]),
     });
 
+    expect(previewed[0]?.port).toBeUndefined();
+  });
+
+  it("stops waiting when the preview budget expires", async () => {
+    const started = Date.now();
+    const previewed = await previewWorktreePorts([port("APP", "app", 5000)], [], {
+      transactionMs: 10,
+      probe: () => new Promise<number>(() => undefined),
+    });
+
+    expect(Date.now() - started).toBeLessThan(200);
     expect(previewed[0]?.port).toBeUndefined();
   });
 });
@@ -379,7 +390,10 @@ describe("allocateWorktreePorts", () => {
       },
     );
 
-    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(result.ports[0]?.outcome).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("staged"),
+    });
     await expect(readFile(target, "utf8")).rejects.toThrow();
   });
 
@@ -432,5 +446,170 @@ describe("allocateWorktreePorts", () => {
 
     expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
     expect(result.warnings).toEqual(["excludeFailed"]);
+  });
+
+  it("refuses a substituted worktree root instead of publishing through it", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const worktreePath = worktrees[1] as string;
+    const original = `${worktreePath}-original`;
+    const redirected = path.join(path.dirname(worktreePath), "redirected");
+    await mkdir(redirected);
+    await rename(worktreePath, original);
+    await symlink(redirected, worktreePath);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath, ports: [port("APP")] },
+      { listWorktrees: async () => complete([repoPath, worktreePath]), probe: probes([5183]) },
+    );
+
+    expect(result.ports[0]?.outcome).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("worktree directory"),
+    });
+    await expect(readFile(path.join(redirected, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("downgrades retained outcomes when the authorized source changes", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "APP=5183\n");
+    class EditingLockedFile extends LockedFile {
+      public override async stageReplacement(contents: string, mode: number | undefined) {
+        const staged = await super.stageReplacement(contents, mode);
+        if (this.path === target) {
+          await writeFile(target, "# external edit\n");
+        }
+        return staged;
+      }
+    }
+
+    const result = await allocateWorktreePorts(
+      {
+        repoId,
+        repoPath,
+        worktreePath: worktrees[1] as string,
+        ports: [port("APP"), port("DB")],
+      },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5433]),
+        lockedFile: (lockedPath) => new EditingLockedFile(lockedPath),
+      },
+    );
+
+    expect(result.ports.map((item) => item.outcome.kind)).toEqual(["failed", "failed"]);
+    expect(await readFile(target, "utf8")).toBe("# external edit\n");
+  });
+
+  it("reauthorizes retained-only claims before reporting reuse", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "APP=5183\n");
+    let targetStats = 0;
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([]),
+        lstat: async (candidate) => {
+          if (candidate === target && ++targetStats === 2) {
+            await writeFile(target, "# external edit\n");
+          }
+          return stat(candidate);
+        },
+      },
+    );
+
+    expect(targetStats).toBeGreaterThan(1);
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+  });
+
+  it("passes the remaining transaction budget into the fresh listing", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    let timeoutMs: number | undefined;
+
+    await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        transactionMs: 50,
+        listWorktrees: async (_root, options) => {
+          timeoutMs = options.timeoutMs;
+          return complete(worktrees);
+        },
+        probe: probes([5183]),
+      },
+    );
+
+    expect(timeoutMs).toBeGreaterThan(0);
+    expect(timeoutMs).toBeLessThanOrEqual(50);
+  });
+
+  it("stops waiting when a listing dependency ignores its timeout", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const started = Date.now();
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        transactionMs: 10,
+        listWorktrees: () => new Promise<PortWorktreeListing>(() => undefined),
+      },
+    );
+
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(result.ports[0]?.outcome).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("listing"),
+    });
+  });
+
+  it("reports listing failures as proof failures rather than lock contention", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => {
+          throw new Error("git listing failed");
+        },
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("listing"),
+    });
+    expect(result.ports[0]?.outcome).not.toMatchObject({ reason: expect.stringContaining("locked") });
+  });
+
+  it("uses bounded descriptor reads instead of buffering the whole claim file", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    const siblingClaim = path.join(worktrees[2] as string, ".env.worktree");
+    await writeFile(siblingClaim, "OTHER=5183\n");
+    let largestRead = 0;
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5184]),
+        open: async (target, flags) => {
+          const handle = await open(target, flags);
+          return {
+            stat: () => handle.stat(),
+            read: async (buffer, offset, length, position) => {
+              largestRead = Math.max(largestRead, length);
+              return handle.read(buffer, offset, length, position);
+            },
+            readFile: async () => {
+              throw new Error("unbounded readFile must not be used");
+            },
+            close: () => handle.close(),
+          };
+        },
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5184 });
+    expect(largestRead).toBeLessThanOrEqual(64 * 1024 + 1);
   });
 });

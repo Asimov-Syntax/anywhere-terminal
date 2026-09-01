@@ -597,8 +597,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         },
         applyPorts: (input) =>
           allocateWorktreePorts(input, {
-            listWorktrees: async (repoPath) => {
-              const listing = await listRepoWorktrees(repoPath, worktreeTreeDeps);
+            listWorktrees: async (repoPath, options) => {
+              const listing = await listRepoWorktrees(repoPath, worktreeTreeDeps, options);
               return {
                 worktrees: listing.worktrees.map((worktree) => ({ id: worktree.id, path: worktree.displayPath })),
                 reasons: listing.reasons,
