@@ -25,7 +25,7 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     2. `src/webview/worktree/WorktreeView.ts` composes each refused row's notice from its contest's membership plus its own reason.
     3. `src/webview/worktree/WorktreeView.test.ts` witnesses the rendered text for a three-member contest.
 
-- [ ] 1_3 Bound what one contest can put on the wire
+- [x] 1_3 Bound what one contest can put on the wire — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: asimov/changes/award-a-contested-destination-or-refuse-it/.reviews/round-3.md#f008
   - **Acceptance**:
