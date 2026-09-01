@@ -12,6 +12,7 @@ export interface ResolveDeps {
   readonly resolvesFrom: string;
   readonly exists?: (p: string) => boolean;
   readonly isDirectory?: (p: string) => boolean;
+  readonly readFile?: (p: string) => string;
 }
 
 export interface BundleDeps {
@@ -20,6 +21,7 @@ export interface BundleDeps {
   readonly resolvesFrom: string;
   readonly exists?: (p: string) => boolean;
   readonly isDirectory?: (p: string) => boolean;
+  readonly readFile?: (p: string) => string;
 }
 
 export function requiredSpecifiers(bundleSource: string): string[];

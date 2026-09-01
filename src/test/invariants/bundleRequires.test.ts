@@ -46,10 +46,23 @@ const verdicts = (
   bundle: string,
   exists: (p: string) => boolean = nowhere,
   isDirectory: (p: string) => boolean = notADirectory,
-) => unresolvableRequires(bundle, { esbuildSource: ESBUILD, outfile: OUT, resolvesFrom: DIST, exists, isDirectory });
+  readFile: (p: string) => string = () => "{}",
+) =>
+  unresolvableRequires(bundle, {
+    esbuildSource: ESBUILD,
+    outfile: OUT,
+    resolvesFrom: DIST,
+    exists,
+    isDirectory,
+    readFile,
+  });
 
-const one = (bundle: string, exists?: (p: string) => boolean, isDirectory?: (p: string) => boolean) =>
-  verdicts(bundle, exists, isDirectory)[0];
+const one = (
+  bundle: string,
+  exists?: (p: string) => boolean,
+  isDirectory?: (p: string) => boolean,
+  readFile?: (p: string) => string,
+) => verdicts(bundle, exists, isDirectory, readFile)[0];
 
 describe("[round-1 F003] the externals come from the bundle's own build", () => {
   it("reads them off the config whose outfile is the bundle", () => {
@@ -139,8 +152,8 @@ describe("[round-1 F001] resolution is what the PACKAGED extension could load", 
     const isDir = (p: string) => p === "/repo/dist/pkg";
     const withIndex = (p: string) => isDir(p) || p === "/repo/dist/pkg/index.js";
     expect(verdicts(`require("./pkg")`, withIndex, isDir)).toEqual([]);
-    const withManifest = (p: string) => isDir(p) || p === "/repo/dist/pkg/package.json";
-    expect(verdicts(`require("./pkg")`, withManifest, isDir)).toEqual([]);
+    const withManifest = (p: string) => isDir(p) || p === "/repo/dist/pkg/package.json" || p === "/repo/dist/pkg/m.js";
+    expect(verdicts(`require("./pkg")`, withManifest, isDir, () => `{"main":"./m.js"}`)).toEqual([]);
   });
 
   it("accepts the other extensions Node really resolves", () => {
@@ -207,5 +220,45 @@ describe("[round-2 F002] a require whose callee minification renamed", () => {
 
   it("leaves an untainted local call alone", () => {
     expect(requiredSpecifiers(`function t(m){return m}t("./not-a-require");`)).toEqual([]);
+  });
+});
+
+
+// [round-2 F001] A manifest is a POINTER, not a resolution. `main` can name a
+// file the VSIX does not carry, escape the artifact directory, or be missing
+// entirely — Node throws MODULE_NOT_FOUND for each, while stopping at "the
+// package.json is there" returns ok.
+describe("[round-2 F001] a directory resolves only when its main does", () => {
+  const isDir = (p: string) => p === "/repo/dist/pkg";
+  const manifestOnly = (p: string) => isDir(p) || p === "/repo/dist/pkg/package.json";
+
+  it("fails a main that names no shipped file", () => {
+    const v = one(`require("./pkg")`, manifestOnly, isDir, () => `{"main":"./missing.js"}`);
+    expect(v).toMatchObject({ ok: false });
+    expect(v.why).toContain("missing.js");
+  });
+
+  it("fails a manifest with no main and no index", () => {
+    const v = one(`require("./pkg")`, manifestOnly, isDir, () => "{}");
+    expect(v).toMatchObject({ ok: false });
+    expect(v.why).toContain("main");
+  });
+
+  it("fails a manifest that does not parse", () => {
+    const v = one(`require("./pkg")`, manifestOnly, isDir, () => "{not json");
+    expect(v).toMatchObject({ ok: false });
+    expect(v.why).toContain("parse");
+  });
+
+  it("fails a main that escapes the packaged directory", () => {
+    const out = (p: string) => manifestOnly(p) || p === "/repo/scripts/x.js";
+    const v = one(`require("./pkg")`, out, isDir, () => `{"main":"../../scripts/x.js"}`);
+    expect(v).toMatchObject({ ok: false });
+    expect(v.why).toContain("outside the packaged");
+  });
+
+  it("resolves a main through the same extension fallback Node uses", () => {
+    const withMain = (p: string) => manifestOnly(p) || p === "/repo/dist/pkg/lib/entry.js";
+    expect(verdicts(`require("./pkg")`, withMain, isDir, () => `{"main":"./lib/entry"}`)).toEqual([]);
   });
 });

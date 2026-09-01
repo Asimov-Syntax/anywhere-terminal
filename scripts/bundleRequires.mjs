@@ -308,7 +308,40 @@ const isFile = (p, exists, stat) => exists(p) && stat(p);
  * module. So resolution must land on a real FILE, and that file must be inside
  * the artifact directory.
  */
-function resolveShipped(specifier, { resolvesFrom, exists, isDirectory }) {
+/**
+ * The file a directory's manifest points at, resolved the way Node would.
+ *
+ * A `package.json` sitting there is a POINTER, not a resolution: its `main` can
+ * name a file the VSIX does not carry, escape the artifact directory, or be
+ * absent, and Node throws MODULE_NOT_FOUND for each (.reviews/round-2.md F001).
+ */
+function resolveManifest(target, root, { exists, isDirectory, readFile }) {
+  const at = path.join(target, "package.json");
+  let main;
+  try {
+    main = JSON.parse(readFile(at)).main;
+  } catch {
+    return { ok: false, why: `resolves to ${target}, whose package.json does not parse` };
+  }
+  if (typeof main !== "string" || main.trim() === "") {
+    return { ok: false, why: `resolves to ${target}, whose package.json declares no main and which has no index` };
+  }
+  const entry = path.resolve(target, main);
+  if (entry !== root && !entry.startsWith(root + path.sep)) {
+    return { ok: false, why: `main "${main}" resolves to ${entry}, which is outside the packaged ${path.basename(root)}/` };
+  }
+  const file = (p) => exists(p) && !isDirectory(p);
+  const candidates = [entry, `${entry}.js`, `${entry}.json`, `${entry}.node`];
+  if (exists(entry) && isDirectory(entry)) {
+    candidates.push(...["index.js", "index.json", "index.node"].map((n) => path.join(entry, n)));
+  }
+  if (candidates.some(file)) {
+    return { ok: true, why: "resolves through its package.json main" };
+  }
+  return { ok: false, why: `main "${main}" names ${entry}, which the packaged extension does not carry` };
+}
+
+function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) {
   const target = path.resolve(resolvesFrom, specifier);
   const root = path.resolve(resolvesFrom);
   const inside = target === root || target.startsWith(root + path.sep);
@@ -327,9 +360,8 @@ function resolveShipped(specifier, { resolvesFrom, exists, isDirectory }) {
         return { ok: true, why: "resolves to a directory index beside the bundle" };
       }
     }
-    const manifest = path.join(target, "package.json");
-    if (file(manifest)) {
-      return { ok: true, why: "resolves to a directory with its own package.json" };
+    if (file(path.join(target, "package.json"))) {
+      return resolveManifest(target, root, { exists, isDirectory, readFile });
     }
     return { ok: false, why: `resolves to ${target}, a directory with no index and no package.json` };
   }
@@ -337,7 +369,13 @@ function resolveShipped(specifier, { resolvesFrom, exists, isDirectory }) {
 }
 
 /** Classify one specifier. */
-export function classify(specifier, { externals, resolvesFrom, exists = existsSync, isDirectory = defaultIsDirectory }) {
+export function classify(specifier, {
+  externals,
+  resolvesFrom,
+  exists = existsSync,
+  isDirectory = defaultIsDirectory,
+  readFile = defaultReadFile,
+}) {
   if (BUILTINS.has(specifier)) {
     return { specifier, ok: true, why: "node builtin" };
   }
@@ -350,13 +388,17 @@ export function classify(specifier, { externals, resolvesFrom, exists = existsSy
     return { specifier, ok: false, why: "absolute path baked into the bundle — it names the build machine" };
   }
   if (specifier.startsWith(".")) {
-    return { specifier, ...resolveShipped(specifier, { resolvesFrom, exists, isDirectory }) };
+    return { specifier, ...resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) };
   }
   return {
     specifier,
     ok: false,
     why: "bare specifier that was never bundled and is not a declared external",
   };
+}
+
+function defaultReadFile(p) {
+  return readFileSync(p, "utf8");
 }
 
 function defaultIsDirectory(p) {
@@ -368,10 +410,10 @@ function defaultIsDirectory(p) {
 }
 
 /** Every specifier the packaged extension could not satisfy. */
-export function unresolvableRequires(bundleSource, { esbuildSource, outfile, resolvesFrom, exists, isDirectory }) {
+export function unresolvableRequires(bundleSource, { esbuildSource, outfile, resolvesFrom, exists, isDirectory, readFile }) {
   const externals = declaredExternals(esbuildSource, outfile);
   return requiredSpecifiers(bundleSource)
-    .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory }))
+    .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory, readFile }))
     .filter((verdict) => !verdict.ok);
 }
 

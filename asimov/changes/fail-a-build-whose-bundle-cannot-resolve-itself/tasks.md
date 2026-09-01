@@ -52,7 +52,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     3. Update `scripts/bundleRequires.d.mts` for any changed export signature.
     4. Arm the witness in `src/test/invariants/bundleRequires.test.ts` with production-minified UMD output — the shape where the factory parameter is renamed and called with a single relative string literal — and assert the specifier is reported.
 
-- [ ] 3_2 Resolve a directory through its manifest's main
+- [x] 3_2 Resolve a directory through its manifest's main — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D4
   - **Acceptance**:
