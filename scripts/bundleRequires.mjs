@@ -197,18 +197,85 @@ function requireBindings(root, checker) {
     return symbol === undefined ? [] : [...(holds.get(symbol) ?? [])];
   };
 
-  for (let growing = true; growing; ) {
-    growing = false;
-    for (const [name, initializer] of assignments) {
-      growing = flow(symbolOf(name), valueOf(initializer)) || growing;
+  // Reverse indexes: symbol → the edges that READ it. A new fact enqueues only
+  // those, instead of re-walking every assignment and every call (round-4 F006).
+  // The rescan loop cost edges x facts — a 2000-link reverse chain took ~2s.
+  /** symbol → assignment edges whose source reads it. */
+  const readsInAssignment = new Map();
+  /** symbol → calls whose callee is it, so new callables revisit them. */
+  const calledAs = new Map();
+  /** symbol → call edges passing it as an argument. */
+  const passedAs = new Map();
+
+  const under = (index, key, value) => {
+    if (key === undefined) {
+      return;
     }
-    for (const call of calls) {
-      for (const target of targetsOf(call)) {
-        target.parameters.forEach((parameter, position) => {
-          if (ts.isIdentifier(parameter.name)) {
-            growing = flow(symbolOf(parameter.name), valueOf(call.arguments[position])) || growing;
-          }
-        });
+    const at = index.get(key);
+    if (at === undefined) {
+      index.set(key, [value]);
+      return;
+    }
+    at.push(value);
+  };
+
+  for (const edge of assignments) {
+    const source = valueOf(edge[1]);
+    under(readsInAssignment, source?.via, edge);
+  }
+  for (const call of calls) {
+    const callee = unwrap(call.expression);
+    if (callee !== undefined && ts.isIdentifier(callee)) {
+      under(calledAs, symbolOf(callee), call);
+    }
+    for (const argument of call.arguments) {
+      const value = unwrap(argument);
+      if (value !== undefined && ts.isIdentifier(value)) {
+        under(passedAs, symbolOf(value), call);
+      }
+    }
+  }
+
+  const applyCall = (call) => {
+    let grew = false;
+    for (const target of targetsOf(call)) {
+      target.parameters.forEach((parameter, position) => {
+        if (ts.isIdentifier(parameter.name)) {
+          grew = flow(symbolOf(parameter.name), valueOf(call.arguments[position])) || grew;
+        }
+      });
+    }
+    return grew;
+  };
+
+  const queue = [...assignments.map((edge) => ({ assignment: edge })), ...calls.map((call) => ({ call }))];
+  const enqueue = (symbol) => {
+    for (const edge of readsInAssignment.get(symbol) ?? []) {
+      queue.push({ assignment: edge });
+    }
+    for (const call of calledAs.get(symbol) ?? []) {
+      queue.push({ call });
+    }
+    for (const call of passedAs.get(symbol) ?? []) {
+      queue.push({ call });
+    }
+  };
+
+  while (queue.length > 0) {
+    const work = queue.pop();
+    if (work.assignment !== undefined) {
+      const [name, initializer] = work.assignment;
+      const symbol = symbolOf(name);
+      if (flow(symbol, valueOf(initializer))) {
+        enqueue(symbol);
+      }
+      continue;
+    }
+    if (applyCall(work.call)) {
+      for (const parameter of targetsOf(work.call).flatMap((t) => t.parameters)) {
+        if (ts.isIdentifier(parameter.name)) {
+          enqueue(symbolOf(parameter.name));
+        }
       }
     }
   }

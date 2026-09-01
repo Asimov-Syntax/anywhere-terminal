@@ -125,7 +125,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     4. Union the sweep's verdicts with the call-detected ones in `unresolvableRequires`, deduplicating by specifier.
     5. Witness the conditional-alias and `.call` shapes from round 4's F008 and F009, plus a computed-argument and an object-carried loader from its F012, asserting each is reported without any call analysis seeing it.
 
-- [ ] 5_2 Process each propagation edge once
+- [x] 5_2 Process each propagation edge once — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: design.md D2
   - **Acceptance**:

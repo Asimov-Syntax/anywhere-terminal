@@ -396,3 +396,24 @@ describe("[round-4 D6] a relative specifier is resolved however it is called", (
     expect(swept(`var isUp = (p) => p.startsWith("../");`)).not.toContain("../");
   });
 });
+
+// [round-4 F006] The rescan loop re-walked every edge whenever one fact landed,
+// so a reverse forwarding chain cost edges x facts: 2000 links took ~2.0s and
+// 4000 took ~8.3s. The worklist processes each edge once.
+describe("[round-4 F006] propagation cost grows with edges, not edges times facts", () => {
+  const chain = (n: number) => {
+    const lines: string[] = [];
+    for (let i = n; i >= 1; i--) {
+      lines.push(`var a${i} = a${i - 1};`);
+    }
+    lines.push("var a0 = require;");
+    lines.push(`a${n}("./deep");`);
+    return lines.join("\n");
+  };
+
+  it("resolves a deep reverse chain well inside a rescan loop's cost", () => {
+    const started = Date.now();
+    expect(requiredSpecifiers(chain(2000))).toContain("./deep");
+    expect(Date.now() - started).toBeLessThan(600);
+  });
+});
