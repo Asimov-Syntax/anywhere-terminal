@@ -80,9 +80,44 @@ restored, so the compound action reports its parts separately.
 | The control is offered only on a proven merge | Offered ⇔ `branchMerged === "passed"` | Offering on `unproven`, which reads as "not yet checked" rather than "not established" | Witness per `ProofOutcome` value asserting absence | supported |
 | It is never on by default | Absent from the request ⇒ never deleted | An opt-out, or a default-true field | Optional wire field defaulting to absent | supported |
 | The typed confirmation never unlocks it | The two controls are independent | Reusing the removal's confirmation as consent for the branch | Witness: confirmed removal without the opt-in deletes no branch | supported |
-| Both OIDs are verified at delete time | The transaction refuses if either moved | Verifying only the branch, letting the default branch move under a stale proof | Witness driving a moved base OID and asserting the branch survives | supported — D2 verified on git 2.50.1 |
-| A branch checked out elsewhere is never deleted | Re-read immediately before the transaction | D3: `update-ref` will delete it, unlike `git branch -d` | Witness with the branch checked out in a second worktree, asserting refusal | supported — and this row is why D3 exists |
-| The default branch is never deleted | Refused at proof time and again at execution | The default branch changing between report and execution | Witness at both points | supported |
-| A failed delete leaves the removal successful | Two outcomes, reported separately | Reporting the compound as failed, implying the worktree survives | Witness: failed delete, removal still reported removed | supported |
+| Both OIDs are verified at delete time | The transaction refuses if either moved | Verifying only the branch, letting the default branch move under a stale proof | Witness driving a moved base OID and asserting the branch survives | **refuted** — the plan re-DERIVES the default at delete time and verifies that ref against the recorded OID. If `origin/HEAD` moves from `main` to `release` between report and execution, it verifies `release@X` while the recorded `main` moved to `Y`, and deletes. The RECORDED ref name has to be verified, not a fresh derivation |
+| A branch checked out elsewhere is never deleted | Re-read immediately before the transaction | D3: `update-ref` will delete it, unlike `git branch -d` | Witness with the branch checked out in a second worktree, asserting refusal | **refuted** — `git worktree list --porcelain` emits only `branch <ref>` or `detached` (`builtin/worktree.c:949-979`), while git's own guard also registers rebase, bisect and sequencer `--update-refs` holders (`branch.c:405-450`). A rebase of `feature` elsewhere leaves a detached HEAD, porcelain names no `feature`, and the transaction deletes it. Git also silently OMITS a worktree whose administrative `gitdir`/HEAD is unreadable (`worktree.c:41-56,121-155`), so the check fails open |
+| The default branch is never deleted | Refused at proof time and again at execution | The default branch changing between report and execution | Witness at both points | **refuted** — default identity comes from mutable `origin/HEAD`/config (`orphanProofs.ts:180-200`). Another process can repoint `origin/HEAD` at the target branch without moving any OID; the transaction guards OIDs only and deletes what is now the default. D5's disclosed residual covers checkout races, not selector changes |
+| A failed delete leaves the removal successful | Two outcomes, reported separately | Reporting the compound as failed, implying the worktree survives | Witness: failed delete, removal still reported removed | **refuted** — separation is planned in the SERVICE, but nothing carries the outcome to the user: `toResultMessage` (`extension.ts:223-252`) serializes only `openFailed`, `messages.ts:2389-2405` has no branch outcome, and `WorktreeView.ts:1516-1537` would render just "Remove done." Every "the user is told" clause in the spec is currently undischarged |
 | The delete runs only after the removal succeeds | Ordering | Deleting the branch then failing the removal, stranding the user | Call-order witness | supported |
 | No window is claimed to be closed | Guarded, not safe | Documenting the guarantee as atomic end to end | D5 states it; no witness can establish a negative | supported — stated, not proven |
+
+## Oracle attack — dispositions and what they cost
+
+Five rows supported, four refuted, one design point unresolved. The refutations are recorded in the
+ledger above with their counterexamples. Three further defects, none of them ledger rows:
+
+- **The evidence has no retrieval path (unresolved).** Task 3_2 says the host resolves the evidence
+  from its own report. It cannot today: the webview sends only `worktreeId` and `fingerprint`
+  (`messages.ts:1296-1300`), the service computes a FRESH assessment before redemption
+  (`worktreeMutationService.ts:539-588`), and `redeem` returns only `"proceed" | "reprompt"` without
+  exposing the issued evidence (`worktreeFingerprint.ts:61-65,95-106`). So a report showing
+  `branch@B1` could authorize a delete carrying freshly-assessed `branch@B2`. The missing fact is how
+  the ISSUED report's evidence is recovered after redemption.
+- **The payload task names the wrong file.** Task 1_2 assigns evidence passthrough to
+  `removalChecks.ts`; the wire payload is assembled at `extension.ts:215-220`. Unit tests over
+  constructed payloads would pass while the running extension omits the evidence and the control
+  never appears.
+- **The spec claims what the design disclaims.** The spec says a checked-out branch SHALL NOT be
+  deleted, tested "at the moment of deletion"; D5 admits a checkout can happen between the read and
+  the transaction. A call-order witness cannot establish an at-the-moment guarantee.
+
+### The mechanism fork this exposes, which is the user's to settle
+
+The oracle's judgment, and I agree with it: `git branch -d` plus separate OID checks is **not**
+strictly safer. The two mechanisms protect different things and neither dominates.
+
+| | in-use guard | evidence guard |
+|---|---|---|
+| `git update-ref` transaction | only what porcelain reports — misses rebase, bisect, sequencer, unreadable entries | exact recorded OIDs, atomic |
+| `git branch -d` | git's full `branch_checked_out` model | checks against the branch's upstream or HEAD, NOT the recorded default — can delete `B2` when the user authorized `B1` |
+
+The plan adopted the transaction and reproduced only a subset of the other guard. Deleting a branch
+is destructive and irreversible from this extension's side, so which guard to prefer — or whether to
+pay for both with a verify-then-`branch -d` sequence and a small unguarded window — is a safety
+judgment, not a mechanism preference.
