@@ -2395,6 +2395,45 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
   });
 
+  it("[F005] says how much was brought over, and names what was not", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          provisioned: [
+            { id: "i1", path: ".env", outcome: { kind: "copied" } },
+            {
+              id: "i2",
+              path: "pnpm-lock.yaml",
+              outcome: { kind: "refused", reason: "a lockfile is never brought over" },
+            },
+          ],
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+
+    // Still a success — the worktree exists — and still says what did not
+    // arrive, rather than a second notice replacing this one.
+    expect(notice?.textContent ?? "").toContain("Create done.");
+    expect(notice?.textContent ?? "").toContain("1 of 2 brought over.");
+    expect(notice?.textContent ?? "").toContain("a lockfile is never brought over");
+  });
+
+  it("[F005] says nothing about provisioning on a create that provisioned nothing", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [{ action: "create", repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git", outcome: "ok" }],
+    });
+
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").not.toMatch(/brought over/i);
+  });
+
   it("offers no retry on a failed mutation", () => {
     // worktree-actions.md § 5: retrying a partially applied git mutation is how
     // a recoverable error becomes an unrecoverable one. The only offered action

@@ -52,6 +52,7 @@ import type {
   WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
+  WorktreeProvisionResultMessage,
   WorktreePullRequestsMessage,
   WorktreeRefsMessage,
   WorktreeRemoveAssessmentMessage,
@@ -135,6 +136,7 @@ export interface MessageHandlers {
   onWorktreeDebrisAuthorized?(msg: WorktreeDebrisAuthorizedMessage): void;
   /** What a mutation this surface started actually did. */
   onWorktreeMutationResult?(msg: WorktreeMutationResultMessage): void;
+  onWorktreeProvisionResult?(msg: WorktreeProvisionResultMessage): void;
   /** What a removal WOULD cost, answered without removing anything. */
   onWorktreeRemoveAssessment?(msg: WorktreeRemoveAssessmentMessage): void;
   // ── Subagent preview popup (preview-subagent-popup) ──
@@ -306,6 +308,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeMutationResult":
         handlers.onWorktreeMutationResult?.(msg);
+        break;
+      case "worktreeProvisionResult":
+        handlers.onWorktreeProvisionResult?.(msg);
         break;
       case "worktreeRemoveAssessment":
         handlers.onWorktreeRemoveAssessment?.(msg);

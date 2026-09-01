@@ -98,7 +98,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     6. `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.test.ts`: the stale offer's POSTED message, not only its absent create; a malformed `provision` refused without throwing; a selection with no binding reporting a step per entry; the id normalized.
   - **Boundary**: no new error arm — every refusal added here rides the `worktreeMutationResult` shape that already exists
 
-- [ ] 2_3 Land the two halves that make the flow reach a user
+- [x] 2_3 Land the two halves that make the flow reach a user — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit && pnpm run gate:fs-deletion exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#the-material-a-worktree-was-promised-is-actually-put-there; .reviews/round-1.md F005
   - **Acceptance**:

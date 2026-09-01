@@ -138,6 +138,24 @@ describe("createMessageRouter", () => {
     }
   });
 
+  it("[F005] routes worktreeProvisionResult rather than dropping it in the default", () => {
+    // The default arm ignores unknown types in silence, so a declared, posted,
+    // handled message type reached nobody and its feature shipped inert — the
+    // exact scar TerminalViewProvider.ts:1021 records from an earlier round.
+    const onWorktreeProvisionResult = vi.fn();
+    const handlers: MessageHandlers = { ...createMockHandlers(), onWorktreeProvisionResult };
+    const dispatch = createMessageRouter(handlers);
+
+    dispatch({
+      type: "worktreeProvisionResult",
+      worktreeId: "/wt/feat",
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+
+    expect(onWorktreeProvisionResult).toHaveBeenCalledTimes(1);
+    expect(onWorktreeProvisionResult.mock.calls[0]?.[0]).toMatchObject({ worktreeId: "/wt/feat" });
+  });
+
   it("routes agentActivityStatus to the optional handler when present", () => {
     const onAgentActivityStatus = vi.fn();
     const handlers: MessageHandlers = { ...createMockHandlers(), onAgentActivityStatus };

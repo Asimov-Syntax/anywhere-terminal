@@ -964,6 +964,63 @@ describe("Bring over — what the new worktree will lack", () => {
 
   const rows = (host: HTMLElement): HTMLElement[] => Array.from(host.querySelectorAll<HTMLElement>(".wt-brow"));
 
+  const submitFrom = (q: <T extends HTMLElement>(sel: string) => T): void => {
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+  };
+
+  describe("[F005] the ticks actually leave the form", () => {
+    // The selection has been held in `checkedByOffer` since WT-012.1 and
+    // nothing read it, so every tick was discarded at the submit and the whole
+    // provisioning flow was inert from the dialog to the filesystem.
+
+    it("carries the offer id and the rows that are ticked", () => {
+      const { q, submitted } = withOffer();
+      submitFrom(q);
+
+      expect(submitted[0]?.provision?.offerId).toBe(provisionOffer().offerId);
+      expect(submitted[0]?.provision?.itemIds.length).toBeGreaterThan(0);
+    });
+
+    it("drops a row the user unticked, and keeps its siblings", () => {
+      const { host, q, submitted } = withOffer();
+      const boxes = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).filter((b) => b.checked);
+      const dropped = boxes[0];
+      if (dropped === undefined) {
+        throw new Error("the offer drew no ticked row to untick");
+      }
+      dropped.checked = false;
+      dropped.dispatchEvent(new Event("change", { bubbles: true }));
+      submitFrom(q);
+
+      expect(submitted[0]?.provision?.itemIds).not.toContain(dropped.value);
+      expect(submitted[0]?.provision?.itemIds).toEqual(boxes.slice(1).map((b) => b.value));
+    });
+
+    it("carries an EMPTY list when the user unticked everything", () => {
+      // Not the same as no offer, and collapsing the two would let a host that
+      // provisions by default provision against a user who said no.
+      const { host, q, submitted } = withOffer();
+      for (const box of host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")) {
+        if (box.checked) {
+          box.checked = false;
+          box.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+      submitFrom(q);
+
+      expect(submitted[0]?.provision?.itemIds).toEqual([]);
+      expect(submitted[0]?.provision?.offerId).toBe(provisionOffer().offerId);
+    });
+
+    it("carries no selection at all when no offer ever arrived", () => {
+      const { q, submitted } = open();
+      submitFrom(q);
+
+      expect(submitted[0]).not.toHaveProperty("provision");
+    });
+  });
+
   it("gives every offered item its own row", () => {
     // Five declared items — two copied, one linked, one port, one setup step.
     // The mockup draws one row per KIND; the spec says one row per ITEM, because

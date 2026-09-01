@@ -17,6 +17,7 @@ import {
   twoRepoTree,
   worktree,
 } from "./worktreeFixtures";
+import { worktreeDelegatedHandlers } from "./worktreeMessageHandlers";
 import type {
   RemovalCheck,
   WorktreeActionResult,
@@ -704,6 +705,70 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     expect(h.posts.filter((m) => m.type === "worktreeCreateClosed")).toEqual([
       { type: "worktreeCreateClosed", opening },
     ]);
+  });
+
+  it("[F005] carries the form's provisioning selection onto the create request", () => {
+    // The middle hop. The dialog surfaces the ticks and the host resolves them,
+    // and between the two sits this spread — which mutation testing showed
+    // could be deleted with the whole suite still green, because every other
+    // witness in the chain stood on one side of it or the other.
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "main",
+      path: "/wt",
+      openAfter: "none",
+      provision: { offerId: "offer-7", itemIds: ["i1", "i3"] },
+    });
+
+    expect(h.posts[0]).toMatchObject({
+      type: "worktreeCreate",
+      provision: { offerId: "offer-7", itemIds: ["i1", "i3"] },
+    });
+  });
+
+  it("[F005] posts no provisioning field for a draft that carries no selection", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "main",
+      path: "/wt",
+      openAfter: "none",
+    });
+
+    expect(h.posts[0]).not.toHaveProperty("provision");
+  });
+
+  it("[F005] routes worktreeProvisionResult through the table production shares", () => {
+    // Not a hand-written copy of the route: `worktreeDelegatedHandlers` is the
+    // table main.ts spreads, and a second copy of it is what shipped a route
+    // dark once during this subsystem's own build.
+    const h = mount();
+    const handled: string[] = [];
+    const stub = {
+      handleProvisionResult: (msg: { worktreeId: string }) => handled.push(msg.worktreeId),
+    } as unknown as WorktreeController;
+
+    worktreeDelegatedHandlers(() => stub).onWorktreeProvisionResult?.({
+      type: "worktreeProvisionResult",
+      worktreeId: "/wt/feat",
+      steps: [],
+    });
+
+    expect(handled).toEqual(["/wt/feat"]);
+    void h;
   });
 
   it("maps a new-branch draft onto the create request", () => {
@@ -2255,6 +2320,49 @@ describe("what a mutation did comes back to the panel", () => {
         outcome: "ok",
       },
     ]);
+  });
+
+  it("[F005] folds provisioning onto the create notice instead of replacing it", () => {
+    // `showActionResult` keys by action + worktree + repo, so a second notice
+    // for the same create REPLACES the first. The user would be told what was
+    // brought over and no longer told the worktree exists.
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator";
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+
+    expect(results(h)).toHaveLength(1);
+    expect(results(h)[0]).toMatchObject({
+      action: "create",
+      worktreeId,
+      repoId: REPO,
+      outcome: "ok",
+      provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+    });
+  });
+
+  it("[F005] reports provisioning on its own when the create notice is already gone", () => {
+    // Dismissed, or re-scoped away. Saying nothing would leave the user unable
+    // to tell "nothing was brought over" from "nobody looked".
+    const h = ready();
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId: "/wt/gone",
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "refused", reason: "a lockfile is never brought over" } }],
+    });
+
+    expect(results(h)).toHaveLength(1);
+    expect(results(h)[0]?.provisioned).toHaveLength(1);
   });
 
   it("attaches a repo-scoped result to the repo alone", () => {

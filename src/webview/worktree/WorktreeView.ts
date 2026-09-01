@@ -47,6 +47,7 @@ import {
 } from "./worktreeTreeView";
 import type {
   PresenceDegradation,
+  ProvisionStepResult,
   WorktreeActionResult,
   WorktreeAgentRow,
   WorktreeInfo,
@@ -377,7 +378,10 @@ export class WorktreeView {
             // The blocker fingerprint is part of the key: it decides whether the
             // notice offers Force remove at all, and WHICH blocker set that
             // confirmation would authorize.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}`,
+            // Provisioning lands as a SECOND message folded onto the same
+            // notice, so its summary is part of the key — without it the merged
+            // result is byte-different and renders identically.
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned)}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -1509,17 +1513,25 @@ export class WorktreeView {
       });
     }
     if (result.outcome === "ok") {
+      const brought = provisionSummary(result.provisioned);
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
       // Still a success — the worktree exists — but the notice says plainly
       // what did not happen afterwards, rather than a second notice replacing
       // this one (round-4 W7).
       return renderNotice({
-        tone: result.openFailed === undefined ? "neutral" : "warn",
+        // A create that succeeded while some of its material did not arrive is
+        // still a success and still needs saying — the same rule the launch
+        // failure above follows (round-4 W7).
+        tone: result.openFailed === undefined && brought?.tone !== "warn" ? "neutral" : "warn",
         live: "status",
         title: `${titleForAction(result.action)} done.`,
-        body: withAbout(result.openFailed === undefined ? undefined : "It could not be opened afterwards."),
-        reason: result.openFailed,
+        body: withAbout(
+          [result.openFailed === undefined ? undefined : "It could not be opened afterwards.", brought?.body]
+            .filter((line) => line !== undefined)
+            .join(" ") || undefined,
+        ),
+        reason: result.openFailed ?? brought?.reason,
         onDismiss: dismiss,
       });
     }
@@ -1775,4 +1787,40 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
     default:
       return "Launch";
   }
+}
+
+/**
+ * The part of a provisioning report that decides whether the notice redraws.
+ *
+ * Every outcome, in order — a run where one entry turned from `copied` to
+ * `refused` must not compare equal to the run before it.
+ */
+function provisionKey(steps: readonly ProvisionStepResult[] | undefined): string {
+  return steps === undefined ? "" : steps.map((s) => `${s.id}=${s.outcome.kind}`).join(",");
+}
+
+/**
+ * One sentence about what was brought over, and the reasons behind it.
+ *
+ * `refused` and `failed` are the two the user has to be told about: the first
+ * is a rule they can work around, the second is something that went wrong.
+ * `skipped` is neither — it means the file was already there — so it is
+ * counted and not dwelt on.
+ */
+function provisionSummary(
+  steps: readonly ProvisionStepResult[] | undefined,
+): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
+  if (steps === undefined || steps.length === 0) {
+    return undefined;
+  }
+  const bad = steps.filter((s) => s.outcome.kind === "refused" || s.outcome.kind === "failed");
+  const arrived = steps.length - bad.length;
+  if (bad.length === 0) {
+    return { body: `${arrived} of ${steps.length} brought over.`, tone: "neutral" };
+  }
+  return {
+    body: `${arrived} of ${steps.length} brought over.`,
+    tone: "warn",
+    reason: bad.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`).join("\n"),
+  };
 }

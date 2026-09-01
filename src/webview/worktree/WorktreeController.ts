@@ -17,6 +17,7 @@ import type {
   WorktreeDebrisAuthorizedMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
+  WorktreeProvisionResultMessage,
   WorktreePullRequestsMessage,
   WorktreeRefsMessage,
   WorktreeRemoveAssessmentMessage,
@@ -657,6 +658,8 @@ export class WorktreeController {
           // interpretation of one answer, and this one authorizes a delete.
           // Absent means free — a recover the user never accepted is not one.
           disposition: draft.disposition ?? { kind: "free" },
+          // Ids only, resolved host-side against the model it displayed.
+          ...(draft.provision === undefined ? {} : { provision: draft.provision }),
           // The launch details travel with the agent variant and with no other —
           // the union is what makes any other pairing unrepresentable.
           afterCreate:
@@ -1346,6 +1349,25 @@ export class WorktreeController {
    */
   handleMutationResult(msg: WorktreeMutationResultMessage): void {
     this.showActionResult(toActionResult(msg));
+  }
+
+  /**
+   * What provisioning did, folded onto the create notice that is already there.
+   *
+   * The host posts this immediately after the create's own result on one
+   * ordered channel, so the notice exists by the time this lands. Merged rather
+   * than raised separately: `showActionResult` keys notices by action, worktree
+   * and repo, so a second one would REPLACE the create's rather than sit beside
+   * it. If the create notice is somehow gone, this reports on its own rather
+   * than being dropped — a user who is told nothing cannot tell "nothing was
+   * brought over" from "nobody looked".
+   */
+  handleProvisionResult(msg: WorktreeProvisionResultMessage): void {
+    const existing = this.actionResults.find((r) => r.action === "create" && r.worktreeId === msg.worktreeId);
+    this.showActionResult({
+      ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
+      provisioned: msg.steps,
+    });
   }
 
   /**

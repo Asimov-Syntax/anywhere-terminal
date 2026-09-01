@@ -21,6 +21,7 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 import type {
   DestinationDisposition,
   ProvisionModel,
+  ProvisionStepResult,
   PullRequestOffer,
   RemovalCheck,
   ResolvedMode,
@@ -34,6 +35,7 @@ export type {
   ProvisionPort,
   ProvisionProblem,
   ProvisionSetupStep,
+  ProvisionStepResult,
   RemovalCheck,
   RemovalCheckClass,
   RemovalCheckOutcome,
@@ -125,6 +127,14 @@ export interface WorktreeActionResult {
   orphanedLabel?: string;
   /** The action succeeded; what it was asked to do next did not. */
   openFailed?: string;
+  /**
+   * What provisioning did, on the create's OWN notice.
+   *
+   * Carried here rather than raised as a second notice: two notices for one
+   * create compete for the same row, and the answer the user wants — the
+   * worktree exists AND its files arrived — is one sentence, not two.
+   */
+  provisioned?: readonly ProvisionStepResult[];
 }
 
 /**
@@ -275,4 +285,13 @@ export interface WorktreeCreateDraft {
    * host issued an authorization for the path the form displayed.
    */
   disposition?: DestinationDisposition;
+  /**
+   * The offer this form was showing, and the rows ticked in it.
+   *
+   * Ids, never paths: the host holds the model it displayed and resolves ids
+   * against THAT, so nothing the webview spells reaches the filesystem
+   * (worktree-rpc.md § 2.4). Absent when no offer arrived — a form that was
+   * never told what the repository needs asks for nothing.
+   */
+  provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
 }

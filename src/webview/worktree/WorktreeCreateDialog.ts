@@ -959,6 +959,22 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   shell.actions.append(cancelBtn, createBtn);
   shell.dialog.appendChild(shell.actions);
 
+  /**
+   * The offer on screen and what is ticked in it, or nothing.
+   *
+   * Nothing in two cases that are NOT the same: no offer ever arrived, so the
+   * form was never told what this repository needs; or an offer arrived and the
+   * user unticked every row, which is a decision and travels as an empty list.
+   * Collapsing the second into the first would let a host that provisions by
+   * default provision against a user who said no.
+   */
+  function settledProvision(): { offerId: string; itemIds: readonly string[] } | undefined {
+    if (drawnOfferId === null) {
+      return undefined;
+    }
+    return { offerId: drawnOfferId, itemIds: [...(checkedByOffer.get(drawnOfferId) ?? [])] };
+  }
+
   function submit(): void {
     if (createBtn.disabled || heldBranch() !== undefined) {
       return;
@@ -975,11 +991,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // showing. Absent, the create is an ordinary one against a free path — the
     // form never asks for a removal it cannot name the authorization for.
     const disposition = settledDisposition();
+    // The last hop. `checkedByOffer` has held this since WT-012.1 and nothing
+    // read it, so every tick the user made was discarded at the submit and the
+    // whole provisioning flow was inert end to end (.reviews/round-1.md F005).
+    const provision = settledProvision();
     deps.onSubmit({
       ...draft,
       ...launch,
       ...(carried === null ? {} : { resolved: carried.mode }),
       ...(disposition === undefined ? {} : { disposition }),
+      ...(provision === undefined ? {} : { provision }),
     });
     disposeAll();
   }
