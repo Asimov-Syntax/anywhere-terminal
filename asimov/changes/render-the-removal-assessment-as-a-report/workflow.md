@@ -8,12 +8,12 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -200,4 +200,52 @@ would have passed for want of anything happening.
 - Verify Gate: check-types clean, 6254/6254, `gate:fs-deletion` ok, biome check-mode at the
   3 errors / 14 warnings / 1 info baseline. Four format errors were hand-applied exactly as the
   formatter printed them; write mode was never run.
+
+HANDBACK (round-6 B5 + S1, cycle 4, 2026-09-01). Gate 2, All tasks done and Verify gate unticked;
+Review done and Gate: implementation approved were already unticked. Tasks 1_1 to 1_7, 2_1 to 2_5 and
+3_1 to 3_4 stay `[x]` — built, verified and untouched by this.
+
+Round 5 was SPENT ON MY ERROR and the round file records it: I requested a verification round after a
+handback, which supersedes by construction, because the range necessarily adds the `D#`s and task
+entries the handback created. My own cycle-1 note already said the review after a handback is the
+next cycle's DISCOVERY round; I did not apply it. Round 6 then ran as cycle 4 discovery and cost a
+second user grant. Both grants are recorded on the review state.
+
+Round 6 returned BLOCK: B5 accepted as gating, S1 accepted as non-gating. Adjudicated as FIXED at
+their witnesses by section 3: round-4 B3, W4 and W5. The chair also ruled explicitly that 3_3's
+pre-flight `unavailable` answer — a deviation I took on my own authority and flagged for attack — is
+valid D12 conformance rather than overreach, and that without it the same-row duplicate guard could
+retain a request that will never answer. D10's parity-not-closure claim, the absence of a
+queue-to-gate lock cycle, and the non-vacuity of the new tests were all upheld.
+
+No fix loop was opened, for two independent reasons either of which alone is sufficient:
+- The remediation boundary. B5 falsifies an accepted D10 ledger claim outright — "a burst cannot back
+  up the mutation queue" is false — so the fix needs a changed `D#`, and the finding's invariant, a
+  structural pending-work bound on read traffic sharing a mutation queue, is an owner this change
+  does not have.
+- The cycle cap. This is cycle 4.
+
+What the redesign must carry, beyond B5 itself:
+- S1: the `.catch()` sits after `.then()`, so a delivery throw on a SUCCESSFUL result is reported as
+  a failed assessment, and a second throw escapes the voided chain.
+- The liveness hazard the oracle found and S1 only partly covers: both production surface adapters
+  are fire-and-forget (`TerminalViewProvider.ts:1659-1666`, `TerminalEditorProvider.ts:1132-1139`)
+  and swallow a fulfilled `false` or a rejection, so a transient delivery failure strands
+  `liveAssess` and kills that row's Remove permanently. Closing every HOST exit in 3_3 did not make
+  "one live request, one reply" true end to end, as I claimed; the transport can still drop it. A
+  pending-work bound and a request lifetime that survives a dropped reply are one question.
+- My own overclaim, which the chair did NOT treat as a defect and which is therefore mine to correct
+  rather than a finding: task 3_4 is titled "Prove the replacement cannot be deleted under its
+  predecessor's report", and the walk does not remove-and-recreate anything, never delivers the
+  watcher event it holds, and never confirms. It is non-vacuous and it does prove what 3_4's
+  Acceptance Outcome actually states — the assessment reads the barrier's registration, not the
+  cache's — but the title and its commit message claim more than the walk earns.
+
+Knowledge candidate: a verification round is impossible after a handback | Surprise: round 5 was
+opened, scope-locked and closed without spawning a single specialist, costing one of exactly two
+user-granted rounds, because a handback ALWAYS adds the `D#` and task entries that supersede
+verification | Evidence: .reviews/round-5.md "Mode: superseded" vs the same conclusion already
+recorded in this file after cycle 1 | Consumer: build | Action: after any artifact handback, request
+the next review as the new cycle's DISCOVERY round; never as a verification round, whatever the fix
+loop's step 7 says about re-review.
 
