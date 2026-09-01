@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -38,3 +38,5 @@ Planned at: 8a48e52c
 - Gate 2 re-earned under fastlane on the standing goal, with the user away. Nothing in the four fixes widens scope; the mechanism, the non-goals and the refused twin-create probe are unchanged.
 - 4_1 build evidence corrected D3/D4 before any review saw them: the entry gate itself lstats the destination (`src/utils/resolvedPathBoundary.ts:117-121`), so `inadmissible` cannot be told apart from `unreadable` and refuses a contest like any other unproven destination. Row 1 now reads "anything but `absent`".
 - Round-2 handback cut accepted scope: the spec scenario promising BOTH members land on a case-sensitive volume is withdrawn, because an oracle attack established that a held member's post-claim `absent` cannot be told from the favoured member's object being unlinked, and writing it there is exactly how the inherited declaration wins a folded destination. The user was asked which way to settle it and was away for 600s; the alternative was a risk acceptance, which only the user can grant, so the refusing option was the only one available to me. Flag it at the next review.
+- Knowledge candidate: a contest's refusal text is O(N²) in members — each of N members carries a reason naming all N — so at the structural row cap ~786 KB of declarations expands to ~150 MiB of reason text before postMessage/JSON/DOM copies | Surprise: the input is capped and the output is not, and the quadratic sits in text nobody sizes | Evidence: src/worktree/provisioning/applyProvisioning.ts#refuseContest | Consumer: plan | Action: if a reason-size or aggregate-byte cap is ever added to the provisioning report, this is the term that dominates it; round-3's performance specialist emitted no finding because the row and file caps bound it
+- Round 3 hit the thrash stop AND the cycle cap: trajectory r1=4 | r2=3 | r3=3, two consecutive rounds with no net reduction, third cycle. Option 1 taken under the standing grant to split a change or replan; options 2 and 3 both need a user decision I do not have. F008 and F007's live half each mint an invariant owner outside this change, so they become their own changes rather than tasks here.
