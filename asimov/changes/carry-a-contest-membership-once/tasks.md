@@ -75,3 +75,13 @@ of result text over a wire whose input is capped at `T`. The membership travels 
   - **Plan**:
     1. `src/webview/worktree/WorktreeView.ts` includes each step's contest and reason in the signature the render guard compares.
     2. `src/webview/worktree/WorktreeView.test.ts` witnesses a second result with identical kinds and changed membership.
+
+- [x] 2_5 Sign what the notice renders, not a list of remembered fields — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_4
+  - **Refs**: .reviews/round-2.md#f006
+  - **Acceptance**:
+    - Outcome: Any change the notice would render differently re-renders it
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeView.ts` builds the provisioning part of the signature structurally over every field `provisionSummary` reads, rather than by concatenating remembered ones.
+    2. `src/webview/worktree/WorktreeView.test.ts` witnesses a second result differing only in a step's path, and one differing only in a descendant detail.

@@ -382,7 +382,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned)}:${contestKey(r.provisionContests)}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests)}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -1796,27 +1796,16 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
  * Every outcome, in order — a run where one entry turned from `copied` to
  * `refused` must not compare equal to the run before it.
  */
-/**
- * The membership the notice renders, in the signature that guards the render.
- *
- * A second result can carry identical steps and a corrected contest — same
- * ids, same kinds, same reasons — and the notice is built from both.
- */
-function contestKey(contests: readonly ProvisionResultContest[] | undefined): string {
-  return contests === undefined
-    ? ""
-    : contests.map((c) => c.members.map((m) => `${m.id}=${m.path}@${m.source}`).join("+")).join(",");
-}
-
-function provisionKey(steps: readonly ProvisionStepResult[] | undefined): string {
-  // The contest and the reason are in here because the NOTICE reads them: a
-  // second result whose steps keep their kinds but whose membership or reason
-  // changed compared equal, and the render was skipped over a stale refusal.
-  return steps === undefined
-    ? ""
-    : steps
-        .map((s) => `${s.id}=${s.outcome.kind}@${s.contest ?? ""}:${"reason" in s.outcome ? s.outcome.reason : ""}`)
-        .join(",");
+function provisionKey(
+  steps: readonly ProvisionStepResult[] | undefined,
+  contests: readonly ProvisionResultContest[] | undefined,
+): string {
+  // Structural, over exactly what `provisionSummary` reads. Concatenating the
+  // fields I happened to remember is what let a second result with a corrected
+  // membership — and then a changed path, and a changed descendant detail —
+  // compare equal and leave a stale notice on screen (.reviews/round-2.md
+  // F006). Free text in a delimiter-joined string can collide; this cannot.
+  return steps === undefined ? "" : JSON.stringify([steps, contests ?? []]);
 }
 
 /**

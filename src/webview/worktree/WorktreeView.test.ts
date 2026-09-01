@@ -2556,6 +2556,29 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(view.element.querySelector(".wt-reason")?.textContent ?? "").toContain("tools/worktree.yaml");
   });
 
+  it.each([
+    ["a step's path", { path: "renamed" }],
+    ["a descendant detail", { details: [{ path: "inner", reason: "a lockfile is never brought over" }] }],
+  ])("re-renders when a second result differs only in %s", (_what, changed) => {
+    // The signature was an enumeration of remembered fields, and the notice
+    // renders more than those (.reviews/round-2.md F006).
+    const { view } = mount();
+    const resultWith = (over: Record<string, unknown>) => ({
+      action: "create" as const,
+      worktreeId: "/wt/feature",
+      outcome: "ok" as const,
+      provisioned: [
+        { id: "i1", path: "kept", outcome: { kind: "copied" as const } },
+        { id: "i2", path: "lost", outcome: { kind: "refused" as const, reason: "it lost" }, ...over },
+      ],
+    });
+    view.setData({ ...populated(), actionResults: [resultWith({})] });
+    view.setData({ ...populated(), actionResults: [resultWith(changed)] });
+    const text = view.element.querySelector(".wt-reason")?.textContent ?? "";
+
+    expect(text).toContain("path" in changed ? "renamed" : "a lockfile is never brought over");
+  });
+
   it("says so when a row cites a contest the report did not carry", () => {
     // Falling back to the bare reason removes every declaring file exactly
     // where the obligation to name them lives (.reviews/round-1.md F002).
