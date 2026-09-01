@@ -324,9 +324,12 @@ nothing to provision.
 
 ## Phase 11 — Recorded Debts
 
-> **Goal**: the subsystem holds one rule per concept rather than one per call site. Every task
-> here closes a finding review already adjudicated valid and then deferred with a written reason —
+> **Goal**: the subsystem holds one rule per concept rather than one per call site. Most tasks
+> here close a finding review already adjudicated valid and then deferred with a written reason —
 > see [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) for each one's triage line.
+> WT-011.11 and WT-011.12 arrived differently: both were found by build evidence rather than by
+> review, and both are recorded here because they are debts of the same kind, not because a round
+> deferred them.
 > Nothing here changes what the panel presents when everything is healthy, which is what makes the
 > phase reviewable as hardening rather than as feature work.
 
@@ -470,6 +473,35 @@ nothing to provision.
 | **Notes** | Raised as W1 in `bound-the-looks-one-projection-starts` rounds 6 and 7, adjudicated non-blocking both times and left for its own change. The host records `projectedEnriched` from what it REQUESTED, not from whether preview enrichment completed, so a projection whose preview half was skipped by WT-011.7's falling-edge fence still marks the envelope enriched and `enrichmentOwed()` suppresses the replacement pass on reopen. The obvious cheap fix does not work and the attempt is worth not repeating: clearing the flag on the falling edge broke 19 cases, because the host's reconcile is deliberately a state settle rather than an edge check and so runs on every mutation while nothing is drawing. Both routes the reviewer named — propagating whether enrichment completed out of the projection, or holding an explicit outstanding-enrichment obligation — add information to the projector/host seam, which is why this is a decision and not a patch |
 | **Acceptance** | A projection whose preview enrichment was skipped does not leave the envelope recorded as enriched; a surface reopening after such a pass is served a replacement pass rather than waiting for the next external scan; the fix does not fire on mutations that changed nothing |
 | **Status** | done |
+
+### [WT-011.11] One Clock Decides Whether a Deadline Has Passed
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A deadline reports itself expired the moment the wait it hands out completes, so a caller that awaits one and then reads it cannot be told it has not passed yet |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.1 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | XS |
+| **Labels** | None |
+| **Notes** | Found while confirming a verify-gate failure was not mine, and it is a real defect rather than a flaky test. The deadline is built from two clocks that do not agree: the expiry instant is computed from `Date.now()` while the wait is a `setTimeout` of the same duration, and Node's timer may fire up to a millisecond early against `Date.now()`. Reproduced 1 run in 25 at commit 414b0aef on an otherwise quiet machine, so it is not CPU contention — the contention flakes are a separate and unrelated population in `extension.worktreeAssembly`, `snapshotPool` and `VaultPanel`. The margin only has to be one millisecond, so the shortest deadlines are the ones that hit it, which is why the existing test uses `1` and why raising that number would hide the defect rather than fix it |
+| **Acceptance** | Awaiting a deadline's completion and then reading whether it expired answers yes, for every duration including the shortest one; the guarantee holds without depending on how promptly the host's timer fires; the existing test keeps its one-millisecond deadline rather than being relaxed to pass |
+| **Status** | todo |
+
+### [WT-011.12] The Shipped Bundle Resolves Every Module It Requires
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A packaged extension that would fail to activate because a dependency left an unresolvable module reference in the bundle fails the build instead of the user's editor |
+| **Design Ref** | [DESIGN.md](DESIGN.md) § 8.5 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | infra |
+| **Notes** | Written after an activation failure that no suite could have caught. A dependency whose package `main` is a UMD bundle calls its factory with `require` as a parameter and the factory then requires a relative path; the bundler cannot follow a require reached through a parameter, so the call survives into the output and resolves against the output directory at runtime. The whole test suite stayed green because the test runner resolves the dependency's ESM entry and never loads the bundle at all — so the gate has to read the built artifact, not the source. The immediate instance was fixed by aliasing that dependency to its ESM build; this task is the tripwire that would have caught it, and it must fail on the artifact rather than assert against a list of known-bad package names |
+| **Acceptance** | A build whose output holds a relative `require` that will not resolve at runtime fails the build; the check reads the built artifact rather than the sources; a deliberately reintroduced instance is caught, so the check is not vacuous; node builtins and the editor host module are not reported |
+| **Status** | todo |
+
 
 ---
 
