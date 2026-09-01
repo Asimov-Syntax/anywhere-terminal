@@ -3,7 +3,7 @@ import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
 import { MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
-import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
+import { DETECTION_ORDER, foldSegment, readProvisioning } from "./readProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
 const ROOT = "/repo";
@@ -929,6 +929,22 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.contenders[0]?.favoured).toBeUndefined();
   });
 
+  it("[round-3 F001] groups the pairs a curated list kept missing", async () => {
+    // Each of these was verified against the real volume, not reasoned about:
+    // writing both names into a temp directory on this APFS mount leaves one
+    // file. `σ`/`ς` is the pair that rejected the second attempt; `ᾳ`/`αι` is
+    // the ypogegrammeni class that the proposed Collator union ALSO missed.
+    for (const [a, b] of [
+      ["\u03c3", "\u03c2"],
+      ["Stra\u00dfe", "STRASSE"],
+      ["\u1fb3", "\u03b1\u03b9"],
+      ["\u1f80", "\u1f00\u03b9"],
+      ["\u1ffc", "\u03c9\u03b9"],
+    ]) {
+      expect([a, foldSegment(a ?? "")]).toEqual([a, foldSegment(b ?? "")]);
+    }
+  });
+
   it("groups nothing when the spellings are unrelated", async () => {
     const model = await readProvisioning(
       fs({
@@ -967,5 +983,65 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.entries.map((e) => e.path)).toEqual(["x"]);
     expect(model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
     expect(model.excluded).toEqual([]);
+  });
+});
+
+describe("[round-3 F001] the fold key is gated over the range, not over examples", () => {
+  /**
+   * Three attempts at this predicate each passed their own witnesses and each
+   * missed a class the next review round found. So the gate is a property over
+   * every code point Unicode casing can move, not another list of characters:
+   * a curated list can only ever confirm what its author already thought of.
+   */
+  function caseVarying(): string[] {
+    const out: string[] = [];
+    for (let cp = 0; cp < 0x30000; cp += 1) {
+      const c = String.fromCodePoint(cp);
+      if (c.toLowerCase() !== c || c.toUpperCase() !== c) {
+        out.push(c);
+      }
+    }
+    return out;
+  }
+
+  it("gives a character, its lowercase and its uppercase one key", () => {
+    const broken = caseVarying().filter(
+      (c) => foldSegment(c) !== foldSegment(c.toLowerCase()) || foldSegment(c) !== foldSegment(c.toUpperCase()),
+    );
+
+    expect(broken).toEqual([]);
+    // The scan has to be doing work: an empty range would satisfy the filter.
+    expect(caseVarying().length).toBeGreaterThan(2000);
+  });
+
+  it("fails without the final normalization, so nobody tidies it away", () => {
+    // Eight Greek iota-with-dialytika code points stop folding without it. The
+    // exact set moves between runtimes — the oracle's node named a different
+    // character — so the ASSERTION is that the step is load-bearing, never that
+    // one character breaks.
+    const withoutFinal = (s: string) => s.normalize("NFKC").toLowerCase().toUpperCase();
+    const broken = caseVarying().filter(
+      (c) => withoutFinal(c) !== withoutFinal(c.toLowerCase()) || withoutFinal(c) !== withoutFinal(c.toUpperCase()),
+    );
+
+    expect(broken.length).toBeGreaterThan(0);
+  });
+
+  it("fails if the uppercase step runs before the lowercase step", () => {
+    // Lowercasing first is what turns capital sharp s into `ß`, so that the
+    // uppercase step can then expand it to `SS`. Reversed, `ẞ` stays `ß` while
+    // its own lowercase becomes `ss`, and one file gets two keys.
+    //
+    // `Straße`/`STRASSE` is NOT the witness for this, though it looks like it:
+    // `toUpperCase` expands `ß` directly, so that pair survives either order.
+    // Asserting it here would have been a test that could not fail.
+    const reversed = (s: string) => s.normalize("NFKC").toUpperCase().toLowerCase().normalize("NFKC");
+    const broken = caseVarying().filter(
+      (c) => reversed(c) !== reversed(c.toLowerCase()) || reversed(c) !== reversed(c.toUpperCase()),
+    );
+
+    expect(foldSegment("\u1e9e")).toBe(foldSegment("\u00df"));
+    expect(reversed("\u1e9e")).not.toBe(reversed("\u00df"));
+    expect(broken).toEqual(["\u1e9e"]);
   });
 });

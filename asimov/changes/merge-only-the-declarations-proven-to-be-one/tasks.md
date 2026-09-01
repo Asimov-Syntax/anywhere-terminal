@@ -106,7 +106,7 @@
 
 ## 5. Round-3 blockers
 
-- [ ] 5_1 Uppercase last, and gate the fold against the whole case-varying range
+- [x] 5_1 Uppercase last, and gate the fold against the whole case-varying range — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_2
   - **Refs**: design.md#d9-the-fold-key-uppercases-last-and-the-union-was-wrong
   - **Acceptance**:

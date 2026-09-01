@@ -288,36 +288,42 @@ function applyExclude(
  * A key two spellings share when some supported filesystem would fold them.
  *
  * Deliberately generous and deliberately not a proof (design.md D4). Three
- * things it has to do that the first attempt did not (round-1 F001):
+ * attempts at this predicate have now been rejected, each of which passed its
+ * own witnesses, so the shape of the answer matters more than the characters:
  *
- * - Fold PER SEGMENT. Win32 strips trailing dots and spaces from every
- *   component, not from the end of the path, so `parent./child` and
- *   `parent/child` are one destination.
- * - Use `NFKC`, not `NFC`. Compatibility composition is what brings the
- *   ligature `ﬀ` together with `ff`, which are one file on APFS.
- * - Expand the multi-character folds. `toLowerCase` is simple case MAPPING:
- *   `Straße` lowercases to `straße` and `STRASSE` to `strasse`, and they stay
- *   apart. Case FOLDING maps `ß` onto `ss`, which is the pair APFS folds.
+ * - Lexical normalization only. Missed everything.
+ * - `NFC` + `toLowerCase`. Missed `Straße`/`STRASSE`, the `ﬀ` ligature, and a
+ *   Win32 dot on a non-final segment.
+ * - `NFKC` + lowercase + a curated expansion list. Missed Greek `σ`/`ς`.
  *
- * Everything here over-groups somewhere — `NFKC` alone maps `Ⅻ` onto `xii` —
- * and that is the direction D4 permits. The direction it forbids is the one
- * this closes.
+ * A union with `Intl.Collator` was proposed to close the third and refuted
+ * before it was built: against every default full fold in Unicode 16 it still
+ * missed 64 pairs, all of which are one file on APFS — Greek ypogegrammeni
+ * expansion, where `ᾳ` and `αι` name one destination. `ᾼ`/`ᾳ` is ordinary case
+ * mapping and was always grouped, which is exactly why no curated witness
+ * revealed the class.
+ *
+ * `toUpperCase` is what performs the multi-character and Greek expansions
+ * `toLowerCase` does not, so the key uppercases LAST (design.md D9). Two
+ * orderings are load-bearing and are asserted rather than trusted: lowercase
+ * must precede uppercase, because it is what turns `ẞ` into `ß` so the
+ * uppercase step can expand it to `SS`; and the FINAL `NFKC` is not decoration,
+ * because without it eight Greek iota-with-dialytika code points stop folding.
+ *
+ * Per SEGMENT, because Win32 strips trailing dots and spaces from every
+ * component rather than from the end of the path.
+ *
+ * It over-groups — `NFKC` alone maps `Ⅻ` onto `xii`, and `I`/`ı` group though
+ * APFS keeps them apart. That is the direction D4 permits.
  */
-const MULTI_CHARACTER_FOLDS: readonly (readonly [RegExp, string])[] = [
-  [/\u00df/g, "ss"],
-  [/\u017f/g, "s"],
-];
+export function foldSegment(segment: string): string {
+  return foldWin32Name(segment.normalize("NFKC").toLowerCase()).toUpperCase().normalize("NFKC");
+}
 
 function foldable(declared: string): string {
   return identityOf(declared)
     .split("/")
-    .map((segment) => {
-      let folded = foldWin32Name(segment.normalize("NFKC").toLowerCase());
-      for (const [pattern, replacement] of MULTI_CHARACTER_FOLDS) {
-        folded = folded.replace(pattern, replacement);
-      }
-      return folded;
-    })
+    .map((segment) => foldSegment(segment))
     .join("/");
 }
 
