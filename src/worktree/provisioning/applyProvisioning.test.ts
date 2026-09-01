@@ -156,7 +156,7 @@ describe("a destination two declarations may both name", () => {
     const { steps } = await applyTo({}, PAIR, { folds: true });
 
     expect(steps.map((s) => s.outcome.kind)).toEqual(["failed", "refused"]);
-    expect(steps[1]?.outcome).toMatchObject({ reason: expect.stringContaining("did not claim it") });
+    expect(steps[1]?.outcome).toMatchObject({ reason: expect.stringContaining("never claimed") });
   });
 
   it("is not a contest at all when the repository's own declaration is unticked", async () => {
@@ -227,22 +227,29 @@ describe("a collision this apply cannot attribute to its own write", () => {
     const occupied = { ...CONTESTED, [`${WT}/MixedCase`]: { kind: "file", size: 99 } as const };
     const { steps } = await applyTo(occupied, PAIR, { folds: true });
 
-    expect(steps[0]).toMatchObject({
-      path: "MixedCase",
-      outcome: { reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)") },
-    });
-    expect(steps[1]).toMatchObject({
-      path: "mixedcase",
-      outcome: { reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)") },
-    });
+    // Its own spelling and declaring file, from its own row: the step result
+    // carries no source and the notice renders `path: reason`, so what the
+    // reason omits the user never gets (.reviews/round-1.md F004).
+    for (const step of steps) {
+      expect(step.outcome).toMatchObject({
+        reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
+      });
+      expect(step.outcome).toMatchObject({
+        reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)"),
+      });
+    }
   });
 
-  it("names the favoured declaration when it never claimed the destination", async () => {
+  it("names both declarations when the favoured one never claimed the destination", async () => {
     const { steps } = await applyTo({}, PAIR, { folds: true });
 
     expect(steps[1]).toMatchObject({
       path: "mixedcase",
-      outcome: { reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)") },
+      outcome: {
+        reason: expect.stringContaining(
+          "mixedcase (declared in asimov/worktree.yaml), MixedCase (declared in .vscode/worktree.json)",
+        ),
+      },
     });
   });
 
@@ -254,9 +261,14 @@ describe("a collision this apply cannot attribute to its own write", () => {
     // this apply cannot establish.
     const { steps } = await applyTo(CONTESTED, PAIR, { folds: true });
 
+    // And it claims nothing about who DIDN'T create it either: naming a
+    // non-creator is the same unfounded causal claim as naming a creator.
     expect(steps[1]?.outcome).toMatchObject({
       kind: "refused",
-      reason: expect.stringContaining("was not put there by this apply"),
+      reason: expect.stringContaining("cannot be attributed to either"),
+    });
+    expect(steps[1]?.outcome).toMatchObject({
+      reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
     });
   });
 });

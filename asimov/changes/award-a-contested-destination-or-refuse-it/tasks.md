@@ -67,7 +67,7 @@
   - **Plan**:
     1. `src/worktree/provisioning/applyProvisioning.ts` returns results in the order they were produced, and `src/worktree/provisioning/applyProvisioning.test.ts` replaces the arrival-order assertion that codified the regression.
 
-- [ ] 4_3 Say who is contesting, and claim nothing about who created what
+- [x] 4_3 Say who is contesting, and claim nothing about who created what — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_2
   - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, .reviews/round-1.md#f004
   - **Acceptance**:

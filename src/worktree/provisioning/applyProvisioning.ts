@@ -193,19 +193,23 @@ export async function applyProvisioning(
     if (answered.has(member)) {
       continue;
     }
+    // Both declarations, in every reason. A step result carries only the
+    // member's own path, and the notice renders `path: reason`, so a reason
+    // that names only the counterparty leaves the user unable to tell which
+    // two config files are in dispute (.reviews/round-1.md F004).
+    const both = [member, contest.favoured].map(declaredAs).join(", ");
     const claimed = answered.get(contest.favoured)?.outcome.kind;
     if (claimed !== "copied" && claimed !== "linked" && claimed !== "degradedToCopy") {
-      const unclaimed = `${declaredAs(contest.favoured)} may name this same destination and did not claim it`;
-      answered.set(member, step(member, unclaimed));
+      answered.set(member, step(member, `${both} may name this same destination, and it was never claimed`));
       continue;
     }
     if ((await read(member)) !== "absent") {
       // It may be the favoured member's own material under a folded name, a
       // descendant another entry's directory copy wrote, or a name another
-      // process created — and nothing here tells those apart. Reporting it as
-      // awarded would claim a causal fact this apply cannot establish
+      // process created — and nothing here tells those apart. Naming a
+      // non-creator is the same unfounded causal claim as naming a creator
       // (design.md D4).
-      const unattributable = `${declaredAs(contest.favoured)} may name this same destination, and what is there now was not put there by this apply`;
+      const unattributable = `${both} may name this same destination, and what is there now cannot be attributed to either`;
       answered.set(member, step(member, unattributable));
       continue;
     }
