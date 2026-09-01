@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [-] Gate 1: direction approved — no fork; worktree-removal.md § 5 fixes the rules and the oracle settled the mechanism
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,6 +31,6 @@
 
 Blueprint: docs/PLAN.md task WT-013.3
 Lane: full
-Planned at: d3ccc700
+Planned at: 50d298f6
 Escalation flags: security-privacy (from the PLAN row) — review is always recommended, never skipped.
 Must-not: no force delete anywhere in this change; `git worktree remove` never touches the branch.

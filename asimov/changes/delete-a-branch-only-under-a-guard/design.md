@@ -57,6 +57,51 @@ process can check the branch out inside it. That window is small and unavoidable
 does not offer, and the failure mode is a dangling HEAD in a worktree the user can repair, not lost
 commits — the commits are merged, which is the precondition for the control existing at all.
 
+## D7 — The in-use check mirrors git's own registrations, and fails closed
+
+The oracle refuted D3's check, not D3's premise. `git branch -d` consults `branch_checked_out`,
+which registers four things (`branch.c:405-450`): a worktree's symbolic HEAD, a rebase's held
+branch, bisect's origin branch, and sequencer `--update-refs` branches. `git worktree list
+--porcelain` reports only the first — `branch <ref>` or `detached` (`builtin/worktree.c:949-979`).
+So a rebase of the target branch in another worktree leaves porcelain saying `detached`, and the
+transaction deletes a branch git itself would refuse.
+
+Worse, git's enumeration fails OPEN: a linked worktree whose administrative `gitdir` or HEAD is
+unreadable is silently omitted (`worktree.c:41-56,121-155`).
+
+So the check reads, for the main checkout and every linked worktree, all four holders:
+
+| Holder | Read |
+|---|---|
+| symbolic HEAD | `git worktree list --porcelain` |
+| rebase | `<wt>/rebase-merge/head-name`, `<wt>/rebase-apply/head-name` |
+| bisect | `<wt>/BISECT_START` |
+| sequencer `--update-refs` | `<wt>/sequencer/todo` |
+
+and **refuses on any doubt**: a non-zero exit, a timeout, output it cannot parse, a worktree entry
+it cannot read, or a count of administrative directories that disagrees with the entries returned.
+Silence is not evidence of absence — that is precisely how git's own enumeration fails open, and
+this check exists because the one it replaced was weaker than it looked.
+
+## D8 — The recorded ref is verified, not a fresh derivation of it
+
+The transaction previously re-derived the default branch and verified THAT ref against the recorded
+OID. Those are different refs when the selector moves: with the proof taken against `main@X`, a
+change of `origin/HEAD` to `release` makes the transaction verify `release@X` while the recorded
+`main` has moved to `Y`, and the delete proceeds on evidence that is no longer true.
+
+So the evidence records the default branch's **ref name** as well as its OID, and the transaction
+verifies that recorded name. Re-derivation still happens, but only to REFUSE — if the target now
+resolves as the default branch it is not deleted — never to choose what to verify.
+
+## D9 — The residual is a selector race, and it is stated
+
+D5's residual named only the checkout window. There is a second: the default-branch selector is
+mutable (`orphanProofs.ts:180-200` reads remote HEAD, then config, then a fallback), so another
+process can repoint `origin/HEAD` at the target branch after this code re-derives it and before the
+transaction runs. Nothing available closes that; the guard is fail-closed on what it can observe,
+which remains weaker than a proof.
+
 ## D4 — Never the default branch, twice over
 
 Rule 4's first half is already structurally true: `mergeProof` returns `notApplicable` when the
@@ -80,10 +125,10 @@ restored, so the compound action reports its parts separately.
 | The control is offered only on a proven merge | Offered ⇔ `branchMerged === "passed"` | Offering on `unproven`, which reads as "not yet checked" rather than "not established" | Witness per `ProofOutcome` value asserting absence | supported |
 | It is never on by default | Absent from the request ⇒ never deleted | An opt-out, or a default-true field | Optional wire field defaulting to absent | supported |
 | The typed confirmation never unlocks it | The two controls are independent | Reusing the removal's confirmation as consent for the branch | Witness: confirmed removal without the opt-in deletes no branch | supported |
-| Both OIDs are verified at delete time | The transaction refuses if either moved | Verifying only the branch, letting the default branch move under a stale proof | Witness driving a moved base OID and asserting the branch survives | **refuted** — the plan re-DERIVES the default at delete time and verifies that ref against the recorded OID. If `origin/HEAD` moves from `main` to `release` between report and execution, it verifies `release@X` while the recorded `main` moved to `Y`, and deletes. The RECORDED ref name has to be verified, not a fresh derivation |
-| A branch checked out elsewhere is never deleted | Re-read immediately before the transaction | D3: `update-ref` will delete it, unlike `git branch -d` | Witness with the branch checked out in a second worktree, asserting refusal | **refuted** — `git worktree list --porcelain` emits only `branch <ref>` or `detached` (`builtin/worktree.c:949-979`), while git's own guard also registers rebase, bisect and sequencer `--update-refs` holders (`branch.c:405-450`). A rebase of `feature` elsewhere leaves a detached HEAD, porcelain names no `feature`, and the transaction deletes it. Git also silently OMITS a worktree whose administrative `gitdir`/HEAD is unreadable (`worktree.c:41-56,121-155`), so the check fails open |
-| The default branch is never deleted | Refused at proof time and again at execution | The default branch changing between report and execution | Witness at both points | **refuted** — default identity comes from mutable `origin/HEAD`/config (`orphanProofs.ts:180-200`). Another process can repoint `origin/HEAD` at the target branch without moving any OID; the transaction guards OIDs only and deletes what is now the default. D5's disclosed residual covers checkout races, not selector changes |
-| A failed delete leaves the removal successful | Two outcomes, reported separately | Reporting the compound as failed, implying the worktree survives | Witness: failed delete, removal still reported removed | **refuted** — separation is planned in the SERVICE, but nothing carries the outcome to the user: `toResultMessage` (`extension.ts:223-252`) serializes only `openFailed`, `messages.ts:2389-2405` has no branch outcome, and `WorktreeView.ts:1516-1537` would render just "Remove done." Every "the user is told" clause in the spec is currently undischarged |
+| Both OIDs are verified at delete time | The transaction refuses if either moved | Verifying only the branch, letting the default branch move under a stale proof | Witness driving a moved base OID and asserting the branch survives | supported after replan — D8 records the default's REF NAME with its OID and verifies that name; re-derivation now only refuses, never selects what to verify |
+| A branch checked out elsewhere is never deleted | Re-read immediately before the transaction | D3: `update-ref` will delete it, unlike `git branch -d` | Witness with the branch checked out in a second worktree, asserting refusal | supported after replan — D7 reads all four holders git registers and refuses on any unreadable or unparseable state, so absence of evidence stops being evidence of absence |
+| The default branch is never deleted | Refused at proof time and again at execution | The default branch changing between report and execution | Witness at both points | **unresolved** — narrowed, not closed. D8 verifies the recorded ref so a selector move cannot redirect the verification, and execution refuses a target that re-derives as the default. The window between that re-derivation and the transaction stays open, and nothing available closes it (D9) |
+| A failed delete leaves the removal successful | Two outcomes, reported separately | Reporting the compound as failed, implying the worktree survives | Witness: failed delete, removal still reported removed | supported after replan — tasks 4_1 and 4_2 carry the outcome through the result message, the action result and the notice, and the acceptance is the rendered notice rather than the service return |
 | The delete runs only after the removal succeeds | Ordering | Deleting the branch then failing the removal, stranding the user | Call-order witness | supported |
 | No window is claimed to be closed | Guarded, not safe | Documenting the guarantee as atomic end to end | D5 states it; no witness can establish a negative | supported — stated, not proven |
 
@@ -121,3 +166,16 @@ The plan adopted the transaction and reproduced only a subset of the other guard
 is destructive and irreversible from this extension's side, so which guard to prefer — or whether to
 pay for both with a verify-then-`branch -d` sequence and a small unguarded window — is a safety
 judgment, not a mechanism preference.
+
+## D10 — The issued evidence has to survive redemption
+
+Task 3_2 said the host resolves the evidence from its own report. It cannot, as the code stands:
+the webview sends only `worktreeId` and `fingerprint` (`messages.ts:1296-1300`), the service computes
+a FRESH assessment before redemption (`worktreeMutationService.ts:539-588`), and `redeem` answers
+`"proceed" | "reprompt"` without exposing what was issued (`worktreeFingerprint.ts:61-65,95-106`).
+Taking the evidence from the fresh assessment would let a report showing `branch@B1` authorize a
+delete carrying `branch@B2` — the exact substitution the guard exists to prevent.
+
+So the fingerprint store, which already RETAINS the issued evidence, returns it on redemption. The
+guard's inputs then come from the same object the user was shown, and the fresh assessment is used
+only to refuse, never to supply an OID.

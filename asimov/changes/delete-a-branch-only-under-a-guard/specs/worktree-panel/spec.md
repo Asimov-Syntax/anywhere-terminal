@@ -45,13 +45,19 @@ either has moved, the extension SHALL NOT delete the branch and SHALL report tha
 
 ### Requirement: A branch in use, or the default branch, is never deleted
 
-The extension SHALL NOT delete the default branch, and SHALL NOT delete a branch checked out in
-another worktree. Both SHALL be established immediately before deleting rather than when the report
-was built.
+The extension SHALL NOT delete the default branch, and SHALL NOT delete a branch it observes to be
+in use by another worktree — whether checked out, held by a rebase, held by a bisect, or named by a
+sequencer operation. Both SHALL be established immediately before deleting rather than when the
+report was built, and the extension SHALL refuse the deletion where it cannot establish either.
 
 #### Scenario: The branch was checked out elsewhere in the meantime
 
-- **WHEN** the branch is checked out in another worktree at the moment of deletion
+- **WHEN** the branch is observed in use by another worktree when the deletion is attempted
+- **THEN** the branch is not deleted and the user is told it was not
+
+#### Scenario: The state that would answer cannot be read
+
+- **WHEN** the extension cannot establish whether the branch is in use
 - **THEN** the branch is not deleted and the user is told it was not
 
 #### Scenario: The target is the default branch

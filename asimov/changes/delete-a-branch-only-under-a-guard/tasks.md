@@ -73,3 +73,50 @@
     1. In `src/providers/WorktreeHost.ts`, validate `deleteBranch` at runtime beside the other inbound removal fields and pass it into the mutation request.
     2. In `src/extension.ts`, supply the `deleteBranch` binding built on `src/worktree/deleteBranch.ts` and the existing git runner.
     3. Resolve the evidence from the host's own report rather than from anything the webview sent.
+
+## 4. Oracle attack — close the refuted rows
+
+- [ ] 4_1 Carry the branch outcome to the user
+  - **Deps**: 2_2
+  - **Refs**: design.md D5; specs/worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal
+  - **Acceptance**:
+    - Outcome: A refused branch delete appears in the removal notice
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. In `src/types/messages.ts`, add an optional branch outcome to the successful removal result, naming which guard refused.
+    2. In `src/extension.ts`, carry it through `toResultMessage` beside `openFailed` rather than dropping it.
+    3. In `src/webview/worktree/WorktreeView.ts`, render it in the removal notice so "Remove done." is never the whole story when a branch delete was asked for and did not happen.
+    4. Witness each refusal reason reaching the rendered notice.
+
+- [ ] 4_2 Assemble the evidence where the payload is actually built
+  - **Deps**: 1_2
+  - **Refs**: design.md D1, D10
+  - **Acceptance**:
+    - Outcome: The running extension emits merge evidence in the assessment it sends
+    - Verify: unit src/extension.worktreeMutations.test.ts
+  - **Plan**:
+    1. In `src/extension.ts`, add the merge evidence to the assessment payload mapper that today emits only `checks` and `contained`.
+    2. Witness the mapper itself, not a constructed payload, so a green unit test cannot coexist with a control that never appears.
+
+- [ ] 4_3 Return the issued evidence from redemption
+  - **Deps**: 2_2, 4_2
+  - **Refs**: design.md D10
+  - **Acceptance**:
+    - Outcome: The guard reads the OIDs the user was shown, never a freshly assessed pair
+    - Verify: unit src/worktree/worktreeFingerprint.test.ts
+  - **Plan**:
+    1. In `src/worktree/worktreeFingerprint.ts`, have `redeem` return the evidence issued with the fingerprint alongside the answer it already returns.
+    2. In `src/worktree/worktreeMutationService.ts`, take the guard's OIDs from that returned evidence and use the fresh assessment only to refuse.
+    3. Witness that a branch which moved between issue and redemption is refused rather than deleted at its new OID.
+
+- [ ] 4_4 Read every holder git registers, and refuse on doubt
+  - **Deps**: 2_1
+  - **Refs**: design.md D7, D8, D9; specs/worktree-panel/spec.md#a-branch-in-use-or-the-default-branch-is-never-deleted
+  - **Acceptance**:
+    - Outcome: A branch any git operation elsewhere holds is never deleted
+    - Verify: unit src/worktree/deleteBranch.test.ts
+  - **Plan**:
+    1. In `src/worktree/deleteBranch.ts`, extend the in-use check beyond porcelain's symbolic HEAD to read the rebase head-name files, the bisect start marker, and the sequencer todo file in each worktree's administrative directory, for the main checkout and every linked worktree.
+    2. Refuse the deletion on a non-zero exit, a timeout, unparseable output, or any administrative entry that cannot be read, rather than treating silence as absence.
+    3. In `src/worktree/deleteBranch.ts`, verify the recorded default ref NAME against its recorded OID, and additionally refuse when the target re-derives as the default branch.
+    4. Witness each holder separately, plus an unreadable entry, plus a recorded-name-versus-re-derived-name divergence.
