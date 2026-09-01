@@ -569,10 +569,8 @@ export class WorktreeController {
         this.actionResults = this.actionResults.filter((r) => r !== result);
         this.push();
       },
-      // Transitional wire shape: the host ignores `force` and reads only the
-      // report fingerprint. Task 4_3 removes the dead client choice.
       onForceRemove: (info, fingerprint) => {
-        deps.postMessage({ type: "worktreeRemove", worktreeId: info.id, force: true, fingerprint });
+        deps.postMessage({ type: "worktreeRemove", worktreeId: info.id, fingerprint });
       },
       onPrune: (repoId) => this.confirmPrune(repoId),
       // Only `unavailable` reaches here — the read failed, so asking again is

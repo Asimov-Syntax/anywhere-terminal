@@ -652,10 +652,8 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
   });
 
   it("ASKS what a removal would cost, and posts no removal at all", () => {
-    // The webview never decides a removal is safe, and it no longer starts one to
-    // find out: the unforced `worktreeRemove` this used to post is answered by
-    // deleting a clean worktree, because the host reports only from the path that
-    // already attempted it (round-3 B1, design.md D6).
+    // The webview never decides a removal is safe; it asks for the report whose
+    // fingerprint can authorize the later removal (design.md D6, D7).
     const { actions, posted } = controllerActions();
     actions.removeWorktree?.(worktree({ id: "/wt" }));
     expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt", token: expect.any(String) }]);
@@ -2741,7 +2739,7 @@ describe("what a mutation did comes back to the panel", () => {
     expect(h.posts).toEqual([]);
   });
 
-  it("forces a removal with the fingerprint the user was actually shown", () => {
+  it("requests removal with the fingerprint the user was actually shown", () => {
     const h = ready();
     const view = (h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string): void } } })
       .view;
@@ -2751,7 +2749,6 @@ describe("what a mutation did comes back to the panel", () => {
       {
         type: "worktreeRemove",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
-        force: true,
         fingerprint: "fp-9",
       },
     ]);
@@ -3179,7 +3176,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(button?.textContent).toBe("Remove");
     button?.click();
 
-    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, force: true, fingerprint: "fp-clean" }]);
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-clean" }]);
   });
 
   it("answers a report with a failed risk using the fingerprint that report carried", () => {
@@ -3208,7 +3205,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     danger()?.click();
 
     expect(h.posts).toEqual([
-      { type: "worktreeRemove", worktreeId: VALIDATOR, force: true, fingerprint: "fp-assess-1" },
+      { type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-assess-1" },
     ]);
   });
 

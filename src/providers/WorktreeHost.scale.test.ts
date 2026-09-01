@@ -295,7 +295,7 @@ describe("assessment traffic against the shared mutation queue", () => {
     await drain();
     expect(held.inFlight()).toBe(1);
 
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: "/a", force: false });
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: "/a" });
     for (let i = 0; i < 10; i += 1) {
       host.handleMessage(view, { type: "worktreeRemoveAssess", worktreeId: "/a", token: `late-${i}` });
     }

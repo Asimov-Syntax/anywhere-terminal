@@ -928,7 +928,7 @@ describe("mutating actions resolve their own target", () => {
 describe("removal resolves its target and forwards only report authority", () => {
   it("[I10] delegates a fingerprint-free request so the service can report it", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: RAW_ID, force: false });
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: RAW_ID });
     await settle();
 
     expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: RAW_ID, origin: view }, undefined]]);
@@ -937,25 +937,7 @@ describe("removal resolves its target and forwards only report authority", () =>
 
   it("passes the fingerprint through without a client-selected Git mode", async () => {
     const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: true, fingerprint: "fp-1" });
-    await settle();
-
-    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, "fp-1"]]);
-    dispose();
-  });
-
-  it("ignores the transitional force bit when no fingerprint exists", async () => {
-    const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: true });
-    await settle();
-
-    expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, undefined]]);
-    dispose();
-  });
-
-  it("ignores the transitional force bit when a fingerprint exists", async () => {
-    const { host, view, calls, dispose } = await builtHost();
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: false, fingerprint: "fp-1" });
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, fingerprint: "fp-1" });
     await settle();
 
     expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, "fp-1"]]);
@@ -964,7 +946,7 @@ describe("removal resolves its target and forwards only report authority", () =>
 
   it("still delegates a missing worktree because Git prunes its registration after confirmation", async () => {
     const { host, view, calls, dispose } = await builtHost([windowRow()], true);
-    host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH, force: false });
+    host.handleMessage(view, { type: "worktreeRemove", worktreeId: FEAT_PATH });
     await settle();
 
     expect(calls).toEqual([["removeWorktree", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, undefined]]);

@@ -225,7 +225,7 @@
     3. `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeRemoveDialog.test.ts`, and `src/webview/worktree/WorktreeView.test.ts`: replace the clean-null callback assertions and prove a confirmable report cannot mount an executable control without authority.
   - **Boundary**: the dialog still chooses ordinary versus typed from check classes; that UI threshold is not Git's force mode and neither predicate is re-derived here
 
-- [ ] 4_3 Remove the webview's force choice
+- [x] 4_3 Remove the webview's force choice — verified: pnpm exec vitest run 'src/providers/TerminalViewProvider.worktree.test.ts' 'src/providers/WorktreeHost.actions.test.ts' 'src/providers/WorktreeHost.scale.test.ts' 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run check-types && pnpm exec vitest run --maxWorkers=1 exit 0
   - **Deps**: 4_2
   - **Refs**: specs/worktree-panel/spec.md#a-confirmation-carries-only-the-authority-its-report-was-granted; design.md D7
   - **Acceptance**:

@@ -1267,8 +1267,6 @@ export interface WorktreeCreateProbeMessage {
 export interface WorktreeRemoveRequestMessage {
   type: "worktreeRemove";
   worktreeId: string;
-  /** @deprecated Transitional only; the host ignores it and derives Git mode from fresh evidence. */
-  force?: boolean;
   fingerprint?: string;
 }
 
