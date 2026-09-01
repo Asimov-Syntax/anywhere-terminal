@@ -33,3 +33,35 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
   - **Plan**:
     1. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses that a large contest's total result text is linear in its membership rather than quadratic.
+
+## 2. Round-1 blockers
+
+- [ ] 2_1 Render the membership once, not once per row
+  - **Deps**: 1_3
+  - **Refs**: .reviews/round-1.md#f001, .reviews/round-1.md#f002, .reviews/round-1.md#f005
+  - **Acceptance**:
+    - Outcome: The notice names each contest once and associates every refused row with it
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeView.ts` renders one membership block per contest and marks each refused row with which contest it belongs to, rather than rebuilding the list per row.
+    2. An index that does not resolve is reported rather than silently dropped.
+    3. `src/webview/worktree/WorktreeView.test.ts` asserts per row, not against the combined notice, and covers an unresolvable index.
+
+- [ ] 2_2 Associate every contested step, whatever its outcome
+  - **Deps**: 2_1
+  - **Refs**: .reviews/round-1.md#f003
+  - **Acceptance**:
+    - Outcome: Every step belonging to a contest carries its index
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyProvisioning.ts` attaches the contest index to a contested step of any outcome, not only a refused one.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts it for every member of a contest.
+
+- [ ] 2_3 Assert the shape, not a measured ratio
+  - **Deps**: 2_2
+  - **Refs**: .reviews/round-1.md#f004
+  - **Acceptance**:
+    - Outcome: Each declaration appears once in the report and never inside a step's reason
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyProvisioning.test.ts` replaces the 6x threshold with a count of each member's declaring token across the whole report.
