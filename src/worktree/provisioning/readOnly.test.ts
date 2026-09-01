@@ -47,6 +47,7 @@ const FORBIDDEN: readonly { name: string; pattern: RegExp }[] = [
 const NOT_READ_PATH = [
   "applyEntries.ts",
   "applyEntries.fake.ts",
+  "applyProvisioning.ts",
   "entryGate.ts",
   "offerStore.ts",
   "provisioningDeps.ts",

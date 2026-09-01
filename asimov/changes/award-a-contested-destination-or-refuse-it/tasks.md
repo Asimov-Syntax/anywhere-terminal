@@ -2,7 +2,7 @@
 
 ## 1. One orchestration that can be tested
 
-- [ ] 1_1 Move the apply's ordering and iteration out of the extension entry point
+- [x] 1_1 Move the apply's ordering and iteration out of the extension entry point — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: design.md#d5-one-orchestration-out-of-the-extension-entry-point, specs/worktree-panel/spec.md#the-material-a-worktree-was-promised-is-actually-put-there
   - **Acceptance**:
     - Outcome: The same models produce the same steps in the same order, from a function a test can call

@@ -45,7 +45,6 @@ import {
 import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
-  ProvisionStepResult,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
@@ -71,7 +70,8 @@ import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
-import { applyEntry, nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
+import { nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
+import { applyProvisioning } from "./worktree/provisioning/applyProvisioning";
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
@@ -558,9 +558,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (worktreeMutations === undefined) {
       const bindings = worktreeHost.mutationBindings();
       worktreeMutations = createWorktreeMutationService({
-        // Sequential, and every entry answers. `applyEntry` never throws, so a
-        // rejection here would be a bug rather than a bad entry — the call site
-        // catches one anyway, because the create has already succeeded by then.
+        // Sequential, and every entry answers. `applyProvisioning` never
+        // throws, so a rejection here would be a bug rather than a bad entry —
+        // the call site catches one anyway, because the create has already
+        // succeeded by then.
         applyProvision: async (mainCheckout, worktreePath, entries) => {
           const roots = await prepareEntryGate(mainCheckout, worktreePath);
           if (roots === null) {
@@ -570,11 +571,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               outcome: { kind: "failed" as const, reason: "the worktree could not be read after it was created" },
             }));
           }
-          const steps: ProvisionStepResult[] = [];
-          // Copy before link, whatever order the provider listed them in
-          // (worktree-apply.md § 1). A link is only ever to material the copy
-          // pass may have just put there.
-          const ordered = [...entries].sort((a, b) => Number(a.mode === "link") - Number(b.mode === "link"));
           // ONE budget for the whole apply, shared by every entry. Minting it
           // per iteration multiplied D10's bound by the entry count — against
           // the provider's own row cap that is hours of wall clock and a
@@ -586,13 +582,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             deadline: afterDelay(60_000),
           };
           try {
-            for (const entry of ordered) {
-              steps.push(await applyEntry(entry, roots, budget, nodeApplyFsDeps));
-            }
+            return await applyProvisioning(entries, roots, budget, nodeApplyFsDeps);
           } finally {
             budget.deadline.cancel();
           }
-          return steps;
         },
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
