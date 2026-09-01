@@ -14,10 +14,12 @@ material and the `mode` at that destination are the repository's own declaration
   of them is the repository's own
 - **THEN** the worktree holds the repository's own declaration's material under its own `mode`
 
-#### Scenario: The two spellings are two files here
+#### Scenario: The two spellings may be two files here
 
-- **WHEN** two such declarations name destinations this filesystem keeps apart
-- **THEN** both are materialized and both are reported as applied
+- **WHEN** two such declarations name destinations this filesystem may keep apart
+- **THEN** only the repository's own is materialized, and the other is refused naming both
+  declarations, because nothing available can establish that the second destination is a different
+  slot rather than the first one having been removed
 
 ### Requirement: A collision the extension cannot attribute to its own write is refused
 
@@ -36,6 +38,16 @@ SHALL NOT write into it.
 
 - **WHEN** the repository's own declaration is refused or fails before it claims the destination
 - **THEN** the other declaration is refused rather than applied in its place
+
+#### Scenario: The repository's own declaration claimed it
+
+- **WHEN** the repository's own declaration has materialized the destination
+- **THEN** the other declaration is refused rather than written, whatever its own destination reads
+
+#### Scenario: More than two declarations may name one destination
+
+- **WHEN** three or more selected declarations may name one destination
+- **THEN** every refusal names every one of them, by path and declaring file, its own included
 
 ### Requirement: A symlink that would resolve to itself is never created
 

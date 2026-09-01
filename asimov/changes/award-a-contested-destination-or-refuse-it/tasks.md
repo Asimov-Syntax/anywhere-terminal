@@ -76,3 +76,36 @@
   - **Plan**:
     1. Each refusal reason in `src/worktree/provisioning/applyProvisioning.ts` names the whole contest, and the appeared-during-the-apply reason says creation cannot be attributed rather than naming a non-creator.
     2. `src/worktree/provisioning/applyProvisioning.test.ts` asserts the refused member's own spelling and source appear in its own row.
+
+## 5. Round-2 blockers
+
+- [ ] 5_1 Claim a contested top-level destination exclusively, or refuse it
+  - **Deps**: 4_3
+  - **Refs**: design.md#d3-absence-is-observed-twice-and-only-enoent-establishes-it, .reviews/round-2.md#f001
+  - **Acceptance**:
+    - Outcome: A contested favoured entry that finds its top-level destination already there refuses the contest
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyEntries.ts` reports a top-level destination that already existed distinctly from one this apply created, without changing what an uncontested entry does.
+    2. `src/worktree/provisioning/applyProvisioning.ts` turns that answer into a refusal of the whole contest.
+    3. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses it with a fake that creates the destination between the second reading and the write, and `src/worktree/provisioning/applyEntries.test.ts` witnesses that an uncontested directory still merges.
+
+- [ ] 5_2 Refuse every held member once the favoured one has run
+  - **Deps**: 5_1
+  - **Refs**: design.md#d4-the-adjudication, .reviews/round-2.md#f005
+  - **Acceptance**:
+    - Outcome: No held member is ever written after the favoured member ran, whatever its own destination reads
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyProvisioning.ts` settles every held member as a refusal, dropping the post-claim read that authorized the write.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` replaces the witness that expected the second member to land on a non-folding volume with one asserting it is refused there too, naming both declarations.
+
+- [ ] 5_3 Name every member of a contest larger than a pair
+  - **Deps**: 5_2
+  - **Refs**: design.md#d4a-every-refusal-names-every-member-by-path-and-declaring-file, .reviews/round-2.md#f004
+  - **Acceptance**:
+    - Outcome: Every refusal names every member of its contest, at any cardinality
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. Every deferred reason in `src/worktree/provisioning/applyProvisioning.ts` is built from the whole contest rather than the current member and the favoured one.
+    2. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses a three-member contest in which each refusal names all three.

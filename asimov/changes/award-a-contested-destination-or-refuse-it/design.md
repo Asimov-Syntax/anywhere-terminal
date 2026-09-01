@@ -57,9 +57,18 @@ A contested destination is observed with `lstat` at two moments:
    (`:485-503`). The favoured step reports `copied` while an unrelated writer owns the top-level
    destination and its mode.
 
-`EEXIST` cannot make the distinction at all, which is why it is not the signal: it cannot tell a
-rival declaration from material `git worktree add` checked out, and a favoured claimant that fails
-before claiming produces none.
+`EEXIST` cannot make the distinction for a pre-existing destination, an uncontested entry, a
+parent, or a descendant: there it cannot tell a rival declaration from material
+`git worktree add` checked out, and a favoured claimant that fails before claiming produces none.
+
+**One site is the exception**, and only one: the TOP-LEVEL destination of a CONTESTED favoured
+entry, at the moment after reading 2 returned `absent`. Nothing this repository owns can create
+that exact path in that window — git has finished (`worktreeMutations.ts:267-287` is awaited
+before `worktreeMutationService.ts:918-957` calls provisioning), the apply is sequential, every
+earlier entry has already answered, `ensureParents` creates only ancestors
+(`applyEntries.ts:395-424`), and the held members are deferred by construction. So there,
+`EEXIST` is not an ambiguous signal: it is **the exclusive claim being lost**, and the contest is
+refused rather than merged into (.reviews/round-2.md F001). Anything else keeps today's merge.
 
 An observation is one of four states, never a boolean:
 
@@ -83,15 +92,37 @@ For a contested group `G` with favoured `f` and each other selected member `m`:
 | What the apply observes | Outcome |
 |---|---|
 | Any member reads anything but `absent` in either D3 reading | `f` and every `m` are `refused`, naming each other; nothing is written for the group |
-| `f` did not claim — refused, skipped or failed | `m` is `refused`, naming both declarations |
-| `f` claimed and `m` does not read `absent` afterwards | `m` is `refused`, naming both declarations |
-| `f` claimed and `m` reads `absent` afterwards | `m` is applied, in the deferred position D2 gives it |
+| `f`'s own top-level creation answers `EEXIST` | `f` and every `m` are `refused`; the claim was lost between reading 2 and the write |
+| `f` did not claim — refused, skipped or failed | every `m` is `refused`, naming every member |
+| `f` claimed | every `m` is `refused`, naming every member |
 
 An `inadmissible` member outside a contest is untouched by all of this: it is applied in its
 ordinary place and the gate reports the refusal it actually has. Inside a contest it refuses the
 group like any other unproven destination, per row 1.
 
-Row 3 is one row on purpose. A destination that appeared during the apply may be `f`'s own
+Row 3 was two rows and is now one, because the distinction the second one rested on cannot be
+observed. It read a held member's `absent` after `f` claimed as proof that this volume keeps the
+two spellings apart, and therefore wrote `m`. But `absent` is equally the signature of `f`'s
+just-written object being unlinked underneath the apply: on a folding volume both spellings then
+read `ENOENT`, and writing `m` there makes the INHERITED declaration the owner of a destination
+the whole change exists to give the repository's own (.reviews/round-2.md F005).
+
+No available primitive tells those two states apart. An oracle attack established it: rechecking
+`f` and then writing `m` is not atomic, an open handle proves the object still exists but not that
+the name still binds it, checking after the write is too late and this apply owns no deletion
+primitive to undo with, and the twin-create probe fails the same way — the probe's first name can
+be unlinked before its second exclusive create succeeds. `{ bigint: true }` fixes the Windows
+`st_ino` precision defect but not the semantics: hard links share an inode, a symlinked parent
+collapses two paths, and an absent path has no inode to compare at all.
+
+So the settlement refuses. **This costs a real case:** where the volume genuinely keeps
+`MixedCase` and `mixedcase` apart, the inherited declaration no longer materializes — only the
+repository's own does, and the other is refused naming both. That is a deliberate scope cut, taken
+because the alternative is a path on which the inherited declaration silently wins the destination
+and BOTH rows report success. The user was asked and was away; the option not taken was a risk
+acceptance, which is theirs to grant and not mine.
+
+A destination that appeared during the apply may be `f`'s own
 material under a folded name, a descendant another entry's directory copy wrote, or a name another
 process created — and nothing available here tells those apart. So the reason says the creation
 **cannot be attributed**, and never that this apply did not create it: naming a non-creator is the
@@ -143,7 +174,8 @@ twin-create probe this change does not assume.
 | Claim | Semantics | Defeater | Witness / check | Disposition |
 |---|---|---|---|---|
 | The inherited declaration never wins a contested destination | For every contested group, the material and mode at the destination are the favoured member's, or nothing was written by either | An ordering or failure path that lets `m` write where `f` would have; a pre-existing destination `f` merges into while only `m` is refused | D2 puts every `m` after `f`; D4 row 1 refuses the whole group before `f` runs. Unit witnesses for all four rows, including the pre-existing directory case asserting the fake recorded no write for either member | supported |
-| A group whose members are two distinct files here still lands both | Both members materialize when the volume keeps their destinations apart | An unconditional refusal or pre-emption of the loser | D4 row 4; witness with a fake filesystem that keeps the two spellings apart | supported |
+| Nothing the apply writes can make the inherited declaration the owner of a contested destination | After any contested group, the material at the destination is `f`'s or nothing this apply wrote | Settling a held member on evidence that cannot distinguish a distinct slot from a removed one | D4's single post-claim row: every `m` is refused once `f` has run, whatever the destination reads. Witness that a held member is refused even when its spelling reads absent on a non-folding fake | supported |
+| A contested top-level destination is created exclusively or not at all | `f`'s own `mkdir` establishes the top-level directory, or the contest refuses | `makeDirectory` converting `EEXIST` into `written` and the walk merging into a directory another writer owns | D3's exception at that one site; witness where the fake creates the destination between reading 2 and the write | supported |
 | No entry outside a contested group changes position or outcome | The applied order and every uncontested step are identical to today's | Promoting a member ahead of the copy pass — the `Foo` / `foo` / `Foo/seed` case | D2 defers the loser instead of promoting the favoured member; witness asserting the applied order for a mixed model with a contested link group present | supported |
 | Provisioning still deletes nothing | No unlink, truncate, or overwrite on any path this change touches | A repair that "clears" a contested destination | `pnpm run gate:fs-deletion`, which already scans every production module under `src/worktree/`; `ApplyFsDeps` offers no destructive primitive to call | supported |
 | Copy-before-link still holds where it was relied on | `P1` over every entry that is not a contested non-favoured member | A deferred copy that a link was waiting on | D2's argument that no link can depend on a contested loser's material — a link entry points out of the worktree, a recreated in-tree link resolves inside its own tree | supported |
