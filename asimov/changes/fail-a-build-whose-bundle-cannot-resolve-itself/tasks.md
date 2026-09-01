@@ -37,3 +37,38 @@ the extension failed to activate. No suite could catch it, because every suite i
     5. `scripts/bundleRequires.d.mts` types the classifier, so the suite has real types instead of a suppression.
     6. `scripts/check-bundle-requires.mjs` passes the bundle's own `outfile` so the externals come from the right build config.
     7. `asimov/changes/fail-a-build-whose-bundle-cannot-resolve-itself/design.md` corrects the known-limit paragraph, which claimed more for a text scan than a text scan can do.
+
+## 3. Round-2 handback — the gate was blind to the shipped artifact
+
+- [ ] 3_1 Find a require call whose callee minification renamed
+  - **Deps**: none
+  - **Refs**: design.md D2, D3
+  - **Acceptance**:
+    - Outcome: The gate reports the relative specifier in production-minified UMD output
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, replace the `expression.text === "require"` callee test in `requireLiteral` with a lookup against a tainted-name set.
+    2. Add the D2 fixed point to `scripts/bundleRequires.mjs`: seed `{require}`, resolve callee identifiers to function expressions bound by declaration initializer or call-site parameter, bind parameters positionally to arguments, and iterate until the set stops growing.
+    3. Update `scripts/bundleRequires.d.mts` for any changed export signature.
+    4. Arm the witness in `src/test/invariants/bundleRequires.test.ts` with production-minified UMD output — the shape where the factory parameter is renamed and called with a single relative string literal — and assert the specifier is reported.
+
+- [ ] 3_2 Resolve a directory through its manifest's main
+  - **Deps**: 3_1
+  - **Refs**: design.md D4
+  - **Acceptance**:
+    - Outcome: A manifest whose `main` names no shipped file is reported unresolvable
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, extend `resolveShipped` so a directory resolves only by parsing its `package.json`, resolving the effective `main` (absent ⇒ `index.*`) through the existing shipped-file rule with extension fallback, and confirming the result is inside the artifact directory.
+    2. Report an unparseable manifest, a missing `main` target, and a `main` escaping the artifact directory as distinct named failures.
+    3. Witness each of those three plus the resolving case in `src/test/invariants/bundleRequires.test.ts`.
+
+- [ ] 3_3 Refuse a build config whose composition the extractor cannot read
+  - **Deps**: 3_2
+  - **Refs**: design.md D5
+  - **Acceptance**:
+    - Outcome: A config object the extractor cannot read is refused rather than read
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, make `declaredExternals` throw a named refusal when a candidate config object literal carries a spread assignment, a computed property name, or an accessor.
+    2. Witness the spread, computed-key, and accessor refusals, and that the current plain-literal `esbuild.js` shape still reads, in `src/test/invariants/bundleRequires.test.ts`.
