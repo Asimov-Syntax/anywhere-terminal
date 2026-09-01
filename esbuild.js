@@ -73,6 +73,16 @@ const extensionConfig = {
     "vscode", // Provided by VS Code runtime
     "node-pty", // Loaded dynamically from VS Code internals
   ],
+  alias: {
+    // `jsonc-parser`'s `main` is a UMD bundle: its CJS branch calls
+    // `factory(require, exports)` and the factory then does
+    // `require("./impl/format")`. esbuild cannot follow a require reached
+    // through a parameter, so it leaves the call alone — and at runtime that
+    // relative path resolves against `dist/`, not against the package, so
+    // activation fails with "Cannot find module './impl/format'". The ESM
+    // build has the same code behind static imports esbuild can inline.
+    "jsonc-parser": require.resolve("jsonc-parser/lib/esm/main.js"),
+  },
   loader: {
     // webviewHtml.ts inlines vendored VS Code CSS strings into a <style> block.
     // See: asimov/changes/port-vscode-async-data-tree/design.md D7
