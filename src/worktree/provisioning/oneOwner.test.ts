@@ -79,3 +79,42 @@ describe("one owner for the model assembly", () => {
     expect(MODEL_LITERAL.test(copied)).toBe(true);
   });
 });
+
+/**
+ * The four inline keys `.vscode/worktree.json` shares with `asimov/worktree.yaml`
+ * (worktree-provisioning.md § 3.4: "same shapes as the asimov adapter").
+ *
+ * A module OWNS that mapping when it names all four keys and turns them into
+ * rows. Naming them without expanding — a known-key set handed to the reader —
+ * is a caller, not an owner.
+ */
+const INLINE_KEY_MAPPING = [/"copy"/, /"link"/, /`ports`|"ports"/, /`setup`|"setup"/, /entriesFor\(/];
+
+describe("one owner for the four inline keys", () => {
+  it("is providerKit alone", () => {
+    const owners = SHIPPED.filter((file) => {
+      const source = sourceOf(file);
+      return INLINE_KEY_MAPPING.every((m) => m.test(source));
+    });
+
+    // Two readers of one format drift, and the drift is silent: both emit rows
+    // that look right until one of them learns a key the other does not.
+    expect(owners).toEqual(["providerKit.ts"]);
+  });
+
+  it("catches a second module that maps them", () => {
+    const copied = [
+      'const KNOWN = new Set(["copy", "link", "ports", "setup"]);',
+      'await entriesFor(record.copy, "copy", repoRoot, root, deps, nextId, draft);',
+      'await entriesFor(record.link, "link", repoRoot, root, deps, nextId, draft);',
+    ].join("\n");
+
+    expect(INLINE_KEY_MAPPING.every((m) => m.test(copied))).toBe(true);
+  });
+
+  it("does not fire on a module that only declares which keys it reads", () => {
+    const caller = 'const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);';
+
+    expect(INLINE_KEY_MAPPING.every((m) => m.test(caller))).toBe(false);
+  });
+});

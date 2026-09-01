@@ -277,6 +277,86 @@ export function modelFromDraft(draft: Draft): ProvisionModel {
   };
 }
 
+/**
+ * The four keys `asimov/worktree.yaml` and `.vscode/worktree.json` share, read
+ * from an already-parsed mapping (worktree-provisioning.md § 3.1, § 3.4).
+ *
+ * One reader, because the two formats declare the same shapes and two readers of
+ * one shape drift silently — both emit rows that look right until one of them
+ * learns a key the other does not. The caller supplies its own known-key set and
+ * its own parse; what happens to `copy`, `link`, `ports` and `setup` afterwards
+ * is the same question for both files.
+ *
+ * Provenance comes from `draft.ctx`, never a literal. The asimov version stamped
+ * its own file name into every port, every setup step and every problem it
+ * raised — shared unchanged, that would have made the native file's rows claim
+ * they came from `asimov/worktree.yaml`, with the whole asimov suite still green
+ * because that is exactly what it asserts (design.md D7).
+ */
+export async function readInlineKeys(
+  record: Record<string, unknown>,
+  known: ReadonlySet<string>,
+  repoRoot: string,
+  root: PreparedRoot,
+  deps: ProviderDeps,
+  nextId: () => string,
+  draft: Draft,
+): Promise<void> {
+  const ctx = draft.ctx;
+  for (const key of Object.keys(record)) {
+    if (capped(draft)) {
+      break;
+    }
+    if (!known.has(key)) {
+      report(draft, `\`${key}\``, problem(ctx, "unknownKey", `\`${key}\` is not a key this reads.`));
+    }
+  }
+
+  // Once the cap is recorded the model is closed, so the remaining sections are
+  // not walked at all. Skipping them is what keeps a capped draft cheap and
+  // keeps the cap to exactly one row — every section below would otherwise call
+  // `report`, find the budget spent, and do nothing, one no-op per declaration
+  // in a file we have already refused to finish reading (round-3 B7).
+  if (record.copy !== undefined && !capped(draft)) {
+    await entriesFor(record.copy, "copy", repoRoot, root, deps, nextId, draft);
+  }
+  if (record.link !== undefined && !capped(draft)) {
+    await entriesFor(record.link, "link", repoRoot, root, deps, nextId, draft);
+  }
+
+  if (record.ports !== undefined && !capped(draft)) {
+    if (typeof record.ports !== "object" || record.ports === null || Array.isArray(record.ports)) {
+      report(draft, "`ports`", problem(ctx, "malformed", "`ports` must be a mapping of names."));
+    } else {
+      for (const name of Object.keys(record.ports as Record<string, unknown>)) {
+        // No number: the name is what the file declares, and probing for a free
+        // port is WT-012.6's. The row is offered without one.
+        if (!addPort(draft, { id: nextId(), name, source: ctx.file })) {
+          break;
+        }
+      }
+    }
+  }
+
+  if (record.setup !== undefined && !capped(draft)) {
+    if (!Array.isArray(record.setup)) {
+      report(draft, "`setup`", problem(ctx, "malformed", "`setup` must be a list of commands."));
+    } else {
+      for (const raw of record.setup) {
+        if (typeof raw !== "string" || raw.trim() === "") {
+          report(draft, "a setup step", problem(ctx, "malformed", "`setup` holds an entry that is not a command."));
+          continue;
+        }
+        // Stored exactly as written. It is display text here and the shell's
+        // single script argument later — never concatenated into one.
+        if (!addSetup(draft, { id: nextId(), kind: "shell", script: raw, source: ctx.file })) {
+          break;
+        }
+      }
+    }
+  }
+}
+
 export function emptyModel(): ProvisionModel {
   return { entries: [], setup: [], ports: [], providers: [], excluded: [], problems: [] };
 }

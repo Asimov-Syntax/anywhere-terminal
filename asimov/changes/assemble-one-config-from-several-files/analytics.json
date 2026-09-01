@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "assemble-one-config-from-several-files"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788253764667,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788253764667,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788253764667
+        }
+      ],
+      "firstAt": 1788253764667,
+      "lastAt": 1788254912526,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 8,
+          "inputTokens": 78156,
+          "outputTokens": 18156,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 518656,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "claude-opus-5",
+          "messages": 22,
+          "inputTokens": 44,
+          "outputTokens": 38182,
+          "reasoningTokens": 11083,
+          "cacheWriteTokens": 65161,
+          "cacheReadTokens": 5869494,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 65161,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

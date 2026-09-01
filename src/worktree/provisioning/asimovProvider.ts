@@ -14,13 +14,8 @@
 import { parse as parseYaml } from "yaml";
 import type { ProvisionModel } from "../../types/messages";
 import {
-  addPort,
-  addSetup,
-  capped,
   type Draft,
   emptyModel,
-  entriesFor,
-  full,
   ids,
   modelFromDraft,
   newBudget,
@@ -32,7 +27,7 @@ import {
   type ProviderContext,
   type ProviderDeps,
   problem,
-  report,
+  readInlineKeys,
 } from "./providerKit";
 
 /** Repo-relative, POSIX. The one file this adapter reads. */
@@ -139,62 +134,7 @@ async function fromOpened(
 
   const nextId = ids();
   const draft: Draft = newDraft(ASIMOV, budget);
-  const record = parsed as Record<string, unknown>;
-
-  for (const key of Object.keys(record)) {
-    if (capped(draft)) {
-      break;
-    }
-    if (!KNOWN_KEYS.has(key)) {
-      report(draft, `\`${key}\``, problem(ASIMOV, "unknownKey", `\`${key}\` is not a key this reads.`));
-    }
-  }
-
-  // Once the cap is recorded the model is closed, so the remaining sections are
-  // not walked at all. Skipping them is what keeps a capped draft cheap and
-  // keeps the cap to exactly one row — every section below would otherwise call
-  // `report`, find the budget spent, and do nothing, one no-op per declaration
-  // in a file we have already refused to finish reading (round-3 B7).
-  if (record.copy !== undefined && !capped(draft)) {
-    await entriesFor(record.copy, "copy", repoRoot, root, deps, nextId, draft);
-  }
-  if (record.link !== undefined && !capped(draft)) {
-    await entriesFor(record.link, "link", repoRoot, root, deps, nextId, draft);
-  }
-
-  if (record.ports !== undefined && !capped(draft)) {
-    if (typeof record.ports !== "object" || record.ports === null || Array.isArray(record.ports)) {
-      report(draft, "`ports`", problem(ASIMOV, "malformed", "`ports` must be a mapping of names."));
-    } else {
-      for (const name of Object.keys(record.ports as Record<string, unknown>)) {
-        if (full(draft, `port \`${name}\``)) {
-          break;
-        }
-        // No number: the name is what the file declares, and probing for a free
-        // port is WT-012.6's. The row is offered without one.
-        addPort(draft, { id: nextId(), name, source: ASIMOV_PROVIDER_FILE });
-      }
-    }
-  }
-
-  if (record.setup !== undefined && !capped(draft)) {
-    if (!Array.isArray(record.setup)) {
-      report(draft, "`setup`", problem(ASIMOV, "malformed", "`setup` must be a list of commands."));
-    } else {
-      for (const raw of record.setup) {
-        if (full(draft, "a setup step")) {
-          break;
-        }
-        if (typeof raw !== "string" || raw.trim() === "") {
-          report(draft, "a setup step", problem(ASIMOV, "malformed", "`setup` holds an entry that is not a command."));
-          continue;
-        }
-        // Stored exactly as written. It is display text here and the shell's
-        // single script argument later — never concatenated into one.
-        addSetup(draft, { id: nextId(), kind: "shell", script: raw, source: ASIMOV_PROVIDER_FILE });
-      }
-    }
-  }
+  await readInlineKeys(parsed as Record<string, unknown>, KNOWN_KEYS, repoRoot, root, deps, nextId, draft);
 
   // `providers` is the one field this reader owns: `readAsimovProvisioning` is
   // WT-012.1's single-source entry point and still answers for itself, while the
