@@ -2464,6 +2464,58 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").toContain("a lockfile is never brought over");
   });
 
+  it("names every declaration of a contest beside the row that lost it", () => {
+    // The membership travels once per contest and a step points at it by
+    // index, so the notice is where the two are put back together — a reason
+    // that repeated it made the report quadratic in the members
+    // (`carry-a-contest-membership-once`).
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          worktreeId: "/wt/feature",
+          outcome: "ok",
+          provisioned: [
+            { id: "i1", path: "MixedCase", outcome: { kind: "copied" }, contest: 0 },
+            {
+              id: "i2",
+              path: "mixedcase",
+              outcome: { kind: "refused", reason: "it was claimed by the repository's own declaration" },
+              contest: 0,
+            },
+            {
+              id: "i3",
+              path: "MIXEDCASE",
+              outcome: { kind: "refused", reason: "it was claimed by the repository's own declaration" },
+              contest: 0,
+            },
+          ],
+          provisionContests: [
+            {
+              members: [
+                { id: "i1", path: "MixedCase", source: ".vscode/worktree.json" },
+                { id: "i2", path: "mixedcase", source: "asimov/worktree.yaml" },
+                { id: "i3", path: "MIXEDCASE", source: "tools/worktree.yaml" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
+
+    for (const declaration of [
+      "MixedCase (declared in .vscode/worktree.json)",
+      "mixedcase (declared in asimov/worktree.yaml)",
+      "MIXEDCASE (declared in tools/worktree.yaml)",
+    ]) {
+      expect(text).toContain(declaration);
+    }
+    expect(text).toContain("it was claimed by the repository's own declaration");
+  });
+
   it("[F018] names what was left INSIDE a directory that itself copied", () => {
     // A directory entry has one outcome and many nodes. Counting only the top
     // level said "1 of 1 brought over" while descendants had been skipped — the

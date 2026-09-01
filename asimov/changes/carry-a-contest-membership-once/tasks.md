@@ -14,14 +14,14 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     3. `src/worktree/provisioning/applyProvisioning.test.ts` asserts the membership appears once per contest and that each refused step points at it.
     4. `src/extension.ts` passes the contests through with the steps it already forwards.
 
-- [ ] 1_2 Render the membership from the contest, not from the reason
+- [x] 1_2 Render the membership from the contest, not from the reason — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: src/webview/worktree/WorktreeView.ts
   - **Acceptance**:
     - Outcome: A refused contested row still shows every member by path and declaring file
     - Verify: unit src/webview/worktree/WorktreeView.test.ts
   - **Plan**:
-    1. `src/extension.ts` forwards the contests on the result message.
+    1. `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/worktreeViewTypes.ts` carry the contests from the message to the view state.
     2. `src/webview/worktree/WorktreeView.ts` composes each refused row's notice from its contest's membership plus its own reason.
     3. `src/webview/worktree/WorktreeView.test.ts` witnesses the rendered text for a three-member contest.
 

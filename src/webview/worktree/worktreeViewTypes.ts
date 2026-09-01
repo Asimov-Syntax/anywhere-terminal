@@ -21,6 +21,7 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 import type {
   DestinationDisposition,
   ProvisionModel,
+  ProvisionResultContest,
   ProvisionStepResult,
   PullRequestOffer,
   RemovalCheck,
@@ -145,6 +146,14 @@ export interface WorktreeActionResult {
    * worktree exists AND its files arrived — is one sentence, not two.
    */
   provisioned?: readonly ProvisionStepResult[];
+  /**
+   * Each contest's membership, once — referenced by a step's `contest` index.
+   *
+   * The reason on a refused row says what happened to that row; who else named
+   * the destination lives here, so N members cost N declarations rather than
+   * N² (`carry-a-contest-membership-once`).
+   */
+  provisionContests?: readonly ProvisionResultContest[];
 }
 
 /**
@@ -305,3 +314,6 @@ export interface WorktreeCreateDraft {
    */
   provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
 }
+
+/** Re-exported so the view reads one module for the shapes it renders. */
+export type { ProvisionResultContest };

@@ -47,6 +47,7 @@ import {
 } from "./worktreeTreeView";
 import type {
   PresenceDegradation,
+  ProvisionResultContest,
   ProvisionStepResult,
   WorktreeActionResult,
   WorktreeAgentRow,
@@ -1513,7 +1514,7 @@ export class WorktreeView {
       });
     }
     if (result.outcome === "ok") {
-      const brought = provisionSummary(result.provisioned);
+      const brought = provisionSummary(result.provisioned, result.provisionContests);
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
       // Still a success — the worktree exists — but the notice says plainly
@@ -1809,7 +1810,23 @@ function provisionKey(steps: readonly ProvisionStepResult[] | undefined): string
  */
 function provisionSummary(
   steps: readonly ProvisionStepResult[] | undefined,
+  contests: readonly ProvisionResultContest[] = [],
 ): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
+  /**
+   * A refused row, and everyone else who named its destination.
+   *
+   * The membership arrives once per contest and a step points at it by index,
+   * so this is where the two are put back together — the reason itself never
+   * repeats it (`carry-a-contest-membership-once`).
+   */
+  const withContest = (step: ProvisionStepResult, reason: string): string => {
+    const members = step.contest === undefined ? undefined : contests[step.contest]?.members;
+    if (members === undefined || members.length === 0) {
+      return reason;
+    }
+    const named = members.map((member) => `${member.path} (declared in ${member.source})`).join(", ");
+    return `${named} may name this same destination — ${reason}`;
+  };
   if (steps === undefined || steps.length === 0) {
     return undefined;
   }
@@ -1840,9 +1857,11 @@ function provisionSummary(
     body: inside.length === 0 ? body : `${body} ${inside.length} inside them did not arrive.`,
     tone: "warn",
     reason: [
-      ...bad.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
+      ...bad.map((s) => `${s.path}: ${withContest(s, "reason" in s.outcome ? s.outcome.reason : s.outcome.kind)}`),
       ...degraded.map((s) => `${s.path}: the platform had no symlink to give, so it was copied`),
-      ...untouched.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
+      ...untouched.map(
+        (s) => `${s.path}: ${withContest(s, "reason" in s.outcome ? s.outcome.reason : s.outcome.kind)}`,
+      ),
       ...inside.map((d) => `${d.path}: ${d.reason}`),
     ].join("\n"),
   };

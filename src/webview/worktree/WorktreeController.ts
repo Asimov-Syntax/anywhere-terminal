@@ -1381,6 +1381,7 @@ export class WorktreeController {
     this.showActionResult({
       ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
       provisioned: msg.steps,
+      provisionContests: msg.contests,
     });
   }
 
