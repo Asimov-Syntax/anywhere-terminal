@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -33,7 +33,7 @@ Blueprint: none
 Blueprint: docs/PLAN.md task WT-012.4
 Lane: full (standard) — MEDIUM risk: two untrusted checked-in files combined into one model a
 later task hands to a shell | flags: new-api-contract, user-visible-ui
-Planned at: 2ff0bcd8 (re-earned for task 4_1; originally 49c4365e)
+Planned at: 094728c0 (re-earned for task 4_1; originally 49c4365e)
 - Admission screen: ONE new invariant owner — the merge (extends resolution, native-wins dedupe,
   exclude, provenance). The native file is a FOURTH instance of the shipped `ProviderAdapter`
   pattern, and the dialog's excluded rendering extends an owner WT-012.1 already has. One
@@ -127,3 +127,18 @@ Gate re-run clean on the whole tree (types, fs-deletion gate, biome at the 3/14/
 unit tests). Both round-3 blockers now have witnesses that were confirmed failing against the prior
 mechanism — 5_1's against round 1's own `readFile` pin, not merely against no fix. The change stops
 here: `Review done` and every gate after it stay unticked, because round 4 is the user's to grant.
+
+Round-4 handback. F005 (BLOCK) crosses the remediation boundary: D11 states the fold probe as an
+existence check, and telling a folding volume from two genuinely distinct files needs resolved
+IDENTITY, which the sentence does not permit and which `lstat`'s `unknown` return type cannot
+express. D11's mechanism paragraph and its ledger row are amended; Gate 2 is re-earned before build.
+F006 rides along — the conservative no-hook default is exactly the witness the amended mechanism
+needs, and round 4 proved it reachable against a comment of mine that said otherwise.
+
+The obvious repair for F005 — resolve both spellings and compare — was ATTACKED BY THE ORACLE BEFORE
+IT WAS BUILT, and refuted with three witnesses run on this host: a case-toggled symlink makes any
+single-file probe answer "insensitive" on a volume that folds nothing; case sensitivity is a
+per-volume and, on Windows, per-directory attribute, so one repository-wide boolean is the wrong
+SHAPE; and `toLowerCase` is not the volume's fold even when the answer is right (`Straße`/`STRASSE`).
+D11 now puts the question to the filesystem about the paths actually being merged and folds nothing
+itself. Third attempt at this invariant, which is why it was attacked before landing rather than after.

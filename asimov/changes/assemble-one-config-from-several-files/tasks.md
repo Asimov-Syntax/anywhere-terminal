@@ -141,3 +141,17 @@
     3. Extend `src/worktree/provisioning/readProvisioning.test.ts` with both filesystem answers, and with the absent-probe default.
   - **Boundary**: no row's displayed `path` or `source` changes, on either filesystem
 
+
+## 6. Round-4 handback
+
+- [ ] 6_1 Ask the filesystem about the paths being merged, not about one probe
+  - **Deps**: 5_2
+  - **Refs**: design.md#d11-identity-is-the-destination-and-folds-exactly-when-the-filesystem-folds; .reviews/round-4.md#f005; .reviews/round-4.md#f006
+  - **Acceptance**:
+    - Outcome: Two declarations are one row exactly when the filesystem resolves them to one path
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/readProvisioning.ts`: replace `foldsCase`, `toggleCase` and the boolean `keyer` with a per-path identity built before the merge — `realpath` each DISTINCT declared path (inherited entries, native entries, `exclude`) under the repository root, key by the resolved answer where one comes back and by the normalized spelling where none does. Namespace the two kinds of key apart so an absolute declaration cannot collide with a resolved path. Bound the resolutions at `MAX_MODEL_ROWS`, because `exclude` is a raw list from the file and is capped nowhere else.
+    2. `src/worktree/provisioning/readProvisioning.ts`: `mergeEntries` and `applyExclude` keep taking one `pathKey`; only its construction changes, so dedupe, exclusion and the D10 contradiction check stay one rule.
+    3. `src/worktree/provisioning/readProvisioning.test.ts`: replace the two probe-answer tests, which encode a mechanism that no longer exists, with the four the amended D11 names — one resolved destination merges, two resolved destinations stay two rows, an unresolvable path keys lexically, and no `realpath` keys everything lexically. Add the oracle's symlink-alias case: a case-toggled symlink to the native file must not make two genuinely distinct declarations merge.
+  - **Boundary**: nothing on the identity path lower-cases — the filesystem's fold is the only fold, and no row's displayed `path` or `source` changes

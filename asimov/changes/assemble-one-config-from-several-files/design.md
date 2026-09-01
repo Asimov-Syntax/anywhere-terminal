@@ -228,14 +228,52 @@ genuinely different files, and merging them would drop a row the repository aske
 is `path.posix.normalize` plus trailing-slash strip, then lower-cased **only when the repository's
 own filesystem is case-insensitive**.
 
-That is decided once per read, by asking whether a file already proven to exist also answers under a
-case-toggled spelling of its own name. It uses `lstat`, falling back to `realpath`, both already on
-`ProviderDeps` — no new capability reaches the read path, which is what keeps `readOnly.test.ts`'s
-property intact. Both are optional on that interface; when neither is supplied the answer is
-case-SENSITIVE, because that is the conservative direction: it offers a row too many rather than
-silently dropping one the user declared.
+Amended twice, and the second amendment was refuted before it was built.
 
-The probe is on the read, not on the entry, so it costs one stat per offer rather than one per path.
+Round 4 (F005) refuted the ORIGINAL mechanism, which asked only whether a case-toggled spelling of
+the native file EXISTS: on a case-sensitive volume both spellings can genuinely exist as two files,
+so a yes proved existence and never folding.
+
+An oracle attack then refuted the obvious repair — resolving both spellings and comparing the
+answers — with three witnesses it ran on this host:
+
+1. On a mounted case-SENSITIVE APFS volume, `.vscode/WORKTREE.JSON` as a symlink to
+   `.vscode/worktree.json` makes the two resolved paths equal. `realpath` follows the link, so
+   equality proves that these two spellings currently reach one target and says nothing about
+   whether the volume folds.
+2. Case sensitivity is not a property of a repository. A case-sensitive APFS volume mounts inside a
+   case-insensitive one, and on Windows it is a per-DIRECTORY attribute — which
+   `src/utils/resolvedPathBoundary.ts` already acknowledges. One boolean asked of `.vscode` cannot
+   answer for a destination somewhere else in the tree: the shape was wrong, not just the question.
+3. `toLowerCase()` is not the filesystem's fold even when the answer is right. On ordinary
+   case-insensitive APFS, `Straße`/`STRASSE`, `Σ`/`ς` and `ﬀ`/`ff` each name ONE file and produce
+   TWO keys.
+
+All three have one root: a probe about one file, generalized into a rule applied to every other
+path, by a fold this code performs itself. So the generalization goes, and the question is put to
+the filesystem **about the paths actually being merged**.
+
+Identity is `path.posix.normalize` plus trailing-slash strip, and then, for each DISTINCT path the
+assembly is about to key — the inherited entries, the native entries and the `exclude` list —
+`realpath` of that path under the repository root. Two declarations are the same destination when
+their resolved answers are equal; that is the filesystem's own equivalence relation, evaluated
+where it applies, so a nested volume answers for itself and a Unicode fold is whatever the volume
+says it is. Nothing is lower-cased anywhere on the identity path.
+
+A path that does not resolve — the ordinary case for a destination the repository declares but does
+not carry — keys by its normalized spelling. Two case-variant spellings of an absent file are then
+two rows on a folding volume: the conservative direction D11 has taken throughout, a visible extra
+row rather than a silently dropped one. Resolved and lexical keys are namespaced apart so an
+absolute declaration cannot collide with a resolved answer.
+
+`realpath` is already on `ProviderDeps` — no new capability reaches the read path, which is what
+keeps `readOnly.test.ts`'s property intact. It is optional there; without it nothing resolves and
+every key is lexical, which is the same conservative answer. `lstat` has no part in this: its
+`ProviderDeps` result is typed `unknown`, so nothing about identity can be read out of it.
+
+The cost is one `realpath` per distinct declared path rather than one per read. Bounded by
+`MAX_MODEL_ROWS`, because `exclude` is a raw list from the file and is not otherwise capped: past
+that many distinct paths the remainder keys lexically, which again splits rather than merges.
 Display is untouched: § 4.3 still forbids rewriting what a row shows or names, and folding is for
 identity only.
 
@@ -247,7 +285,7 @@ Dispositions were written by the plan attack. Two rows were narrowed and one add
 |---|---|---|---|---|
 | A native entry that was admitted wins any path it shares with the inherited model, including its mode | For every path declared by both where the native entry is within the row cap, exactly one entry is offered and it is the native one | Native-first ordering alone does not save an overlap declared past row 199 of the native file's own list — the cap refuses it and the inherited copy too, so ZERO rows are offered for that path | Test: inherited file declaring more than the cap, native declaring one shared path early — assert one row, native's mode. Second test: native declaring the shared path past its own cap — assert the documented zero-row outcome and the cap diagnostic | supported (narrowed — the unnarrowed claim was refuted) |
 | An entry's `source` is never rewritten | For every entry in `entries` and `excluded`, `source` equals the file its adapter read | Dedupe keeps the loser's source; exclusion re-stamps the native file as the source of what it removed | Test asserting source per row across merge, dedupe and exclusion; the excluded row keeps the ORIGINAL declaring file | supported |
-| Identity is the destination on disk, on either kind of filesystem | Two declarations naming one file are one row and one exclusion target, whether they differ by dot-segment or by case, and two declarations naming two files stay two rows | A case-insensitive volume where `MixedCase` and `mixedcase` split into two rows and `exclude` matches neither; a case-SENSITIVE volume where unconditional folding merges two real files into one | Tests on both filesystem answers: folded identity dedupes and excludes when the probe says insensitive, and leaves both rows when it says sensitive (D11) | supported (added after round 3 refuted the lexical-only version) |
+| Identity is the destination on disk, on either kind of filesystem | Two declarations naming one file are one row and one exclusion target, whether they differ by dot-segment or by case, and two declarations naming two files stay two rows | A case-insensitive volume where `MixedCase` and `mixedcase` split into two rows and `exclude` matches neither; a case-SENSITIVE volume where unconditional folding merges two real files into one; a case-SENSITIVE volume that genuinely holds BOTH spellings, where an existence-only probe answers "insensitive" and drops a declared row; a case-toggled SYMLINK to the probed file, which makes any single-file probe answer "insensitive" on a volume that folds nothing; a case-sensitive volume mounted inside a case-insensitive repository, where no repository-wide answer is correct; `Straße` and `STRASSE`, which one macOS volume calls one file and `toLowerCase` calls two | Tests over the PATHS BEING MERGED, not over a probe: two spellings resolving to one path are one row and one exclusion target; two spellings resolving to two paths stay two rows; an unresolvable path keys lexically; no `realpath` supplied keys everything lexically (D11) | supported (round 3 refuted the lexical-only version, round 4 F005 refuted the existence-only probe, and an oracle attack refuted the resolved-identity PROBE — a symlinked alias, a nested case-sensitive volume, and `toLowerCase` vs the volume's own fold) |
 | The authorized `extends` file is the file the base adapter reads | The bytes that passed the check are the bytes consumed, and the named file's material appears in the offer whenever the base contributes at all | Pinning below the containment check: `openProviderFile` re-runs root prep and containment first, so a target resolving outside on the re-open never reaches the pinned read while the sibling still contributes | Test where the named file resolves outside the checkout on the adapter's own re-open — assert its material is present and the sibling did not answer alone (D1 as amended) | supported (round 1's deps-wrapper was refuted by round 3) |
 | `extends` reaches only a present file of a framework adapter, inside the repository | The named path is inside the root, belongs to § 3.1–3.3, and is itself present; otherwise `missingExtends` | `../` or a symlink out of tree; a path naming the native file itself, which self-merges or loops; `orca.yaml` named while only `.worktreeinclude` exists, which inherits a file nobody named | `contained()` reused not re-derived; tests for `../`, an out-of-tree symlink, `extends` naming `.vscode/worktree.json`, and each orca file named while only the other is present | supported (D2 rules 1 and 2 were added because the loose version was refuted) |
 | One read spends at most `MAX_MODEL_ROWS` rows and `MAX_SCAN` names across every file it touches | Both accounts are shared by the native draft, the inherited draft, and every presence probe | A second `newBudget()`; an append that charges without enforcing; **an early-return problem path that builds `problems: []` directly and charges nothing** | Test: native draft driven to exactly the cap, then an inherited file that is malformed — assert the total never exceeds `MAX_MODEL_ROWS`. D9 routes every early return through `report()` | supported (D9 was added because the unrouted early returns refuted this) |
