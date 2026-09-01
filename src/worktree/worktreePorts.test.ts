@@ -1,0 +1,436 @@
+import { chmod, mkdir, mkdtemp, open, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import type { ProvisionPort } from "../types/messages";
+import { LockedFile } from "../utils/lockedFile";
+import {
+  allocateWorktreePorts,
+  type PortWorktreeListing,
+  previewWorktreePorts,
+  type WorktreePortsDeps,
+} from "./worktreePorts";
+
+const tempDirectories: string[] = [];
+
+async function fixture(names = ["main", "one", "two"]) {
+  const root = await mkdtemp(path.join(tmpdir(), "worktree-ports-"));
+  tempDirectories.push(root);
+  const repoId = path.join(root, ".git");
+  await mkdir(repoId, { recursive: true });
+  const worktrees = await Promise.all(
+    names.map(async (name) => {
+      const worktree = path.join(root, name);
+      await mkdir(worktree, { recursive: true });
+      return worktree;
+    }),
+  );
+  return { repoId, repoPath: worktrees[0] as string, worktrees };
+}
+
+function port(name: string, id = `id-${name}`, preview?: number): ProvisionPort {
+  return { id, name, source: "asimov/worktree.yaml", ...(preview === undefined ? {} : { port: preview }) };
+}
+
+function complete(paths: readonly string[]): PortWorktreeListing {
+  return {
+    worktrees: paths.map((worktreePath) => ({ id: worktreePath, path: worktreePath })),
+    reasons: [],
+    skipped: 0,
+  };
+}
+
+function probes(values: readonly number[]): WorktreePortsDeps["probe"] {
+  let index = 0;
+  return async () => {
+    const value = values[index];
+    index += 1;
+    if (value === undefined) {
+      throw new Error("no probe value");
+    }
+    return value;
+  };
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+describe("previewWorktreePorts", () => {
+  it("excludes sibling claims and gives duplicate names one preview", async () => {
+    const { worktrees } = await fixture(["main", "sibling"]);
+    await writeFile(path.join(worktrees[1] as string, ".env.worktree"), "OTHER=5183\n");
+
+    const previewed = await previewWorktreePorts([port("APP", "a"), port("APP", "b")], worktrees, {
+      probe: probes([5183, 5184]),
+    });
+
+    expect(previewed.map((item) => item.port)).toEqual([5184, 5184]);
+  });
+
+  it("returns explicit unavailable previews when sibling claims are untrusted", async () => {
+    const { worktrees } = await fixture(["main", "sibling"]);
+    await writeFile(path.join(worktrees[1] as string, ".env.worktree"), "APP = 5183\n");
+
+    const previewed = await previewWorktreePorts([port("APP", "app", 5000)], worktrees, {
+      probe: probes([5184]),
+    });
+
+    expect(previewed[0]?.port).toBeUndefined();
+  });
+});
+
+describe("allocateWorktreePorts", () => {
+  it("serializes concurrent allocators so sibling claims are distinct", async () => {
+    const { repoId, repoPath, worktrees } = await fixture();
+    const probe = probes([5183, 5183, 5184]);
+    const deps = { listWorktrees: async () => complete(worktrees), probe };
+
+    const [first, second] = await Promise.all([
+      allocateWorktreePorts({ repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] }, deps),
+      allocateWorktreePorts({ repoId, repoPath, worktreePath: worktrees[2] as string, ports: [port("APP")] }, deps),
+    ]);
+
+    const values = [first, second].map((result) => {
+      const outcome = result.ports[0]?.outcome;
+      return outcome?.kind === "allocated" ? outcome.port : undefined;
+    });
+    expect(new Set(values)).toEqual(new Set([5183, 5184]));
+  });
+
+  it("fails closed without writing when the common lock already exists", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
+    await writeFile(`${sentinel}.anywhere-terminal.lock`, "held");
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("reuses an existing assignment and appends only missing names", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "# keep\nAPP=5183\n");
+
+    const result = await allocateWorktreePorts(
+      {
+        repoId,
+        repoPath,
+        worktreePath: worktrees[1] as string,
+        ports: [port("APP", "app", 5182), port("DB", "db", 5432)],
+      },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5433]) },
+    );
+
+    expect(result.ports.map((item) => item.outcome.kind)).toEqual(["reused", "allocated"]);
+    expect(await readFile(target, "utf8")).toBe("# keep\nAPP=5183\nDB=5433\n");
+  });
+
+  it("preserves the existing claim file mode while appending", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "APP=5183\n");
+    await chmod(target, 0o640);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("DB")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5433]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("allocated");
+    expect((await stat(target)).mode & 0o777).toBe(0o640);
+  });
+
+  it.each([
+    { name: "degraded", listing: { ...complete([]), degraded: "git failed" } },
+    { name: "skipped", listing: { ...complete([]), skipped: 1 } },
+    { name: "reason", listing: { ...complete([]), reasons: ["one record was omitted"] } },
+  ])("fails fresh allocation for an incomplete $name listing", async ({ listing }) => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => listing, probe: probes([5183]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("leaves a file with duplicate numeric values untouched and fails every selection", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    const original = "APP=5183\nDB=5183\n";
+    await writeFile(target, original);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP"), port("DB")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([]) },
+    );
+
+    expect(result.ports.every((item) => item.outcome.kind === "failed")).toBe(true);
+    expect(await readFile(target, "utf8")).toBe(original);
+  });
+
+  it.each([
+    "APP=0\n",
+    "APP=01\n",
+    "APP=65536\n",
+    " APP=5183 \n",
+    "APP=5183\nAPP=5184\n",
+  ])("leaves the unsupported target %j untouched", async (original) => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, original);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5184]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(await readFile(target, "utf8")).toBe(original);
+  });
+
+  it("fails fresh allocation when a sibling claim file is malformed", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    await writeFile(path.join(worktrees[2] as string, ".env.worktree"), "not an assignment\n");
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("fails fresh allocation when a sibling claim file exceeds the byte cap", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    await writeFile(path.join(worktrees[2] as string, ".env.worktree"), `#${"x".repeat(64 * 1024)}\n`);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5184]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("fails fresh allocation when a sibling claim file cannot be opened", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    const siblingClaim = path.join(worktrees[2] as string, ".env.worktree");
+    await writeFile(siblingClaim, "OTHER=5183\n");
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5184]),
+        open: async (target, flags) => {
+          if (target === siblingClaim) {
+            throw Object.assign(new Error("denied"), { code: "EACCES" });
+          }
+          return open(target, flags);
+        },
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses symlink targets without replacing their referent", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const referent = path.join(worktrees[0] as string, "claims");
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(referent, "APP=5183\n");
+    await symlink(referent, target);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5184]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(await readFile(referent, "utf8")).toBe("APP=5183\n");
+  });
+
+  it("retains a sibling-conflicting assignment without adopting it", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "# retained\nAPP=5183\n");
+    await writeFile(path.join(worktrees[2] as string, ".env.worktree"), "OTHER=5183\n");
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => complete(worktrees), probe: probes([]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(await readFile(target, "utf8")).toBe("# retained\nAPP=5183\n");
+  });
+
+  it("coalesces duplicate names while retaining per-id outcomes", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+
+    const result = await allocateWorktreePorts(
+      {
+        repoId,
+        repoPath,
+        worktreePath: worktrees[1] as string,
+        ports: [port("APP", "first", 5182), port("APP", "second", 5182)],
+      },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
+    );
+
+    expect(result.ports.map((item) => item.id)).toEqual(["first", "second"]);
+    expect(result.ports.map((item) => item.outcome)).toEqual([
+      { kind: "allocated", port: 5183 },
+      { kind: "allocated", port: 5183 },
+    ]);
+    expect(await readFile(target, "utf8")).toBe("APP=5183\n");
+  });
+
+  it("keeps name-local failures from stopping a valid name", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+
+    const result = await allocateWorktreePorts(
+      {
+        repoId,
+        repoPath,
+        worktreePath: worktrees[1] as string,
+        ports: [port("BAD-NAME", "bad"), port("APP", "app")],
+      },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
+    );
+
+    expect(result.ports.map((item) => item.outcome.kind)).toEqual(["failed", "allocated"]);
+    expect(await readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).toBe("APP=5183\n");
+  });
+
+  it("bounds exhausted probes and continues with the next name", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    await writeFile(path.join(worktrees[2] as string, ".env.worktree"), "OTHER=5183\n");
+    const probe = probes([...Array.from({ length: 32 }, () => 5183), 5184]);
+
+    const result = await allocateWorktreePorts(
+      {
+        repoId,
+        repoPath,
+        worktreePath: worktrees[1] as string,
+        ports: [port("APP", "app"), port("DB", "db")],
+      },
+      { listWorktrees: async () => complete(worktrees), probe },
+    );
+
+    expect(result.ports.map((item) => item.outcome.kind)).toEqual(["failed", "allocated"]);
+    expect(await readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).toBe("DB=5184\n");
+  });
+
+  it("aborts pending names when the authorized target changes before commit", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "# original\n");
+    class SubstitutingLockedFile extends LockedFile {
+      public override async stageReplacement(contents: string, mode: number | undefined) {
+        const staged = await super.stageReplacement(contents, mode);
+        if (this.path === target) {
+          await writeFile(target, "# external edit\n");
+        }
+        return staged;
+      }
+    }
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        lockedFile: (lockedPath) => new SubstitutingLockedFile(lockedPath),
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(await readFile(target, "utf8")).toBe("# external edit\n");
+  });
+
+  it("reports failed atomic publication without claiming allocation", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        lockedFile: (lockedPath) => {
+          const locked = new LockedFile(lockedPath);
+          return lockedPath === target
+            ? { withLock: locked.withLock.bind(locked), stageReplacement: async () => undefined }
+            : locked;
+        },
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(target, "utf8")).rejects.toThrow();
+  });
+
+  it("preserves committed outcomes while reporting lock-release and exclude warnings", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
+    const warned: string[] = [];
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        lockedFile: (lockedPath) => {
+          if (lockedPath !== sentinel) {
+            return new LockedFile(lockedPath);
+          }
+          return {
+            stageReplacement: async () => undefined,
+            withLock: async (work, _unavailable, _failed, releaseFailed) => {
+              const value = await work();
+              releaseFailed?.(`${sentinel}.lock`);
+              return value;
+            },
+          };
+        },
+        addExclude: async () => ({ failed: "denied" }),
+        warn: (message) => warned.push(message),
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
+    expect(result.warnings).toEqual(["lockReleaseFailed", "excludeFailed"]);
+    expect(warned).toHaveLength(1);
+  });
+
+  it("turns a thrown exclude update into a warning without rejecting allocation", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        addExclude: async () => {
+          throw new Error("denied");
+        },
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
+    expect(result.warnings).toEqual(["excludeFailed"]);
+  });
+});

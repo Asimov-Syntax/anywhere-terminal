@@ -39,7 +39,7 @@ The lock extraction and result skeleton can start together. Everything after the
     3. `src/webview/worktree/WorktreeCreateDialog.ts`: replace the WT-012.6 placeholder comment and render each port subject as `NAME=preview`, or `NAME · preview unavailable`, while the source stays in the existing badge slot.
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts`: replace the no-number assertion with numeric and unavailable-preview cases; keep per-item ids and source provenance unchanged.
 
-- [ ] 1_4 Allocate, retain and publish named port claims under one lock
+- [x] 1_4 Allocate, retain and publish named port claims under one lock — verified: pnpm exec vitest run 'src/worktree/worktreePorts.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2, 1_3
   - **Refs**: design.md D2, design.md D3, design.md D4, design.md D5, design.md D6, design.md D7, design.md D8; specs/worktree-panel/spec.md#{successful-port-claims-do-not-collide-across-sibling-worktrees, the-port-claim-file-has-one-strict-format, port-names-are-safe-environment-identifiers, existing-non-conflicting-assignments-are-reused, a-conflicting-existing-assignment-is-retained-but-not-adopted, an-unsupported-existing-claim-file-is-left-untouched, one-configured-name-gets-one-claim, unproven-sibling-claims-prevent-fresh-allocation, every-selected-port-gets-its-own-outcome, the-port-claim-file-stays-local-to-the-repository, a-committed-allocation-stays-successful-when-lock-cleanup-fails}
   - **Boundary**: no edits to `src/worktree/provisioning/readProvisioning.ts`, `providerKit.ts`, or `entryGate.ts`; duplicate names are coalesced at apply, not rewritten in the provider model
