@@ -33,7 +33,7 @@ Blueprint: none
 Blueprint: docs/PLAN.md task WT-012.4
 Lane: full (standard) — MEDIUM risk: two untrusted checked-in files combined into one model a
 later task hands to a shell | flags: new-api-contract, user-visible-ui
-Planned at: 49c4365e2bf1e80aba18ab4186eea3e1bd9f9200
+Planned at: 2ff0bcd8 (re-earned for task 4_1; originally 49c4365e)
 - Admission screen: ONE new invariant owner — the merge (extends resolution, native-wins dedupe,
   exclude, provenance). The native file is a FOURTH instance of the shipped `ProviderAdapter`
   pattern, and the dialog's excluded rendering extends an owner WT-012.1 already has. One
@@ -99,3 +99,14 @@ Build notes:
   none of the three errors in a file this change touched, `pnpm run gate:fs-deletion` ok,
   `pnpm run test:unit` 279 files / 6544 tests green. The `test:unit` flakiness noted above did not
   reproduce on any of tasks 2_1 through 3_2.
+
+Round 2 superseded, and it was my error, not the chair's. Round 1's four findings were all fixed
+inside the accepted contract — the chair confirmed no `D#` changed — but the remediation was given
+its own `tasks.md` entry (4_1), and a NEW task entry supersedes a verification round on its own: a
+verification range must start at the prior round's recorded Head, and a fix-task scaffold authored in
+response to that round always lands after it. There is no range that excludes it.
+
+The entry was never necessary. The fix loop needs the discipline — lease, RED, GREEN, `verify-task`,
+commit — not a new row in `tasks.md`, and 4_1's fixes all fell inside paths approved tasks already
+owned. Gate 2 is re-earned here for the entry that now exists; the next round is cycle 2's DISCOVERY
+round, which is not blocked by an amendment in its range.

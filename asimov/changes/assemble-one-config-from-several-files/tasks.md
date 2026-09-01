@@ -104,7 +104,7 @@
   - **Deps**: 3_2
   - **Refs**: .reviews/round-1.md#{f001, f002, f003, f004}; specs/worktree-panel/spec.md#{the-repository-s-own-declaration-wins-the-path-it-shares, a-path-the-repository-removed-is-shown-as-deliberate, one-unreadable-part-never-discards-the-rest-of-a-configuration}; design.md#{d2-extends-resolves-by-file-membership-not-by-provider-name, d10-base-native-and-exclude-all-naming-one-path}
   - **Acceptance**:
-    - Outcome: Two spellings of one path are one row, the authorized base is the one read, and a damaged key keeps its file's other keys
+    - Outcome: One path is one row, however two files spell it
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
     1. In `src/worktree/provisioning/readProvisioning.ts`, derive one canonical repository-relative identity and key dedupe, exclusion and the D10 contradiction check on it — never the displayed `path` and never the `source`, which § 4.3 forbids rewriting.
