@@ -42,7 +42,7 @@
     4. In `src/worktree/provisioning/orcaProvider.ts`, add no problem for an `orca.yaml` key outside the two that map.
     5. Create `src/worktree/provisioning/orcaProvider.test.ts` covering: both files present; each alone; a multi-line `scripts.setup` containing an `if`/`fi` stays ONE step whose script still parses as one program; a `sharedDirectories` path that does not exist is still offered; unmapped keys produce no problem; each row's `source` is the file it came from; a path escaping the repo is refused; a provider file that is itself a symlink out is refused before it is read; a malformed `orca.yaml` names the file and does not throw.
 
-- [ ] 2_2 Read tasks declared to run when a worktree is created
+- [x] 2_2 Read tasks declared to run when a worktree is created — verified: pnpm exec vitest run 'src/worktree/provisioning/vscodeTasksProvider.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-repository-is-read-through-whichever-provisioning-file-it-already-keeps, a-task-file-is-read-on-the-terms-its-own-format-defines}; design.md D1, D4
   - **Acceptance**:
