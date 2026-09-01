@@ -198,3 +198,65 @@ describe("a destination two declarations may both name", () => {
     ]);
   });
 });
+
+describe("a collision this apply cannot attribute to its own write", () => {
+  it("stops a pre-existing DIRECTORY destination instead of merging into it", async () => {
+    // The state `EEXIST` cannot report: `makeDirectory` answers `written` for a
+    // directory that was already there and the walk merges children in, so the
+    // destination keeps ITS mode and gains the favoured member's contents —
+    // neither declaration's outcome, and nothing in the step results says so.
+    const occupied = {
+      [`${MAIN}/MixedCase`]: { kind: "dir" } as const,
+      [`${MAIN}/MixedCase/inner`]: { kind: "file", size: 11 } as const,
+      [`${MAIN}/mixedcase`]: { kind: "dir" } as const,
+      [`${MAIN}/mixedcase/other`]: { kind: "file", size: 22 } as const,
+      [`${WT}/MixedCase`]: { kind: "dir", mode: 0o755 } as const,
+    };
+    const { steps, fs } = await applyTo(occupied, PAIR, { folds: true });
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
+    expect(fs.created).toEqual([]);
+    expect(fs.nodes.get(`${WT}/MixedCase/inner`)).toBeUndefined();
+    expect(fs.nodes.get(`${WT}/MixedCase`)).toEqual({ kind: "dir", mode: 0o755 });
+  });
+
+  it("names BOTH declarations in each refusal, from each row", async () => {
+    // The row a person reads is one entry's. Naming only the refused one leaves
+    // them with a rule and no counterparty; naming only the other leaves them
+    // unable to tell which row lost.
+    const occupied = { ...CONTESTED, [`${WT}/MixedCase`]: { kind: "file", size: 99 } as const };
+    const { steps } = await applyTo(occupied, PAIR, { folds: true });
+
+    expect(steps[0]).toMatchObject({
+      path: "MixedCase",
+      outcome: { reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)") },
+    });
+    expect(steps[1]).toMatchObject({
+      path: "mixedcase",
+      outcome: { reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)") },
+    });
+  });
+
+  it("names the favoured declaration when it never claimed the destination", async () => {
+    const { steps } = await applyTo({}, PAIR, { folds: true });
+
+    expect(steps[1]).toMatchObject({
+      path: "mixedcase",
+      outcome: { reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)") },
+    });
+  });
+
+  it("refuses a name that appeared during the apply rather than crediting it to the favoured member", async () => {
+    // Absent when the reading was taken and present now — which may be the
+    // favoured member folding onto it, a descendant another entry's directory
+    // copy wrote, or another process. Nothing here tells those apart, so
+    // reporting the loser as skipped-because-awarded would claim a causal fact
+    // this apply cannot establish.
+    const { steps } = await applyTo(CONTESTED, PAIR, { folds: true });
+
+    expect(steps[1]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("was not put there by this apply"),
+    });
+  });
+});

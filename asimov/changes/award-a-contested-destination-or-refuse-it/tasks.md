@@ -25,7 +25,7 @@
     2. Settle each held member against D4's table after the ordered pass ends.
     3. Witness all four rows in `src/worktree/provisioning/applyProvisioning.test.ts`, including the one where the volume keeps the two spellings apart and both land. `src/worktree/provisioning/applyEntries.fake.ts` gains whatever the fake needs to hold two spellings that fold together.
 
-- [ ] 2_2 Refuse a collision this apply cannot attribute to its own write
+- [x] 2_2 Refuse a collision this apply cannot attribute to its own write — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md#d4-the-adjudication, specs/worktree-panel/spec.md#a-collision-the-extension-cannot-attribute-to-its-own-write-is-refused
   - **Acceptance**:
