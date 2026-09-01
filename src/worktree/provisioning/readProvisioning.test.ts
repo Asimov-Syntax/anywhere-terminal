@@ -643,3 +643,43 @@ describe("[round-1 F002] the file that was authorized is the file that is read",
     expect(model.entries.map((e) => [e.path, e.source])).toContainEqual([".env", ORCA_INCLUDE_FILE]);
   });
 });
+
+describe("[round-3 F002] authorization is a result, not a byte source", () => {
+  it("keeps the named file's rows when its containment answer changes under the read", async () => {
+    // Round 1 pinned `readFile` beneath the second open, and the ENOENT witness
+    // above passed because absence falls THROUGH to the pinned bytes. Nothing
+    // that fails EARLIER does: root preparation and the containment check both
+    // run first, so `.worktreeinclude` resolving outside on the adapter's own
+    // open dropped the named file out of the offer while `orca.yaml` — which
+    // the user never named — still contributed `node_modules` and a setup
+    // command, with orca marked active.
+    const INCLUDE_AT = `${ROOT}/${ORCA_INCLUDE_FILE}`;
+    let resolutions = 0;
+    const deps: ProviderDeps = {
+      ...fs({
+        native: `{"extends": ".worktreeinclude"}`,
+        orcaInclude: ".env\n",
+        orcaYaml: "worktree:\n  sharedDirectories: [node_modules]\nscripts:\n  setup: pnpm install\n",
+      }),
+      realpath: async (p) => {
+        if (p !== INCLUDE_AT) {
+          return p;
+        }
+        resolutions += 1;
+        // Authorized on the first resolution, outside the checkout on every
+        // one after it.
+        return resolutions > 1 ? `/elsewhere/${ORCA_INCLUDE_FILE}` : p;
+      },
+    };
+    const model = await readProvisioning(deps, ROOT);
+
+    expect(model.entries.map((e) => [e.path, e.source])).toEqual([
+      ["node_modules", ORCA_YAML_FILE],
+      [".env", ORCA_INCLUDE_FILE],
+    ]);
+    // The escape is never reached, so there is nothing to report — the named
+    // file was authorized once and answered from that authorization.
+    expect(model.problems).toEqual([]);
+    expect(model.providers.find((p) => p.id === "orca")?.active).toBe(true);
+  });
+});

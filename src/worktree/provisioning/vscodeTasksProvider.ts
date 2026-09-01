@@ -13,6 +13,7 @@ import { type ParseError, parse as parseJsonc } from "jsonc-parser";
 import { posixShellQuote } from "../../utils/posixShellQuote";
 import {
   type AdapterRead,
+  type Authorized,
   addSetup,
   type Draft,
   ids,
@@ -115,8 +116,13 @@ export const vscodeTasksAdapter: ProviderAdapter = {
   id: "vscodeTasks",
   files: [VSCODE_TASKS_FILE],
 
-  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null> {
-    const opened = await openProviderFile(deps, repoRoot, TASKS);
+  async read(
+    deps: ProviderDeps,
+    repoRoot: string,
+    budget: ProviderBudget,
+    authorized?: Authorized,
+  ): Promise<AdapterRead | null> {
+    const opened = await openProviderFile(deps, repoRoot, TASKS, undefined, authorized);
     if (opened.kind === "absent" || (opened.kind === "problem" && opened.at === "root")) {
       // Root failure is neither presence nor absence, and the dispatcher reads
       // any model as detection — so answering with one elected this adapter for

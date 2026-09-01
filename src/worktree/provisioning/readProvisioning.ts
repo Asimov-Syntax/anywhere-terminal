@@ -16,6 +16,7 @@ import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { orcaAdapter } from "./orcaProvider";
 import {
   type AdapterRead,
+  type Authorized,
   type Draft,
   emptyModel,
   newBudget,
@@ -115,7 +116,7 @@ async function baseFor(
   deps: ProviderDeps,
   repoRoot: string,
   target: string,
-): Promise<{ adapter: ProviderAdapter; deps: ProviderDeps } | null> {
+): Promise<{ adapter: ProviderAdapter; authorized: Authorized } | null> {
   const adapter = FRAMEWORK_ORDER.find((a) => a.files.includes(target));
   if (adapter === undefined) {
     return null;
@@ -124,7 +125,7 @@ async function baseFor(
   if (opened.kind !== "text") {
     return null;
   }
-  // The bytes that passed the check are the bytes the adapter reads.
+  // The open that passed IS the open the adapter gets.
   //
   // Authorizing the target and then letting the adapter open it again left a
   // gap: with `.worktreeinclude` named and vanishing in between, orca read only
@@ -133,15 +134,15 @@ async function baseFor(
   // (.reviews/round-1.md F002). That is D2 rule 2's own defeater, returning
   // through a seam the rule did not cover.
   //
-  // Only the named path is pinned. The adapter's other files still read live,
-  // because D2 rule 3 wants the WHOLE adapter: half of orca is a model orca
-  // would not recognize.
-  const at = path.resolve(repoRoot, target);
-  const pinned: ProviderDeps = {
-    ...deps,
-    readFile: async (p) => (p === at ? opened.text : deps.readFile(p)),
-  };
-  return { adapter, deps: pinned };
+  // The first fix pinned `deps.readFile`, which is too late in the open: root
+  // preparation and the containment check both run BEFORE the read, so a target
+  // whose containment answer changed was still refused despite having passed
+  // here (.reviews/round-3.md F002). Carrying the whole opened file is the
+  // authorization, and nothing re-derives it.
+  //
+  // One key, the exact name that was named. The adapter's other files still
+  // open live, because D2 rule 3 wants the WHOLE adapter.
+  return { adapter, authorized: new Map([[target, opened]]) };
 }
 
 /**
@@ -239,7 +240,7 @@ async function assemble(
   }
   // The inline keys are offered whether or not the base resolved. An early
   // return here would discard them for a typo in one other key.
-  const inherited = resolved === null ? null : await resolved.adapter.read(resolved.deps, repoRoot, budget);
+  const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
   const baseModel = inherited?.model ?? emptyModel();
 
   const merged = mergeEntries(baseModel.entries, native.model.entries);

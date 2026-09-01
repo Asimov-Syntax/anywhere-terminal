@@ -14,6 +14,7 @@
 import { type ParseError, parse as parseJsonc } from "jsonc-parser";
 import {
   type AdapterRead,
+  type Authorized,
   type Draft,
   ids,
   modelFromDraft,
@@ -80,8 +81,13 @@ export const nativeAdapter: ProviderAdapter = {
   id: "native",
   files: [NATIVE_PROVIDER_FILE],
 
-  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null> {
-    const opened = await openProviderFile(deps, repoRoot, NATIVE);
+  async read(
+    deps: ProviderDeps,
+    repoRoot: string,
+    budget: ProviderBudget,
+    authorized?: Authorized,
+  ): Promise<AdapterRead | null> {
+    const opened = await openProviderFile(deps, repoRoot, NATIVE, undefined, authorized);
     if (opened.kind === "absent" || (opened.kind === "problem" && opened.at === "root")) {
       // Absence is not "declared nothing", and a root that will not resolve is
       // neither presence nor absence. Answering a model for either would elect

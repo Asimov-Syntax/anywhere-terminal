@@ -116,7 +116,7 @@
 
 ## 5. Round-3 handback
 
-- [ ] 5_1 Carry the authorized `extends` file across the adapter boundary
+- [x] 5_1 Carry the authorized `extends` file across the adapter boundary — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#d1-read-answers-a-record-not-a-model; .reviews/round-3.md#f002
   - **Acceptance**:

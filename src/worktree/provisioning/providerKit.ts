@@ -456,7 +456,20 @@ export async function openProviderFile(
   repoRoot: string,
   ctx: ProviderContext,
   root?: PreparedRoot,
+  authorized?: Authorized,
 ): Promise<OpenedProviderFile> {
+  // An already-authorized file is answered from, never re-opened.
+  //
+  // Pinning `deps.readFile` beneath this function was tried first and refuted:
+  // the root preparation and containment check below run BEFORE any read, so a
+  // target that resolves outside the checkout on THIS call never reaches the
+  // pinned bytes — the named file drops out of the offer while its unnamed
+  // sibling still contributes paths and a shell command (.reviews/round-3.md
+  // F002). The authorization has to arrive as a result, not as a byte source.
+  const already = authorized?.get(ctx.file);
+  if (already !== undefined) {
+    return already;
+  }
   const prepared = root ?? (await prepareResolvedRoot(repoRoot, { realpath: deps.realpath, lstat: deps.lstat }));
   if (prepared === null) {
     return {
@@ -699,8 +712,20 @@ export interface AdapterRead {
   readonly exclude?: readonly string[];
 }
 
+/**
+ * Files whose open already passed, keyed by the repo-relative name the caller
+ * asked for. Only the dispatcher builds one, and only for a file it authorized
+ * itself (design.md D1).
+ */
+export type Authorized = ReadonlyMap<string, OpenedProviderFile>;
+
 export interface ProviderAdapter {
   readonly id: ProvisionProvider["id"];
   readonly files: readonly string[];
-  read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null>;
+  read(
+    deps: ProviderDeps,
+    repoRoot: string,
+    budget: ProviderBudget,
+    authorized?: Authorized,
+  ): Promise<AdapterRead | null>;
 }

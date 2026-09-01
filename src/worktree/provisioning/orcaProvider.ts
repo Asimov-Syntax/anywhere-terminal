@@ -14,6 +14,7 @@
 import { parse as parseYaml } from "yaml";
 import {
   type AdapterRead,
+  type Authorized,
   addSetup,
   type Draft,
   entriesFor,
@@ -134,8 +135,13 @@ export const orcaAdapter: ProviderAdapter = {
    * yields a model plus a problem, never a throw. `null` means neither of the
    * two files is there — the one answer that lets detection move on (D3).
    */
-  async read(deps: ProviderDeps, repoRoot: string, budget: ProviderBudget): Promise<AdapterRead | null> {
-    const opened = await openProviderFile(deps, repoRoot, YAML);
+  async read(
+    deps: ProviderDeps,
+    repoRoot: string,
+    budget: ProviderBudget,
+    authorized?: Authorized,
+  ): Promise<AdapterRead | null> {
+    const opened = await openProviderFile(deps, repoRoot, YAML, undefined, authorized);
     if (opened.kind === "problem" && opened.at === "root") {
       // Nothing about this provider can be decided when the checkout itself
       // will not resolve, and it is not this adapter's problem to report.
@@ -179,7 +185,10 @@ export const orcaAdapter: ProviderAdapter = {
     // The draft moves file, so the rows below name the file that asked for
     // them rather than the one the read started at (§ 4.3).
     draft.ctx = INCLUDE;
-    const included = await openProviderFile(deps, repoRoot, INCLUDE, root);
+    // Orca's second file is authorized on its own terms even when the first was
+    // handed over: the map holds exactly the file `extends` named, and a sibling
+    // served from it would be the defect this closes, inverted (D1).
+    const included = await openProviderFile(deps, repoRoot, INCLUDE, root, authorized);
     if (included.kind === "problem") {
       present = true;
       report(draft, `\`${ORCA_INCLUDE_FILE}\``, included.problem);
