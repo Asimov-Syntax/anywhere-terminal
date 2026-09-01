@@ -83,9 +83,12 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
 /**
  * Apply every selected entry, and answer for every one of them.
  *
- * The answer is in the order the entries ARRIVED, not the order they ran: the
- * dialog reads it beside the rows it drew. `applyEntry` never throws, so this
- * has no failure of its own to report.
+ * The answer is in the order the answers were PRODUCED — copies before links,
+ * a deferred contest member where it was settled — which is what the closure
+ * this replaced returned (design.md D5). The webview keys its provisioning
+ * state off the whole sequence, so re-sorting it here would be a visible
+ * change dressed as a refactor (.reviews/round-1.md F003). `applyEntry` never
+ * throws, so this has no failure of its own to report.
  */
 export async function applyProvisioning(
   entries: readonly ProvisionEntry[],
@@ -209,12 +212,17 @@ export async function applyProvisioning(
     answered.set(member, await applyEntry(member, roots, budget, deps));
   }
 
-  return entries.map(
-    (entry) =>
-      answered.get(entry) ?? {
+  // Insertion order IS production order, and an entry that reached neither
+  // pass still owes the dialog a row.
+  const produced = [...answered.values()];
+  for (const entry of entries) {
+    if (!answered.has(entry)) {
+      produced.push({
         id: entry.id,
         path: entry.path,
         outcome: { kind: "failed" as const, reason: "this entry was never applied" },
-      },
-  );
+      });
+    }
+  }
+  return produced;
 }

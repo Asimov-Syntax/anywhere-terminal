@@ -58,7 +58,7 @@
     1. In `src/worktree/provisioning/applyProvisioning.ts`, replace the boolean reading with D3's four states, and take the second reading immediately before the favoured member's ordinary turn.
     2. Witness in `src/worktree/provisioning/applyProvisioning.test.ts` that an uncontested copy creating the favoured directory first refuses the contest instead of merging into it, and that an `lstat` failure that is not `ENOENT` refuses rather than authorizing the write. `src/worktree/provisioning/applyEntries.fake.ts` gains whatever the failing-`lstat` case needs.
 
-- [ ] 4_2 Answer in the order the answers were produced
+- [x] 4_2 Answer in the order the answers were produced — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#d5-one-orchestration-out-of-the-extension-entry-point, .reviews/round-1.md#f003
   - **Acceptance**:

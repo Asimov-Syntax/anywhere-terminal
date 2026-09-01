@@ -48,9 +48,10 @@ describe("applyProvisioning", () => {
     expect(fs.created).toEqual([`${WT}/.env`, `${WT}/third_party`]);
   });
 
-  it("answers for every entry it was given, in the order it was given them", async () => {
-    // The report is per entry and the dialog reads it beside the rows it drew,
-    // so the ORDER OF WORK is not the order of the answer.
+  it("answers for every entry it was given, in the order the answers were produced", async () => {
+    // The order the closure in the extension returned, which the webview keys
+    // its provisioning state off: copies before links, whatever order the
+    // provider listed them in (.reviews/round-1.md F003).
     const { steps } = await applyTo(MATERIAL, [
       entry("third_party", "link", "asimov/worktree.yaml"),
       entry(".env", "copy", "asimov/worktree.yaml"),
@@ -58,9 +59,9 @@ describe("applyProvisioning", () => {
     ]);
 
     expect(steps.map((s) => [s.path, s.outcome.kind])).toEqual([
-      ["third_party", "linked"],
       [".env", "copied"],
       ["absent", "failed"],
+      ["third_party", "linked"],
     ]);
   });
 
@@ -191,9 +192,9 @@ describe("a destination two declarations may both name", () => {
     // directory, so no member can claim that destination by its own write, and
     // neither declaration is written into what a third entry owns.
     expect(steps.map((s) => [s.path, s.outcome.kind])).toEqual([
+      ["MixedCase/seed", "copied"],
       ["MixedCase", "refused"],
       ["mixedcase", "refused"],
-      ["MixedCase/seed", "copied"],
     ]);
   });
 });
