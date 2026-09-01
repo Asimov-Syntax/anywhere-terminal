@@ -436,12 +436,22 @@ function bringSummary(model: WorktreeProvisionOffer["model"]): string {
     parts.push(`${model.setup.length} setup step${model.setup.length === 1 ? "" : "s"}`);
   }
   if (model.contenders.length > 0) {
-    // The counts above are ROWS OFFERED. A contender group offers two rows that
-    // may turn out to be one destination, so leaving the counts unqualified
-    // would promise a file that never lands — and which one gives way cannot be
-    // known before the worktree exists (design D2).
-    const n = model.contenders.length;
-    parts.push(`${n} pair${n === 1 ? "" : "s"} may be one file`);
+    // The counts above are ROWS OFFERED. A contender group offers rows that may
+    // turn out to be one destination, so leaving the counts unqualified would
+    // promise a file that never lands — and which one gives way cannot be known
+    // before the worktree exists (design D2).
+    //
+    // Counted from the members, never called a "pair": a group is a connected
+    // component and three spellings of one name are one group, so the word
+    // understated a three-way collision by exactly the row it did not mention
+    // (round-1 F004).
+    const groups = model.contenders;
+    const first = groups[0];
+    parts.push(
+      groups.length === 1 && first !== undefined
+        ? `${first.members.length} spellings may be one file`
+        : `${groups.length} sets of spellings may each be one file`,
+    );
   }
   if (parts.length > 0) {
     return parts.join(" \u00b7 ");

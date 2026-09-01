@@ -3526,7 +3526,36 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     // way cannot be known before the worktree exists (D2).
     const { host } = withPair();
 
-    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked · 1 pair may be one file");
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked · 2 spellings may be one file");
+  });
+
+  it("[round-1 F004] counts the third spelling of a three-way collision", () => {
+    // "1 pair" understated this by exactly the row it did not mention. The
+    // fixture already existed; the summary was never asserted against it.
+    const { host } = withPair({
+      entries: [...PAIR, { id: "i3", path: "MIXEDCASE", mode: "copy", source: "orca.yaml" }],
+      contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied · 1 linked · 3 spellings may be one file");
+  });
+
+  it("[round-1 F004] does not call two separate collisions one set of spellings", () => {
+    const { host } = withPair({
+      entries: [
+        ...PAIR,
+        { id: "i3", path: "Other", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i4", path: "other", mode: "copy", source: "orca.yaml" },
+      ],
+      contenders: [
+        { members: ["i1", "i2"], favoured: "i1" },
+        { members: ["i3", "i4"], favoured: "i3" },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe(
+      "3 copied · 1 linked · 2 sets of spellings may each be one file",
+    );
   });
 
   it("leaves the summary alone when nothing is grouped", () => {

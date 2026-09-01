@@ -83,7 +83,7 @@
     4. RED first, and prove it on this lane: `Straße`/`STRASSE`, `ﬀ`/`ff`, a dotted non-final segment, a framework-winner model, and a base row against a native row that both minted `i1`.
   - **Boundary**: the group stays advisory — no code path may merge, drop or reorder an entry on the strength of membership
 
-- [ ] 4_2 Say how many rows a group holds, not that it holds two
+- [x] 4_2 Say how many rows a group holds, not that it holds two — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#d3-a-contender-group-offered-in-full
   - **Acceptance**:
