@@ -72,7 +72,7 @@
     6. Change `src/extension.ts`'s `readProvisioning` binding to call `readProvisioning(createProvisioningDeps(), mainWorktree)` instead of `readAsimovProvisioning`.
     7. Create `src/worktree/provisioning/readProvisioning.test.ts` covering: each source alone; all three present yields the asimov rows and two inactive providers; a comment-only `asimov/worktree.yaml` beside a populated `orca.yaml` yields an EMPTY section and orca inactive; an unreadable first source reports and stops; the active id is unchanged when the fake reverses enumeration order; `prefer` selects a later source; one budget's scan account spans two sources; an orca provider row names both files.
 
-- [ ] 3_2 Answer a switch with a fresh offer, latest choice winning
+- [x] 3_2 Answer a switch with a fresh offer, latest choice winning — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: specs/worktree-panel/spec.md#a-source-that-did-not-supply-the-offer-stays-visible-and-selectable; design.md D5
   - **Acceptance**:
@@ -81,7 +81,7 @@
   - **Plan**:
     1. Add `WorktreeProvisionSwitchMessage` to `src/types/messages.ts` with the fields design.md D5 names — `repoId`, `opening`, `switch`, `provider` — and list `worktreeProvisionSwitch` in `WORKTREE_MESSAGE_TYPES`.
     2. In `src/providers/WorktreeHost.ts`, add a guard for that payload beside `isKnownProvision`, refusing a `provider` that is not one of the ids this host put in the model it last offered for that opening.
-    3. In `src/providers/WorktreeHost.ts`, track the highest `switch` seen per `(surface, repo, opening)` and re-resolve with `prefer` set to the named provider without consulting the `provisionReading` marker, publishing the resulting offer only when the resolving request still holds the highest sequence.
+    3. In `src/providers/WorktreeHost.ts`, track the highest `switch` seen per `(surface, repo, opening)` and re-resolve with `prefer` set to the named provider without consulting the `provisionReading` marker, publishing the resulting offer only when the resolving request still holds the highest sequence. Widen the `readProvisioning` dep to take that preference, and pass it through the binding in `src/extension.ts` — a binding that dropped it would type-check and answer every switch with the same source.
     4. Extend `src/providers/WorktreeHost.actions.test.ts`: a switch posts a fresh offer with a different offer id and the other source's rows; two switches whose reads resolve in reverse order leave the later provider's offer published; a switch for an undetected provider is refused with no read; a switch after the opening is retired publishes nothing; a switch submits and creates nothing.
   - **Boundary**: no message may carry a path, a command, or a model from the webview
 

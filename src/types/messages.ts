@@ -1133,6 +1133,37 @@ export interface WorktreeCreateClosedMessage {
 }
 
 /**
+ * WebView → Extension: populate the section from a source that was detected but
+ * did not win.
+ *
+ * A NEW request with its own identity, not a re-entry of the open one. The host
+ * admits one provisioning read per `(repo, opening)` and holds that marker until
+ * the opening retires, so a switch riding the opening alone would either join a
+ * finished read and do nothing, or clear a marker that exists to stop exactly
+ * that (design.md D5).
+ *
+ * `switch` is minted by the dialog and increases per dialog. It is what makes
+ * latest-wins expressible: without it, two switches whose reads resolve in the
+ * opposite order let the earlier choice overwrite the later one, and the opening
+ * check cannot tell them apart because both carry the same opening.
+ *
+ * There is deliberately no field capable of carrying a file, a path, a command,
+ * or a model. It names a provider the HOST already detected; the host
+ * re-resolves that provider itself. Taking a switch submits nothing and creates
+ * nothing.
+ */
+export interface WorktreeProvisionSwitchMessage {
+  type: "worktreeProvisionSwitch";
+  repoId: string;
+  /** The opening the form was composed in. A retired one is not honoured. */
+  opening: number;
+  /** Monotonic per dialog. The highest seen wins, whatever order reads resolve in. */
+  switch: number;
+  /** Must be one the host itself put in the model it last offered for this form. */
+  provider: ProvisionProvider["id"];
+}
+
+/**
  * WebView → Extension: which local branches does this repository have?
  *
  * Its own message rather than a field on `requestWorktreeCreateDefaults`,
@@ -1522,6 +1553,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateRequestMessage
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeCreateClosedMessage
+  | WorktreeProvisionSwitchMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
@@ -1560,6 +1592,7 @@ export type WorktreeInboundMessage = Extract<
 export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
   "worktreeCreateClosed",
+  "worktreeProvisionSwitch",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
   "worktreeAuthorizeDebris",

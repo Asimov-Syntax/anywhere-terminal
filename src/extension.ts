@@ -838,7 +838,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
-    readProvisioning: (mainWorktree) => readProvisioning(createProvisioningDeps(), mainWorktree),
+    readProvisioning: (mainWorktree, prefer) => readProvisioning(createProvisioningDeps(), mainWorktree, prefer),
     // Same reason as the offer above: without this the create form never
     // receives a branch list and the combobox is a plain text field in the
     // shipped extension, with every module test green against its own fake.

@@ -3025,6 +3025,271 @@ describe("the provisioning offer the create form is given", () => {
   });
 });
 
+describe("[D5] a switch is a new request with its own identity", () => {
+  const OFFERED: ProvisionModel = {
+    entries: [{ id: "i1", path: ".env", mode: "copy", source: "asimov/worktree.yaml" }],
+    setup: [],
+    ports: [],
+    providers: [
+      { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+      { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: false },
+    ],
+    excluded: [],
+    problems: [],
+  };
+
+  function forProvider(prefer: string | undefined): ProvisionModel {
+    if (prefer !== "orca") {
+      return OFFERED;
+    }
+    return {
+      ...OFFERED,
+      entries: [{ id: "i1", path: "node_modules", mode: "link", source: "orca.yaml" }],
+      providers: [
+        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: true },
+        { id: "asimov", files: ["asimov/worktree.yaml"], active: false },
+      ],
+    };
+  }
+
+  function offersIn(view: { posts: unknown[] }) {
+    return (view.posts as ExtensionToWebViewMessage[]).filter((p) => p.type === "worktreeProvisionOffer");
+  }
+
+  function pathsIn(offer: unknown): string[] {
+    return (offer as { model: ProvisionModel }).model.entries.map((e) => e.path);
+  }
+
+  /** A host whose form is already open with the asimov offer published. */
+  async function opened(readProvisioning: (main: string, prefer?: string) => Promise<ProvisionModel>) {
+    const h = await builtHost(undefined, false, {
+      readProvisioning: readProvisioning as never,
+    });
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    return h;
+  }
+
+  it("publishes a fresh offer carrying the other source's rows", async () => {
+    const h = await opened(async (_main, prefer) => forProvider(prefer));
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+
+    const offers = offersIn(h.view);
+    expect(offers).toHaveLength(2);
+    expect(pathsIn(offers[0])).toEqual([".env"]);
+    expect(pathsIn(offers[1])).toEqual(["node_modules"]);
+    // A NEW id, and the old one evicted with it: a submission naming the
+    // superseded offer would name the model the user stopped looking at.
+    expect((offers[1] as { offerId: string }).offerId).not.toBe((offers[0] as { offerId: string }).offerId);
+    h.dispose();
+  });
+
+  it("creates nothing and submits nothing", async () => {
+    const h = await opened(async (_main, prefer) => forProvider(prefer));
+    const before = (h.view.posts as ExtensionToWebViewMessage[]).filter(
+      (p) => p.type === "worktreeMutationResult",
+    ).length;
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+
+    const after = (h.view.posts as ExtensionToWebViewMessage[]).filter(
+      (p) => p.type === "worktreeMutationResult",
+    ).length;
+    expect(after).toBe(before);
+    h.dispose();
+  });
+
+  it("leaves the LATER choice on screen when two reads resolve in reverse order", async () => {
+    // The schedule D5 exists for: the user picks orca, its read is slow; the
+    // user picks the task file, that read resolves first and draws; orca's read
+    // then lands. Without the sequence the earlier choice overwrites the later.
+    const gates = new Map<string, () => void>();
+    const h = await opened(async (_main, prefer) => {
+      if (prefer === undefined) {
+        return OFFERED;
+      }
+      await new Promise<void>((resolve) => gates.set(prefer, resolve));
+      return forProvider(prefer);
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 2,
+      provider: "asimov",
+    });
+    await settle();
+    // The LATER request answers first, then the earlier one lands.
+    gates.get("asimov")?.();
+    await settle();
+    gates.get("orca")?.();
+    await settle();
+
+    const offers = offersIn(h.view);
+    expect(offers).toHaveLength(2);
+    expect(pathsIn(offers[1])).toEqual([".env"]);
+    h.dispose();
+  });
+
+  it("refuses a provider the host did not put in the model it offered", async () => {
+    let asked = 0;
+    const h = await opened(async (_main, prefer) => {
+      asked += 1;
+      return forProvider(prefer);
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "vscodeTasks",
+    });
+    await settle();
+
+    // Refused before any read: the webview names a source the host detected, it
+    // never supplies one.
+    expect(asked).toBe(1);
+    expect(offersIn(h.view)).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("refuses a payload carrying anything but its four scalars", async () => {
+    let asked = 0;
+    const h = await opened(async (_main, prefer) => {
+      asked += 1;
+      return forProvider(prefer);
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+      // Not a field of the message. An extra key admitted here is a webview
+      // supplying material the host is supposed to be the authority on.
+      model: { entries: [{ id: "x", path: "/etc/passwd", mode: "copy", source: "x" }] },
+    } as never);
+    await settle();
+
+    expect(asked).toBe(1);
+    expect(offersIn(h.view)).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("publishes nothing for a switch that arrives after the form closed", async () => {
+    let released: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    const h = await opened(async (_main, prefer) => {
+      if (prefer === undefined) {
+        return OFFERED;
+      }
+      await held;
+      return forProvider(prefer);
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+    released?.();
+    await settle();
+
+    // The read was already running; retirement is what stops its answer from
+    // reaching a form the user dismissed.
+    expect(offersIn(h.view)).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("refuses a switch naming an opening this surface is not serving", async () => {
+    let asked = 0;
+    const h = await opened(async (_main, prefer) => {
+      asked += 1;
+      return forProvider(prefer);
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 2,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+
+    expect(asked).toBe(1);
+    expect(offersIn(h.view)).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("does not carry one dialog's ceiling into the next", async () => {
+    // The sequence is per opening. Keyed by surface and repo alone, a dialog
+    // that reached switch 5 would leave the next dialog's first switch refused.
+    const h = await opened(async (_main, prefer) => forProvider(prefer));
+    for (const n of [1, 2, 3]) {
+      h.host.handleMessage(h.view, {
+        type: "worktreeProvisionSwitch",
+        repoId: REPO,
+        opening: 1,
+        switch: n,
+        provider: n % 2 === 1 ? "orca" : "asimov",
+      });
+      await settle();
+    }
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    await settle();
+    const before = offersIn(h.view).length;
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 2,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+
+    expect(offersIn(h.view)).toHaveLength(before + 1);
+    expect(pathsIn(offersIn(h.view).at(-1))).toEqual(["node_modules"]);
+    h.dispose();
+  });
+});
+
 // Cycle-2 B5 at the host boundary. `evaluateRemoval` owns the corroboration,
 // but only if the host actually carries the claim into it — and a stub that
 // always answered with an empty map would type-check, pass every module test,

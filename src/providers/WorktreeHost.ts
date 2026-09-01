@@ -15,6 +15,7 @@ import type {
   ProbeBase,
   ProvisionEntry,
   ProvisionModel,
+  ProvisionProvider,
   ProvisionSelection,
   ResolvedDisposition,
   ResolvedMode,
@@ -25,6 +26,7 @@ import type {
   WorktreeCreateMode,
   WorktreeMutationResultMessage,
   WorktreeProvisionResultMessage,
+  WorktreeProvisionSwitchMessage,
   WorktreeRemoveAssessmentMessage,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
@@ -239,7 +241,7 @@ export interface WorktreeHostOptions {
    * Takes the repo's main worktree path, because a provider file belongs to the
    * checkout that declares it, not to the worktree being made from it.
    */
-  readProvisioning?(mainWorktree: string): Promise<ProvisionModel>;
+  readProvisioning?(mainWorktree: string, prefer?: ProvisionProvider["id"]): Promise<ProvisionModel>;
   /**
    * Enumerate a repository's local branches. Absent — every surface but the
    * real extension entry point — and the create form gets no list, exactly as
@@ -674,12 +676,32 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * being served. Both are per surface, and both go when the surface does.
    */
   const openingHighWater = new Map<string, number>();
+  /**
+   * The highest switch sequence each form has seen.
+   *
+   * Keyed by surface, repository AND opening, so a new opening starts from
+   * nothing rather than inheriting a predecessor's ceiling and refusing the new
+   * dialog's first switch. Latest-wins is decided here and nowhere else: the
+   * opening cannot decide it, because every switch of one dialog carries the
+   * same opening (design.md D5).
+   *
+   * Retirement also sweeps this map, so the opening in the key is redundant with
+   * that sweep and mutating either alone is NOT caught by the suite — the same
+   * overlap `provisionReading` carries above, and stated for the same reason:
+   * the sweep bounds the map, and the key states the invariant.
+   */
+  const provisionSwitch = new Map<string, number>();
   const retireOpening = (key: string): void => {
     liveOpening.delete(key);
     const reading = `${key} `;
     for (const slot of [...provisionReading.keys()]) {
       if (slot.startsWith(reading)) {
         provisionReading.delete(slot);
+      }
+    }
+    for (const slot of [...provisionSwitch.keys()]) {
+      if (slot.startsWith(reading)) {
+        provisionSwitch.delete(slot);
       }
     }
     offers.forgetSurface(key);
@@ -1407,6 +1429,34 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     );
   }
 
+  /**
+   * A switch is four scalars and nothing else.
+   *
+   * The Boundary this enforces: no field of it can carry a file, a path, a
+   * command, or a model. `onlyKeys` is what makes that a property of the
+   * MESSAGE rather than of the fields this function happens to read — an extra
+   * key smuggled alongside would otherwise reach whatever read the payload next.
+   */
+  function isKnownSwitch(msg: unknown): msg is WorktreeProvisionSwitchMessage {
+    if (
+      typeof msg !== "object" ||
+      msg === null ||
+      !onlyKeys(msg, ["type", "repoId", "opening", "switch", "provider"])
+    ) {
+      return false;
+    }
+    const m = msg as { repoId?: unknown; opening?: unknown; switch?: unknown; provider?: unknown };
+    return (
+      typeof m.repoId === "string" &&
+      m.repoId.length > 0 &&
+      namedOpening(m.opening) &&
+      typeof m.switch === "number" &&
+      Number.isInteger(m.switch) &&
+      m.switch > 0 &&
+      typeof m.provider === "string"
+    );
+  }
+
   function isKnownDisposition(disposition: unknown): disposition is DestinationDisposition {
     if (typeof disposition !== "object" || disposition === null) {
       return false;
@@ -2094,6 +2144,83 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           return;
         }
         void answerDebrisAuthorization(surface, msg);
+        return;
+      }
+      case "worktreeProvisionSwitch": {
+        // A NEW request with its own identity. It deliberately does NOT consult
+        // `provisionReading`: that marker admits one read per (repo, opening)
+        // and is held until the opening retires, so riding it would either join
+        // a finished read and do nothing, or clear a marker that exists to stop
+        // exactly that (design.md D5).
+        if (!isKnownSwitch(msg)) {
+          return;
+        }
+        const key = surfaceKey(surface);
+        // A retired or never-seen opening has no authority to spend. Nothing is
+        // read and nothing is published for a form the user has closed.
+        if (liveOpening.get(key) !== msg.opening) {
+          return;
+        }
+        const offerKey = { surface: key, repoId: msg.repoId };
+        // The webview names a provider; it never supplies one. The only ids
+        // honoured are the ones THIS host put in the model it last offered for
+        // this form, so a switch cannot reach a source the host did not detect.
+        const shown = offers.current(offerKey)?.model;
+        if (shown === undefined || !shown.providers.some((p) => p.id === msg.provider)) {
+          return;
+        }
+        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        if (repo === undefined || options.readProvisioning === undefined) {
+          return;
+        }
+        const slot = `${key} ${msg.repoId} ${msg.opening}`;
+        // Synchronously, before the read starts. A later switch raises the
+        // ceiling immediately, so an earlier read already in flight can never
+        // find itself still highest when it lands.
+        if (msg.switch <= (provisionSwitch.get(slot) ?? 0)) {
+          return;
+        }
+        provisionSwitch.set(slot, msg.switch);
+        const mine = msg.switch;
+        void options
+          .readProvisioning(repo.mainPath, msg.provider)
+          .then((model) => {
+            if (disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // Latest-wins. Two switches whose reads resolve in the opposite
+            // order would otherwise leave the EARLIER choice on screen, and the
+            // opening check cannot tell them apart — both carry this opening.
+            //
+            // The opening is re-checked too, and that half is belt-and-braces:
+            // retiring an opening sweeps the sequence map, so the first
+            // condition already refuses a read whose form has closed. It is
+            // written out because "publish only for the opening still being
+            // served" is the invariant, and a future change to the sweep must
+            // not silently remove it.
+            if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
+              return;
+            }
+            // A fresh id, and the old one evicted with it: a submission naming
+            // the superseded offer would name the model the user is no longer
+            // looking at.
+            const offer = offers.issue(offerKey, model);
+            surface.post({
+              type: "worktreeProvisionOffer",
+              repoId: msg.repoId,
+              opening: msg.opening,
+              offerId: offer.offerId,
+              model: offer.model,
+            });
+          })
+          // The section is not the create. A source that will not resolve leaves
+          // the form exactly as it was, and releases the sequence so the user
+          // can try another one.
+          .catch(() => {
+            if (provisionSwitch.get(slot) === mine) {
+              provisionSwitch.delete(slot);
+            }
+          });
         return;
       }
       case "worktreeCreateClosed": {
@@ -3217,6 +3344,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreePrune":
       case "requestWorktreeCreateDefaults":
       case "worktreeCreateClosed":
+      case "worktreeProvisionSwitch":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
       case "worktreeAuthorizeDebris":
