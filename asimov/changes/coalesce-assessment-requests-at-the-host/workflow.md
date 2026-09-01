@@ -34,7 +34,9 @@ child of `render-the-removal-assessment-as-a-report` (docs/PLAN.md WT-013.4), wh
 complete-but-unapproved and DEPENDS on this one: its round-6 B5 and W6 are this change's whole
 subject. docs/PLAN.md was deliberately not edited — minting a task there needs the user.
 Lane: full (standard) — MEDIUM risk | flags: security-privacy (the assessment is the read that mints
-force authority for an irrevocable deletion), new-api-contract (`WorktreeSurface` gains `postCritical`)
+force authority for an irrevocable deletion). `new-api-contract` was recorded at scaffold time for a
+`postCritical` member on `WorktreeSurface`; the plan attack cut that decision, no wire message or
+shared interface changed, and the flag is withdrawn rather than left standing over nothing.
 Planned at: a72bc499
 - Owner test run at Stage 1 and it lands on `own change`, both signals of the remediation boundary:
   the remedy needs a semantically changed `D#` (the parent's accepted D10 claim "a burst cannot back
