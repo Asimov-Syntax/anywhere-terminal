@@ -107,7 +107,11 @@ export function errnoOf(error: unknown): string {
 }
 
 /**
- * Ids are minted per offer as a counter.
+ * A counter, one per read.
+ *
+ * Callers take theirs from `ProviderBudget.nextId` rather than calling this,
+ * so every row of one read is numbered from one sequence (design.md D7). This
+ * stays exported for the budget to build and for tests that want a bare one.
  *
  * Deliberately not derived from the path: an id that encoded one would be a
  * path the webview could read back out and reason about, and an id from a
@@ -140,10 +144,21 @@ export interface ProviderBudget {
   scanned: number;
   /** The cap's reason has been recorded against this budget; do not record it again. */
   capped: boolean;
+  /**
+   * One id sequence for the whole read (design.md D7).
+   *
+   * It lives here because this object already has exactly the scope wanted: D9
+   * gives one budget to every adapter consulted in one read, and `assemble`
+   * hands the same one to the base adapter it builds on. An adapter that mints
+   * from its own `ids()` restarts at `i1`, so a base row and a native row that
+   * both survive the merge can carry the same id — which round-1 F003 showed
+   * collapses a contender group down a map keyed on it, silently and totally.
+   */
+  nextId: () => string;
 }
 
 export function newBudget(): ProviderBudget {
-  return { rows: 0, scanned: 0, capped: false };
+  return { rows: 0, scanned: 0, capped: false, nextId: ids() };
 }
 
 export type Draft = {
@@ -750,6 +765,36 @@ export interface ProviderAdapter {
  * `path.sep` is the plainest true statement about it, and `path` here is the
  * platform-bound module.
  */
+/**
+ * The trailing dots, trailing spaces and `::$DATA` suffix Win32 treats as the
+ * same name, removed to a fixed point. Expects an already-lower-cased segment.
+ *
+ * To a fixed point because the two compose in either order and one pass cannot
+ * follow them: `pnpm-lock.yaml::$DATA.` needs the dot stripped before the
+ * stream suffix is even visible, and `pnpm-lock.yaml. ::$DATA` needs the
+ * reverse.
+ *
+ * One owner for two callers with different reasons to ask. `entryGate.ts` asks
+ * about the destination it is deciding whether to refuse, and asks only where
+ * the platform actually applies these rules. The contender detector asks about
+ * a declared spelling, on every platform, because it is looking for a pair some
+ * supported filesystem would fold and it is allowed to be generous
+ * (design.md D4, D8). Two implementations of one rule drift, and `oneOwner.test.ts`
+ * exists because that drift has already happened here twice.
+ */
+export function foldWin32Name(lowerName: string): string {
+  const STREAM = "::$data";
+  let folded = lowerName;
+  for (;;) {
+    const trimmed = folded.replace(/[. ]+$/, "");
+    const unstreamed = trimmed.endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
+    if (unstreamed === folded) {
+      return folded;
+    }
+    folded = unstreamed;
+  }
+}
+
 export function platformUsesWin32FilenameRules(): boolean {
   return path.sep === "\\";
 }

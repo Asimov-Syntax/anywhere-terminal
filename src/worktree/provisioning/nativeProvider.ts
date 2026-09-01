@@ -16,7 +16,6 @@ import {
   type AdapterRead,
   type Authorized,
   type Draft,
-  ids,
   modelFromDraft,
   newDraft,
   openProviderFile,
@@ -142,7 +141,7 @@ export const nativeAdapter: ProviderAdapter = {
     const record = parsed as Record<string, unknown>;
     const base = extendsOf(record, draft);
     const dropped = excludeOf(record, draft);
-    await readInlineKeys(record, KNOWN_KEYS, repoRoot, opened.root, deps, ids(), draft);
+    await readInlineKeys(record, KNOWN_KEYS, repoRoot, opened.root, deps, draft.budget.nextId, draft);
 
     return { model: modelFromDraft(draft), extends: base, exclude: dropped };
   },

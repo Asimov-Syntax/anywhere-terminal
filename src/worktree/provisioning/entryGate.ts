@@ -26,7 +26,7 @@ import {
   prepareResolvedRoot,
   type ResolvedPathInsideDeps,
 } from "../../utils/resolvedPathBoundary";
-import { platformUsesWin32FilenameRules } from "./providerKit";
+import { foldWin32Name, platformUsesWin32FilenameRules } from "./providerKit";
 
 /** A root an entry's repo-relative spelling joins onto, resolved once for the pass. */
 export interface GateRoot {
@@ -160,19 +160,10 @@ const LOCKFILE_REASON = "a lockfile is never brought over — this branch's own 
  */
 function filesystemIdentity(base: string, win32: boolean): string {
   const name = base.toLowerCase();
-  if (!win32) {
-    return name;
-  }
-  const STREAM = "::$data";
-  let folded = name;
-  for (;;) {
-    const trimmed = folded.replace(/[. ]+$/, "");
-    const unstreamed = trimmed.endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
-    if (unstreamed === folded) {
-      return folded;
-    }
-    folded = unstreamed;
-  }
+  // The strip itself lives in `providerKit.ts`: the contender detector needs
+  // the same rule for a different reason, and this module used to be the only
+  // place it existed (design.md D8).
+  return win32 ? foldWin32Name(name) : name;
 }
 
 /**

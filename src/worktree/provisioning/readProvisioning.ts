@@ -19,6 +19,7 @@ import {
   type Authorized,
   type Draft,
   emptyModel,
+  foldWin32Name,
   newBudget,
   newDraft,
   openProviderFile,
@@ -283,30 +284,43 @@ function applyExclude(
  *  - macOS stores NFD and compares canonically, so `é` composed and `é` decomposed
  *    are one name.
  */
+/**
+ * A key two spellings share when some supported filesystem would fold them.
+ *
+ * Deliberately generous and deliberately not a proof (design.md D4). Three
+ * things it has to do that the first attempt did not (round-1 F001):
+ *
+ * - Fold PER SEGMENT. Win32 strips trailing dots and spaces from every
+ *   component, not from the end of the path, so `parent./child` and
+ *   `parent/child` are one destination.
+ * - Use `NFKC`, not `NFC`. Compatibility composition is what brings the
+ *   ligature `ﬀ` together with `ff`, which are one file on APFS.
+ * - Expand the multi-character folds. `toLowerCase` is simple case MAPPING:
+ *   `Straße` lowercases to `straße` and `STRASSE` to `strasse`, and they stay
+ *   apart. Case FOLDING maps `ß` onto `ss`, which is the pair APFS folds.
+ *
+ * Everything here over-groups somewhere — `NFKC` alone maps `Ⅻ` onto `xii` —
+ * and that is the direction D4 permits. The direction it forbids is the one
+ * this closes.
+ */
+const MULTI_CHARACTER_FOLDS: readonly (readonly [RegExp, string])[] = [
+  [/\u00df/g, "ss"],
+  [/\u017f/g, "s"],
+];
+
 function foldable(declared: string): string {
-  let folded = identityOf(declared);
-  const STREAM = "::$data";
-  for (;;) {
-    const trimmed = folded.replace(/[. ]+$/, "");
-    const unstreamed = trimmed.toLowerCase().endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
-    if (unstreamed === folded) {
-      break;
-    }
-    folded = unstreamed;
-  }
-  return folded.normalize("NFC").toLowerCase();
+  return identityOf(declared)
+    .split("/")
+    .map((segment) => {
+      let folded = foldWin32Name(segment.normalize("NFKC").toLowerCase());
+      for (const [pattern, replacement] of MULTI_CHARACTER_FOLDS) {
+        folded = folded.replace(pattern, replacement);
+      }
+      return folded;
+    })
+    .join("/");
 }
 
-/**
- * Entries whose spellings differ but which a filesystem might fold together.
- *
- * Grouped by one canonical key, so the relation is an equivalence and three
- * spellings of one name are ONE group rather than three pairs. A group is
- * favoured only when exactly one member is the repository's own: two native
- * members have no rule to pick between them, and none means there is nothing
- * for the merge rule to prefer. Both cases leave `favoured` absent rather than
- * fabricating a winner (design.md D3).
- */
 function contendersOf(entries: readonly ProvisionEntry[]): ProvisionContenders[] {
   const byKey = new Map<string, ProvisionEntry[]>();
   for (const entry of entries) {
@@ -440,7 +454,12 @@ export async function readProvisioning(
   // field: a framework format that learned an `extends` would otherwise start
   // merging here silently.
   if (chosen.adapter !== nativeAdapter) {
-    return { ...chosen.answer.model, providers };
+    // Grouped here too. A framework winner and a switched provider return their
+    // adapter's model straight out, and every adapter answers `contenders: []`,
+    // so the section that needed the relation most — one file declaring two
+    // foldable spellings — was the one branch that never computed it
+    // (round-1 F002).
+    return { ...chosen.answer.model, providers, contenders: contendersOf(chosen.answer.model.entries) };
   }
 
   const { model, base } = await assemble(deps, repoRoot, budget, chosen.answer);

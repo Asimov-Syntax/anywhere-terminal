@@ -872,6 +872,63 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.contenders[0]?.members.length).toBe(3);
   });
 
+  it.each([
+    ["Stra\u00dfe", "STRASSE", "a multi-character fold lowercasing cannot reach"],
+    ["\ufb00", "ff", "a ligature only compatibility composition brings together"],
+    ["parent./child", "parent/child", "a Win32 dot on a NON-FINAL segment"],
+  ])("[round-1 F001] groups %s with %s — %s", async (native, inherited) => {
+    // Each of these is one file on a common filesystem and each was MISSED:
+    // `toLowerCase` is simple case mapping, `NFC` leaves ligatures alone, and
+    // the Win32 strip only ever saw the end of the whole path. A false negative
+    // is the one direction D4 forbids, so these are the assertions that matter.
+    const model = await readProvisioning(
+      fs({
+        native: JSON.stringify({ extends: "orca.yaml", copy: [native] }),
+        orcaYaml: `worktree:\n  sharedDirectories: [${JSON.stringify(inherited)}]\n`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.members.length).toBe(2);
+  });
+
+  it("[round-1 F003] gives a base row and a native row different ids, so a group keeps both", async () => {
+    // Every adapter used to call `ids()` for itself and each sequence restarts
+    // at `i1`, so these two rows were both `i1`. A group then named the same id
+    // twice and any map keyed on it collapsed the pair into one member — below
+    // the two-member contract, with the first row left outside its own group.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+    const ids = model.entries.map((e) => e.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(model.contenders[0]?.members).size).toBe(2);
+  });
+
+  it("[round-1 F002] groups a framework winner's own declarations, with no native file at all", async () => {
+    // The branch that needed the relation most was the one branch that never
+    // computed it: a non-native winner returns its adapter's model straight
+    // out, and every adapter answers `contenders: []`.
+    const model = await readProvisioning(
+      fs({ orcaYaml: "worktree:\n  sharedDirectories: [mixedcase, MixedCase]\n" }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.members.length).toBe(2);
+    // No native declaration exists, so nothing is favoured rather than one of
+    // the two inherited rows being promoted.
+    expect(model.contenders[0]?.favoured).toBeUndefined();
+  });
+
   it("groups nothing when the spellings are unrelated", async () => {
     const model = await readProvisioning(
       fs({

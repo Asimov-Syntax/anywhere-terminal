@@ -308,8 +308,14 @@ describe("one read, two accounts", () => {
     expect(caps).toHaveLength(1);
   });
 
-  it("a fresh budget starts empty", () => {
-    expect(newBudget()).toEqual({ rows: 0, scanned: 0, capped: false });
+  it("a fresh budget starts empty, and carries the read's one id sequence", () => {
+    const budget = newBudget();
+
+    expect(budget).toMatchObject({ rows: 0, scanned: 0, capped: false });
+    // The sequence is the budget's, not each adapter's: two adapters taking
+    // ids from one budget cannot both mint `i1` (design.md D7).
+    expect([budget.nextId(), budget.nextId()]).toEqual(["i1", "i2"]);
+    expect(newBudget().nextId()).toBe("i1");
   });
 });
 

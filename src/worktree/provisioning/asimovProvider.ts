@@ -19,7 +19,6 @@ import {
   type Authorized,
   type Draft,
   emptyModel,
-  ids,
   modelFromDraft,
   newBudget,
   newDraft,
@@ -141,7 +140,7 @@ async function fromOpened(
     return { ...modelFromDraft(draft), providers: PROVIDERS };
   }
 
-  const nextId = ids();
+  const nextId = draft.budget.nextId;
   await readInlineKeys(parsed as Record<string, unknown>, KNOWN_KEYS, repoRoot, root, deps, nextId, draft);
 
   // `providers` is the one field this reader owns: `readAsimovProvisioning` is

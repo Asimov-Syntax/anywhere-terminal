@@ -16,7 +16,6 @@ import {
   type Authorized,
   addSetup,
   type Draft,
-  ids,
   modelFromDraft,
   newDraft,
   openProviderFile,
@@ -130,8 +129,8 @@ export const vscodeTasksAdapter: ProviderAdapter = {
       // The other two adapters already answer `null` here.
       return null;
     }
-    const nextId = ids();
     const draft = newDraft(TASKS, budget);
+    const nextId = draft.budget.nextId;
 
     if (opened.kind === "problem") {
       // Present and refused — reported, never read as "this repository declared

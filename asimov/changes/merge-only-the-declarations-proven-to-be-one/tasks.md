@@ -70,7 +70,7 @@
 
 ## 4. Round-1 blockers
 
-- [ ] 4_1 Mint identity once per read, fold per segment, and group on every branch
+- [x] 4_1 Mint identity once per read, fold per segment, and group on every branch — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md#d7-a-row-s-identity-is-minted-once-per-read-not-once-per-adapter, design.md#d8-folding-is-generous-per-segment-and-lowercase-is-not-folding, design.md#d4-detecting-a-contender-is-allowed-to-be-wrong-in-one-direction
   - **Acceptance**:
@@ -78,8 +78,8 @@
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
     1. Thread the id sequence through the read on the object that already carries the budget, in `src/worktree/provisioning/providerKit.ts`. Every adapter takes its ids from there instead of calling `ids()` for itself: `src/worktree/provisioning/asimovProvider.ts`, `src/worktree/provisioning/orcaProvider.ts`, `src/worktree/provisioning/vscodeTasksProvider.ts`, `src/worktree/provisioning/nativeProvider.ts`.
-    2. Build the fold key per path segment rather than over the whole path, and fold with `NFKC` plus lowercasing plus the multi-character expansions lowercasing cannot reach. `entryGate.ts` computes the Win32 segment rule already — take the shared primitive from one owner rather than growing a second, since `oneOwner.test.ts` is there to catch exactly that.
-    3. Compute the groups on every branch that returns a model, not only through `assemble` — a framework winner and a switched provider return their adapter's model directly and today carry an empty list.
+    2. In `src/worktree/provisioning/readProvisioning.ts`, build the fold key per path segment rather than over the whole path, and fold with `NFKC` plus lowercasing plus the multi-character expansions lowercasing cannot reach. `src/worktree/provisioning/entryGate.ts` computes the Win32 segment rule already — take the shared primitive from one owner rather than growing a second, since `src/worktree/provisioning/oneOwner.test.ts` is there to catch exactly that.
+    3. Still in `src/worktree/provisioning/readProvisioning.ts`, compute the groups on every branch that returns a model, not only through `assemble` — a framework winner and a switched provider return their adapter's model directly and today carry an empty list.
     4. RED first, and prove it on this lane: `Straße`/`STRASSE`, `ﬀ`/`ff`, a dotted non-final segment, a framework-winner model, and a base row against a native row that both minted `i1`.
   - **Boundary**: the group stays advisory — no code path may merge, drop or reorder an entry on the strength of membership
 

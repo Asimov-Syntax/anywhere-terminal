@@ -19,7 +19,6 @@ import {
   addSetup,
   type Draft,
   entriesFor,
-  ids,
   modelFromDraft,
   newDraft,
   openProviderFile,
@@ -149,8 +148,8 @@ export const orcaAdapter: ProviderAdapter = {
       return null;
     }
     const root = opened.root;
-    const nextId = ids();
     const draft = newDraft(YAML, budget);
+    const nextId = draft.budget.nextId;
     let present = false;
 
     if (opened.kind === "problem") {
