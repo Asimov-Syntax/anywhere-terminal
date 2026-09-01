@@ -65,3 +65,13 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
   - **Plan**:
     1. `src/worktree/provisioning/applyProvisioning.test.ts` replaces the 6x threshold with a count of each member's declaring token across the whole report.
+
+- [x] 2_4 Let the render guard see the contest — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_3
+  - **Refs**: src/webview/worktree/WorktreeView.ts
+  - **Acceptance**:
+    - Outcome: A result whose steps keep their kinds but whose contest or reason changed still renders
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeView.ts` includes each step's contest and reason in the signature the render guard compares.
+    2. `src/webview/worktree/WorktreeView.test.ts` witnesses a second result with identical kinds and changed membership.

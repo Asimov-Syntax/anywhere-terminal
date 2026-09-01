@@ -2528,6 +2528,34 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     }
   });
 
+  it("re-renders when only the contest membership changed", () => {
+    // The signature the render guard compares hashed step id and outcome kind
+    // alone, so a corrected membership under identical kinds was skipped and
+    // the stale refusal stayed on screen.
+    const { view } = mount();
+    const resultWith = (source: string) => ({
+      action: "create" as const,
+      worktreeId: "/wt/feature",
+      outcome: "ok" as const,
+      provisioned: [
+        { id: "i1", path: "MixedCase", outcome: { kind: "copied" as const }, contest: 0 },
+        { id: "i2", path: "mixedcase", outcome: { kind: "refused" as const, reason: "it lost" }, contest: 0 },
+      ],
+      provisionContests: [
+        {
+          members: [
+            { id: "i1", path: "MixedCase", source: ".vscode/worktree.json" },
+            { id: "i2", path: "mixedcase", source },
+          ],
+        },
+      ],
+    });
+    view.setData({ ...populated(), actionResults: [resultWith("asimov/worktree.yaml")] });
+    view.setData({ ...populated(), actionResults: [resultWith("tools/worktree.yaml")] });
+
+    expect(view.element.querySelector(".wt-reason")?.textContent ?? "").toContain("tools/worktree.yaml");
+  });
+
   it("says so when a row cites a contest the report did not carry", () => {
     // Falling back to the bare reason removes every declaring file exactly
     // where the obligation to name them lives (.reviews/round-1.md F002).
