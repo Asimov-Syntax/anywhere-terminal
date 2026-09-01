@@ -6,7 +6,7 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
+- [-] Gate 1: direction approved — no fork; the defect and its two constraints were settled from the PLAN row and the code
 - [x] `asm change validate` passes
 - [x] Gate 2: plan approved
 
@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.11`)_
+- [x] Review done — cycle 1: round 1 BLOCK (both findings accepted and fixed), round 2 APPROVE with 0 blockers
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete — worktree-subsystem-debts.md § 2.3 records the one-deadline rule and the monotonic-clock debt; WT-011.11 set to done
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 

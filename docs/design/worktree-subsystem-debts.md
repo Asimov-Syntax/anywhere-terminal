@@ -215,6 +215,28 @@ backs off, rather than being recorded as a resolution or as an error the user se
 that is slow today is usually readable tomorrow, and a row that blanks on a slow disk would be a
 worse lie than a row that keeps its last known line.
 
+**The deadline is one deadline, not two clocks (WT-011.11).** `afterDelay` handed out an `elapsed`
+promise driven by `setTimeout` and an `expired` flag derived from `Date.now()`, and those do not
+agree: Node's timer may fire a millisecond early against the wall clock, so awaiting the wait a
+deadline handed out and then reading it answered "not yet" — about one run in twenty-five. `expired`
+is now the latched disjunction of a flag set inside the timer callback, in the same job that resolves
+`elapsed`, and the original wall-clock comparison. Latching is load-bearing on its own: `Date.now()`
+can step backwards under NTP correction or a resumed VM snapshot, and a caller polling a budget must
+never be told it came back.
+
+Both clocks derive from ONE normalized delay, and the top of that normalization mirrors Node's own
+clamp rather than saturating at its maximum. Saturating was tried first and was worse than the defect
+it replaced: `ignoredMaterial` computes `left` from `Date.now() - startedAt`, so a backwards clock
+step alone yields a number past the timer's range, and clamping it to `2**31-1` held removal
+assessment open for 24.8 days where Node's 1 ms had failed it soft. A delay this timer cannot express
+now expires at once — it never waits longer than it was asked to.
+
+**Still owed, and deliberately not fixed there.** The primitive can stop an inflated budget becoming
+a long wait; it cannot stop the budget being the wrong number. A modest backwards step still makes
+`left` representable but inflated — a ten-second step gives `left = 11_500` against a 1_500 ms bound
+— because these budgets are measured on the wall clock. The coherent fix is a monotonic elapsed
+clock at the callers, which is its own change and has no PLAN task yet.
+
 ### 2.4 A row can draw the same sentence twice — SHIPPED (WT-011.4)
 
 A row's tooltip joins its title, its preview, and its confidence caveat. For a session whose only

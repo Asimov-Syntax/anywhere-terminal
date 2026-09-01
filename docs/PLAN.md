@@ -486,7 +486,7 @@ nothing to provision.
 | **Labels** | None |
 | **Notes** | Found while confirming a verify-gate failure was not mine, and it is a real defect rather than a flaky test. The deadline is built from two clocks that do not agree: the expiry instant is computed from `Date.now()` while the wait is a `setTimeout` of the same duration, and Node's timer may fire up to a millisecond early against `Date.now()`. Reproduced 1 run in 25 at commit 414b0aef on an otherwise quiet machine, so it is not CPU contention — the contention flakes are a separate and unrelated population in `extension.worktreeAssembly`, `snapshotPool` and `VaultPanel`. The margin only has to be one millisecond, so the shortest deadlines are the ones that hit it, which is why the existing test uses `1` and why raising that number would hide the defect rather than fix it |
 | **Acceptance** | Awaiting a deadline's completion and then reading whether it expired answers yes, for every duration including the shortest one; the guarantee holds without depending on how promptly the host's timer fires; the existing test keeps its one-millisecond deadline rather than being relaxed to pass |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-011.12] The Shipped Bundle Resolves Every Module It Requires
 
