@@ -20,7 +20,7 @@
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
+- [x] Apply deltas: `bun run asm change apply`
 - [ ] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.

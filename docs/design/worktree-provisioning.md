@@ -192,8 +192,8 @@ defined just below — as the step's `script`.
 UNLESS the entry declares `"type": "shell"`. A `type: "process"` task runs with no shell, so
 `./bin/build; touch /tmp/x` is a legal executable name there — rendering it verbatim into text a
 later task hands to `sh -c` would turn one reviewed task into two commands. The quoting itself is
-`src/utils/posixShellQuote.ts`, the repository's one implementation of the rule; this document
-previously deferred to a "§ 2.4" that does not exist.
+`src/utils/posixShellQuote.ts`, the repository's one implementation of the rule. An earlier
+draft deferred this to a subsection of § 2 that was never written.
 
 **Task identity is not preserved, and cannot be.** The design carried a `task` variant for exactly
 that purpose until it was measured: a `vscode.Task` scoped to a directory that is not an open
