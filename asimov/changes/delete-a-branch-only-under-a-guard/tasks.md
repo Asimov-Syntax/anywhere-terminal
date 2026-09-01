@@ -1,6 +1,6 @@
 ## 1. The proof carries what it proved against
 
-- [ ] 1_1 Record the two commits the merge proof was taken from
+- [x] 1_1 Record the two commits the merge proof was taken from — verified: pnpm exec vitest run 'src/worktree/orphanProofs.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D1, D4; specs/worktree-panel/spec.md#the-branch-is-deleted-only-if-nothing-it-was-proven-against-has-moved
   - **Acceptance**:
