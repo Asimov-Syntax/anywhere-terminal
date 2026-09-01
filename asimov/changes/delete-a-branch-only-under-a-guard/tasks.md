@@ -12,7 +12,7 @@
     3. Answer `unproven` rather than `passed` when either `rev-parse` fails or returns no OID, so evidence is never partially present.
     4. Leave the `notApplicable`, `failed` and `unproven` arms answering exactly as they do now, carrying no evidence.
 
-- [ ] 1_2 Carry the evidence and the opt-in across the wire
+- [x] 1_2 Carry the evidence and the opt-in across the wire — verified: pnpm exec vitest run 'src/types/messages.contract.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D1
   - **Acceptance**:

@@ -21,6 +21,8 @@ import type {
   WorktreeAfterCreate,
   WorktreeCreateMode,
   WorktreeProvisionResultMessage,
+  WorktreeRemoveAssessmentPayload,
+  WorktreeRemoveRequestMessage,
 } from "./messages";
 
 type Mode<K extends WorktreeCreateMode["kind"]> = Extract<WorktreeCreateMode, { kind: K }>;
@@ -136,6 +138,20 @@ const branchDelete: BranchDeleteRequest = {
   expectedDefaultOid: "def456",
   fingerprint: "fp-1",
 };
+const removeWithoutBranch: WorktreeRemoveRequestMessage = {
+  type: "worktreeRemove",
+  worktreeId: "/wt/x",
+  fingerprint: "fp-1",
+};
+const removeWithBranch: WorktreeRemoveRequestMessage = {
+  ...removeWithoutBranch,
+  deleteBranch: branchDelete,
+};
+const assessmentWithBranch: WorktreeRemoveAssessmentPayload = {
+  checks: [],
+  contained: [],
+  branchDelete: branchOffer,
+};
 
 const free: DestinationDisposition = { kind: "free" };
 const debris: DestinationDisposition = {
@@ -213,6 +229,9 @@ describe("the wire contract", () => {
     ]);
     expect([free, debris].map((d) => d.kind)).toEqual(["free", "debris"]);
     expect(branchDelete.expectedBranchOid).toBe(branchOffer.branchOid);
+    expect(removeWithoutBranch.deleteBranch).toBeUndefined();
+    expect(removeWithBranch.deleteBranch).toBe(branchDelete);
+    expect(assessmentWithBranch.branchDelete).toBe(branchOffer);
     expect(selection.itemIds).toHaveLength(2);
     expect([reuseWithBase, reattachWithBase, adoptWithBase, detachedWithBranch, detachedNoBase]).toHaveLength(5);
     expect([noneWithAgent, terminalWithWait, selectionWithCommand, selectionWithPath]).toHaveLength(4);

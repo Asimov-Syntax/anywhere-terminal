@@ -1297,6 +1297,8 @@ export interface WorktreeRemoveRequestMessage {
   type: "worktreeRemove";
   worktreeId: string;
   fingerprint?: string;
+  /** Absent by default: removal alone never implies deleting its branch. */
+  deleteBranch?: BranchDeleteRequest;
 }
 
 /**
@@ -2384,6 +2386,8 @@ export interface WorktreeRemoveAssessmentPayload {
   readonly checks: readonly RemovalCheck[];
   /** Named, not just counted — the refusal tells the user what to remove first. */
   readonly contained: readonly { worktreeId: string; displayPath: string }[];
+  /** Present only when the merge proof passed; presence gates the opt-in. */
+  readonly branchDelete?: BranchDeleteOffer;
 }
 
 export interface WorktreeMutationResultMessage {
