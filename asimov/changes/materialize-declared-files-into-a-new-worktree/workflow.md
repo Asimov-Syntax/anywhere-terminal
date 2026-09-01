@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -161,3 +161,17 @@ content identity. D3 builds the safety half; neither missing half is in WT-012.2
   `asm change validate` reports 0 errors; its 3 warnings are pre-existing and sit on tasks already
   ticked. Fastlane auto-approves. Round 4 therefore opens as cycle 2 DISCOVERY over the cumulative
   change, with all 12 round-2 findings and the 11 round-3 left unadjudicated.
+- Round 4 (cycle 2 discovery) returned BLOCK with 10 findings, all accepted, none rebutted. F025,
+  F026 and F027 were verified against source with production-binding probes before triage rather than
+  taken from the report; F025 and F027 reproduced exactly. Fix tasks 4_1-4_4 scaffolded, Gate 2
+  re-earned, `validate` 0 errors. Because these are new tasks.md ENTRIES, round 5 is a cycle 3
+  DISCOVERY round, not verification — that is the same trap that superseded round 3, and it is
+  accepted here deliberately rather than worked around. Round 5 needs the user's grant.
+- The two blockers' first fix approaches were BOTH refuted by an oracle attack before any code was
+  written, and the refutations were verified independently: classifying a descendant symlink as a
+  link would refuse `cfg/node_modules -> vendor`, which D6 requires be recreated, and a
+  spelling-level trailing-dot rule would refuse `scratch./../.env`, whose offending segment
+  resolution discards — reintroducing exactly the raw-versus-resolved disagreement round-2 F004
+  removed. The oracle also found a third alias the round missed, `pnpm-lock.yaml::$DATA`. 4_1 is
+  written against the revised approach: fold the RESOLVED basename to the filesystem's own identity,
+  and apply the existing classifier only in the `isFile()` branch.

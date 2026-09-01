@@ -140,3 +140,52 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     4. `src/webview/worktree/WorktreeView.ts`: render the `details` rows the host bounds and sends — a directory reporting `copied` currently hides every skipped descendant, which is what D8 minted the field for (F018).
     5. `src/worktree/worktreeMutationService.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/extension.worktreeAssembly.test.ts`: the merge witness rebuilt from what the service actually emits rather than from a literal — the round-2 finding names my own fixture as the reason the defect survived. The end-to-end half runs in the assembly lane, where the id is produced rather than written down; round 2 recorded that the webview side of this change had no such witness at all.
   - **Boundary**: no new notice — provisioning reports on the create's own result, never beside it
+
+## 4. Round-4 fixes (cycle 2 discovery)
+
+- [ ] 4_1 Refuse a lockfile wherever it would land, on the identity the filesystem uses
+  - **Deps**: 3_2
+  - **Refs**: design.md#d6; design.md#d7; .reviews/round-4.md#f025; .reviews/round-4.md#f004
+  - **Acceptance**:
+    - Outcome: A lockfile reaches the worktree by no spelling and through no ancestor
+    - Verify: unit src/worktree/provisioning/applyEntries.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/entryGate.ts`: export the material classifier, and fold the RESOLVED basename to the identity the filesystem acts on before the lookup — Win32 strips a trailing dot and space and addresses a file through `::$DATA`, so three spellings named the refused object and missed the set (F004). No spelling-level rule and no new refusal reason: `scratch./../.env` resolves to `.env` and the walk never touches the discarded segment.
+    2. `src/worktree/provisioning/applyEntries.ts`: apply that classifier inside `walk`'s `isFile()` branch, after `spend()` and `lstat`. The entry-level check ran once, so a lockfile inside a copied directory arrived and the step still reported `copied` (F025). Not a kind-split: a symlink delivering main's lockfile is already refused by D6 rule 2, and refusing a descendant `node_modules` would move D6.
+    3. `src/worktree/provisioning/applyEntries.test.ts`, `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/entryGate.test.ts`: a descendant witness against the production binding, each alias spelling, and the false-refusal cases the fold must NOT catch — a directory named like a lockfile, and an entry whose offending segment resolution discards.
+  - **Boundary**: D6 and D7 do not move — no descendant `node_modules` rule, and no refusal reason the spec does not already own
+
+- [ ] 4_2 Charge and preserve what the apply actually did
+  - **Deps**: 4_1
+  - **Refs**: design.md#d5; design.md#d10; .reviews/round-4.md#f027; .reviews/round-4.md#f016; .reviews/round-4.md#f021; .reviews/round-4.md#f019
+  - **Acceptance**:
+    - Outcome: A copied file keeps its source mode under a nonzero umask
+    - Verify: unit src/worktree/provisioning/applyEntries.node.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyEntries.ts`: restore the source mode explicitly after exclusive creation, for files and for directories. `fs.open` and `mkdir` both apply the process umask, so a `0777` source arrived `0700` under umask `077` while the step reported `copied` — and the fake stores the mode verbatim, so no existing witness can see it (F027).
+    2. `src/worktree/provisioning/applyEntries.ts`: charge one node and check the deadline before every direct-link attempt, including the arm where the destination already exists (F016); limit bytes during the transfer rather than reconciling a stat snapshot after the write (F021); refuse only a component exactly equal to `..` rather than any name starting with it (F019).
+    3. `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/applyEntries.test.ts`: mode witnesses under a nonzero umask against the production binding, a link at the exact node boundary, a file that grows after its size is read, and `..cache` admitted.
+  - **Boundary**: no deletion primitive may appear in this module — D9 and the I10 gate both still hold
+
+- [ ] 4_3 Say what happened to every entry, not what was hoped for
+  - **Deps**: 3_2
+  - **Refs**: design.md#d7; design.md#d8; .reviews/round-4.md#f026; .reviews/round-4.md#f017
+  - **Acceptance**:
+    - Outcome: A degraded link and a skipped entry each read as themselves in the notice
+    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeView.ts`: count and render by outcome. Only `refused` and `failed` counted as non-arrivals, so a skipped entry read as "1 of 1 brought over" for an apply that wrote nothing, and a platform-forced copy was indistinguishable from a link the provider asked for — which PLAN Acceptance requires be said per entry (F026).
+    2. `src/webview/worktree/WorktreeController.ts`: keep the canonical worktree identity separately from the render anchor `rescope` clears, so a merged notice is still the earlier worktree's when a later create lands in the same repository (F017, third half).
+    3. `src/webview/worktree/WorktreeView.test.ts`, `src/webview/worktree/WorktreeController.test.ts`: a top-level skip, a degradation, and two creates in one repository where the first notice must survive the second.
+  - **Boundary**: no new notice — provisioning reports on the create's own result, never beside it
+
+- [ ] 4_4 One owner for a thrown value in provisioning
+  - **Deps**: 3_2
+  - **Refs**: .reviews/round-4.md#f011
+  - **Acceptance**:
+    - Outcome: No provisioning module converts a thrown value for itself
+    - Verify: unit src/worktree/provisioning/oneOwner.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/asimovProvider.ts`, `src/worktree/provisioning/orcaProvider.ts`: route both through `messageOf`. Round 1 extracted the helper after finding three drifted copies; two provider parse paths kept their own (F011).
+    2. `src/worktree/provisioning/oneOwner.test.ts`: fail structurally on a second conversion in this directory, so the next copy is caught by the suite rather than by a fourth review round.
+  - **Boundary**: `src/worktree/errorMessage.ts` is the only owner — no second helper
