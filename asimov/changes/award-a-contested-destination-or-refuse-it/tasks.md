@@ -23,7 +23,7 @@
   - **Plan**:
     1. Recompute the contested groups over the selected entries in `src/worktree/provisioning/applyProvisioning.ts`, take the D3 reading before the ordered pass, and hold every non-favoured member out of its own pass.
     2. Settle each held member against D4's table after the ordered pass ends.
-    3. Witness all four rows in `src/worktree/provisioning/applyProvisioning.test.ts`, including the one where the volume keeps the two spellings apart and both land. `src/worktree/provisioning/applyEntries.fake.ts` gains whatever the fake needs to hold two spellings that fold together.
+    3. Witness every row of D4's table in `src/worktree/provisioning/applyProvisioning.test.ts`, including the one where the volume keeps the two spellings apart — where the held member is refused too, since that reading cannot be told from the favoured member's object having been removed (superseded by 5_2). `src/worktree/provisioning/applyEntries.fake.ts` gains whatever the fake needs to hold two spellings that fold together.
 
 - [x] 2_2 Refuse a collision this apply cannot attribute to its own write — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
@@ -109,3 +109,16 @@
   - **Plan**:
     1. Every deferred reason in `src/worktree/provisioning/applyProvisioning.ts` is built from the whole contest rather than the current member and the favoured one.
     2. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses a three-member contest in which each refusal names all three.
+
+## 6. Round-3 blockers
+
+- [ ] 6_1 Report the rule that actually refused a contested entry
+  - **Deps**: 5_3
+  - **Refs**: design.md#d4b-a-refusal-says-which-rule-refused-and-the-reason-string-is-not-a-channel, .reviews/round-3.md#f006
+  - **Acceptance**:
+    - Outcome: A contested entry refused by its own rule keeps that rule's reason
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/applyEntries.ts` reports a lost exclusive claim as its own outcome shape rather than as refusal text.
+    2. `src/worktree/provisioning/applyProvisioning.ts` refuses the contest on that shape alone and passes every other refusal through unchanged.
+    3. `src/worktree/provisioning/applyProvisioning.test.ts` witnesses a contested entry refused by the material rule keeping its own reason, and `src/worktree/provisioning/applyEntries.test.ts` covers the new shape.

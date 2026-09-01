@@ -60,15 +60,14 @@ that resolves to itself.
 ### Requirement: The material a worktree was promised is actually put there
 
 WHEN a worktree is created with provisioning entries the user left selected, the extension SHALL
-materialize each of them into the new worktree — copying by default, linking where the entry says
-link — and SHALL report the outcome of every entry it was given, including the ones it refused.
-Copying SHALL happen before linking, EXCEPT that where two selected declarations may name one
-destination, the repository's own declaration is materialized before either of them, whatever its
-`mode`.
+materialize each one it does not refuse into the new worktree — copying by default, linking where
+the entry says link — and SHALL report the outcome of every entry it was given, refusals included.
+Copying SHALL happen before linking, EXCEPT that where declarations may name one destination, the
+repository's own is materialized first and the others are refused.
 
 #### Scenario: The files the dialog listed are in the new worktree
 
-- **WHEN** a create carries selected copy entries
+- **WHEN** a create carries selected copy entries, none of which may name another's destination
 - **THEN** each of those files exists in the new worktree, and each is reported as copied
 
 #### Scenario: Only what was selected is materialized

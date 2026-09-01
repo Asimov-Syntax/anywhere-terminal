@@ -131,6 +131,19 @@ same unfounded causal claim as naming a creator.
 `P2` is satisfied by the ordering and by row 1's refusal, never by a repair. No row writes `m` into
 a destination `f` claimed or any party held.
 
+### D4b — A refusal says which rule refused, and the reason string is not a channel
+
+`applyEntry` answers a contested member with one `refused` outcome whatever refused it — an
+unsupported file type, a lockfile, a symlink destination, or the exclusive claim being lost. The
+orchestration cannot read a rule out of prose, so replacing every one of them with the claim-loss
+reason reported a destination collision that never happened, for refusals that had nothing to do
+with the contest (.reviews/round-3.md F006).
+
+So the claim-loss answer is distinguishable at the type level rather than by its text: `applyEntry`
+reports it as its own outcome shape, and the orchestration refuses the contest on THAT and passes
+every other refusal through with the rule it actually had. The reason a person reads still names
+every member, because D4a is about what a refusal says, not about which one it is.
+
 ### D4a — Every refusal names every member, by path and declaring file
 
 A step's own `path` says which row lost; it does not say which declaration it lost to, and the row
@@ -175,6 +188,7 @@ twin-create probe this change does not assume.
 |---|---|---|---|---|
 | The inherited declaration never wins a contested destination | For every contested group, the material and mode at the destination are the favoured member's, or nothing was written by either | An ordering or failure path that lets `m` write where `f` would have; a pre-existing destination `f` merges into while only `m` is refused | D2 puts every `m` after `f`; D4 row 1 refuses the whole group before `f` runs. Unit witnesses for all four rows, including the pre-existing directory case asserting the fake recorded no write for either member | supported |
 | Nothing the apply writes can make the inherited declaration the owner of a contested destination | After any contested group, the material at the destination is `f`'s or nothing this apply wrote | Settling a held member on evidence that cannot distinguish a distinct slot from a removed one | D4's single post-claim row: every `m` is refused once `f` has run, whatever the destination reads. Witness that a held member is refused even when its spelling reads absent on a non-folding fake | supported |
+| A refusal reports the rule that fired | A contested member refused for its own reason keeps that reason; only a lost exclusive claim reports a lost claim | Collapsing every `refused` from a contested entry into the claim-loss text, which invents a collision for an unsupported file type | D4b's distinguishable outcome; witness that a contested entry refused by the material rule still says so | supported |
 | A contested top-level destination is created exclusively or not at all | `f`'s own `mkdir` establishes the top-level directory, or the contest refuses | `makeDirectory` converting `EEXIST` into `written` and the walk merging into a directory another writer owns | D3's exception at that one site; witness where the fake creates the destination between reading 2 and the write | supported |
 | No entry outside a contested group changes position or outcome | The applied order and every uncontested step are identical to today's | Promoting a member ahead of the copy pass — the `Foo` / `foo` / `Foo/seed` case | D2 defers the loser instead of promoting the favoured member; witness asserting the applied order for a mixed model with a contested link group present | supported |
 | Provisioning still deletes nothing | No unlink, truncate, or overwrite on any path this change touches | A repair that "clears" a contested destination | `pnpm run gate:fs-deletion`, which already scans every production module under `src/worktree/`; `ApplyFsDeps` offers no destructive primitive to call | supported |
