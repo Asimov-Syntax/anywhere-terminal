@@ -47,7 +47,7 @@ export interface WorktreeRemoveDialogDeps {
    * unforced request. That is the whole of what stops the dialog from becoming
    * a way to manufacture deletion authority (design.md D7).
    */
-  onConfirm: (fingerprint: string | null) => void;
+  onConfirm: (fingerprint: string) => void;
   /** Reveal the agent that blocks the removal. */
   onShowAgent?: (row: WorktreeAgentRow) => void;
   onCancel?: () => void;
@@ -550,12 +550,17 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   shell.dialog.append(buildRemovalWarning(checks, info));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(cancelBtn);
+  const fingerprint = deps.report.fingerprint;
+  if (fingerprint === null) {
+    shell.dialog.appendChild(shell.actions);
+    shell.refreshFocusTrap();
+    shell.focusInitial(cancelBtn);
+    return shell.dispose;
+  }
   const typed = confirmationFor(checks) === "typed";
   const confirm = textButton(typed ? "Force remove" : "Remove", "danger", () => {
-    // Re-sent with the fingerprint the user was SHOWN: this authorizes the
-    // blocker set they read, not a blanket one. Typing raises the bar over that
-    // same set; it never widens it. A null one authorizes no force at all.
-    deps.onConfirm(deps.report.fingerprint);
+    // Re-send exactly the report authority the user answered.
+    deps.onConfirm(fingerprint);
     shell.dispose();
   });
   if (typed) {

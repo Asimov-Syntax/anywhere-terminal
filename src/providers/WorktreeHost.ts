@@ -346,7 +346,7 @@ export interface WorktreeActions {
     provision?: readonly ProvisionEntry[];
     origin?: WorktreeSurface;
   }): Promise<void>;
-  removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
+  removeWorktree?(target: WorktreeMutationTarget, fingerprint: string | undefined): Promise<void>;
   /**
    * What removing this worktree WOULD cost, without removing it.
    *
@@ -746,11 +746,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * still owed. Service is round-robin over `rotation`, not newest-first: two
    * panels asking continuously must each be answered.
    */
-  interface PendingAssess {
-    surface: WorktreeSurface;
-    worktreeId: string;
-    token: string;
-  }
+  type PendingAssess =
+    | {
+        kind: "assessment";
+        surface: WorktreeSurface;
+        worktreeId: string;
+        token: string;
+      }
+    | {
+        kind: "rawRemoval";
+        surface: WorktreeSurface;
+        worktreeId: string;
+      };
   interface AssessLane {
     /** The latest unanswered request per surface, keyed by `surfaceKey`. */
     pending: Map<string, PendingAssess>;
@@ -761,6 +768,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
   type AssessCapability = NonNullable<WorktreeActions["assessRemovalReport"]>;
   const assessLanes = new Map<string, AssessLane>();
+
+  /** Replace this surface's pending report request and enqueue at most one repository job. */
+  function admitAssess(repoId: string, request: PendingAssess): void {
+    const laneKey = surfaceKey(request.surface);
+    const fresh: AssessLane = { pending: new Map(), rotation: [], outstanding: false };
+    const lane = assessLanes.get(repoId) ?? fresh;
+    assessLanes.set(repoId, lane);
+    // Against the ROTATION, not against `pending`: a surface being served has
+    // already had its pending entry taken, so testing `pending` here re-appends
+    // its key on every re-ask and grows the rotation without bound.
+    if (!lane.rotation.includes(laneKey)) {
+      lane.rotation.push(laneKey);
+    }
+    lane.pending.set(laneKey, request);
+    if (lane.outstanding) {
+      return;
+    }
+    lane.outstanding = true;
+    void runAssessLane(repoId);
+  }
 
   /** Everything one surface has pending, dropped when it detaches. */
   const forgetSurfaceAssessments = (key: string): void => {
@@ -804,7 +831,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return undefined;
   }
 
-  async function runAssessLane(repoId: string, assess: AssessCapability): Promise<void> {
+  async function runAssessLane(repoId: string): Promise<void> {
     const lane = assessLanes.get(repoId);
     if (lane === undefined) {
       return;
@@ -812,7 +839,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     try {
       const request = takeNextAssess(lane);
       if (request !== undefined) {
-        await serveAssess(repoId, request, assess);
+        await serveAssess(repoId, request);
       }
     } finally {
       // Synchronous, in one block: the flag falls and the re-enqueue decision
@@ -822,19 +849,30 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       lane.outstanding = false;
       if (lane.pending.size > 0) {
         lane.outstanding = true;
-        void runAssessLane(repoId, assess);
+        void runAssessLane(repoId);
       } else if (assessLanes.get(repoId) === lane) {
         assessLanes.delete(repoId);
       }
     }
   }
 
-  /**
-   * One request, answered exactly once while its surface is attached (D12, as
-   * amended by design.md D3).
-   */
-  async function serveAssess(repoId: string, request: PendingAssess, assess: AssessCapability): Promise<void> {
-    const { surface: origin, worktreeId, token } = request;
+  /** Serve one report-producing request while its surface remains attached. */
+  async function serveAssess(repoId: string, request: PendingAssess): Promise<void> {
+    const { surface: origin, worktreeId } = request;
+    if (request.kind === "rawRemoval") {
+      const remove = options.actions?.removeWorktree;
+      if (remove === undefined) {
+        return;
+      }
+      try {
+        await remove({ repoId, worktreeId, origin }, undefined);
+      } catch (err) {
+        console.warn(`${LOG_PREFIX} worktree action failed`, err);
+      }
+      return;
+    }
+
+    const { token } = request;
     const unavailable = (unreadable: readonly string[]): void => {
       if (surfaces.has(origin)) {
         origin.post({
@@ -849,6 +887,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // lane, and the registration can leave while it does.
     if (actionPath(worktreeId, true) === undefined) {
       unavailable(["the worktree is no longer registered"]);
+      return;
+    }
+    const assess = options.actions?.assessRemovalReport;
+    if (assess === undefined) {
+      unavailable(["the assessment"]);
       return;
     }
     let result: Awaited<ReturnType<AssessCapability>>;
@@ -2027,27 +2070,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           }
           return;
         }
-        // Admission, and nothing else — every write below is synchronous in
-        // this handler turn, before any await (design.md D6). A request always
-        // REPLACES this surface's pending one; it adds a job only when this
-        // repository has none outstanding, which is the whole bound (D1).
-        const laneKey = surfaceKey(surface);
-        const fresh: AssessLane = { pending: new Map(), rotation: [], outstanding: false };
-        const lane = assessLanes.get(assessRepo) ?? fresh;
-        assessLanes.set(assessRepo, lane);
-        // Against the ROTATION, not against `pending`: a surface being served
-        // has already had its pending entry taken, so testing `pending` here
-        // re-appended its key on every re-ask and grew the rotation without
-        // bound — the shape this lane exists to prevent.
-        if (!lane.rotation.includes(laneKey)) {
-          lane.rotation.push(laneKey);
-        }
-        lane.pending.set(laneKey, { surface, worktreeId: assessTarget, token: msg.token });
-        if (lane.outstanding) {
-          return;
-        }
-        lane.outstanding = true;
-        void runAssessLane(assessRepo, assess);
+        // Admission is shared with fingerprint-free raw intents: both produce
+        // reports and therefore contribute to the same per-repository bound.
+        admitAssess(assessRepo, {
+          kind: "assessment",
+          surface,
+          worktreeId: assessTarget,
+          token: msg.token,
+        });
         return;
       }
       case "worktreeRemove": {
@@ -2058,19 +2088,21 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // a fail-fast so an id the host never published spawns nothing at all;
         // it is not the resolution the action acts on (B2).
         const gate = actionPath(msg.worktreeId, true);
-        // A force with no fingerprint authorizes nothing, and an unforced call
-        // carrying one is a payload we did not issue — both refused here rather
-        // than deeper, where a partial check could act on the wrong half.
-        if (msg.force !== (msg.fingerprint !== undefined)) {
-          return;
-        }
         // Deliberately NOT pre-resolved: the capability re-resolves this id
         // after its own forced rebuild (B2). A `missing` worktree still
         // resolves there — `git worktree remove` is how its stale registration
         // gets pruned (worktree-rpc.md:241).
+        //
+        // The host forwards confirmation authority, not Git's execution mode.
+        // No fingerprint means "report this target"; only the service owns the
+        // fresh evidence that can choose ordinary versus forced execution (D7).
         const repoId = repoIdOf(msg.worktreeId);
         if (remove && repoId !== undefined && gate !== undefined) {
-          perform(() => remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.force, msg.fingerprint));
+          if (msg.fingerprint === undefined) {
+            admitAssess(repoId, { kind: "rawRemoval", surface, worktreeId: msg.worktreeId });
+          } else {
+            perform(() => remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint));
+          }
         }
         return;
       }

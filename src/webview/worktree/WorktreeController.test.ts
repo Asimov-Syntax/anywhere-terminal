@@ -652,10 +652,8 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
   });
 
   it("ASKS what a removal would cost, and posts no removal at all", () => {
-    // The webview never decides a removal is safe, and it no longer starts one to
-    // find out: the unforced `worktreeRemove` this used to post is answered by
-    // deleting a clean worktree, because the host reports only from the path that
-    // already attempted it (round-3 B1, design.md D6).
+    // The webview never decides a removal is safe; it asks for the report whose
+    // fingerprint can authorize the later removal (design.md D6, D7).
     const { actions, posted } = controllerActions();
     actions.removeWorktree?.(worktree({ id: "/wt" }));
     expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt", token: expect.any(String) }]);
@@ -2741,7 +2739,7 @@ describe("what a mutation did comes back to the panel", () => {
     expect(h.posts).toEqual([]);
   });
 
-  it("forces a removal with the fingerprint the user was actually shown", () => {
+  it("requests removal with the fingerprint the user was actually shown", () => {
     const h = ready();
     const view = (h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string): void } } })
       .view;
@@ -2751,33 +2749,9 @@ describe("what a mutation did comes back to the panel", () => {
       {
         type: "worktreeRemove",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
-        force: true,
         fingerprint: "fp-9",
       },
     ]);
-  });
-
-  // The other half of the same rule: a report that carried NO fingerprint carried
-  // no force authority, so answering it sends the ordinary removal — which the
-  // host re-evaluates, and blocks if the worktree stopped being clean while the
-  // user was reading it (design.md D7).
-  it("answers a report that authorized no force with an ordinary removal", () => {
-    const h = ready();
-    const view = (
-      h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string | null): void } } }
-    ).view;
-    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, null);
-
-    expect(h.posts).toEqual([
-      {
-        type: "worktreeRemove",
-        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
-        force: false,
-      },
-    ]);
-    // Not `fingerprint: undefined`: the key is ABSENT. A present-but-undefined key
-    // survives a structured clone as a present key, and the host reads presence.
-    expect(Object.hasOwn(h.posts[0] as object, "fingerprint")).toBe(false);
   });
 });
 
@@ -3187,14 +3161,14 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(h.posts).toEqual([{ type: "worktreeRemoveAssess", worktreeId: VALIDATOR, token: expect.any(String) }]);
   });
 
-  it("answers a clean report with an ordinary removal, carrying no fingerprint", () => {
+  it("answers a clean report with the authority it carried", () => {
     const h = ready();
     const token = ask(h);
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     const button = danger();
@@ -3202,7 +3176,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(button?.textContent).toBe("Remove");
     button?.click();
 
-    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, force: false }]);
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-clean" }]);
   });
 
   it("answers a report with a failed risk using the fingerprint that report carried", () => {
@@ -3230,9 +3204,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     }
     danger()?.click();
 
-    expect(h.posts).toEqual([
-      { type: "worktreeRemove", worktreeId: VALIDATOR, force: true, fingerprint: "fp-assess-1" },
-    ]);
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-assess-1" }]);
   });
 
   it("routes an assessment the host could not make to the retry surface, not to a refusal", () => {
@@ -3299,7 +3271,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: first,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     // The launch dialog is what the user is looking at, and a global
     // `closeDialog` is exactly how a stale report would take it down.
@@ -3309,7 +3281,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: second,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     expect(danger()?.textContent, "the live reply opened nothing either").toBe("Remove");
   });
@@ -3339,7 +3311,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     // Still the forced one. The clean report would have replaced its typed
@@ -3354,7 +3326,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
       token: `${token}-other`,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -3388,7 +3360,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: first,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     expect(document.querySelector('[role="dialog"]'), "the superseded answer opened a report").toBeNull();
 
@@ -3396,7 +3368,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: second,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
@@ -3413,7 +3385,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: retried,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     expect(document.querySelector('[role="dialog"]'), "the row stayed dead after a dropped reply").not.toBeNull();

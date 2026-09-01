@@ -311,11 +311,10 @@ export interface MutationServiceDeps {
 /**
  * What a removal WOULD cost, and what answering the report is worth.
  *
- * `fingerprint` is non-null under exactly `atRisk` — the same predicate, in the
- * same module, that the blocked path issues under. That colocation is the point
- * of putting this here rather than in the host: deciding it anywhere else would
- * be a second copy of `atRisk`, and the two would drift on the one action that
- * cannot be undone (design.md D7).
+ * Every readable non-refused report carries a fingerprint authorizing one
+ * confirmed attempt. Git's force mode is derived later from fresh evidence by
+ * the same module's single `atRisk` predicate; the panel never chooses it
+ * (design.md D7).
  */
 export type RemovalReport =
   | {
@@ -419,16 +418,13 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
     if (assessment.kind === "refused") {
       return { kind: "assessed", assessment, fingerprint: null };
     }
-    // The whole of D7 is this line. `atRisk` false means the ordinary unforced
-    // removal is legal, so the report needs no force authority and gets none:
-    // asking what a clean worktree would cost must not be the door that makes
-    // destroying one possible.
+    // Confirmation authority and Git force are orthogonal (D7). A clean report
+    // still needs proof that the dialog it opened was answered; fresh evidence
+    // later decides whether the resulting Git command needs force.
     return {
       kind: "assessed",
       assessment,
-      fingerprint: atRisk(assessment.evidence)
-        ? fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now())
-        : null,
+      fingerprint: fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now()),
     };
   }
 
@@ -470,7 +466,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // and the mutation result `withTarget` publishes are separable, and only
       // the second is what D6 was right to avoid. Reading from the cache instead
       // let a rebuild still pending hand the predecessor's report the
-      // replacement's evidence, and mint force authority over it (round-4 B3).
+      // replacement's evidence and removal authority (round-4 B3).
       return coordinator.run<ResolvedTarget, RemovalReport | null>(target.repoId, {
         resolve: async () => deps.resolve(target),
         // The other silent exit. The departure is only the user's answer while
@@ -516,23 +512,21 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         settled("unlock", target.repoId, await unlockWorktree(deps.runner, paths(t))),
       ),
 
-    removeWorktree: (target, force, fingerprint) =>
+    removeWorktree: (target, fingerprint) =>
       withTarget(
         "remove",
         target,
         async (t, ctx) => {
-          // Assessed on EVERY removal, forced or not. Gating this behind `force`
-          // meant an unforced removal evaluated no blockers at all and went
-          // straight to git — and since only the confirmable branch issues a
-          // token, nothing ever called `issueFingerprint` either (round-2 B1).
-          // Git refuses a dirty worktree itself; idle panes and external sessions
-          // are not git's concern and would have been destroyed unannounced.
-          // EVERY forced exit spends the token, including the ones below that
+          // Assessed on EVERY removal. A request with no fingerprint reports;
+          // a request with one re-evaluates before it may execute. Git refuses a
+          // dirty worktree itself, but idle panes and external sessions are not
+          // Git's concern and would otherwise be destroyed unannounced.
+          // EVERY confirmed exit spends the token, including the ones below that
           // never reach git. Returning `reprompt` without redeeming left it live
           // after an evidence-read failure, so the next message could retry a
           // removal that may already have run half-way (round-2 B5).
           const spend = (): void => {
-            if (force && fingerprint !== undefined) {
+            if (fingerprint !== undefined) {
               fingerprints.forget(target.worktreeId);
             }
           };
@@ -572,34 +566,35 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             };
           }
 
-          if (!force) {
-            // Nothing at risk is the only case an unforced removal may run.
-            // Anything else comes back as the blocker set the user must see,
-            // carrying the token that will authorize exactly it.
-            if (atRisk(assessment.evidence)) {
-              return {
-                kind: "blocked",
-                verb: "remove",
-                repoId: target.repoId,
-                worktreeId: target.worktreeId,
-                assessment,
-                fingerprint: fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now()),
-              };
-            }
-          } else {
-            const verdict =
-              fingerprint === undefined
-                ? "reprompt"
-                : fingerprints.redeem({ worktreeId: target.worktreeId }, fingerprint, assessment.evidence, deps.now());
-            if (verdict === "reprompt") {
-              return {
-                kind: "error",
-                verb: "remove",
-                repoId: target.repoId,
-                message: "What is at risk here changed since you confirmed it. Please review it again.",
-              };
-            }
+          if (fingerprint === undefined) {
+            // A fingerprint-free request is an ask, never execution authority.
+            // Every readable non-refused assessment therefore returns the report
+            // and the one-shot token its dialog callback must send back (D7).
+            return {
+              kind: "blocked",
+              verb: "remove",
+              repoId: target.repoId,
+              worktreeId: target.worktreeId,
+              assessment,
+              fingerprint: fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now()),
+            };
           }
+
+          const verdict = fingerprints.redeem(
+            { worktreeId: target.worktreeId },
+            fingerprint,
+            assessment.evidence,
+            deps.now(),
+          );
+          if (verdict === "reprompt") {
+            return {
+              kind: "error",
+              verb: "remove",
+              repoId: target.repoId,
+              message: "What is at risk here changed since you confirmed it. Please review it again.",
+            };
+          }
+          const force = atRisk(assessment.evidence);
           const journal = {
             worktreePath: t.worktreePath,
             wasRegistered: t.wasRegistered,

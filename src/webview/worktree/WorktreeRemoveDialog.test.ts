@@ -763,23 +763,21 @@ describe("a check nobody could evaluate (round-1 W2)", () => {
 });
 
 describe("[2_3] the confirmation carries only the authority its report was handed", () => {
-  /**
-   * What the host now sends for a worktree nothing is wrong with: every check
-   * passes, so `atRisk` is false and no fingerprint is issued (design.md D7).
-   * FULL_REPORT is the same shape WITH one, so the pair separates "forwards the
-   * fingerprint" from "forwards a fingerprint".
-   */
-  const CLEAN_REPORT: WorktreeRemoveReport = { ...FULL_REPORT, fingerprint: null };
+  const CLEAN_REPORT: WorktreeRemoveReport = { ...FULL_REPORT, fingerprint: "sha256:clean-v1" };
 
-  it("hands back null for a report that authorized no force", () => {
+  it("hands back confirmation authority for a clean report", () => {
     const { host, confirmed } = open(CLEAN_REPORT, { info: CLEAN });
 
     host.querySelector<HTMLButtonElement>("button.wt-btn--danger")?.click();
 
-    // `[null]`, not `[]` and not `[undefined]`: the confirmation HAPPENED and it
-    // carried nothing. An empty array would pass just as well if the button had
-    // never been mounted, which is the bug this pins.
-    expect(confirmed).toEqual([null]);
+    expect(confirmed).toEqual(["sha256:clean-v1"]);
+  });
+
+  it("fails closed when a confirmable report carries no authority", () => {
+    const { host, confirmed } = open({ ...CLEAN_REPORT, fingerprint: null }, { info: CLEAN });
+
+    expect(host.querySelector("button.wt-btn--danger")).toBeNull();
+    expect(confirmed).toEqual([]);
   });
 
   it("hands back the exact fingerprint a report carried, never a substitute", () => {

@@ -166,7 +166,7 @@ export interface WorktreeViewDeps {
    * nothing more: null means it authorized no force, and the caller sends the
    * ordinary removal (design.md D7).
    */
-  onForceRemove?: (info: WorktreeInfo, fingerprint: string | null) => void;
+  onForceRemove?: (info: WorktreeInfo, fingerprint: string) => void;
   /**
    * Ask again for an action whose risk could not be READ. Offered only there:
    * a failure already has its answer, and an unclear outcome has state to

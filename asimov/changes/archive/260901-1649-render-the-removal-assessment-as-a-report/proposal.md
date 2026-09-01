@@ -8,6 +8,12 @@ that cannot be undone. The force button is currently withheld outright whenever 
 unproven, which makes a worktree with an unreadable `git status` unremovable rather than removable
 with a warning.
 
+The report is now reached from the menu, but its ordinary callback posts the same fingerprint-free
+removal request any caller may post directly. The service treats that request as immediate permission
+when the fresh assessment is clean. Confirmation is therefore a panel convention, not a host-enforced
+precondition: the destructive boundary still has a clean-path door that never proves a dialog was
+answered.
+
 ## Appetite
 
 M (≤3d)
@@ -20,6 +26,8 @@ M (≤3d)
   not applicable — the orphan proofs included.
 - Choosing the confirmation control from the check classes the host sent: none, typed, or ordinary.
 - Retiring the blanket withhold-on-unproven guard in favour of the typed confirmation.
+- Making a report fingerprint the only authority to execute any removal, while the host — not the
+  panel — chooses ordinary or forced Git execution from fresh evidence.
 
 ### Out of scope
 
@@ -27,7 +35,7 @@ M (≤3d)
   WT-013.2 own that and it is already on the wire.
 - Branch deletion after a successful removal — that is WT-013.3, gated on this task's report being
   the thing a user reads before they get there.
-- Anything the host does after the confirmation: re-evaluation, execution, partial-failure reporting.
+- Changing the check set, execution-time re-evaluation rule, fingerprint subset rule, or partial-failure reporting.
 
 ### Must not
 
@@ -36,11 +44,14 @@ M (≤3d)
   with itself.
 - Render an unproven check as passed, or a not-applicable check as either.
 - Let a proof — withheld, unproven, or failing — refuse a removal or demand a typed confirmation.
+- Let a fingerprint-free request execute, let the webview choose Git's force mode, or treat a
+  fingerprint's presence as permission to force a clean worktree.
+- Mint executable authority for a refusal or an unavailable assessment.
 - Edit `docs/ui/create-worktree.html` or `docs/ui/worktree-create-dialog.css`; they are owned by an
   external design pass.
 
 ## Risk Level
 
-MEDIUM — it is presentation only and adds no capability, but it decides what a user is told before
-authorizing an irreversible deletion, and it retires an existing safety guard in favour of a
-different one.
+HIGH — it decides what a user is told before an irreversible deletion and moves the authorization
+boundary so no removal can execute without a report fingerprint. The change adds no deletion
+capability, but a mistake can either restore the confirmation bypass or force a clean removal.

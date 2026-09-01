@@ -18,7 +18,7 @@ The remove dialog SHALL render every check the assessment reported — the ones 
 
 ### Requirement: A typed confirmation is required only where a confirmable risk earned one
 
-Given an assessment, the dialog SHALL decide its control from the classes and outcomes reported: a refusal-class check that is failing or unproven leaves no confirmation control, a confirmable one requires the worktree's name to be typed, and anything else takes an ordinary confirmation. A proof that is unproven or withheld SHALL NOT require a typed confirmation. Which removals are assessed at all is the host's policy, not this contract's.
+Given an assessment, the dialog SHALL decide its control from the classes and outcomes reported: a refusal-class check that is failing or unproven leaves no confirmation control, a confirmable one requires the worktree's name to be typed, and anything else takes an ordinary confirmation. A proof that is unproven or withheld SHALL NOT require a typed confirmation. Every removal SHALL cross this assessment and control selection before it can execute.
 
 #### Scenario: Only a proof is unproven
 
@@ -37,9 +37,10 @@ Given an assessment, the dialog SHALL decide its control from the classes and ou
 
 ### Requirement: A removal is reported before anything is deleted
 
-WHEN the user asks to remove a worktree, the panel SHALL present the removal report and SHALL NOT
-delete anything until the user answers it. Asking for the report SHALL NOT itself remove, modify, or
-delete anything.
+WHEN the user asks to remove a worktree shown by the panel, the panel SHALL present the removal
+report and SHALL NOT delete anything until the user answers it. A removal request for that target
+carrying no report fingerprint SHALL return assessment state rather than execute. Asking for the
+report SHALL NOT itself remove, modify, or delete anything.
 
 #### Scenario: A worktree with nothing wrong with it
 
@@ -53,13 +54,21 @@ delete anything.
 
 ### Requirement: A confirmation carries only the authority its report was granted
 
-A confirmation SHALL authorize a forced removal ONLY where the report it answers was itself granted
-that authority. Where it was not, the confirmation SHALL take the ordinary removal path.
+Every report that offers confirmation SHALL carry a fingerprint bound to what it reported, and the
+confirmation SHALL return that fingerprint. A fingerprint authorizes one confirmed removal attempt;
+it SHALL NOT itself decide whether Git is invoked with force. After re-evaluating the worktree, the
+host SHALL choose ordinary or forced execution from the current evidence. A refusal or unavailable
+assessment SHALL carry no executable authority.
 
-#### Scenario: Confirming a report that was granted nothing
+#### Scenario: Confirming a clean report
 
-- **WHEN** the user confirms a report that carries no authority to force
-- **THEN** the ordinary removal is requested, and it is the removal itself that re-checks the worktree
+- **WHEN** the user confirms a report whose confirmable checks passed
+- **THEN** the fingerprint is redeemed and the host takes the ordinary removal path if the fresh evidence is still clean
+
+#### Scenario: Confirming a risky report
+
+- **WHEN** the user confirms a report whose confirmable risk failed or was unproven
+- **THEN** the fingerprint is redeemed and only the host may select the forced removal the fresh evidence requires
 
 ### Requirement: A report that could not be produced is not a refusal
 

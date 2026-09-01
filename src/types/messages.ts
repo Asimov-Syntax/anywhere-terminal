@@ -1296,7 +1296,6 @@ export interface WorktreeCreateProbeMessage {
 export interface WorktreeRemoveRequestMessage {
   type: "worktreeRemove";
   worktreeId: string;
-  force: boolean;
   fingerprint?: string;
 }
 
@@ -1344,14 +1343,11 @@ export interface WorktreeRemoveAssessmentMessage {
         kind: "assessed";
         assessment: WorktreeRemoveAssessmentPayload;
         /**
-         * PRESENCE is the authority to force, and its absence is not a missing
-         * field but an answer: this removal has nothing to force past.
-         *
-         * Non-null under exactly the predicate the blocked path already issues
-         * under — `atRisk(evidence)` — and null for a refusal, as that path also
-         * already sends. So asking what a clean worktree would cost mints no
-         * deletion authority, and its confirmation travels the ordinary unforced
-         * path, which re-evaluates before it acts (design.md D7).
+         * PRESENCE is authority for one confirmed removal attempt, not authority
+         * to force Git. Every readable non-refused assessment carries one; a
+         * refusal carries null and mounts no confirmation control. The host
+         * re-evaluates and derives ordinary versus forced execution from the fresh
+         * evidence after redemption (design.md D7).
          */
         fingerprint: string | null;
       }

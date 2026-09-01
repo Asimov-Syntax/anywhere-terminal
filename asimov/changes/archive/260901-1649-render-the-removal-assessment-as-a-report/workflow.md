@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -30,10 +30,10 @@
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
 Blueprint: docs/PLAN.md task WT-013.4
-Lane: full (standard) — MEDIUM risk: presentation only, but it decides what a user is told before authorizing an irreversible deletion, and retires an existing safety guard | flags: none
-Planned at: 39099132 (re-earned; originally 6e521950)
+Lane: full (standard) — HIGH risk: the report UI and host authorization seam govern irreversible deletion | flags: new-api-contract, security-privacy, cross-boundary
+Planned at: 1f4819b7 (re-earned after the every-removal-confirms decision; originally 6e521950)
 - Worktree based on huybuidac/create-worktree-harden, not main: WT-013.1 and WT-013.2 are the deps and neither is merged to main yet — main's docs/PLAN.md has no WT-013 tasks at all and src/worktree has no orphan proofs. A first attempt on the default base was discarded before any work landed.
-- No new-api-contract flag: WT-013.1 and WT-013.2 already carry `cls`, the four-outcome vocabulary and the three proofs in the same checks array, so this change alters no message shape.
+- Superseded lane note: the first plan needed no `new-api-contract` flag because it only consumed the existing assessment shape. The user's every-removal-confirms decision now removes the client `force` field, so section 4 carries `new-api-contract`, `security-privacy`, and `cross-boundary`.
 - 1_2 leaves a residual D2/D3 composed: a REFUSAL-class check that is `unproven` no longer withholds anything (`isRefusedByChecks` refuses only on `failed`), so it falls to the confirmable classes — typed if one of those is failing or unproven, ordinary otherwise. Both the spec's "Otherwise ... ordinary" and D2 say this explicitly, so it is built as accepted; flagged here because the retired guard was the only thing covering it and review should see it named rather than infer it.
 - Verify Gate: 3 biome errors / 14 warnings / 1 info is the pre-existing baseline on this branch (src/agentHooks, src/cursor, src/vault, CSS files) — none in this change's files, reproduced unchanged before and after.
 - 1_3 needed no spec delta: `A removal states what it destroys and what it spares` is already a BASELINE worktree-panel requirement and is written for "a removal confirmation", unqualified. A mid-build handback was raised against the delta alone and withdrawn once the baseline was read.
@@ -323,3 +323,8 @@ Verify Gate re-run after the amendment (2026-09-01, HEAD 39099132): check-types 
 this Gate 2 pass — the suite grew from 6254 to 6262 because the child change's tests are on this
 branch, not because anything here was rebuilt.
 - Round-1 B1 RESOLVED by the user on 2026-09-01, verbatim: "Luôn hỏi trước khi xoá" — every removal returns a fingerprint-bound assessment and executes only after the dialog's confirmation callback; a clean worktree gets the ordinary confirmation instead of a one-click delete. This is the first of B1's two remedies, so the change reopens Gate 2: it needs a host-side owner for the new seam and a changed D#. The alternative (cut the ordinary control) was declined. Build does NOT resume until asimov-plan re-earns Gate 2.
+- Replan: D7 now separates confirmation authority from Git force, and section 4 adds four serial tasks, `4_1 → 4_2 → 4_3 → 4_4`; the prior 16 tasks stay `[x]` as the record of what was built before the scope decision.
+- Reference check: Orca independently confirms first and lets fresh host evidence select ordinary versus forced removal; t3code confirms but always forces, so only Orca's separation is adopted. No syntax is copied.
+- Replan baseline in this worktree: Biome check mode remains 3 errors / 14 warnings / 1 info; no fix mode was run.
+- FASTLANE Gate 2 blueprint sync: WT-013.4 becomes Size `L`; Labels retain `user-visible-ui` and add `new-api-contract`, `security-privacy`, `cross-boundary`; Acceptance gains “every removal presents this report before deletion, including a clean worktree, and no removal executes until the report's confirmation is answered”. Status stays `in_progress`. `worktree-rpc.md` § 2.1 must also replace the paired `force`/fingerprint request with the optional report fingerprint.
+- Plan attack triage approved in FASTLANE: narrow the host claim from “proves a human answered” to issued-report authority plus an assembled callback witness; scope the raw fallback to a published target and keep its existing blocked-notice opener; fix 4_3's typed-call leases and the ticked 2_2–2_4 supersession record. No child change — the existing mutation service and fingerprint store already own the invariant.

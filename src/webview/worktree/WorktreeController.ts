@@ -569,16 +569,8 @@ export class WorktreeController {
         this.actionResults = this.actionResults.filter((r) => r !== result);
         this.push();
       },
-      // The fingerprint decides the verb. A report that carried one is answered
-      // with the forced removal it authorizes; one that carried none is answered
-      // with the ORDINARY removal, which re-evaluates host-side and blocks if the
-      // worktree stopped being clean while the user was reading (design.md D7).
       onForceRemove: (info, fingerprint) => {
-        deps.postMessage(
-          fingerprint === null
-            ? { type: "worktreeRemove", worktreeId: info.id, force: false }
-            : { type: "worktreeRemove", worktreeId: info.id, force: true, fingerprint },
-        );
+        deps.postMessage({ type: "worktreeRemove", worktreeId: info.id, fingerprint });
       },
       onPrune: (repoId) => this.confirmPrune(repoId),
       // Only `unavailable` reaches here — the read failed, so asking again is

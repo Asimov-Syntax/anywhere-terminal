@@ -1042,7 +1042,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // what it published rather than against what the registry would run.
       launchTargets: () => detectLaunchTargets("start"),
       resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
-      removeWorktree: (target, force, fingerprint) => mutations().removeWorktree(target, force, fingerprint),
+      removeWorktree: (target, fingerprint) => mutations().removeWorktree(target, fingerprint),
       // The service decides the authority; this only reshapes the assessment for
       // the wire, through the SAME converter the blocked path uses — a second
       // one would let the two reports disagree about what the user was shown.
