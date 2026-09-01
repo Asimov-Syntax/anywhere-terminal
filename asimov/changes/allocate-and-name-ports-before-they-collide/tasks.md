@@ -95,7 +95,7 @@ The lock extraction and result skeleton can start together. Everything after the
   - **Deps**: 1_7
   - **Refs**: design.md D1, design.md D5, design.md D6, design.md D9; specs/worktree-panel/spec.md#{a-named-port-carries-a-numeric-preview, existing-non-conflicting-assignments-are-reused, every-selected-port-gets-its-own-outcome}; .reviews/round-1.md F001, F002, F003, F004, F005
   - **Acceptance**:
-    - Outcome: Port results remain truthful and bounded when checkout roots, retained claims, listings, reads, previews, or publication fail
+    - Outcome: Port results fail closed under authorization changes, expired budgets, and persistence failures
     - Verify: command pnpm exec vitest run 'src/worktree/worktreePorts.test.ts' 'src/worktree/WorktreeDiscovery.listRepo.test.ts' 'src/webview/worktree/WorktreeCreateDialog.test.ts'
   - **Plan**:
     1. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: authorize and recheck worktree-root identity around claim reads and publication; downgrade retained successes when their source proof fails; bound claim reads before buffering; apply one preview and allocation deadline to listing, claim reads, source proof, and probes; and distinguish lock, proof, source-change, staging, publication, and unexpected failures with regression witnesses.

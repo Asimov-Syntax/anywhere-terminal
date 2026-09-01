@@ -32,5 +32,6 @@
 Blueprint: docs/PLAN.md task WT-012.6
 Lane: full (standard) — cross-process allocation mutates shared repository state and a worktree-local claim file | flags: cross-boundary
 Reference check: orca, cmux and t3code contain no reusable Node port-claim allocator; this repo's existing LockedFile owns the reusable lock and staged-write semantics.
-Planned at: 1f4819b7497b5a226485dbd046c480f411254021
-Verify baseline: project Biome remains at 3 errors / 14 warnings / 1 info in src/agentHooks/AgentHookController.test.ts, src/agentHooks/install/ClaudeHookInstaller.test.ts, src/cursor/CursorHookInstaller.test.ts, and unrelated warning/info files; the clean baseline reproduces it, while all 24 change-owned source files pass.
+Planned at: 042b4755af853ffdacf83e05cd3c7d5d12f0efea
+Verify baseline: project Biome remains at 3 errors / 14 warnings / 1 info in src/agentHooks/AgentHookController.test.ts, src/agentHooks/install/ClaudeHookInstaller.test.ts, src/cursor/CursorHookInstaller.test.ts, and unrelated warning/info files; the clean baseline reproduces it, while all change-owned source files pass.
+Review cycle 1 superseded at round 2 because remediation task 1_8 added an explicit Acceptance and Plan contract; fastlane re-approved that mechanical in-scope remediation at Gate 2.
