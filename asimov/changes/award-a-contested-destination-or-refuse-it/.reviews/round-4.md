@@ -221,3 +221,20 @@
 ## Audit backlog
 
 None.
+
+## Author triage
+
+- **F009 — accepted, fixed in task 6_2.** Preserving the rule that fired was only half of what round
+  3 asked for. An ordinary refusal from a contested entry is now decorated with the whole contest's
+  membership rather than stored unchanged, and the witness asserts both the rule and every member.
+- **F010 (WARN) — accepted, fixed with it.** D4b described a single `applyEntry` returning the
+  claim-loss arm; the implementation deliberately has two doors, and D4b now records that.
+- **F007 — accepted in part.** The proposal's non-goal and appetite lines still promised the
+  withdrawn both-materialize behaviour and are reconciled. The rest stands: it stays gating until
+  `offer-a-yielding-declaration-as-yielding` reaches APPROVE on its own.
+- **F008 — accepted as stated.** Nothing to fix here; it stays gating until
+  `carry-a-contest-membership-once` reaches APPROVE on its own.
+
+F007 and F008 are therefore not open fix work on this change — they are dependencies. This change
+does not archive until both children are approved. The bounded extension is spent, so the round that
+verifies this change after they land needs a new user decision.
