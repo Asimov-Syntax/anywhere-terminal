@@ -162,6 +162,45 @@ explicit expansion of the multi-character folds lowercasing cannot reach. `NFKC`
 `NFC` deliberately: it maps ligatures and other compatibility forms together and it over-groups
 elsewhere, which D4 permits and D4's other direction does not.
 
+## D9 — The fold key uppercases last, and the union was wrong
+
+Round 3 F001, and the second failure of this predicate. D8's key was `NFKC` + lowercase plus an
+explicit expansion list, and it missed Greek `σ`/`ς` — one file on this APFS volume, verified by
+creating both names in a temp directory and counting one.
+
+My own proposal was to union the hand fold with `Intl.Collator`, because the two are incomplete in
+opposite directions: the collator groups `σ`/`ς` and splits `ß`/`ss`, the hand fold does the
+reverse. **That was refuted before it was built.** Against all 1557 default full/common mappings in
+Unicode 16's `CaseFolding.txt` the union still missed 64 pairs, and all 64 collided on this volume
+— a whole third class, Greek ypogegrammeni expansion, where `ᾳ` and `αι` are one file. `ᾼ`/`ᾳ` is
+ordinary case mapping and was already caught, which is exactly why the existing witness did not
+reveal it.
+
+The mechanism that works is already in the runtime and needs no dependency: **uppercase last.**
+Locale-insensitive `toUpperCase` performs the multi-character and Greek expansions `toLowerCase`
+does not, and lowercasing first turns `ẞ` into `ß` so that uppercasing then expands it to `SS`. Per
+segment:
+
+`NFKC` → `toLowerCase` → `foldWin32Name` → `toUpperCase` → `NFKC`
+
+Two things about that pipeline are load-bearing and must not be tidied away. The FINAL `NFKC` is
+not decoration — dropping it breaks eight Greek iota-with-dialytika code points (`U+0390`,
+`U+03B0`, `U+1FD2`, `U+1FD3`, `U+1FD7`, `U+1FE2`, `U+1FE3`, `U+1FE7`), measured on node v24 by
+scanning every case-varying code point below `U+30000`. And the lowercase step must come BEFORE the
+uppercase step, because it is what makes `ẞ` reachable.
+
+`Intl.Collator` is rejected outright rather than kept as a second opinion. Its answer depends on
+the process locale — `tr-TR` alone changes `I`/`ı` and `İ`/`i` — so an undefined locale would make
+the section's contents depend on the user's machine, which is worse than either error. Pinning
+`"en"` removes that drift but still does not make the relation filesystem-correct, and it buys
+nothing the uppercase key does not already cover.
+
+Keeping a KEY rather than a relation also keeps the code shape. A comparator would have forced
+grouping into connected components over a non-transitive relation — `["σ.", "σ", "ς"]` has
+`a~b`, `b~c` and not `a~c` — which is well-defined only with a full union-find closure, and which
+a greedy compare-to-representative loop would get order-dependently wrong. Key equality has none of
+that, and it is what `contendersOf` already does.
+
 ## Obligation ledger
 
 | Claim | Semantics | Defeater | Witness | Disposition |
@@ -174,6 +213,8 @@ elsewhere, which D4 permits and D4's other direction does not.
 | A contender group is offered, not withheld | Both members receive offer ids and can be selected | A member without an id, or filtered from the offer | Offer-store / host test that both ids redeem. NOT `readProvisioning.test.ts` — it cannot see redemption, and asserting there would prove the wrong layer | supported |
 | The detector cannot cause a declaration to be lost | Grouping is advisory; no code path deletes or merges on the strength of group membership | Any merge keyed on the group | `rg` gate plus a test that a deliberately over-grouping detector still conserves the declaration count | supported |
 | A group never names one id twice | Across one read, no two rows carry the same id, so a group's member list has as many rows as ids | Two adapters each minting from their own sequence | Unit test that a base row and a native row surviving one merge carry different ids, and that a group built from them keeps two members through `remint()` | supported |
+| The fold key groups every default Unicode full fold | For every `C`/`F` mapping in `CaseFolding.txt`, the two spellings share a key | A mapping class the pipeline does not reach — round 3's was Greek ypogegrammeni expansion | Suite gate scanning every case-varying code point below `U+30000` and asserting `key(c) === key(lower(c)) === key(upper(c))`, plus the pairs verified against the real volume, plus a test that the final `NFKC` is load-bearing | supported |
+| That gate is weaker than a `CaseFolding.txt` conformance run | It checks folds reachable through JS casing, not every row of the Unicode file | A mapping in the file that neither `toLowerCase` nor `toUpperCase` reaches | None here — the exhaustive run that found the 64-pair gap read a file this repository does not vendor | **unresolved**, deliberately and visibly: vendoring ~100KB of Unicode data is its own decision and is recorded as a follow-up rather than taken silently. Stated so the gate is not mistaken for the stronger claim |
 | Every pair a supported filesystem folds shares a group | The relation is computed per segment over a fold that includes multi-character cases, on every branch that produces a model | A pair that is one file on APFS or Win32 and lands in no group | Grouping tests for `Straße`/`STRASSE`, `ﬀ`/`ff`, a dotted non-final segment, and a model produced by a framework winner rather than by `assemble` | supported |
 | Whether the favoured member actually wins the destination | WT-012.18's Acceptance, not this change's | Directory-against-directory merges rather than skips; native-link-against-inherited-copy collides with the accepted copy-before-link rule | None available here — the destination does not exist while this code runs | **unresolved**, deliberately, and NOT `n/a`: the spec delta no longer asserts any on-disk outcome, so nothing in THIS change depends on it, but the promise is real and it is owed by WT-012.18 before either ships |
 

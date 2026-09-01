@@ -103,3 +103,38 @@
   - **Plan**:
     1. Walk the TypeScript AST in `src/worktree/provisioning/oneOwner.test.ts` instead of matching `function` at the left margin — arrow functions, methods and imported helpers are ordinary shapes and the gate must see all of them. `src/test/invariants/fsDeletionGate.ts` already drives a TypeScript Program for the same kind of check; reuse it rather than growing a second traversal.
     2. Prove RED on each shape the current gate misses, not only on the one it catches.
+
+## 5. Round-3 blockers
+
+- [ ] 5_1 Uppercase last, and gate the fold against the whole case-varying range
+  - **Deps**: 4_2
+  - **Refs**: design.md#d9-the-fold-key-uppercases-last-and-the-union-was-wrong
+  - **Acceptance**:
+    - Outcome: Every pair reachable through Unicode casing shares one fold key
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/readProvisioning.ts`, replace the character stage of `foldable` with `NFKC` → `toLowerCase` → `foldWin32Name` → `toUpperCase` → `NFKC`, still per segment. Delete the explicit expansion list — it is what the uppercase step replaces, and leaving it would hide which stage is doing the work.
+    2. Gate it over the whole range rather than another curated list: scan every code point below `U+30000` whose case differs from itself and assert the key is equal for the character, its lowercase and its uppercase. A curated list is what let round 3's class through twice.
+    3. Assert both load-bearing orderings so neither is tidied away later: dropping the final `NFKC` must fail, and so must uppercasing before lowercasing.
+    4. Keep the direct witnesses that were verified against the real volume: `σ`/`ς`, `ß`/`ss`, `ᾳ`/`αι`, and the round-1 three.
+  - **Boundary**: no `Intl.Collator` and no new dependency — D9 rejects both, and grouping stays key equality rather than a relation
+
+- [ ] 5_2 Give every exported model constructor the same contender semantics
+  - **Deps**: 5_1
+  - **Refs**: design.md#d3-a-contender-group-offered-in-full
+  - **Acceptance**:
+    - Outcome: A directly-read model groups its foldable spellings like the offered one
+    - Verify: unit src/worktree/provisioning/asimovProvider.test.ts
+  - **Plan**:
+    1. `readAsimovProvisioning` in `src/worktree/provisioning/asimovProvider.ts` returns `modelFromDraft()`, whose `contenders` is always empty. Only tests call it today, so this is a trap for the next caller rather than a live defect — finalize contenders there too rather than leaving two meanings of `ProvisionModel`.
+    2. Put the finalization where both callers reach it instead of copying it, so `oneOwner.test.ts` has nothing new to catch.
+
+- [ ] 5_3 Make the identity gate refuse what it cannot see
+  - **Deps**: 5_1
+  - **Refs**: design.md#obligation-ledger
+  - **Acceptance**:
+    - Outcome: An identity helper imported from another module fails the gate
+    - Verify: unit src/worktree/provisioning/oneOwner.test.ts
+  - **Plan**:
+    1. The walk in `src/worktree/provisioning/oneOwner.test.ts` parses one file and indexes callables by unqualified name, so an imported helper calling `realpathSync` is never traversed. Two rewrites have each closed the shapes the previous round named and left a wider one, so stop chasing shapes: assert a closed boundary instead. Every name the identity closure reaches must be either a local callable or an import from a declared pure module, and anything else fails.
+    2. Prove RED with an imported helper that reaches the filesystem — the shape neither previous version could see.

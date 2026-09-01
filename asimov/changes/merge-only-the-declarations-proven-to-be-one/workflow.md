@@ -8,7 +8,7 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: none
 Lane: full
-Planned at: 43baba8b
+Planned at: 5f21abae
 
 Blueprint: docs/PLAN.md task WT-012.17
 Lane: full — HIGH risk: this is the seventh mechanism proposed for one invariant and six are refuted; getting it wrong in the merging direction silently deletes a declaration the repository made | flags: new-api-contract
@@ -54,3 +54,7 @@ Lane: full — HIGH risk: this is the seventh mechanism proposed for one invaria
 - The collision in F003 was half-known and that is the lesson worth keeping: task 2_1 already identified the FAVOURED member by declaring file rather than by id, precisely because ids collide across adapters. The same reasoning was not carried to MEMBERSHIP twenty lines away. A hazard that has been worked around once is not a hazard that has been closed.
 - Round-1 fix-delta audit. Each finding's own witness now closes and each is non-vacuous against the defect it names: F001's three pairs, F002's framework-winner model, F003's distinct ids, and F004's two summary cases were all proved RED by restoring the exact defect, and F005's three shapes are backed by a test showing the old left-margin pattern matches none of them. Every earlier blocker's witness was re-run whole, not sampled — the full suite ran inside each `verify-task`. Nothing previously satisfied is falsified: D1 still holds because `foldable` remains pure and the gate over it got strictly stronger; task 2_1's Boundary still holds because no path merges on group membership; `oneOwner.test.ts`'s lockfile count still reads `entryGate.ts` once, because moving the Win32 strip out did not move `LOCKFILES.has(`; and `readOnly.test.ts` is unaffected because the new import crosses from one READ_PATH module to another.
 - Impact manifest for the round-1 fixes, since they change an identity source and a shared interface. `ProviderBudget` gained `nextId`, so every construction site is a caller: `newBudget()` itself and the tests that build one — all type-checked, and `providerKit.test.ts` now asserts the sequence rather than the old exact-shape `toEqual`. `ids()` keeps its export and loses its four adapter callers. `foldWin32Name` is a new shared export with two callers whose reasons differ, which is why its doc says so. The behaviourally reachable entry modes for the contender relation are now three, and all three are covered: native assembly with an `extends`, a framework winner with no native file, and a provider switch — the switch reaches the same non-native branch through `prefer`.
+- Round 3 fired the thrash stop: the fold invariant failed a SECOND fix attempt. Option 1 taken — hand back for a designed fix — under the standing grant "cho phép rouund review mới hoặc tách change/ replan, cần thì oracle tư vấn các blocker". Not option 3: a third hand-tuned expansion list is what the stop exists to prevent.
+- The oracle refuted MY proposal, which is the reason this round is worth more than the last two. I wanted to union the hand fold with `Intl.Collator` because they are incomplete in opposite directions. Against all 1557 `CaseFolding.txt` C/F mappings that union still missed 64 pairs, and all 64 collide on this volume — Greek ypogegrammeni expansion, a class BOTH mechanisms miss. `ᾼ`/`ᾳ` is ordinary case mapping and was already grouped, which is precisely why the witness I had could not reveal it.
+- I re-derived the recommendation instead of adopting it: scanning every case-varying code point below `U+30000` on node v24, the uppercase-last key has zero self-consistency failures, and dropping the final `NFKC` produces eight — U+0390, U+03B0, U+1FD2, U+1FD3, U+1FD7, U+1FE2, U+1FE3, U+1FE7. The oracle named `İ` for that role and my runtime disagrees about WHICH characters break; both agree the step is load-bearing, and the disagreement is why the test asserts the property rather than a character list.
+- Knowledge candidate: a curated witness list cannot gate a Unicode fold | Surprise: three attempts at this predicate each passed their own witnesses and each missed a class the next round found — lexical, then simple case mapping, then a union that looked strictly stronger | Evidence: design.md#d9 and the 64-pair measurement | Consumer: plan | Action: gate a character-class predicate over the whole reachable range, never over examples, and treat "my witnesses pass" as evidence of nothing.
