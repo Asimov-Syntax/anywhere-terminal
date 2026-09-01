@@ -45,20 +45,42 @@ A detector keyed on the name `require` returns nothing here and the gate passes 
 artifact it ever inspects. Reproduced directly: `esbuild --bundle --platform=node --minify` over a
 jsonc-parser-shaped UMD fixture emits exactly the line above.
 
-So the callee is identified by **what it is bound to, not what it is called**. One intra-module
-fixed point over the parsed bundle:
+So the callee is identified by **what it is bound to, not what it is called**.
 
-1. Seed the tainted set twice: with the AMBIENT `require` — an identifier the bundle never declares
-   — and with any binding still spelled `require`, which is what an unminified factory parameter is.
-   Spelling remains sufficient; round 2's defect was treating it as *necessary*, and replacing it
-   rather than widening it would have traded one blind spot for another (an uninvoked factory is
-   statically connected to nothing, so binding alone cannot see it).
-2. Record every binding — `var`/`let`/`const` initializer, or parameter bound at a call site — whose
-   value is a function expression, so a callee identifier can be resolved back to a function.
-3. For every call whose callee resolves to a known function expression, bind that function's
-   parameters positionally to the call's arguments; a parameter bound to a tainted expression joins
-   the tainted set.
-4. Repeat to fixed point (the bundle is finite and each step only adds names).
+Round 3 then found three more spellings that ship and were still missed or misjudged, and they were
+one defect rather than three: the hand-rolled lexical resolver behind that idea was wrong about
+function declarations (F004), about taint through an assignment (F005), and about telling an ambient
+`require` from a local binding that merely shares the name (F007 — a FALSE REJECTION of a legitimate
+build, caused by the spelling seed this section previously argued for).
+
+Three rounds, three hand-rolled detectors, three misses: a text scan, then an identifier match, then
+a scope resolver. The lesson is not to write a fourth. **TypeScript's own binder already resolves
+lexical identity**, it is the same `typescript` devDependency the parse already uses, and its answers
+were verified against every disputed case before this paragraph was written:
+
+| Callee | `getSymbolAtLocation().declarations` | What it settles |
+|---|---|---|
+| `r` in `var r = require; r("./x")` | `VariableDeclaration` | follow the initializer — F005 |
+| `req` in `function factory(req){…}` | `Parameter` | follow the call site |
+| `factory` | `FunctionDeclaration` | a callable target, invisible before — F004 |
+| `require` declared as a parameter | `Parameter` | DECLARED, so not ambient — F007 |
+| ambient `require` | `null` | the ambient test, exactly |
+
+`declarations === null` is the precise ambient test the previous cut approximated with "nothing in
+this bundle declares it", and it is why the spelling seed can now be **dropped**: a binding named
+`require` that is genuinely ambient has no declaration, and one that is a local callback does. The
+round-1 fixture the seed existed to preserve is source-only — an uninvoked factory that never reaches
+a bundle — so the fixture is what changes, not the detector.
+
+The fixed point runs over SYMBOLS rather than node identity:
+
+1. Seed: an identifier resolving to a symbol with no declarations and spelled `require`.
+2. A symbol's declarations give its value — a variable initializer, a parameter bound at a call site,
+   or a function declaration — so a callee resolves to the functions it may hold.
+3. Bind parameters positionally to arguments, and propagate through identifier initializers and
+   assignments, both monotonically.
+4. Worklist with reverse indexes, so each propagation edge is processed once rather than triggering a
+   whole re-scan (F006).
 
 A call is a require call when its callee is a tainted identifier and it has exactly one
 string-literal argument. This catches the direct `require("./x")` spelling — `require` is tainted by
@@ -118,6 +140,12 @@ names a `main`, and that `main` may point at a file the VSIX does not carry, or 
 directory, or be absent or malformed — Node throws `MODULE_NOT_FOUND` for each, while a check that
 stops at "the manifest exists" returns ok.
 
+The manifest is read BEFORE a sibling `index.*` is accepted. Taking the index first let a directory
+holding both an index and a malformed `package.json` pass, while Node 18 and Node 24 both throw
+resolving it (.reviews/round-3.md F001) — a parse error is fatal to the directory, not something an
+index can rescue. Node's index fallback still applies to a VALID manifest whose `main` is absent or
+unresolved.
+
 So a directory resolves only when: its `package.json` parses; its effective `main` (absent ⇒ Node's
 `index.*` fallback) resolves through the same shipped-FILE rule the relative case uses, extension
 fallback included; and the resolved file lies INSIDE the artifact directory. A manifest that fails
@@ -132,7 +160,10 @@ returns: an earlier `external: ["stale"]` overridden by a later spread leaves th
 error is the dangerous one — it allowlists a dependency the VSIX does not carry.
 
 The allowlist is an authority, so it fails closed: a candidate config object carrying a spread, a
-computed property name, or an accessor is REFUSED with that reason, rather than read as if those
+computed property name, an accessor, or a SHORTHAND property is REFUSED with that reason. Shorthand
+was the form the first guard missed: a trailing `{ external }` overrides an earlier literal at
+runtime while a literal read keeps returning the stale value (.reviews/round-3.md F003). The rule is
+every element form the extractor does not interpret, not a list of the ones remembered, rather than read as if those
 constructs were not there. The current `esbuild.js` is a plain literal and reads correctly; strictness
 costs nothing today and the refusal is loud when it stops costing nothing.
 

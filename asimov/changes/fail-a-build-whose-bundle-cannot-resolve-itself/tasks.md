@@ -72,3 +72,40 @@ the extension failed to activate. No suite could catch it, because every suite i
   - **Plan**:
     1. In `scripts/bundleRequires.mjs`, make `declaredExternals` throw a named refusal when a candidate config object literal carries a spread assignment, a computed property name, or an accessor.
     2. Witness the spread, computed-key, and accessor refusals, and that the current plain-literal `esbuild.js` shape still reads, in `src/test/invariants/bundleRequires.test.ts`.
+
+## 4. Round-3 handback — delegate lexical identity to the binder
+
+- [ ] 4_1 Resolve callees through TypeScript's binder instead of a hand-rolled scope walk
+  - **Deps**: none
+  - **Refs**: design.md D2, D3
+  - **Acceptance**:
+    - Outcome: The gate reports an aliased and a function-declaration require, and stops rejecting a declared local
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, replace `scopeNames` and `makeResolver` with a `ts.createProgram` over the bundle and `checker.getSymbolAtLocation`, keying the fixed point on symbols.
+    2. Seed taint only where the resolved symbol has no declarations and the identifier is spelled `require`, and delete the spelling-only seed.
+    3. Register function declarations and variable initializers as callable targets, and propagate taint through identifier initializers and assignments.
+    4. Drive propagation from a worklist with reverse indexes so each edge is processed once.
+    5. Change the source-only uninvoked-factory witness in `src/test/invariants/bundleRequires.test.ts` to an invoked one, and add witnesses for the alias, function-declaration, and declared-local-named-require cases.
+    6. Record the gate's wall-clock cost on the real `dist/extension.js` in the change's workflow.md Notes.
+
+- [ ] 4_2 Read a directory manifest before accepting its sibling index
+  - **Deps**: 4_1
+  - **Refs**: design.md D4
+  - **Acceptance**:
+    - Outcome: A directory with an index and a malformed manifest is reported unresolvable
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, move the `package.json` read in `resolveShipped` ahead of the `index.*` candidates, making a parse failure fatal for the directory.
+    2. Keep Node's index fallback for a valid manifest whose `main` is absent or does not resolve.
+    3. Witness both orderings in `src/test/invariants/bundleRequires.test.ts`.
+
+- [ ] 4_3 Refuse a shorthand property in the build config
+  - **Deps**: 4_2
+  - **Refs**: design.md D5
+  - **Acceptance**:
+    - Outcome: A config carrying a shorthand property is refused rather than read
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, add `ts.isShorthandPropertyAssignment` to the refusal guard in `declaredExternals`.
+    2. Witness the shorthand refusal, and that the repo's own config still reads, in `src/test/invariants/bundleRequires.test.ts`.

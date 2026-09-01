@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-011.12
 Lane: light
-Planned at: 6616ccf2
+Planned at: 1bc770f9
 Lane: light — S, one new gate script plus wiring | flags: infra
 - Adoption is `clean-now` (automated-rule reference): `dist/extension.js` at planning time carries only node builtins and `vscode`, so the rule passes on landing. No baseline, no ratchet.
 - Specs are NO-DELTA: a build-time gate changes nothing the shipped extension does.
@@ -41,3 +41,4 @@ Round 3 was opened by an `asm review round-start` run made to read the trajector
 Handback (round 2 F002): design.md D2 detects a BARE `require` identifier, and the "Known limit" section asserts the shipped defect left a direct literal call. Both are false for the artifact the gate inspects — production esbuild renames the UMD factory's `require` parameter, so the defect ships as `e("./impl/format")`. Reproduced locally with a UMD fixture under `--bundle --platform=node --minify`. D2's mechanism has to change, so this is not remediation.
 Verify gate: one unit test failed on the first run and passed on two consecutive re-runs with no intervening edit — the same infra flake seen earlier in this branch, not reproduced on a clean tree.
 The gate was also run against the real production artifact, not only fixtures: `node scripts/check-bundle-requires.mjs` exits 0 on the 1 MB `dist/extension.js`, and reports `./impl/format` when the minified UMD shape is appended to that same file.
+Round 3 closes cycle 2 as superseded: its four blockers were accepted and handed back rather than fixed in place. F004, F005 and F007 are one defect — the hand-rolled lexical resolver — and D2 now delegates to TypeScript's binder, whose answers were verified against every disputed case first.
