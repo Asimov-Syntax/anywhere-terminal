@@ -154,7 +154,10 @@ export async function applyProvisioning(
       // would merge it into a destination it did not create — `makeDirectory`
       // answers `written` for an existing directory — installing neither its
       // material nor its mode, while only the loser was reported.
-      await refuseContest(contest, "may name this same destination, and it could not be shown to be free before the apply began");
+      await refuseContest(
+        contest,
+        "may name this same destination, and it could not be shown to be free before the apply began",
+      );
       continue;
     }
     live.set(contest.favoured, contest);
@@ -176,7 +179,10 @@ export async function applyProvisioning(
       // owns while reporting that it claimed it (.reviews/round-1.md F001).
       const members = [contest.favoured, ...contest.held];
       if (contended(await Promise.all(members.map(read)))) {
-        await refuseContest(contest, "may name this same destination, and it could not be shown to be free at this entry own turn");
+        await refuseContest(
+          contest,
+          "may name this same destination, and it could not be shown to be free at this entry own turn",
+        );
         for (const member of contest.held) {
           held.delete(member);
         }
