@@ -380,10 +380,7 @@ function foldable(declared: string): string {
     .join("/");
 }
 
-export function contendersOf(
-  entries: readonly ProvisionEntry[],
-  favouredSource?: string,
-): ProvisionContenders[] {
+export function contendersOf(entries: readonly ProvisionEntry[], favouredSource?: string): ProvisionContenders[] {
   const byKey = new Map<string, ProvisionEntry[]>();
   for (const entry of entries) {
     const key = foldable(entry.path);

@@ -421,3 +421,211 @@ describe("identity never reaches a filesystem", () => {
     expect(CONSULTS_A_FILESYSTEM.test(bodyOf(clean, "identityOf"))).toBe(false);
   });
 });
+
+/**
+ * The gate above walks one file, and an imported helper is invisible to it.
+ *
+ * `callablesOf` indexes a single source by unqualified name, so `identityOf`
+ * calling `probe(declared, deps)` where `probe` came from a sibling module has
+ * no node to walk: the name is not in the map, the walk stops, and the gate
+ * reports nothing. Two rewrites have each closed the shapes the previous round
+ * named and each left a wider one open, so this stops enumerating shapes and
+ * states a CLOSED BOUNDARY instead: every name the identity closure reaches is
+ * either a callable in a file this walk reads, or an import from a module
+ * declared pure below. Anything else is an offender — including a module this
+ * check cannot open, which is the point (design.md D1).
+ */
+const PURE_MODULES: ReadonlySet<string> = new Set([
+  // Lexical path algebra. `node:path` never touches a volume — `node:fs` is the
+  // one that does, and it is not here and cannot be added without editing this
+  // line, which is what "declared" means.
+  "node:path",
+  // Types only, erased before anything runs.
+  "../../types/messages",
+]);
+
+interface ImportedName {
+  readonly module: string;
+  /** The name the module exports, which an alias hides at the import site. */
+  readonly exported: string;
+  readonly typeOnly: boolean;
+}
+
+/** Every name this file imports, and where from. Type-only imports are marked, not dropped. */
+function importsOf(source: string): Map<string, ImportedName> {
+  const file = ts.createSourceFile("probe.ts", source, ts.ScriptTarget.Latest, true);
+  const found = new Map<string, ImportedName>();
+
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue;
+    }
+    const module = statement.moduleSpecifier.text;
+    const clause = statement.importClause;
+    if (clause === undefined) {
+      continue;
+    }
+    const wholeClauseIsTypes = clause.isTypeOnly;
+    if (clause.name !== undefined) {
+      found.set(clause.name.text, { module, exported: "default", typeOnly: wholeClauseIsTypes });
+    }
+    const bindings = clause.namedBindings;
+    if (bindings === undefined) {
+      continue;
+    }
+    if (ts.isNamespaceImport(bindings)) {
+      found.set(bindings.name.text, { module, exported: "*", typeOnly: wholeClauseIsTypes });
+      continue;
+    }
+    for (const element of bindings.elements) {
+      found.set(element.name.text, {
+        module,
+        exported: (element.propertyName ?? element.name).text,
+        typeOnly: wholeClauseIsTypes || element.isTypeOnly,
+      });
+    }
+  }
+  return found;
+}
+
+/**
+ * Everything reachable from one root that the boundary does not admit.
+ *
+ * `read` returns a file's source or `undefined` when this walk cannot open it;
+ * a relative specifier it cannot open is an offender rather than a shrug.
+ */
+function boundaryOffenders(entry: string, root: string, read: (file: string) => string | undefined): string[] {
+  const offenders: string[] = [];
+  const seen = new Set<string>();
+  const queue: (readonly [string, string])[] = [[entry, root]];
+  for (;;) {
+    const next = queue.pop();
+    if (next === undefined) {
+      return [...new Set(offenders)].sort();
+    }
+    const [file, name] = next;
+    const key = `${file}#${name}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const source = read(file);
+    if (source === undefined) {
+      offenders.push(`${name} from an unreadable ${file}`);
+      continue;
+    }
+    const callables = callablesOf(source);
+    const node = callables.get(name);
+    if (node === undefined) {
+      // A name a module exports that is not a callable — a constant, a type —
+      // reaches nothing on its own.
+      continue;
+    }
+    if (CONSULTS_A_FILESYSTEM.test(node.getText())) {
+      offenders.push(key);
+    }
+    const imports = importsOf(source);
+    for (const other of referencesOf(node)) {
+      if (other === name) {
+        continue;
+      }
+      if (callables.has(other)) {
+        queue.push([file, other]);
+        continue;
+      }
+      const imported = imports.get(other);
+      if (imported === undefined || imported.typeOnly) {
+        continue;
+      }
+      if (imported.module.startsWith("./")) {
+        // A sibling module is WALKED, never trusted: the only way past this
+        // gate is to be readable and clean. `read` answering `undefined` for
+        // one is an offender above, not a shrug.
+        queue.push([`${imported.module.slice(2)}.ts`, imported.exported]);
+        continue;
+      }
+      if (!PURE_MODULES.has(imported.module)) {
+        offenders.push(`${other} from ${imported.module}`);
+      }
+    }
+  }
+}
+
+describe("identity reaches nothing this walk cannot see", () => {
+  it.each(IDENTITY_ROOTS)("%s#%s stays inside the declared boundary", (file, root) => {
+    const offenders = boundaryOffenders(file, root, (name) => (SHIPPED.includes(name) ? sourceOf(name) : undefined));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("catches a helper IMPORTED from a sibling module that reaches a hook", () => {
+    // The shape the single-file walk cannot see at all: the name is not in its
+    // callable map, so it stops there and reports a clean root.
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { probe } from "./probes";',
+        "export function identityOf(declared: string, io: Io): string {",
+        "  return probe(declared, io);",
+        "}",
+      ].join("\n"),
+      "probes.ts": [
+        "export function probe(declared: string, deps: ProviderDeps): string {",
+        "  return deps.realpath(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual(["probes.ts#probe"]);
+    // Non-vacuity: the walk this replaces sees nothing wrong with the entry file.
+    const alone = files["identity.ts"] ?? "";
+    expect(
+      [...reachableFrom(alone, ["identityOf"])].filter((n) => CONSULTS_A_FILESYSTEM.test(bodyOf(alone, n))),
+    ).toEqual([]);
+  });
+
+  it("catches an import from a module that was never declared pure", () => {
+    // Whether or not `node:fs` is what a future helper reaches for, an
+    // undeclared module is refused on the import alone — the gate does not need
+    // to understand the module to refuse it.
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { realpathSync } from "node:fs";',
+        "export function identityOf(declared: string): string {",
+        "  return realpathSync(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual(["realpathSync from node:fs"]);
+  });
+
+  it("refuses a relative module it cannot open, rather than passing it", () => {
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import { probe } from "./elsewhere";',
+        "export function identityOf(declared: string): string {",
+        "  return probe(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([
+      "probe from an unreadable elsewhere.ts",
+    ]);
+  });
+
+  it("admits a pure module, and a type-only import of anything", () => {
+    const files: Record<string, string> = {
+      "identity.ts": [
+        'import * as path from "node:path";',
+        'import type { ProviderDeps } from "./providerKit";',
+        "export function identityOf(declared: string): string {",
+        "  const _unused: ProviderDeps | undefined = undefined;",
+        "  return path.posix.normalize(declared);",
+        "}",
+      ].join("\n"),
+    };
+
+    expect(boundaryOffenders("identity.ts", "identityOf", (n) => files[n])).toEqual([]);
+  });
+});

@@ -253,9 +253,7 @@ describe("a directly-read model carries the contender relation too", () => {
     const deps = withYaml("copy:\n  - MixedCase\n  - mixedcase\n  - other\n");
     const model = await readAsimovProvisioning(deps, ROOT);
 
-    const grouped = model.contenders.map((g) =>
-      g.members.map((id) => model.entries.find((e) => e.id === id)?.path),
-    );
+    const grouped = model.contenders.map((g) => g.members.map((id) => model.entries.find((e) => e.id === id)?.path));
 
     expect(grouped).toEqual([["MixedCase", "mixedcase"]]);
     // One declaring file, so nothing in it is "the repository's own" relative

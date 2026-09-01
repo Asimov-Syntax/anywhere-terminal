@@ -129,7 +129,7 @@
     1. `readAsimovProvisioning` in `src/worktree/provisioning/asimovProvider.ts` returns `modelFromDraft()`, whose `contenders` is always empty. Only tests call it today, so this is a trap for the next caller rather than a live defect — finalize contenders there too rather than leaving two meanings of `ProvisionModel`.
     2. Put the finalization where both callers reach it instead of copying it, so `oneOwner.test.ts` has nothing new to catch: `foldSegment` and the grouping move from `src/worktree/provisioning/readProvisioning.ts` into `src/worktree/provisioning/providerKit.ts`, and `modelFromDraft` fills the field so every adapter's model carries it. `src/worktree/provisioning/readProvisioning.test.ts` and `src/worktree/provisioning/oneOwner.test.ts` follow the move.
 
-- [ ] 5_3 Make the identity gate refuse what it cannot see
+- [x] 5_3 Make the identity gate refuse what it cannot see — verified: pnpm exec vitest run 'src/worktree/provisioning/oneOwner.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: design.md#obligation-ledger
   - **Acceptance**:
@@ -138,3 +138,4 @@
   - **Plan**:
     1. The walk in `src/worktree/provisioning/oneOwner.test.ts` parses one file and indexes callables by unqualified name, so an imported helper calling `realpathSync` is never traversed. Two rewrites have each closed the shapes the previous round named and left a wider one, so stop chasing shapes: assert a closed boundary instead. Every name the identity closure reaches must be either a local callable or an import from a declared pure module, and anything else fails.
     2. Prove RED with an imported helper that reaches the filesystem — the shape neither previous version could see.
+    3. `src/worktree/provisioning/readProvisioning.ts` keeps the imports 5_2 left behind: `path` and `ProvisionContenders` are unused there now, and the lint gate is a count. `src/worktree/provisioning/providerKit.ts` and `src/worktree/provisioning/readProvisioning.test.ts` carry the same residue (one signature the formatter joins, one import the mover split in two), and so does `src/worktree/provisioning/asimovProvider.test.ts`.

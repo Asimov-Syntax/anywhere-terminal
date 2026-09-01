@@ -9,17 +9,16 @@
 // as if it had never configured the tool it uses. One answers; the others are
 // named and one click away (design.md D3, D5).
 
-import * as path from "node:path";
-import type { ProvisionContenders, ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
+import type { ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
 import { asimovAdapter } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { orcaAdapter } from "./orcaProvider";
 import {
   type AdapterRead,
   type Authorized,
+  contendersOf,
   type Draft,
   emptyModel,
-  contendersOf,
   identityOf,
   newBudget,
   newDraft,
@@ -147,7 +146,6 @@ async function baseFor(
   return { adapter, authorized: new Map([[target, opened]]) };
 }
 
-
 /**
  * Base first, then the repository's own — and the native entry wins the path
  * they share, including its mode (§ 4.2 steps 1–3).
@@ -223,7 +221,6 @@ function applyExclude(
     excluded: entries.filter((e) => removed.has(pathKey(e.path))),
   };
 }
-
 
 /** What the native file's answer becomes once the base it named is resolved. */
 async function assemble(

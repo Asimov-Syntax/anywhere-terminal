@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
-import { MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
-import { foldSegment } from "./providerKit";
+import { foldSegment, MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
 import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
