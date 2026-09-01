@@ -27,6 +27,7 @@
 import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
 import { isResolvedPathInsideRoot, type ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
@@ -66,7 +67,13 @@ export interface ApplyFsDeps {
    * bytes written. Rejects `ELOOP` when the source is a symlink and `EEXIST`
    * when the destination already exists.
    */
-  copyFileNoFollow(source: string, destination: string, mode: number, signal?: AbortSignal): Promise<number>;
+  copyFileNoFollow(
+    source: string,
+    destination: string,
+    mode: number,
+    signal?: AbortSignal,
+    limit?: number,
+  ): Promise<number>;
 }
 
 /**
@@ -354,7 +361,10 @@ export async function applyEntry(
     // symlinked component. Resting on an invariant three modules away is
     // fragile enough — but resting on it and answering "nothing to do" when it
     // fails is the wrong failure mode (round-2 F019).
-    if (relative.startsWith("..")) {
+    // An exact `..` COMPONENT, not a name that merely begins with one:
+    // `..cache` is an ordinary in-root directory and was refused as an escape
+    // (.reviews/round-4.md F019).
+    if (relative.split(path.sep).includes("..")) {
       return { kind: "refused", reason: "a parent directory of this entry resolves outside the worktree" };
     }
     let at = roots.destination.prepared.resolved;
@@ -410,7 +420,11 @@ export async function applyEntry(
     if (node.isFile()) {
       spendBytes(node.size);
       try {
-        settleBytes(node.size, await deps.copyFileNoFollow(source, destination, node.mode, stopping.signal));
+        // The remaining budget travels WITH the copy. The precharge above is a
+        // stat's estimate, and a file that grows between the two spent bytes
+        // this could only notice afterwards (.reviews/round-4.md F021).
+        const ceiling = budget.maxBytes - (spent.bytes - node.size);
+        settleBytes(node.size, await deps.copyFileNoFollow(source, destination, node.mode, stopping.signal, ceiling));
       } catch (error) {
         if (codeOf(error) === "EEXIST") {
           settleBytes(node.size, 0);
@@ -459,6 +473,12 @@ export async function applyEntry(
    * worktree.
    */
   async function makeLink(): Promise<NodeResult | "degrade"> {
+    // One node, charged and checked like any other. A root-level link creates
+    // no parent, so `ensureParents` spends nothing and this arm reached the
+    // filesystem with `maxNodes: 0` and an expired deadline both unconsulted
+    // (.reviews/round-4.md F016) — including the arm where the destination
+    // already exists.
+    spend();
     const target = path.relative(path.dirname(entryDestination), entrySource);
     try {
       await deps.symlink(target, entryDestination);
@@ -527,9 +547,16 @@ export const nodeApplyFsDeps: ApplyFsDeps & ResolvedPathInsideDeps = {
   // through this, and omitting it is what made D6 run on lexical dirnames in
   // production while every test ran the corrected path (round-1 F003).
   realpath: (p) => fs.realpath(p),
-  mkdir: async (p, mode) => void (await fs.mkdir(p, { mode })),
+  // `mkdir`'s mode is masked by the process umask, so the directory that lands
+  // is not the one the source had — a `0777` source became `0700` under umask
+  // `077` (.reviews/round-4.md F027). Restored explicitly, and only when THIS
+  // call created it: `EEXIST` throws past the chmod.
+  mkdir: async (p, mode) => {
+    await fs.mkdir(p, { mode });
+    await fs.chmod(p, mode);
+  },
   symlink: (target, p) => fs.symlink(target, p),
-  copyFileNoFollow: async (source, destination, mode, signal) => {
+  copyFileNoFollow: async (source, destination, mode, signal, limit) => {
     // Windows has no O_NOFOLLOW; `?? 0` degrades to a following open there
     // rather than throwing, and the platform's own symlink story is why link
     // entries degrade to copies on it at all (D7).
@@ -551,8 +578,25 @@ export const nodeApplyFsDeps: ApplyFsDeps & ResolvedPathInsideDeps = {
       }
       const destination_ = await fs.open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
       unstreamed = false;
-      await pipeline(source_.createReadStream(), destination_.createWriteStream(), { signal });
-      return stat.size;
+      // `O_CREAT`'s mode is masked by the umask exactly as `mkdir`'s is, and
+      // the file has just been created exclusively, so this cannot re-mode
+      // anything that was already there (F027).
+      await destination_.chmod(mode & 0o7777);
+      let written = 0;
+      const counted = new Transform({
+        transform(chunk: Buffer, _encoding, done): void {
+          written += chunk.length;
+          if (limit !== undefined && written > limit) {
+            // Refused DURING the transfer. Reconciling a second stat after the
+            // write bounds a sequence of copies and bounds no single one (F021).
+            done(new BudgetExceeded(`too large to bring over — stopped after ${limit} bytes`));
+            return;
+          }
+          done(null, chunk);
+        },
+      });
+      await pipeline(source_.createReadStream(), counted, destination_.createWriteStream(), { signal });
+      return written;
     } finally {
       if (unstreamed) {
         await source_.close();

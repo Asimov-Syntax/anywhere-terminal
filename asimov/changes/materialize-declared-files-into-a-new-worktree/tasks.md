@@ -155,7 +155,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     3. `src/worktree/provisioning/applyEntries.test.ts`, `src/worktree/provisioning/applyEntries.node.test.ts`, `src/worktree/provisioning/entryGate.test.ts`: a descendant witness against the production binding, each alias spelling, and the false-refusal cases the fold must NOT catch — a directory named like a lockfile, and an entry whose offending segment resolution discards.
   - **Boundary**: D6 and D7 do not move — no descendant `node_modules` rule, and no refusal reason the spec does not already own
 
-- [ ] 4_2 Charge and preserve what the apply actually did
+- [x] 4_2 Charge and preserve what the apply actually did — verified: pnpm exec vitest run 'src/worktree/provisioning/applyEntries.node.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#d5; design.md#d10; .reviews/round-4.md#f027; .reviews/round-4.md#f016; .reviews/round-4.md#f021; .reviews/round-4.md#f019
   - **Acceptance**:

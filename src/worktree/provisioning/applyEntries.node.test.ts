@@ -258,3 +258,109 @@ describe("[round-4 F004] the classifier reads the identity the filesystem acts o
     expect(result.outcome.kind).toBe("copied");
   });
 });
+
+describe("[round-4 F027] the mode that lands is the mode the source had", () => {
+  // The ambient umask, not one this suite sets — vitest workers refuse
+  // `process.umask(mask)`. That is enough, because the defect IS the umask
+  // being applied: any nonzero mask makes the two modes differ.
+  const MASK = process.umask();
+
+  it("has a umask that can tell the two apart, so the two tests below are not vacuous", () => {
+    // Without this the suite would pass on a machine whose umask is 0 while
+    // proving nothing at all.
+    expect(MASK & 0o777).not.toBe(0);
+  });
+
+  it("keeps a file's permission bits", async () => {
+    // `fs.open`'s `O_CREAT` mode is masked by the process umask and nothing
+    // restored it, so a `0777` source arrived masked while the step reported
+    // `copied`. The fake stores the supplied mode verbatim, so only this suite
+    // can see it.
+    await fs.writeFile(path.join(main, "run.sh"), "#!/bin/sh\n");
+    await fs.chmod(path.join(main, "run.sh"), 0o777);
+
+    const result = await apply(entry({ path: "run.sh" }));
+
+    expect(result.outcome.kind).toBe("copied");
+    expect((await fs.stat(path.join(worktree, "run.sh"))).mode & 0o777).toBe(0o777);
+  });
+
+  it("keeps a directory's permission bits too", async () => {
+    await fs.mkdir(path.join(main, "shared"));
+    await fs.chmod(path.join(main, "shared"), 0o777);
+    await fs.writeFile(path.join(main, "shared", "a.txt"), "a");
+
+    await apply(entry({ path: "shared" }));
+
+    expect((await fs.stat(path.join(worktree, "shared"))).mode & 0o777).toBe(0o777);
+  });
+});
+
+describe("[round-4 F016] a direct link is one node like any other", () => {
+  it("refuses a root-level link when no node is left in the budget", async () => {
+    // A root-level link creates no parent, so `ensureParents` spends nothing
+    // and this arm reached `symlink` with the budget entirely unconsulted.
+    await fs.writeFile(path.join(main, "third_party"), "x");
+
+    const result = await apply(entry({ path: "third_party", mode: "link" }), budget({ maxNodes: 0 }));
+
+    expect(result.outcome.kind).toBe("failed");
+    await expect(fs.lstat(path.join(worktree, "third_party"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a link whose destination already exists, rather than skipping for free", async () => {
+    // The EEXIST arm answered `skipped` without ever charging the node, so the
+    // cheap path was also the unaccounted one.
+    await fs.writeFile(path.join(main, "third_party"), "x");
+    await fs.writeFile(path.join(worktree, "third_party"), "y");
+
+    const result = await apply(entry({ path: "third_party", mode: "link" }), budget({ maxNodes: 0 }));
+
+    expect(result.outcome.kind).toBe("failed");
+  });
+});
+
+describe("[round-4 F021] the transfer is bounded while it runs, not audited after", () => {
+  it("stops a copy that outgrows the ceiling it was given", async () => {
+    // The binding's own contract, exercised directly: a stat before the open is
+    // an ESTIMATE, and a source that is larger than the remaining budget must
+    // fail during the stream rather than be reconciled once the bytes are down.
+    await fs.writeFile(path.join(main, "big.bin"), "x".repeat(64 * 1024));
+
+    await expect(
+      nodeApplyFsDeps.copyFileNoFollow(
+        path.join(main, "big.bin"),
+        path.join(worktree, "big.bin"),
+        0o644,
+        undefined,
+        16,
+      ),
+    ).rejects.toThrow(/too large/);
+  });
+
+  it("answers with the bytes it actually wrote, not the size it was told", async () => {
+    await fs.writeFile(path.join(main, "small.txt"), "hello");
+
+    const written = await nodeApplyFsDeps.copyFileNoFollow(
+      path.join(main, "small.txt"),
+      path.join(worktree, "small.txt"),
+      0o644,
+      undefined,
+      1024,
+    );
+
+    expect(written).toBe(5);
+  });
+});
+
+describe("[round-4 F019] a name that begins with two dots is not an escape", () => {
+  it("admits an entry under a directory literally named `..cache`", async () => {
+    await fs.mkdir(path.join(main, "..cache"), { recursive: true });
+    await fs.writeFile(path.join(main, "..cache", "seed"), "s");
+
+    const result = await apply(entry({ path: "..cache/seed" }));
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(await fs.readFile(path.join(worktree, "..cache", "seed"), "utf8")).toBe("s");
+  });
+});
