@@ -108,3 +108,27 @@ FOLLOW-UP grew a second half, both for the same PLAN task: rpc § 2.4 requires a
 re-presented after a stale offer id, AND refusal when the provider files changed underneath a
 still-held offer — `lookup` (`offerStore.ts:132-136`) compares key and id only, carrying no version or
 content identity. D3 builds the safety half; neither missing half is in WT-012.2's Acceptance.
+
+- D7 carried a sentence that contradicted its own premise and was corrected at build time rather than
+  implemented: "its target is checked by D6's destination-side rule like any other". D6's rule
+  requires a target to resolve INSIDE the worktree, and a link entry points at the main checkout —
+  leaving is what link means. Applied literally it would have refused every link this decision exists
+  to create. Corrected in design.md and in 1_4's Plan, with the scope of D6 stated: it governs
+  symlinks found while walking a copied tree, where nothing intends to leave. No Acceptance, Boundary
+  or spec requirement moved, which is why this was a correction and a Notes line rather than a
+  handback.
+- Mutation testing on 1_3 found TWO survivors, and both were guards the plan attack had specifically
+  demanded — the walk's descent check and its two-sided symlink validation. The tests I wrote for them
+  passed for the wrong reason: `admitEntry` refuses those inputs before the walk runs, so the walk's
+  own checks were never reached. Fixed with two witnesses the gate cannot answer — a destination
+  symlink one level BELOW the admitted entry, and a relocation whose source side passes so only the
+  destination check can refuse it. Recorded because "the test exists" was false comfort here, and the
+  same shape will recur wherever a gate and a walk check overlapping things.
+- That also exposed a real defect rather than only a weak test: `copyLink` resolved a symlink's target
+  from the LEXICAL dirname. It admitted nothing extra, but it refused legitimate links under a
+  symlinked ancestor. Both sides now resolve from real directories, with a companion test asserting a
+  valid relative link still survives.
+- `EACCES` was briefly added to the codes that degrade a link to a copy and then removed: it is
+  permission denied on the containing directory, not the platform saying it has no symlink to give,
+  and degrading on it would hand the user a copy where a failure is the honest answer. The design's
+  three codes stand.

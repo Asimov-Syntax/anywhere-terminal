@@ -6,6 +6,7 @@
 // relative symlink that is inside the repository where it was found and outside
 // the worktree where it lands.
 
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
 import { afterDelay } from "../deadline";
@@ -249,5 +250,87 @@ describe("the walk is bounded", () => {
     expect(result.outcome.kind).toBe("failed");
     // D9: a partial copy is reported, never unwound.
     expect(fs.created.length).toBeGreaterThan(0);
+  });
+});
+
+describe("a link points at the main checkout, or says the platform would not let it", () => {
+  const linkable: Record<string, FakeNode> = {
+    "/repo/.env": { kind: "file", size: 12 },
+    "/wt/feature/sub": { kind: "dir" },
+  };
+
+  it("creates a RELATIVE symlink back to the main checkout", async () => {
+    const { result, fs } = await apply(entry(".env", "link"), linkable);
+    expect(result.outcome.kind).toBe("linked");
+    const node = fs.nodes.get("/wt/feature/.env");
+    expect(node).toMatchObject({ kind: "link" });
+    if (node?.kind !== "link") {
+      return;
+    }
+    // Relative so the pair survives being moved together — an absolute target
+    // would name this machine's layout.
+    expect(path.posix.isAbsolute(node.target)).toBe(false);
+    expect(path.posix.resolve("/wt/feature", node.target)).toBe("/repo/.env");
+  });
+
+  it("does not walk a link entry's source tree", async () => {
+    // A link is ONE node. Copying the tree underneath it would give the worktree
+    // its own copy, which is the opposite of what link means.
+    const { result, fs } = await apply(entry("cfg", "link"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/a.json": { kind: "file" },
+      "/repo/cfg/b.json": { kind: "file" },
+    });
+    expect(result.outcome.kind).toBe("linked");
+    expect(fs.nodes.get("/wt/feature/cfg")).toMatchObject({ kind: "link" });
+    expect(fs.nodes.has("/wt/feature/cfg/a.json")).toBe(false);
+  });
+
+  it("degrades to a copy, and says so, where the platform has no symlink to give", async () => {
+    const fs = fakeFs({ ...base, ...linkable });
+    const refuse = (code: string) => async () => {
+      const error = new Error(`${code}: symlink`) as NodeJS.ErrnoException;
+      error.code = code;
+      throw error;
+    };
+    for (const code of ["EPERM", "ENOSYS", "UNKNOWN"]) {
+      const one = fakeFs({ ...base, ...linkable });
+      one.symlink = refuse(code);
+      const roots = await prepareEntryGate(MAIN, WT, one);
+      if (roots === null) {
+        throw new Error("roots did not prepare");
+      }
+      const result = await applyEntry(entry(".env", "link"), roots, budget(), one);
+      expect(result.outcome.kind).toBe("degradedToCopy");
+      // Degraded means the user still got the material — not a link reported as
+      // made, and not a failure.
+      expect(one.nodes.get("/wt/feature/.env")).toMatchObject({ kind: "file", size: 12 });
+    }
+    void fs;
+  });
+
+  it("fails rather than silently degrading on a symlink error the platform did not excuse", async () => {
+    const fs = fakeFs({ ...base, ...linkable });
+    fs.symlink = async () => {
+      const error = new Error("EIO: symlink") as NodeJS.ErrnoException;
+      error.code = "EIO";
+      throw error;
+    };
+    const roots = await prepareEntryGate(MAIN, WT, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const result = await applyEntry(entry(".env", "link"), roots, budget(), fs);
+    expect(result.outcome.kind).toBe("failed");
+    expect(fs.nodes.has("/wt/feature/.env")).toBe(false);
+  });
+
+  it("skips a link whose destination already exists rather than replacing it", async () => {
+    const { result, fs } = await apply(entry(".env", "link"), {
+      ...linkable,
+      "/wt/feature/.env": { kind: "file", size: 99 },
+    });
+    expect(result.outcome.kind).toBe("skipped");
+    expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ kind: "file", size: 99 });
   });
 });

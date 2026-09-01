@@ -150,7 +150,14 @@ Otherwise the walk dispatches on `lstat`, which does not follow:
 ### D7 — Link is relative, and degrades rather than lies
 
 A link entry becomes a relative symlink from the worktree to the main checkout. Relative so the pair
-survives being moved together. Its target is checked by D6's destination-side rule like any other.
+survives being moved together.
+
+**D6's destination-side rule does NOT apply to it, and an earlier draft of this paragraph said it
+did.** That rule requires a target to resolve inside the worktree, and a link entry points at the
+main checkout — leaving the worktree is the entire thing it is for. Applied here it would refuse
+every link this decision exists to create. What the entry gate already established is what governs:
+the target is inside the main checkout, and the link's own location is inside the worktree. D6 governs
+symlinks *encountered while walking a source tree*, where nothing intends to leave.
 
 `EPERM` / `ENOSYS` / `UNKNOWN` from `symlink` is the platform saying it has no symlink to give (Windows
 without Developer Mode or elevation). The entry then copies instead and reports `degradedToCopy` — not a

@@ -88,6 +88,14 @@ const WRITTEN: NodeResult = { kind: "written" };
 /** Thrown to stop a walk at once; carries the reason the entry reports. */
 class BudgetExceeded extends Error {}
 
+/**
+ * The platform saying it has no symlink to give — Windows without Developer
+ * Mode or elevation. Anything else from `symlink` is a real failure and is
+ * reported as one, because a degradation the user did not need hands them a
+ * copy where they asked for write-through.
+ */
+const NO_SYMLINK: ReadonlySet<string> = new Set(["EPERM", "ENOSYS", "UNKNOWN"]);
+
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code;
 
 const messageOf = (error: unknown): string =>
@@ -116,6 +124,9 @@ export async function applyEntry(
   if (!admitted.ok) {
     return step({ kind: "refused", reason: admitted.reason });
   }
+  // Held as plain values: a closure below reads them, and narrowing on the
+  // union does not survive into one.
+  const { source: entrySource, destination: entryDestination } = admitted;
 
   // Poll-able rather than raced: racing reports a failure while the walk keeps
   // writing, and the whole point of the budget is to stop holding the queue.
@@ -153,7 +164,7 @@ export async function applyEntry(
 
   /** Relative spelling of an absolute destination, for a `details` row. */
   const shown = (absolute: string): string =>
-    path.posix.join(entry.path, path.relative(admitted.destination, absolute) || "");
+    path.posix.join(entry.path, path.relative(entryDestination, absolute) || "");
 
   /**
    * A symlink is recreated only when its target lands inside the main checkout
@@ -250,12 +261,57 @@ export async function applyEntry(
     return WRITTEN;
   }
 
+  /**
+   * A link entry is ONE node, never a walk.
+   *
+   * It points OUT of the worktree on purpose — that is what "link" means, and
+   * why D6's destination-side containment governs links found inside a copied
+   * tree rather than this. What makes it safe is already established: the entry
+   * gate put the target inside the main checkout and the link inside the
+   * worktree.
+   */
+  async function makeLink(): Promise<NodeResult | "degrade"> {
+    const target = path.relative(path.dirname(entryDestination), entrySource);
+    try {
+      await deps.symlink(target, entryDestination);
+    } catch (error) {
+      const code = codeOf(error);
+      if (code === "EEXIST") {
+        return { kind: "skipped", reason: "already there" };
+      }
+      if (code !== undefined && NO_SYMLINK.has(code)) {
+        return "degrade";
+      }
+      throw error;
+    }
+    return WRITTEN;
+  }
+
   try {
-    const result = await walk(admitted.source, admitted.destination);
+    if (entry.mode === "link") {
+      const linked = await makeLink();
+      if (linked !== "degrade") {
+        return linked.kind === "written"
+          ? step({ kind: "linked" })
+          : step({ kind: linked.kind, reason: linked.reason });
+      }
+      // The material still arrives; it just arrives as a copy, and the report
+      // says which — a link and a copy differ in the way the dialog told the
+      // user about, so neither a silent success nor a failure is honest here.
+      const copied = await walk(entrySource, entryDestination);
+      if (copied.kind !== "written") {
+        return step({ kind: copied.kind, reason: copied.reason }, details);
+      }
+      return step({ kind: "degradedToCopy" }, details);
+    }
+
+    const result = await walk(entrySource, entryDestination);
     if (result.kind === "skipped" || result.kind === "refused") {
       return step({ kind: result.kind, reason: result.reason }, details);
     }
-    return step(entry.mode === "link" ? { kind: "linked" } : { kind: "copied" }, details);
+    // The link branch above returns for every link entry, so what reaches here
+    // is a copy — the mode ternary that used to sit here could not be false.
+    return step({ kind: "copied" }, details);
   } catch (error) {
     if (error instanceof BudgetExceeded) {
       return step({ kind: "failed", reason: error.message }, details);
