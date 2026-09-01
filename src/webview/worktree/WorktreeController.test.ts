@@ -3204,9 +3204,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     }
     danger()?.click();
 
-    expect(h.posts).toEqual([
-      { type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-assess-1" },
-    ]);
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-assess-1" }]);
   });
 
   it("routes an assessment the host could not make to the retry surface, not to a refusal", () => {
