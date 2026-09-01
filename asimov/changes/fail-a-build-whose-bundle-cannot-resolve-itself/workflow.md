@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -44,3 +44,4 @@ The gate was also run against the real production artifact, not only fixtures: `
 Round 3 closes cycle 2 as superseded: its four blockers were accepted and handed back rather than fixed in place. F004, F005 and F007 are one defect — the hand-rolled lexical resolver — and D2 now delegates to TypeScript's binder, whose answers were verified against every disputed case first.
 Binder cost on the real artifact (round-3 F006): `node scripts/check-bundle-requires.mjs` over the 1 MB dist/extension.js runs in 0.47s wall clock end to end — cheaper than the hand-rolled scope walk it replaces, so the superlinear-growth concern is answered by measurement rather than by argument.
 Arm check on that same artifact, all four shapes appended at once: ./umd-minified, ./scalar-alias and ./decl-factory are reported; ./legit-local — a local binding spelled `require` bound to a plain callback — is not, which is F007 closed in the direction that matters.
+Verify gate after the round-3 handback: check-types clean, 6756 unit tests pass, biome check at the 3/14/1 baseline, verify-status 0. One unrelated test in src/extension.worktreeAssembly.test.ts failed once under full-suite load and passed 3/3 standalone and on the re-run — the same infra flake recorded above, not reproduced on a clean tree.
