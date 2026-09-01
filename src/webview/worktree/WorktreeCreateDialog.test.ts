@@ -3542,11 +3542,18 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     expect(host.querySelectorAll(".wt-brow-note")).toHaveLength(0);
   });
 
-  it("stops the summary promising both members will land", () => {
-    // The counts are ROWS OFFERED. Saying "1 copied · 1 linked" unqualified
-    // promises two files where one may be all that lands, and which one gives
-    // way cannot be known before the worktree exists (D2).
+  it("counts the repository's own and not the member that yields to it", () => {
+    // The yielding row is offered unticked and refused by the apply on every
+    // volume, so counting its link promised a second file that never lands
+    // (F007). The spellings line stays: the row is still on screen, and the
+    // count alone does not say why it is not in it.
     const { host } = withPair();
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 2 spellings may be one file");
+  });
+
+  it("counts both members when neither is favoured", () => {
+    const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
 
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked · 2 spellings may be one file");
   });
@@ -3559,7 +3566,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
       contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
     });
 
-    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied · 1 linked · 3 spellings may be one file");
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 3 spellings may be one file");
   });
 
   it("[round-1 F004] does not call two separate collisions one set of spellings", () => {
@@ -3576,7 +3583,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     });
 
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe(
-      "3 copied · 1 linked · 2 sets of spellings may each be one file",
+      "2 copied · 2 sets of spellings may each be one file",
     );
   });
 

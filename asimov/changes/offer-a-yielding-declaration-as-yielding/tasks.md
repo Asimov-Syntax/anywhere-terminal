@@ -13,7 +13,7 @@ counts it into "N copied", so the offer promises what the apply will refuse.
     2. A group with no favoured member is untouched — both stay selected.
     3. `src/webview/worktree/WorktreeCreateDialog.test.ts` witnesses both, and that the repository's own stays selected.
 
-- [ ] 1_2 Count only what will be brought over
+- [x] 1_2 Count only what will be brought over — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding
   - **Acceptance**:

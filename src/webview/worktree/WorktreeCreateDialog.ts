@@ -458,8 +458,14 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
  * not the same claim, and a single blank summary would make them look alike.
  */
 function bringSummary(model: WorktreeProvisionOffer["model"]): string {
-  const copied = model.entries.filter((e) => e.mode === "copy").length;
-  const linked = model.entries.length - copied;
+  // What the section offers SELECTED, not what the model declares. A member
+  // yielding to the repository's own is refused by the apply on every volume,
+  // so counting it here says a file will be brought over that never can be
+  // (`award-a-contested-destination-or-refuse-it/.reviews/round-3.md` F007).
+  const yielding = yieldsTo(model);
+  const brought = model.entries.filter((e) => !yielding.has(e.id));
+  const copied = brought.filter((e) => e.mode === "copy").length;
+  const linked = brought.length - copied;
   const parts: string[] = [];
   if (copied > 0) {
     parts.push(`${copied} copied`);
@@ -474,10 +480,11 @@ function bringSummary(model: WorktreeProvisionOffer["model"]): string {
     parts.push(`${model.setup.length} setup step${model.setup.length === 1 ? "" : "s"}`);
   }
   if (model.contenders.length > 0) {
-    // The counts above are ROWS OFFERED. A contender group offers rows that may
-    // turn out to be one destination, so leaving the counts unqualified would
-    // promise a file that never lands — and which one gives way cannot be known
-    // before the worktree exists (design D2).
+    // The counts above exclude the members that yield, but a group with no
+    // favoured member yields nobody: its rows are all offered, all counted, and
+    // which one gives way cannot be known before the worktree exists (design
+    // D2). The line covers both — a settled group still tells the user why a
+    // spelling it can see is not in the count.
     //
     // Counted from the members, never called a "pair": a group is a connected
     // component and three spellings of one name are one group, so the word
