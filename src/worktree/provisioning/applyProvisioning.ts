@@ -10,7 +10,7 @@
 // Nothing here deletes, truncates or overwrites. `ApplyFsDeps` offers no
 // primitive that could.
 
-import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
+import type { ProvisionEntry, ProvisionResultContest, ProvisionStepResult } from "../../types/messages";
 import type { ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
 import { type ApplyBudget, type ApplyFsDeps, applyEntry, applyExclusiveEntry, CLAIM_LOST } from "./applyEntries";
 import { admitEntry, type EntryGateRoots } from "./entryGate";
@@ -31,14 +31,20 @@ function copiesFirst(entries: readonly ProvisionEntry[]): ProvisionEntry[] {
   return [...entries].sort((a, b) => Number(a.mode === "link") - Number(b.mode === "link"));
 }
 
+/** What the apply answers with: a step per entry, and each contest named once. */
+export interface ApplyProvisioningResult {
+  readonly steps: readonly ProvisionStepResult[];
+  readonly contests: readonly ProvisionResultContest[];
+}
+
 /** A set of selected declarations that may name one destination, and the repository's own. */
 interface Contest {
   readonly favoured: ProvisionEntry;
   readonly held: readonly ProvisionEntry[];
 }
 
-/** How this names the other side of a dispute in a reason a person reads. */
-const declaredAs = (entry: ProvisionEntry): string => `${entry.path} (declared in ${entry.source})`;
+/** What the report needs to name one member: never the entry itself. */
+const memberOf = (entry: ProvisionEntry) => ({ id: entry.id, path: entry.path, source: entry.source });
 
 /**
  * The contests among the entries the create actually carried.
@@ -95,12 +101,15 @@ export async function applyProvisioning(
   roots: EntryGateRoots,
   budget: ApplyBudget,
   deps: ApplyFsDeps & ResolvedPathInsideDeps,
-): Promise<ProvisionStepResult[]> {
+): Promise<ApplyProvisioningResult> {
   const answered = new Map<ProvisionEntry, ProvisionStepResult>();
-  const step = (entry: ProvisionEntry, reason: string): ProvisionStepResult => ({
+  const contests = contestsOf(entries);
+  const indexOf = new Map<Contest, number>(contests.map((contest, at) => [contest, at]));
+  const step = (entry: ProvisionEntry, reason: string, contest?: Contest): ProvisionStepResult => ({
     id: entry.id,
     path: entry.path,
     outcome: { kind: "refused", reason },
+    ...(contest === undefined ? {} : { contest: indexOf.get(contest) }),
   });
 
   /**
@@ -130,9 +139,6 @@ export async function applyProvisioning(
    */
   const contended = (readings: readonly Reading[]): boolean => readings.some((reading) => reading !== "absent");
 
-  /** Every member of a contest, by path and declaring file, in one reading order. */
-  const namesOf = (contest: Contest): string => [contest.favoured, ...contest.held].map(declaredAs).join(", ");
-
   /** Refuse every member that is still claiming, naming the whole contest. */
   const refuseContest = async (contest: Contest, why: string): Promise<void> => {
     const members = [contest.favoured, ...contest.held];
@@ -140,11 +146,10 @@ export async function applyProvisioning(
       if (answered.has(member)) {
         continue;
       }
-      answered.set(member, step(member, `${members.map(declaredAs).join(", ")} ${why}`));
+      answered.set(member, step(member, why, contest));
     }
   };
 
-  const contests = contestsOf(entries);
   const held = new Map<ProvisionEntry, Contest>();
   const live = new Map<ProvisionEntry, Contest>();
 
@@ -211,15 +216,14 @@ export async function applyProvisioning(
       continue;
     }
     const result = applied as ProvisionStepResult;
-    // A contested entry refused by its own rule keeps that rule AND names the
-    // contest. D4a is about what a refusal says, not about which one it is, so
-    // passing an ordinary refusal through unchanged left the user with a rule
-    // and no counterparty (.reviews/round-4.md F009).
+    // A contested entry refused by its own rule keeps that rule AND points at
+    // the contest, so the report can name every member beside it. D4a is about
+    // what a refusal says, not about which one it is (.reviews/round-4.md F009).
     answered.set(
       entry,
       contest === undefined || result.outcome.kind !== "refused"
         ? result
-        : step(entry, `${namesOf(contest)} may name this same destination — ${result.outcome.reason}`),
+        : { ...result, contest: indexOf.get(contest) },
     );
   }
 
@@ -248,15 +252,12 @@ export async function applyProvisioning(
     // and the notice renders `path: reason`, so a reason that names only the
     // counterparty leaves the user unable to tell which config files are in
     // dispute (.reviews/round-1.md F004).
-    const everyone = [member, contest.favoured, ...contest.held.filter((other) => other !== member)]
-      .map(declaredAs)
-      .join(", ");
     const claimed = answered.get(contest.favoured)?.outcome.kind;
     const why =
       claimed === "copied" || claimed === "linked" || claimed === "degradedToCopy"
         ? "may name this same destination, and it was claimed by the repository's own declaration"
         : "may name this same destination, and it was never claimed";
-    answered.set(member, step(member, `${everyone} ${why}`));
+    answered.set(member, step(member, why, contest));
   }
 
   // Insertion order IS production order, and an entry that reached neither
@@ -271,5 +272,10 @@ export async function applyProvisioning(
       });
     }
   }
-  return produced;
+  return {
+    steps: produced,
+    contests: contests.map((contest) => ({
+      members: [contest.favoured, ...contest.held].map(memberOf),
+    })),
+  };
 }

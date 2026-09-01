@@ -2540,6 +2540,28 @@ export type ProvisionStepOutcome =
  * Documented at worktree-rpc.md § 2.2 since before there was a producer; this
  * is its first definition.
  */
+/**
+ * One declaration in a contest, as a refusal names it.
+ *
+ * Carried once per contest rather than repeated inside every member's reason:
+ * every member naming every member is `O(N²)` of text over a wire whose input
+ * the model already caps, so a valid group could expand a few hundred kilobytes
+ * of declarations into tens of megabytes of report
+ * (`award-a-contested-destination-or-refuse-it/.reviews/round-3.md` F008).
+ */
+export interface ProvisionResultMember {
+  readonly id: string;
+  /** Repo-relative POSIX path, for display. */
+  readonly path: string;
+  /** The provider file that declared it, for display. */
+  readonly source: string;
+}
+
+/** A set of declarations that may name one destination, as the apply found them. */
+export interface ProvisionResultContest {
+  readonly members: readonly ProvisionResultMember[];
+}
+
 export interface ProvisionStepResult {
   /** The offer item this answers. Opaque and per-offer — never a path. */
   readonly id: string;
@@ -2554,6 +2576,11 @@ export interface ProvisionStepResult {
    * `copied` cannot express. Bounded and display-ready; absent for a file entry.
    */
   readonly details?: readonly { readonly path: string; readonly reason: string }[];
+  /**
+   * Index into the result message's `contests`, when this step is a member of
+   * one. The reason says what happened; the contest says who else was named.
+   */
+  readonly contest?: number;
 }
 
 /**
@@ -2569,6 +2596,8 @@ export interface WorktreeProvisionResultMessage {
   type: "worktreeProvisionResult";
   worktreeId: string;
   steps: readonly ProvisionStepResult[];
+  /** Referenced by `ProvisionStepResult.contest`; absent when nothing contested. */
+  contests?: readonly ProvisionResultContest[];
 }
 
 /**

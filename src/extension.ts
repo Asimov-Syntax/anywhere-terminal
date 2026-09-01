@@ -45,6 +45,7 @@ import {
 import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
+  ProvisionResultContest,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
@@ -553,6 +554,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * all, so the host declared five optional capabilities and production
    * supplied none of them.
    */
+  /**
+   * Each apply's contest membership, waiting for the message that reports it.
+   *
+   * The mutation service's `applyProvision` answers with steps alone, and that
+   * contract is not this change's to move. A step carries the INDEX of its
+   * contest, so the membership travels here — written by the apply, read once
+   * by the message assembly below, and deleted, so nothing accumulates across
+   * creates.
+   */
+  const provisionContests = new Map<string, readonly ProvisionResultContest[]>();
+  /** Read once and forgotten — a create that never reports leaves nothing behind. */
+  const takeContests = (worktreePath: string): { contests?: readonly ProvisionResultContest[] } => {
+    const contests = provisionContests.get(worktreePath);
+    provisionContests.delete(worktreePath);
+    return contests === undefined ? {} : { contests };
+  };
   let worktreeMutations: ReturnType<typeof createWorktreeMutationService> | undefined;
   function mutations(): ReturnType<typeof createWorktreeMutationService> {
     if (worktreeMutations === undefined) {
@@ -582,7 +599,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             deadline: afterDelay(60_000),
           };
           try {
-            return await applyProvisioning(entries, roots, budget, nodeApplyFsDeps);
+            const applied = await applyProvisioning(entries, roots, budget, nodeApplyFsDeps);
+            if (applied.contests.length > 0) {
+              provisionContests.set(worktreePath, applied.contests);
+            }
+            return applied.steps;
           } finally {
             budget.deadline.cancel();
           }
@@ -683,6 +704,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     type: "worktreeProvisionResult" as const,
                     worktreeId: outcome.provision.path,
                     steps: outcome.provision.steps,
+                    ...takeContests(outcome.provision.path),
                   },
                 }
               : {}),

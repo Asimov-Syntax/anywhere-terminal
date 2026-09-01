@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProvisionEntry } from "../../types/messages";
+import type { ProvisionEntry, ProvisionResultContest, ProvisionStepResult } from "../../types/messages";
 import { afterDelay } from "../deadline";
 import { fakeFs } from "./applyEntries.fake";
 import { applyProvisioning } from "./applyProvisioning";
@@ -24,12 +24,24 @@ async function applyTo(
   }
   const deadline = afterDelay(60_000);
   try {
-    const steps = await applyProvisioning(entries, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
-    return { steps, fs };
+    const applied = await applyProvisioning(entries, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+    return { steps: applied.steps, contests: applied.contests, fs };
   } finally {
     deadline.cancel();
   }
 }
+
+/**
+ * The declarations a step's contest names, as the report will render them.
+ *
+ * The membership is carried once per contest and referenced by index, so a
+ * reason no longer repeats it — asserting on the reason text would witness the
+ * quadratic shape this change removed.
+ */
+const named = (contests: readonly ProvisionResultContest[], step: ProvisionStepResult | undefined): readonly string[] =>
+  (step?.contest === undefined ? [] : (contests[step.contest]?.members ?? [])).map(
+    (member) => `${member.path} (declared in ${member.source})`,
+  );
 
 /** One file and one directory in the main checkout, for the entries below to name. */
 const MATERIAL = { [`${MAIN}/.env`]: { kind: "file" }, [`${MAIN}/third_party`]: { kind: "dir" } } as const;
@@ -82,7 +94,7 @@ describe("applyProvisioning", () => {
     }
     const deadline = afterDelay(60_000);
     try {
-      const steps = await applyProvisioning(
+      const { steps } = await applyProvisioning(
         [entry("a", "copy", "s"), entry("b", "copy", "s"), entry("c", "copy", "s")],
         roots,
         { maxNodes: 2, maxBytes: 1_000_000, deadline },
@@ -114,14 +126,12 @@ const PAIR = [entry("MixedCase", "copy", NATIVE, "i1"), entry("mixedcase", "copy
 
 describe("a destination two declarations may both name", () => {
   it("leaves the repository's own declaration holding it, and refuses the other", async () => {
-    const { steps, fs } = await applyTo(CONTESTED, PAIR, { folds: true });
+    const { steps, contests, fs } = await applyTo(CONTESTED, PAIR, { folds: true });
 
     expect(fs.nodes.get(`${WT}/MixedCase`)).toMatchObject({ size: 11 });
     expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "refused"]);
     // Both declarations, so the user can see what it was weighed against.
-    expect(steps[1]?.outcome).toMatchObject({
-      reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)"),
-    });
+    expect(named(contests, steps[1])).toContain("MixedCase (declared in .vscode/worktree.json)");
   });
 
   it("refuses the held member even where this filesystem keeps the two spellings apart", async () => {
@@ -132,16 +142,15 @@ describe("a destination two declarations may both name", () => {
     // write hands the destination to the inherited declaration
     // (.reviews/round-2.md F005). Refusing costs this member its material and
     // is the only settlement that cannot lose the destination.
-    const { steps, fs } = await applyTo(CONTESTED, PAIR);
+    const { steps, contests, fs } = await applyTo(CONTESTED, PAIR);
 
     expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "refused"]);
     expect(fs.nodes.get(`${WT}/MixedCase`)).toMatchObject({ size: 11 });
     expect(fs.nodes.has(`${WT}/mixedcase`)).toBe(false);
-    expect(steps[1]?.outcome).toMatchObject({
-      reason: expect.stringContaining(
-        "mixedcase (declared in asimov/worktree.yaml), MixedCase (declared in .vscode/worktree.json)",
-      ),
-    });
+    expect(named(contests, steps[1])).toEqual([
+      "MixedCase (declared in .vscode/worktree.json)",
+      "mixedcase (declared in asimov/worktree.yaml)",
+    ]);
   });
 
   it("refuses BOTH when the destination was already there, and writes nothing", async () => {
@@ -233,32 +242,27 @@ describe("a collision this apply cannot attribute to its own write", () => {
     // them with a rule and no counterparty; naming only the other leaves them
     // unable to tell which row lost.
     const occupied = { ...CONTESTED, [`${WT}/MixedCase`]: { kind: "file", size: 99 } as const };
-    const { steps } = await applyTo(occupied, PAIR, { folds: true });
+    const { steps, contests } = await applyTo(occupied, PAIR, { folds: true });
 
     // Its own spelling and declaring file, from its own row: the step result
-    // carries no source and the notice renders `path: reason`, so what the
-    // reason omits the user never gets (.reviews/round-1.md F004).
+    // carries no source and the notice renders `path: reason`, so what the row
+    // cannot reach the user never gets (.reviews/round-1.md F004).
     for (const step of steps) {
-      expect(step.outcome).toMatchObject({
-        reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
-      });
-      expect(step.outcome).toMatchObject({
-        reason: expect.stringContaining("MixedCase (declared in .vscode/worktree.json)"),
-      });
+      expect(named(contests, step)).toEqual([
+        "MixedCase (declared in .vscode/worktree.json)",
+        "mixedcase (declared in asimov/worktree.yaml)",
+      ]);
     }
   });
 
   it("names both declarations when the favoured one never claimed the destination", async () => {
-    const { steps } = await applyTo({}, PAIR, { folds: true });
+    const { steps, contests } = await applyTo({}, PAIR, { folds: true });
 
-    expect(steps[1]).toMatchObject({
-      path: "mixedcase",
-      outcome: {
-        reason: expect.stringContaining(
-          "mixedcase (declared in asimov/worktree.yaml), MixedCase (declared in .vscode/worktree.json)",
-        ),
-      },
-    });
+    expect(steps[1]).toMatchObject({ path: "mixedcase" });
+    expect(named(contests, steps[1])).toEqual([
+      "MixedCase (declared in .vscode/worktree.json)",
+      "mixedcase (declared in asimov/worktree.yaml)",
+    ]);
   });
 
   it("refuses a name that appeared during the apply rather than crediting it to the favoured member", async () => {
@@ -267,7 +271,7 @@ describe("a collision this apply cannot attribute to its own write", () => {
     // copy wrote, or another process. Nothing here tells those apart, so
     // reporting the loser as skipped-because-awarded would claim a causal fact
     // this apply cannot establish.
-    const { steps } = await applyTo(CONTESTED, PAIR, { folds: true });
+    const { steps, contests } = await applyTo(CONTESTED, PAIR, { folds: true });
 
     // And it claims nothing about who DIDN'T create it either: naming a
     // non-creator is the same unfounded causal claim as naming a creator.
@@ -275,9 +279,7 @@ describe("a collision this apply cannot attribute to its own write", () => {
       kind: "refused",
       reason: expect.stringContaining("claimed by the repository's own declaration"),
     });
-    expect(steps[1]?.outcome).toMatchObject({
-      reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
-    });
+    expect(named(contests, steps[1])).toContain("mixedcase (declared in asimov/worktree.yaml)");
   });
 });
 
@@ -294,31 +296,25 @@ describe("a contest larger than a pair", () => {
   const TRIO_MATERIAL = { ...CONTESTED, [`${MAIN}/MIXEDCASE`]: { kind: "file", size: 33 } as const };
 
   it("names all three in every refusal, after the repository's own claimed it", async () => {
-    const { steps } = await applyTo(TRIO_MATERIAL, TRIO);
+    const { steps, contests } = await applyTo(TRIO_MATERIAL, TRIO);
 
     expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "refused", "refused"]);
     for (const refused of steps.slice(1)) {
-      for (const declaration of [
+      expect(named(contests, refused)).toEqual([
         "MixedCase (declared in .vscode/worktree.json)",
         "mixedcase (declared in asimov/worktree.yaml)",
         "MIXEDCASE (declared in tools/worktree.yaml)",
-      ]) {
-        expect(refused.outcome).toMatchObject({ reason: expect.stringContaining(declaration) });
-      }
+      ]);
     }
   });
 
   it("names all three when the repository's own never claimed it", async () => {
-    const { steps } = await applyTo({}, TRIO);
+    const { steps, contests } = await applyTo({}, TRIO);
 
     expect(steps.map((s) => s.outcome.kind)).toEqual(["failed", "refused", "refused"]);
     for (const refused of steps.slice(1)) {
-      expect(refused.outcome).toMatchObject({
-        reason: expect.stringContaining("MIXEDCASE (declared in tools/worktree.yaml)"),
-      });
-      expect(refused.outcome).toMatchObject({
-        reason: expect.stringContaining("mixedcase (declared in asimov/worktree.yaml)"),
-      });
+      expect(named(contests, refused)).toContain("MIXEDCASE (declared in tools/worktree.yaml)");
+      expect(named(contests, refused)).toContain("mixedcase (declared in asimov/worktree.yaml)");
     }
   });
 });
@@ -332,7 +328,7 @@ describe("a refusal says which rule refused", () => {
       [`${MAIN}/MixedCase`]: { kind: "special" } as const,
       [`${MAIN}/mixedcase`]: { kind: "file", size: 22 } as const,
     };
-    const { steps } = await applyTo(material, PAIR, { folds: true });
+    const { steps, contests } = await applyTo(material, PAIR, { folds: true });
 
     expect(steps[0]?.outcome).toMatchObject({
       kind: "refused",
@@ -340,16 +336,61 @@ describe("a refusal says which rule refused", () => {
     });
     // The rule it fired AND the contest it is in — D4a holds for every refusal,
     // not only the ones the contest itself produced (.reviews/round-4.md F009).
-    expect(steps[0]?.outcome).toMatchObject({
-      reason: expect.stringContaining(
-        "MixedCase (declared in .vscode/worktree.json), mixedcase (declared in asimov/worktree.yaml)",
-      ),
-    });
+    expect(named(contests, steps[0])).toEqual([
+      "MixedCase (declared in .vscode/worktree.json)",
+      "mixedcase (declared in asimov/worktree.yaml)",
+    ]);
     // And the contest still settles: the favoured member never claimed it.
     expect(steps[1]?.outcome).toMatchObject({
       kind: "refused",
       reason: expect.stringContaining("never claimed"),
     });
+  });
+});
+
+describe("a contest's membership travels once", () => {
+  it("carries each contest once and points every member at it", async () => {
+    const { steps, contests } = await applyTo(CONTESTED, PAIR, { folds: true });
+
+    expect(contests).toEqual([
+      {
+        members: [
+          { id: "i1", path: "MixedCase", source: ".vscode/worktree.json" },
+          { id: "i2", path: "mixedcase", source: "asimov/worktree.yaml" },
+        ],
+      },
+    ]);
+    // The reason says what happened to THIS row and nothing about who else was
+    // named — that repetition is what made the report quadratic
+    // (award-a-contested-destination-or-refuse-it/.reviews/round-3.md F008).
+    expect(steps[1]?.contest).toBe(0);
+    expect(steps[1]?.outcome).toMatchObject({ reason: expect.not.stringContaining("declared in") });
+  });
+
+  it("keeps the report linear in the declarations, not quadratic", async () => {
+    // Twelve members of one contest. Repeating the membership in every reason
+    // costs it twelve times over; carrying it once costs it once.
+    // Twelve DISTINCT spellings of one name — letter `j` is upper when bit `j`
+    // of the index is set — so all twelve fold onto one key and none of them
+    // collides before the contest forms.
+    const spelling = (at: number): string =>
+      [..."shared"].map((letter, j) => ((at >> j) & 1 ? letter.toUpperCase() : letter)).join("");
+    const many = Array.from({ length: 12 }, (_, at) =>
+      entry(spelling(at), "copy", at === 0 ? NATIVE : INHERITED, `m${at}`),
+    );
+    const { steps, contests } = await applyTo(
+      Object.fromEntries(many.map((e) => [`${MAIN}/${e.path}`, { kind: "file", size: 1 } as const])),
+      many,
+      { folds: true },
+    );
+
+    expect(contests).toHaveLength(1);
+    expect(contests[0]?.members).toHaveLength(12);
+    const reasons = steps.reduce((n, s) => n + ("reason" in s.outcome ? s.outcome.reason.length : 0), 0);
+    const membership = JSON.stringify(contests).length;
+    // The whole report's reason text is smaller than one copy of the
+    // membership, which it never repeats.
+    expect(reasons).toBeLessThan(membership * 2);
   });
 });
 
@@ -404,7 +445,7 @@ describe("absence is established, never assumed", () => {
     }
     const deadline = afterDelay(60_000);
     try {
-      const steps = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+      const { steps } = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
 
       expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
       expect(fs.created).toEqual([]);
@@ -435,7 +476,7 @@ describe("absence is established, never assumed", () => {
     }
     const deadline = afterDelay(60_000);
     try {
-      const steps = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+      const { steps } = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
 
       expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
       // The other writer's mode is untouched, and neither declaration's

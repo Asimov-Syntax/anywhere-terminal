@@ -3,7 +3,7 @@
 Every refused member of a contest carries a reason naming every member, so `N` members cost `O(N·T)`
 of result text over a wire whose input is capped at `T`. The membership travels once instead.
 
-- [ ] 1_1 Carry a contest's membership once on the result message
+- [x] 1_1 Carry a contest's membership once on the result message — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Refs**: src/types/messages.ts, asimov/changes/award-a-contested-destination-or-refuse-it/.reviews/round-3.md#f008
   - **Acceptance**:
     - Outcome: The result message carries each contest's membership once, and a step references it
@@ -12,6 +12,7 @@ of result text over a wire whose input is capped at `T`. The membership travels 
     1. `src/types/messages.ts` gains a contest shape on `WorktreeProvisionResultMessage` and a reference on `ProvisionStepResult`.
     2. `src/worktree/provisioning/applyProvisioning.ts` returns the contests beside the steps and stops repeating membership in every reason.
     3. `src/worktree/provisioning/applyProvisioning.test.ts` asserts the membership appears once per contest and that each refused step points at it.
+    4. `src/extension.ts` passes the contests through with the steps it already forwards.
 
 - [ ] 1_2 Render the membership from the contest, not from the reason
   - **Deps**: 1_1
