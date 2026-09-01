@@ -1193,6 +1193,22 @@ describe("Bring over — a repository that declares nothing, and a file that can
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("2 copied · 1 linked · 1 port · 1 setup step");
   });
 
+  it.each([
+    ["malformed", "`asimov/worktree.yaml` is not valid YAML."],
+    ["unreadable", "`asimov/worktree.yaml` could not be read (EACCES)."],
+    ["unknownKey", "`nope` is not a key this reads."],
+    ["missingExtends", "`Makefile` is not a file this can build on."],
+  ] as const)("still offers Create when a file reports %s", (reason, detail) => {
+    // § 9: no problem state disables the create. Each reason reaches the dialog
+    // through the same list, and a renderer that special-cased one of them
+    // would take the create away for a typo in one key.
+    const { host, q } = withModel(provisionModel({ problems: [{ file: ".vscode/worktree.json", reason, detail }] }));
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+
+    expect(host.querySelectorAll(".wt-bring-problem")).toHaveLength(1);
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(false);
+  });
+
   it("names every unreadable file, not just the first", () => {
     const { host } = withModel(
       malformedProvisionModel({

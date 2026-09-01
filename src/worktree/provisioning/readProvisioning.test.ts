@@ -486,3 +486,76 @@ describe("[D5] a preference for a framework answers alone; a preference for nati
     expect(model.entries.map((e) => e.path)).toEqual(["node_modules", ".env.local"]);
   });
 });
+
+describe("[D9] one read spends one budget, across every file it touches", () => {
+  it("does not exceed the row bound when a native draft at the cap inherits a malformed file", async () => {
+    // The defeater: an early-return problem path that builds `problems: []` by
+    // hand charges nothing, so the inherited file's malformed diagnostic became
+    // a 201st row on a read that was already full.
+    const own = Array.from({ length: MAX_MODEL_ROWS + 5 }, (_, i) => `n${i}`);
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "asimov/worktree.yaml", "copy": ${JSON.stringify(own)}}`,
+        asimov: "copy: [unclosed\n",
+      }),
+      ROOT,
+    );
+
+    const rows =
+      model.entries.length + model.setup.length + model.ports.length + model.problems.length + model.excluded.length;
+    expect(rows).toBeLessThanOrEqual(MAX_MODEL_ROWS);
+    // And the read really did reach the cap, so the bound above is being tested
+    // rather than merely satisfied by a short list.
+    expect(model.problems.some((p) => p.detail.includes("are not offered"))).toBe(true);
+  });
+});
+
+describe("one unreadable part never discards the rest of a configuration", () => {
+  it("reports a malformed key, an unread key and a missing base as three distinct reasons", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "Makefile", "exclude": ".x", "nope": 1, "copy": [".env.local"]}`,
+        asimov: ASIMOV_YAML,
+      }),
+      ROOT,
+    );
+
+    // Three reasons, not one bucket: the user can act on each differently, and
+    // a single "could not read your config" would say which file but not what
+    // was lost.
+    expect(new Set(model.problems.map((p) => p.reason))).toEqual(
+      new Set(["malformed", "unknownKey", "missingExtends"]),
+    );
+    // None of the three discarded the rest of the file.
+    expect(model.entries.map((e) => [e.path, e.source])).toEqual([[".env.local", NATIVE_PROVIDER_FILE]]);
+    // The base never resolved, so asimov stays a detected, inactive source.
+    expect(model.providers.find((p) => p.id === "asimov")?.active).toBe(false);
+  });
+
+  it("keeps the rest of a file whose base is malformed", async () => {
+    const model = await readProvisioning(
+      fs({ native: `{"extends": "asimov/worktree.yaml", "copy": [".env.local"]}`, asimov: "copy: [unclosed\n" }),
+      ROOT,
+    );
+
+    expect(model.problems.map((p) => [p.file, p.reason])).toEqual([[ASIMOV_PROVIDER_FILE, "malformed"]]);
+    // A base that parsed to nothing does not take the native file's rows with
+    // it, and the base is still the source being built on.
+    expect(model.entries.map((e) => [e.path, e.source])).toEqual([[".env.local", NATIVE_PROVIDER_FILE]]);
+    expect(model.providers.find((p) => p.id === "asimov")?.active).toBe(true);
+  });
+
+  it("offers the inline keys of a file that names a base which is not there", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "asimov/worktree.yaml", "copy": [".env.local"], "ports": {"APP": null}, "setup": ["pnpm i"]}`,
+      }),
+      ROOT,
+    );
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["missingExtends"]);
+    expect(model.entries.map((e) => e.path)).toEqual([".env.local"]);
+    expect(model.ports.map((p) => p.name)).toEqual(["APP"]);
+    expect(model.setup.map((s) => s.script)).toEqual(["pnpm i"]);
+  });
+});

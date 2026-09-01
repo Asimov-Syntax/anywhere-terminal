@@ -59,7 +59,7 @@
     5. Extend `src/worktree/provisioning/readProvisioning.test.ts` with the ledger's witnesses, including the starvation case, the documented zero-row case where the native file's own overlap falls past the cap, and a target naming the native file itself.
   - **Boundary**: no new containment implementation — `rg -n 'function isPathInside' src/` must find nothing outside the two modules that already define it
 
-- [ ] 2_3 Report every failure state distinctly, and keep Create available
+- [x] 2_3 Report every failure state distinctly, and keep Create available — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#one-unreadable-part-never-discards-the-rest-of-a-configuration; design.md#{d9-every-problem-is-charged-to-the-budget-including-the-ones-on-an-early-return, d10-base-native-and-exclude-all-naming-one-path}
   - **Acceptance**:

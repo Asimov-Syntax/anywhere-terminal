@@ -29,6 +29,7 @@ import {
   type ProviderDeps,
   problem,
   readInlineKeys,
+  report,
 } from "./providerKit";
 
 /** Repo-relative, POSIX. The one file this adapter reads. */
@@ -101,14 +102,20 @@ async function fromOpened(
   repoRoot: string,
   budget: ProviderBudget,
 ): Promise<ProvisionModel> {
+  // The draft is opened before the first thing that can go wrong, because EVERY
+  // problem is charged to the shared budget — including the ones on a path that
+  // never reaches a row. These three returns used to build `problems: [...]` by
+  // hand and charge nothing, which was harmless while one adapter answered per
+  // read: two do not, and a native draft sitting exactly at the cap plus a
+  // malformed inherited file yielded a 201st row (design.md D9).
+  const draft: Draft = newDraft(ASIMOV, budget);
+  const label = `\`${ASIMOV_PROVIDER_FILE}\``;
+
   if (opened.kind === "problem") {
+    report(draft, label, opened.problem);
     // A root that will not resolve is not this provider being present, so it is
     // the one problem reported without a providers row.
-    return {
-      ...emptyModel(),
-      ...(opened.at === "root" ? {} : { providers: PROVIDERS }),
-      problems: [opened.problem],
-    };
+    return { ...modelFromDraft(draft), ...(opened.at === "root" ? {} : { providers: PROVIDERS }) };
   }
   const root = opened.root;
 
@@ -116,25 +123,18 @@ async function fromOpened(
   try {
     parsed = parseYaml(opened.text);
   } catch (error) {
-    return {
-      ...emptyModel(),
-      providers: PROVIDERS,
-      problems: [problem(ASIMOV, "malformed", error instanceof Error ? error.message : String(error))],
-    };
+    report(draft, label, problem(ASIMOV, "malformed", error instanceof Error ? error.message : String(error)));
+    return { ...modelFromDraft(draft), providers: PROVIDERS };
   }
   if (parsed === null || parsed === undefined) {
-    return { ...emptyModel(), providers: PROVIDERS };
+    return { ...modelFromDraft(draft), providers: PROVIDERS };
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return {
-      ...emptyModel(),
-      providers: PROVIDERS,
-      problems: [problem(ASIMOV, "malformed", "The file is not a mapping of keys.")],
-    };
+    report(draft, label, problem(ASIMOV, "malformed", "The file is not a mapping of keys."));
+    return { ...modelFromDraft(draft), providers: PROVIDERS };
   }
 
   const nextId = ids();
-  const draft: Draft = newDraft(ASIMOV, budget);
   await readInlineKeys(parsed as Record<string, unknown>, KNOWN_KEYS, repoRoot, root, deps, nextId, draft);
 
   // `providers` is the one field this reader owns: `readAsimovProvisioning` is
