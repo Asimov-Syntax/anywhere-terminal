@@ -3552,6 +3552,46 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 2 spellings may be one file");
   });
 
+  it("[round-1 F001] withdraws the refusal note once the counterpart is unticked", () => {
+    // The note states a condition. Unticking MixedCase leaves this row
+    // uncontested — the apply recomputes contests from what was submitted and
+    // finds no favoured member — so a standing "refused while" notice on the
+    // row the user just chose describes a refusal that will not happen.
+    const { host, q } = withPair();
+    const yieldNote = () => host.querySelector<HTMLElement>(".wt-brow-yield");
+
+    expect(yieldNote()?.hidden).toBe(false);
+
+    q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb")[0]?.click();
+
+    expect(yieldNote()?.hidden).toBe(true);
+  });
+
+  it("[round-1 F001] restates the counts when the user reverses the pair", () => {
+    // The escape hatch: untick the repository's own and tick the one that would
+    // have yielded. Now the LINK is what arrives, and a summary frozen at the
+    // first render still says "1 copied" — the opposite materialization mode
+    // from the one the create will perform.
+    const { host, q, submitted } = withPair();
+    const boxes = Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+    boxes[0]?.click();
+    boxes[1]?.click();
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 linked · 2 spellings may be one file");
+
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision?.itemIds).toEqual(["i2"]);
+  });
+
+  it("[round-1 F001] drops a row from the counts the moment it is unticked", () => {
+    const { host, q } = withPair({ contenders: [] });
+    q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb")[0]?.click();
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 linked");
+  });
+
   it("counts both members when neither is favoured", () => {
     const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
 
