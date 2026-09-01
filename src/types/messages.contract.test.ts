@@ -143,7 +143,6 @@ const debris: DestinationDisposition = {
   authorization: { path: "/wt/x", fingerprint: "fp-1" },
 };
 
-describe("the wire contract", () => {
 // --- A step result answers an id, and never carries a path back as authority --
 
 type Outcome<K extends ProvisionStepOutcome["kind"]> = Extract<ProvisionStepOutcome, { kind: K }>;
@@ -193,6 +192,7 @@ const provisionResultWithVerdict: WorktreeProvisionResultMessage = {
   ok: false,
 };
 
+describe("the wire contract", () => {
   it("is judged by pnpm run check-types, not by this assertion", () => {
     // The suite exists so the file is a valid Vitest module; the proofs above
     // are the acceptance, and they fail the build rather than this test.

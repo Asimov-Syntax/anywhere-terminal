@@ -1,0 +1,153 @@
+// src/worktree/provisioning/entryGate.ts — what an entry has to survive before
+// anything opens a file descriptor for it (design.md D4, D7).
+//
+// Two roots, checked separately: the SOURCE must resolve inside the main
+// checkout, the DESTINATION inside the new worktree. A single "inside the
+// repository" test admits a source that is really a destination, and a
+// destination whose existing parent resolves out of the new worktree
+// (worktree-apply.md § 2.1).
+//
+// This module defines no containment predicate. `isResolvedPathInsideRoot` from
+// src/utils/resolvedPathBoundary.ts is the one definition, and the resolved form
+// is the right one here because the answer authorizes a read or a write
+// (DESIGN.md § 9 D31).
+//
+// Nothing here touches the filesystem except to ask that predicate where a path
+// lands. A refusal returns a reason and no path — never a path adjusted to bring
+// it back inside a root, which would turn a suspicious entry into a silently
+// different one.
+
+import path from "node:path";
+import type { ProvisionEntry } from "../../types/messages";
+import { isWindowsAbsPath } from "../../utils/pathBoundary";
+import {
+  isResolvedPathInsideRoot,
+  type PreparedRoot,
+  prepareResolvedRoot,
+  type ResolvedPathInsideDeps,
+} from "../../utils/resolvedPathBoundary";
+
+/** A root an entry's repo-relative spelling joins onto, resolved once for the pass. */
+export interface GateRoot {
+  readonly path: string;
+  readonly prepared: PreparedRoot;
+}
+
+export interface EntryGateRoots {
+  /** The main checkout: where material is read FROM. */
+  readonly source: GateRoot;
+  /** The worktree being created: where material is written TO. */
+  readonly destination: GateRoot;
+}
+
+export type EntryVerdict =
+  | { readonly ok: true; readonly source: string; readonly destination: string }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Lockfiles this refuses by name.
+ *
+ * A lockfile copied from main describes MAIN's dependency tree, and the whole
+ * point of a per-worktree install is that this branch's lockfile is the
+ * authoritative one (worktree-apply.md § 2.1). Matched on the basename, so a
+ * lockfile nested in a package is refused like one at the root.
+ */
+const LOCKFILES: ReadonlySet<string> = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lockb",
+  "bun.lock",
+  "Cargo.lock",
+  "poetry.lock",
+  "Gemfile.lock",
+  "composer.lock",
+]);
+
+const REFUSED_OUTSIDE_SOURCE = "resolves outside the repository it was declared in";
+const REFUSED_OUTSIDE_DESTINATION = "resolves outside the worktree being created";
+
+/**
+ * Resolve both roots once, for a caller about to check many entries.
+ *
+ * `null` when either does not resolve: nothing is inside a root that is not
+ * there, and saying so once beats saying it per entry.
+ */
+export async function prepareEntryGate(
+  mainCheckout: string,
+  worktree: string,
+  deps: ResolvedPathInsideDeps = {},
+): Promise<EntryGateRoots | null> {
+  const [source, destination] = await Promise.all([
+    prepareResolvedRoot(mainCheckout, deps),
+    prepareResolvedRoot(worktree, deps),
+  ]);
+  if (source === null || destination === null) {
+    return null;
+  }
+  return {
+    source: { path: mainCheckout, prepared: source },
+    destination: { path: worktree, prepared: destination },
+  };
+}
+
+/** Repo-relative means repo-relative. An absolute spelling is refused, not re-rooted. */
+function isAbsoluteSpelling(p: string): boolean {
+  return p.startsWith("/") || isWindowsAbsPath(p);
+}
+
+/**
+ * The material-class refusals, checked BEFORE mode is dispatched on so copy and
+ * link cannot drift apart (design.md D7).
+ *
+ * `node_modules` is the one rule that reads mode, because it is a rule about
+ * SHARING a dependency tree — which a copy does not do.
+ */
+function refusedMaterial(entry: ProvisionEntry): string | null {
+  const base = path.posix.basename(entry.path);
+  if (LOCKFILES.has(base)) {
+    return "a lockfile is never brought over — this branch's own lockfile is the authoritative one";
+  }
+  if (base === "node_modules" && entry.mode === "link") {
+    return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";
+  }
+  return null;
+}
+
+/**
+ * Admit an entry, or refuse it with the reason its own rule names.
+ *
+ * Order matters only in that the cheap, filesystem-free refusals come first: an
+ * entry refused by name never causes a resolution.
+ */
+export async function admitEntry(
+  entry: ProvisionEntry,
+  roots: EntryGateRoots,
+  deps: ResolvedPathInsideDeps = {},
+): Promise<EntryVerdict> {
+  const material = refusedMaterial(entry);
+  if (material !== null) {
+    return { ok: false, reason: material };
+  }
+  if (isAbsoluteSpelling(entry.path)) {
+    return { ok: false, reason: "an entry names a path relative to the repository, not an absolute one" };
+  }
+
+  const source = path.resolve(roots.source.path, entry.path);
+  const destination = path.resolve(roots.destination.path, entry.path);
+
+  // Both, separately, and both must hold. Checked in parallel because neither
+  // answer depends on the other and a refusal names which side failed anyway.
+  const [sourceInside, destinationInside] = await Promise.all([
+    isResolvedPathInsideRoot(source, roots.source.prepared, deps),
+    isResolvedPathInsideRoot(destination, roots.destination.prepared, deps),
+  ]);
+  if (!sourceInside) {
+    return { ok: false, reason: REFUSED_OUTSIDE_SOURCE };
+  }
+  if (!destinationInside) {
+    return { ok: false, reason: REFUSED_OUTSIDE_DESTINATION };
+  }
+  return { ok: true, source, destination };
+}

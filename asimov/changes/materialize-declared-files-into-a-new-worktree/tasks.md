@@ -14,7 +14,7 @@ Fully serial. 1_3 and 1_4 share `applyEntries.ts`; 1_5 needs every layer beneath
     3. `src/types/messages.contract.test.ts`: the new message appears in the union and round-trips. Verify is the type check because that file says outright that `check-types` is the judge and its runtime body is a placeholder — a passing unit run there would not fail on a wrong contract.
   - **Boundary**: no behavior — this task adds types and registrations only, and nothing reads them yet
 
-- [ ] 1_2 Refuse an entry before anything opens a file descriptor for it
+- [x] 1_2 Refuse an entry before anything opens a file descriptor for it — verified: pnpm exec vitest run 'src/worktree/provisioning/entryGate.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D4, D7; specs/worktree-panel/spec.md#{an-entry-that-would-write-outside-the-new-worktree-is-refused-not-adjusted, some-material-is-refused-however-a-repository-asks-for-it}
   - **Acceptance**:
