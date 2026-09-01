@@ -207,3 +207,44 @@ The accepted scope conservatively refuses a held declaration even on a volume th
 ## Audit backlog
 
 None.
+
+## Author triage (post-round)
+
+All three blockers accepted in full — none rebutted — and fixed in `ffde4a64` (task 7_1). None
+needed a new or changed `D#` or minted a new invariant owner, so the remediation boundary was not
+crossed and no handback was owed for the fixes themselves.
+
+- **F007 — accepted, fixed.** Real, and introduced by this session's own round-1 F001 fix on the
+  child: making the counts follow the live selection dropped the "only while its favoured member is
+  also selected" clause the round-1 chair had specified. Restored. Witness
+  `[round-5 F007] does not count a yielder the user ticked back on` asserts the note, the count and
+  the submitted ids together, as asked. Arm-checked.
+- **F011 — accepted, fixed.** New `failEveryEntry` in `applyProvisioning.ts` is the single builder
+  for "every entry failed for one reason"; it recomputes contests through `contestsOf` — the one
+  definition of who is contesting — and attaches each member's index. `extension.ts` routes the
+  unreadable-root return through it and stages memberships exactly as the ordinary path does.
+  Three witnesses, arm-checked.
+  - Deviation from the chair's suggested fix: no `extension.worktreeAssembly.test.ts` integration
+    witness. That file has no harness able to make `prepareEntryGate` answer `null`, and building
+    one would be a larger change than the fix. The builder is witnessed directly and the two staging
+    lines at the call site are the ones the ordinary path already exercises. Recorded rather than
+    quietly skipped.
+- **F008 — accepted, fixed.** D4a is rewritten as a requirement on what the READER ends up
+  identifying rather than on what any one string contains, and now shows the shipped
+  representation (step reason + contest index → membership once per contest → composed at
+  rendering). The D4 table rows and tasks 4_3/5_3 Plan text follow. The two ticked tasks' Acceptance
+  Outcomes were left as written: "names every member" is still true of what the reader gets, and
+  rewriting accepted Acceptance on completed tasks is the handback rule's business, not a review
+  fix's.
+
+## Status after triage
+
+0 gating blockers by the author's account, and NOT independently verified: round 5 is closed and
+round 6 needs a user decision the author cannot supply. The verify gate was re-run on the fixed
+tree — check-types clean, Biome at the 3/14/1 baseline, 6707 unit tests across 280 files,
+fs-deletion gate ok.
+
+The product residual the chair names is unchanged and still the user's: on a volume that genuinely
+keeps two spellings apart, the held declaration's file no longer lands. An oracle attack established
+no `node:fs` composition can tell that case from the favoured member's object having been unlinked,
+so the alternatives are this refusal or a user risk acceptance.
