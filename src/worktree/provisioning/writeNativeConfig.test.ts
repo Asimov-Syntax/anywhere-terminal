@@ -315,31 +315,34 @@ describe("the destination is computed, never accepted", () => {
 });
 
 describe("the destination is the resolution that was checked", () => {
-  it("writes to the value it checked, not to a later answer for the same path", async () => {
-    // Two resolutions of one path are two answers, and only one of them was
-    // checked. Staged through the injected `realpath` rather than by racing the
-    // filesystem: a path that answers differently the second time is exactly
-    // what the ordering has to survive (.reviews/round-2.md F019).
-    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-second-"));
-    const here = path.dirname(target);
-    let asked = 0;
-    const flipping: NativeConfigDeps = {
+  it("writes to the value the check authorized, not to the spelling it was handed", async () => {
+    // Resolving here and then checking THAT answer is two resolutions, and the
+    // predicate authorizes its own — so the pair could disagree about which
+    // path was approved. This is the state where the disagreement escapes: the
+    // directory resolves to somewhere OUTSIDE the repository, and that place in
+    // turn resolves back inside it. Checking the first answer's resolution says
+    // "inside" and the write then lands at the first answer, outside the root
+    // (.reviews/round-3.md F019 and its plan attack).
+    //
+    // Not two answers for one path: one answer per path, which is what a
+    // symlink chain actually is. A counter would model a filesystem that
+    // changes under the caller, and D16 owns that.
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-outside-"));
+    const backInside = path.join(root, "back-inside");
+    await fs.mkdir(backInside, { recursive: true });
+    const dir = path.dirname(target);
+    const chain = new Map([
+      [dir, outside],
+      [outside, await fs.realpath(backInside)],
+    ]);
+    const chained: NativeConfigDeps = {
       lstat: (p) => fs.lstat(p),
-      realpath: async (p) => {
-        if (p !== here) {
-          return fs.realpath(p);
-        }
-        asked += 1;
-        return asked === 1 ? fs.realpath(p) : outside;
-      },
+      realpath: async (p) => chain.get(p) ?? fs.realpath(p),
     };
 
-    const wrote = await writeNativeConfig(flipping, root, div({ exclude: ["dist"] }));
+    const wrote = await writeNativeConfig(chained, root, div({ exclude: ["dist"] }));
 
-    // Asked once, so there is no second answer to build a destination from —
-    // and the write landed where the check said it would.
-    expect(asked).toBe(1);
-    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(wrote).toEqual({ ok: false, reason: "outside" });
     expect(await fs.readdir(outside)).toEqual([]);
     await fs.rm(outside, { recursive: true, force: true });
   });

@@ -176,7 +176,7 @@ genuinely parallel, so nothing here pretends to be.
 
 ## Wave 5 — round 3 handback
 
-- [ ] 5_1 Build the destination from the value the containment check authorized
+- [x] 5_1 Build the destination from the value the containment check authorized — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: design.md#{d7-the-parent-is-resolved-once-and-written-through-and-a-symlinked-target-is-refused, obligation-ledger} <!-- .reviews/round-3.md F019; D16 -->
   - **Acceptance**:

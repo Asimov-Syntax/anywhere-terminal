@@ -7,13 +7,13 @@
 ## Plan
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -32,7 +32,7 @@
 Blueprint: docs/PLAN.md task WT-012.5
 Lane: full (standard) — MEDIUM-HIGH risk: the first control that writes a checked-in file,
 sitting beside files that must stay byte-identical | flags: user-visible-ui, new-api-contract
-Planned at: a82ccc85
+Planned at: 1e4c335d
 - Admission screen: ONE new invariant owner — the writer of `.vscode/worktree.json`. The dialog
   control and the wire message are surfaces on it, and all five PLAN acceptance clauses are
   properties of the same write. One acceptance story, so no split at Size M.
@@ -231,3 +231,10 @@ Planned at: a82ccc85
   instructive part — "the two answers coincide" was true of every state I had tested.
 - Auto-decision (fastlane): the descriptor-anchored writer stays D16's separate change rather than
   being folded in. `docs/PLAN.md` task WT-012.19 now owns it and D16 names that id.
+- Building 5_1's witness found the escape the plan attack's own counterexample had missed. It framed
+  the divergence as a race between two answers for one path; it is an ordinary symlink CHAIN needing
+  no concurrency at all — where `.vscode` resolves outside the repository and that place resolves
+  back inside it, resolve-then-check authorizes the second hop and writes at the first. Armed, the
+  previous writer returns `ok: true` having written outside the root. The first witness written for
+  this task (a counter answering differently the second time) could not fail once the writer stopped
+  resolving twice, which is the same defect F019 named one level up.

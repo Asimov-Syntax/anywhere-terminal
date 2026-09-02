@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { applyEdits, type FormattingOptions, type JSONPath, modify, type ParseError } from "jsonc-parser";
 import { isNotFound, LockedFile, type LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
 import type { ProvisionModel } from "../../types/messages";
-import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
+import { authorizedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { readJsonc } from "./providerKit";
 import { FRAMEWORK_ORDER } from "./readProvisioning";
@@ -378,22 +378,18 @@ export async function writeNativeConfig(
     return { ok: false, reason: "outside" };
   }
   const dir = path.join(repoRoot, path.dirname(NATIVE_PROVIDER_FILE));
-  // ONE resolution, and it is the one that gets checked. Checking `dir` and then
-  // resolving it again afterwards asks the filesystem the same question twice
-  // and builds the destination from the answer nobody checked
-  // (.reviews/round-2.md F019).
-  let here = dir;
-  try {
-    here = await deps.realpath(dir);
-  } catch (error) {
-    if (!isNotFound(error)) {
-      return { ok: false, reason: "outside" };
-    }
-    // Not there yet, so `here` stays the unresolved spelling — which the check
-    // below tolerates for an absent tail beneath a parent that resolves, and
-    // `LockedFile` then creates.
-  }
-  if (!(await isResolvedPathInsideRoot(here, prepared, deps))) {
+  // The destination is built from the value the check AUTHORIZED, which is the
+  // check's own resolution and not the spelling handed to it. Resolving here and
+  // then checking that answer looks like one resolution and is two: the
+  // predicate re-resolves by contract, and a second answer that differs but
+  // stays inside the root is authorized while the caller's stale spelling names
+  // the file (.reviews/round-3.md F019, design.md D7).
+  //
+  // An absent directory needs no separate branch — the walk reconstructs the
+  // unresolved tail beneath a resolved ancestor, and that is the path
+  // `LockedFile` then creates.
+  const here = await authorizedPathInsideRoot(dir, prepared, deps);
+  if (here === null) {
     return { ok: false, reason: "outside" };
   }
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
