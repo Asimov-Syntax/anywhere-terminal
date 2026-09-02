@@ -14,10 +14,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProvisionPort } from "../types/messages";
 import { authorizeDirectory } from "../utils/authorizedDirectory";
-import { LockedFile } from "../utils/lockedFile";
+import { LockedFile, type StagedReplacement, type WriteGate } from "../utils/lockedFile";
+import type { Deadline } from "./deadline";
 import {
   allocateWorktreePorts,
   type PortWorktreeListing,
@@ -82,6 +83,30 @@ function probes(values: readonly number[]): WorktreePortsDeps["probe"] {
     return value;
   };
 }
+
+function manualDeadline(initiallyExpired = false) {
+  let expire!: () => void;
+  let expired = initiallyExpired;
+  const elapsed = new Promise<void>((resolve) => {
+    expire = () => {
+      expired = true;
+      resolve();
+    };
+  });
+  if (initiallyExpired) {
+    expire();
+  }
+  const deadline: Deadline = {
+    elapsed,
+    get expired() {
+      return expired;
+    },
+    cancel: vi.fn(),
+  };
+  return { deadline, expire };
+}
+
+const openGate: WriteGate = { open: true, guard: (step) => step() };
 
 afterEach(async () => {
   await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -526,10 +551,10 @@ describe("allocateWorktreePorts", () => {
           }
           return {
             stageReplacement: async () => undefined,
-            withLock: async (work, _unavailable, _failed, releaseFailed) => {
-              const value = await work();
+            withLock: async (_deadline, work, _failed, releaseFailed) => {
+              const value = await work({ open: true, guard: (step) => step() });
               releaseFailed?.(`${sentinel}.lock`);
-              return value;
+              return { kind: "done" as const, value };
             },
           };
         },
@@ -541,6 +566,173 @@ describe("allocateWorktreePorts", () => {
     expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
     expect(result.warnings).toEqual(["lockReleaseFailed", "excludeFailed"]);
     expect(warned).toHaveLength(1);
+  });
+
+  it("reports a dirty port timeout as retained serialization", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline } = manualDeadline();
+    const retainedLockPath = `${path.join(repoId, "anywhere-terminal-port-claims")}.anywhere-terminal.lock`;
+    const warn = vi.fn();
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees: async () => complete(worktrees),
+        lockedFile: () => ({
+          stageReplacement: async () => undefined,
+          withLock: async () => ({ kind: "timedOut" as const, retainedLockPath }),
+        }),
+        addExclude: async () => ({ added: false }),
+        warn,
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({
+      kind: "failed",
+      reason: "port allocation timed out while a protected write was still pending",
+    });
+    expect(result.warnings).toEqual(["lockRetained"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(retainedLockPath));
+    expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("reports a clean port timeout without claiming lock retention", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline } = manualDeadline();
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees: async () => complete(worktrees),
+        lockedFile: () => ({
+          stageReplacement: async () => undefined,
+          withLock: async () => ({ kind: "timedOut" as const }),
+        }),
+        addExclude: async () => ({ added: false }),
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({
+      kind: "failed",
+      reason: "port allocation timed out before publication",
+    });
+    expect(result.warnings).toEqual([]);
+    expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("starts no listing or publication after the shared deadline is already expired", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline } = manualDeadline(true);
+    const listWorktrees = vi.fn(async () => complete(worktrees));
+    const stageReplacement = vi.fn(async () => undefined);
+    const probe = vi.fn(async () => 5183);
+    const addExclude = vi.fn(async (_gitDir: string, _entry: string, given?: Deadline) => {
+      expect(given).toBe(deadline);
+      return { added: false } as const;
+    });
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees,
+        probe,
+        lockedFile: () => ({
+          stageReplacement,
+          withLock: async (given) => {
+            expect(given).toBe(deadline);
+            expect(given.expired).toBe(true);
+            return { kind: "timedOut" as const };
+          },
+        }),
+        addExclude,
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(listWorktrees).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+    expect(stageReplacement).not.toHaveBeenCalled();
+    expect(addExclude).toHaveBeenCalledOnce();
+    expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("preserves committed allocation when temporary cleanup misses the shared deadline", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline, expire } = manualDeadline();
+    const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    const discard = vi.fn(() => {
+      expire();
+      return new Promise<boolean>(() => undefined);
+    });
+    const commit = vi.fn(async () => true);
+    const staged: StagedReplacement = { path: `${target}.tmp`, commit, discard, abandon: vi.fn(async () => undefined) };
+    const addExclude = vi.fn(async (_gitDir: string, _entry: string, given?: Deadline) => {
+      expect(given).toBe(deadline);
+      expect(deadline.cancel).not.toHaveBeenCalled();
+      return { added: true } as const;
+    });
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        lockedFile: (lockedPath) =>
+          lockedPath === sentinel
+            ? {
+                stageReplacement: async () => undefined,
+                withLock: async (_deadline, work) => ({ kind: "done" as const, value: await work(openGate) }),
+              }
+            : {
+                stageReplacement: async (_contents, _mode, gate) => {
+                  expect(gate).toBe(openGate);
+                  return staged;
+                },
+                withLock: async () => ({ kind: "unavailable" as const }),
+              },
+        addExclude,
+      },
+    );
+
+    expect(commit).toHaveBeenCalledWith("create", openGate);
+    expect(discard).toHaveBeenCalledWith();
+    expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
+    expect(result.warnings).toEqual(["temporaryCleanupFailed"]);
+    expect(addExclude).toHaveBeenCalledOnce();
+    expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("maps a retained exclude timeout without changing committed ports", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline } = manualDeadline();
+    const retainedLockPath = path.join(repoId, "info", "exclude.anywhere-terminal.lock");
+    const addExclude = vi.fn(async (_gitDir: string, _entry: string, given?: Deadline) => {
+      expect(given).toBe(deadline);
+      return {
+        failed: "the repository-local exclude update timed out while a write was still pending",
+        timedOut: true as const,
+        retainedLockPath,
+      };
+    });
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        addExclude,
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
+    expect(result.warnings).toEqual(["excludeFailed", "lockRetained"]);
+    expect(deadline.cancel).toHaveBeenCalledOnce();
   });
 
   it("turns a thrown exclude update into a warning without rejecting allocation", async () => {
@@ -694,9 +886,9 @@ describe("allocateWorktreePorts", () => {
     );
 
     expect(Date.now() - started).toBeLessThan(200);
-    expect(result.ports[0]?.outcome).toMatchObject({
+    expect(result.ports[0]?.outcome).toEqual({
       kind: "failed",
-      reason: expect.stringContaining("listing"),
+      reason: "port allocation timed out before publication",
     });
   });
 

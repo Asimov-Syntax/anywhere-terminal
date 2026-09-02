@@ -1850,6 +1850,14 @@ function portSummary(
     ...(warnings?.includes("lockReleaseFailed")
       ? ["The allocation lock could not be released; later port allocations may be blocked."]
       : []),
+    ...(warnings?.includes("lockRetained")
+      ? [
+          "The allocation lock was retained because a timed-out write may still finish; later port allocations remain blocked until the lock is cleaned up.",
+        ]
+      : []),
+    ...(warnings?.includes("temporaryCleanupFailed")
+      ? ["Port claims were saved, but temporary-file cleanup did not finish."]
+      : []),
     ...(warnings?.includes("excludeFailed")
       ? ["The repository-local exclude could not be updated; .env.worktree may appear in Git status."]
       : []),

@@ -23,7 +23,7 @@ The shared acquisition/write gate precedes both consumers. Repository-local excl
   - **Plan**:
     1. `src/worktree/gitExclude.ts` and `src/worktree/gitExclude.test.ts`: accept a caller-owned worktree `Deadline` or mint one for standalone use, pass its gate through atomic replacement, return distinct clean-timeout and retained-lock failure data, log retained paths, and cancel only a locally owned timer after settlement, and preserve exact-line idempotence and existing read and publication failures.
 
-- [ ] 1_3 Bound port publication and report retained locks truthfully
+- [x] 1_3 Bound port publication and report retained locks truthfully — verified: pnpm exec vitest run 'src/worktree/worktreePorts.test.ts' 'src/types/messages.contract.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 exit 0
   - **Deps**: 1_1, 1_2
   - **Refs**: design.md D1, design.md D4, design.md D5, design.md D6, design.md D7; specs/worktree-panel/spec.md#{a-dirty-port-write-timeout-retains-serialization, a-clean-port-write-timeout-releases-serialization, an-expired-port-write-starts-no-later-publication, successful-work-remains-successful-when-cleanup-is-late}
   - **Acceptance**:

@@ -2546,7 +2546,7 @@ export interface ProvisionPortResult {
 }
 
 /** A batch condition that does not change any committed per-port outcome. */
-export type ProvisionPortWarning = "lockReleaseFailed" | "excludeFailed";
+export type ProvisionPortWarning = "lockReleaseFailed" | "excludeFailed" | "lockRetained" | "temporaryCleanupFailed";
 
 /**
  * Extension → WebView: what provisioning did, per item, after a create.

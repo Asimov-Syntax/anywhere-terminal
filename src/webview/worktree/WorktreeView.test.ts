@@ -2531,7 +2531,7 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(text).not.toMatch(/reserv/i);
   });
 
-  it("warns about lock cleanup and repository-local exclude failures", () => {
+  it("renders each port cleanup warning without changing the authoritative success", () => {
     const { view } = mount();
     view.setData({
       ...populated(),
@@ -2541,15 +2541,19 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
           repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
           outcome: "ok",
           ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5183 } }],
-          portWarnings: ["lockReleaseFailed", "excludeFailed"],
+          portWarnings: ["lockReleaseFailed", "lockRetained", "temporaryCleanupFailed", "excludeFailed"],
         },
       ],
     });
 
     const notice = view.element.querySelector(".wt-notice");
+    const text = notice?.textContent ?? "";
     expect(notice?.className ?? "").toContain("wt-notice--warn");
-    expect(notice?.textContent ?? "").toContain("later port allocations may be blocked");
-    expect(notice?.textContent ?? "").toContain(".env.worktree may appear in Git status");
+    expect(text).toContain("1 of 1 ports ready");
+    expect(text).toContain("could not be released");
+    expect(text).toContain("was retained because a timed-out write may still finish");
+    expect(text).toContain("temporary-file cleanup did not finish");
+    expect(text).toContain(".env.worktree may appear in Git status");
   });
 
   it("redraws when only an authoritative port value changes", () => {

@@ -10,7 +10,14 @@ import {
   fileIdentityOf,
   sameFileIdentity,
 } from "../utils/authorizedDirectory";
-import { LockedFile, type StagedReplacement } from "../utils/lockedFile";
+import {
+  type LockDeadline,
+  LockedFile,
+  type LockedOutcome,
+  type StagedReplacement,
+  type WriteGate,
+} from "../utils/lockedFile";
+import { afterDelay, type Deadline } from "./deadline";
 import { addToGitExclude, type ExcludeResult } from "./gitExclude";
 
 const CLAIM_FILE = ".env.worktree";
@@ -42,12 +49,16 @@ interface HandleLike {
 
 interface PortLockedFile {
   withLock<T>(
-    work: () => Promise<T>,
-    lockUnavailable: T,
+    deadline: LockDeadline,
+    work: (gate: WriteGate) => Promise<T>,
     failed: T,
     onLockReleaseFailed?: (lockPath: string) => void,
-  ): Promise<T>;
-  stageReplacement(contents: string, mode: number | undefined): Promise<StagedReplacement | undefined>;
+  ): Promise<LockedOutcome<T>>;
+  stageReplacement(
+    contents: string,
+    mode: number | undefined,
+    gate?: WriteGate,
+  ): Promise<StagedReplacement | undefined>;
 }
 
 export interface PortWorktreeListing {
@@ -74,12 +85,13 @@ export interface PreviewPortsDeps {
   readonly probe?: () => Promise<number>;
   readonly now?: () => number;
   readonly transactionMs?: number;
+  readonly deadline?: (milliseconds: number) => Deadline;
 }
 
 export interface WorktreePortsDeps extends PreviewPortsDeps {
   readonly listWorktrees: (repoPath: string, options: PortListingOptions) => Promise<PortWorktreeListing>;
   readonly lockedFile?: (target: string) => PortLockedFile;
-  readonly addExclude?: (gitDir: string, entry: string) => Promise<ExcludeResult>;
+  readonly addExclude?: (gitDir: string, entry: string, deadline?: Deadline) => Promise<ExcludeResult>;
   readonly warn?: (message: string) => void;
 }
 
@@ -108,7 +120,7 @@ type ClaimRead =
   | { readonly kind: "invalid" };
 
 type DirectoryAuthorization = { readonly dev: number | bigint; readonly ino: number | bigint };
-type Budget = { readonly deadline: number; readonly now: () => number };
+type Budget = { readonly deadline: Deadline; readonly at: number; readonly now: () => number };
 
 class BudgetExpired extends Error {}
 
@@ -126,27 +138,19 @@ function sameIdentity(left: { dev: number | bigint; ino: number | bigint }, righ
 }
 
 function remaining(budget: Budget): number {
-  return Math.max(0, budget.deadline - budget.now());
+  return budget.deadline.expired ? 0 : Math.max(0, budget.at - budget.now());
 }
 
 async function withinBudget<T>(budget: Budget, work: () => Promise<T>): Promise<T> {
-  const timeoutMs = remaining(budget);
-  if (timeoutMs <= 0) {
+  if (remaining(budget) <= 0) {
     throw new BudgetExpired();
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new BudgetExpired()), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
+  return Promise.race([
+    work(),
+    budget.deadline.elapsed.then<never>(() => {
+      throw new BudgetExpired();
+    }),
+  ]);
 }
 
 function authorizationBudget(budget: Budget): AuthorizationBudget {
@@ -435,46 +439,52 @@ export async function previewWorktreePorts(
     probe: dependencies.probe ?? nodeProbe,
     now: dependencies.now ?? Date.now,
     transactionMs: dependencies.transactionMs ?? TRANSACTION_MS,
+    deadline: dependencies.deadline ?? afterDelay,
   };
   if (worktreePaths.length > MAX_SIBLINGS) {
     return ports.map(withoutPreview);
   }
-  const budget = { deadline: deps.now() + deps.transactionMs, now: deps.now };
-  const claimed = new Set<number>();
-  for (const worktreePath of worktreePaths) {
-    const authorized = await readClaimsUnderRoot(worktreePath, deps, budget);
-    if (authorized === undefined || authorized.source.kind === "invalid") {
-      return ports.map(withoutPreview);
-    }
-    if (authorized.source.kind === "valid") {
-      for (const value of authorized.source.claims.values()) {
-        claimed.add(value);
+  const deadline = deps.deadline(deps.transactionMs);
+  const budget = { deadline, at: deps.now() + deps.transactionMs, now: deps.now };
+  try {
+    const claimed = new Set<number>();
+    for (const worktreePath of worktreePaths) {
+      const authorized = await readClaimsUnderRoot(worktreePath, deps, budget);
+      if (authorized === undefined || authorized.source.kind === "invalid") {
+        return ports.map(withoutPreview);
+      }
+      if (authorized.source.kind === "valid") {
+        for (const value of authorized.source.claims.values()) {
+          claimed.add(value);
+        }
       }
     }
-  }
 
-  const previews = new Map<string, number>();
-  for (const name of groupPorts(ports).keys()) {
-    if (!NAME.test(name)) {
-      continue;
-    }
-    for (let attempt = 0; attempt < MAX_PROBES_PER_NAME; attempt += 1) {
-      try {
-        const candidate = await withinBudget(budget, deps.probe);
-        if (Number.isSafeInteger(candidate) && candidate > 0 && candidate <= 65_535 && !claimed.has(candidate)) {
-          claimed.add(candidate);
-          previews.set(name, candidate);
+    const previews = new Map<string, number>();
+    for (const name of groupPorts(ports).keys()) {
+      if (!NAME.test(name)) {
+        continue;
+      }
+      for (let attempt = 0; attempt < MAX_PROBES_PER_NAME; attempt += 1) {
+        try {
+          const candidate = await withinBudget(budget, deps.probe);
+          if (Number.isSafeInteger(candidate) && candidate > 0 && candidate <= 65_535 && !claimed.has(candidate)) {
+            claimed.add(candidate);
+            previews.set(name, candidate);
+            break;
+          }
+        } catch {
           break;
         }
-      } catch {
-        break;
       }
     }
+    return ports.map((item) => {
+      const preview = previews.get(item.name);
+      return preview === undefined ? withoutPreview(item) : { ...withoutPreview(item), port: preview };
+    });
+  } finally {
+    deadline.cancel();
   }
-  return ports.map((item) => {
-    const preview = previews.get(item.name);
-    return preview === undefined ? withoutPreview(item) : { ...withoutPreview(item), port: preview };
-  });
 }
 
 export async function allocateWorktreePorts(
@@ -489,148 +499,159 @@ export async function allocateWorktreePorts(
     open: dependencies.open ?? nodeFs.open,
     probe: dependencies.probe ?? nodeProbe,
     lockedFile: dependencies.lockedFile ?? ((target: string) => new LockedFile(target)),
-    addExclude: dependencies.addExclude ?? addToGitExclude,
+    addExclude:
+      dependencies.addExclude ??
+      ((gitDir: string, entry: string, deadline?: Deadline) => addToGitExclude(gitDir, entry, undefined, deadline)),
     now: dependencies.now ?? Date.now,
     transactionMs: dependencies.transactionMs ?? TRANSACTION_MS,
+    deadline: dependencies.deadline ?? afterDelay,
     warn: dependencies.warn ?? ((message: string) => console.warn(message)),
   };
   const lock = deps.lockedFile(path.join(input.repoId, "anywhere-terminal-port-claims"));
   const warnings: ProvisionPortWarning[] = [];
+  const addWarning = (warning: ProvisionPortWarning): void => {
+    if (!warnings.includes(warning)) {
+      warnings.push(warning);
+    }
+  };
   const failure = (reason: string): WorktreePortApplyResult => ({
     ports: failedResults(input.ports, reason),
     warnings: [],
   });
+  const deadline = deps.deadline(deps.transactionMs);
+  const budget = { deadline, at: deps.now() + deps.transactionMs, now: deps.now };
+  let postCommitCleanup: StagedReplacement | undefined;
 
-  const result = await lock.withLock<WorktreePortApplyResult>(
-    async () => {
-      const budget = { deadline: deps.now() + deps.transactionMs, now: deps.now };
-      if (!samePath(input.authorization.path, input.worktreePath)) {
-        return failure("the observed worktree authority does not name the allocation target");
-      }
-      let listing: PortWorktreeListing;
-      try {
-        listing = await withinBudget(budget, () =>
-          dependencies.listWorktrees(input.repoPath, {
-            timeoutMs: remaining(budget),
-            maxBufferBytes: MAX_LISTING_BYTES,
-            maxWorktrees: MAX_SIBLINGS,
-            authorizationBudget: authorizationBudget(budget),
-          }),
-        );
-      } catch {
-        return failure("the sibling worktree listing could not be completed");
-      }
-      if (!listingIsComplete(listing) || listing.worktrees.length > MAX_SIBLINGS) {
-        return failure("sibling port claims could not be proven");
-      }
-
-      const siblingClaims = new Set<number>();
-      for (const worktree of listing.worktrees) {
-        if (!samePath(worktree.authorization.path, worktree.id)) {
-          return failure("sibling port claims could not be proven");
+  try {
+    const lockedOutcome = await lock.withLock<WorktreePortApplyResult>(
+      deadline,
+      async (gate) => {
+        if (!samePath(input.authorization.path, input.worktreePath)) {
+          return failure("the observed worktree authority does not name the allocation target");
         }
-        if (sameAuthorizedLeaf(worktree.authorization, input.authorization)) {
-          continue;
-        }
-        if (!(await authorizedDirectoryStillMatches(worktree.authorization, deps, budget))) {
-          return failure("sibling port claims could not be proven");
-        }
-        const source = await readClaims(path.join(worktree.id, CLAIM_FILE), deps, budget);
-        if (
-          source.kind === "invalid" ||
-          !(await authorizedDirectoryStillMatches(worktree.authorization, deps, budget))
-        ) {
-          return failure("sibling port claims could not be proven");
-        }
-        if (source.kind === "valid") {
-          for (const value of source.claims.values()) {
-            siblingClaims.add(value);
-          }
-        }
-      }
-
-      const target = path.join(input.worktreePath, CLAIM_FILE);
-      if (!(await authorizedDirectoryStillMatches(input.authorization, deps, budget))) {
-        return failure("the observed worktree directory changed before port claims could be read");
-      }
-      const source = await readClaims(target, deps, budget);
-      if (!(await authorizedDirectoryStillMatches(input.authorization, deps, budget))) {
-        return failure("the observed worktree directory changed while port claims were being read");
-      }
-      if (source.kind === "invalid") {
-        return failure("the existing port claim file is not supported");
-      }
-      const existing = source.kind === "valid" ? source.claims : new Map<string, number>();
-      const claimed = new Set<number>([...siblingClaims, ...existing.values()]);
-      const results = new Map<string, ProvisionPortResult>();
-      const pending = new Map<string, number>();
-      const groups = groupPorts(input.ports);
-
-      for (const [name, items] of groups) {
-        const put = (outcome: ProvisionPortResult["outcome"]) => {
-          for (const item of items) {
-            results.set(item.id, {
-              id: item.id,
-              name,
-              ...(item.port === undefined ? {} : { preview: item.port }),
-              outcome,
-            });
-          }
-        };
-        if (!NAME.test(name)) {
-          put({ kind: "failed", reason: "the port name is not a valid environment identifier" });
-          continue;
-        }
-        const retained = existing.get(name);
-        if (retained !== undefined) {
-          put(
-            siblingClaims.has(retained)
-              ? { kind: "failed", reason: "a sibling worktree already claims the existing value" }
-              : { kind: "reused", port: retained },
+        let listing: PortWorktreeListing;
+        try {
+          listing = await withinBudget(budget, () =>
+            dependencies.listWorktrees(input.repoPath, {
+              timeoutMs: remaining(budget),
+              maxBufferBytes: MAX_LISTING_BYTES,
+              maxWorktrees: MAX_SIBLINGS,
+              authorizationBudget: authorizationBudget(budget),
+            }),
           );
-          continue;
+        } catch {
+          return failure("the sibling worktree listing could not be completed");
         }
-        let allocated: number | undefined;
-        for (let attempt = 0; attempt < MAX_PROBES_PER_NAME && remaining(budget) > 0; attempt += 1) {
-          try {
-            const candidate = await withinBudget(budget, deps.probe);
-            if (Number.isSafeInteger(candidate) && candidate > 0 && candidate <= 65_535 && !claimed.has(candidate)) {
-              allocated = candidate;
-              claimed.add(candidate);
+        if (!listingIsComplete(listing) || listing.worktrees.length > MAX_SIBLINGS) {
+          return failure("sibling port claims could not be proven");
+        }
+
+        const siblingClaims = new Set<number>();
+        for (const worktree of listing.worktrees) {
+          if (!samePath(worktree.authorization.path, worktree.id)) {
+            return failure("sibling port claims could not be proven");
+          }
+          if (sameAuthorizedLeaf(worktree.authorization, input.authorization)) {
+            continue;
+          }
+          if (!(await authorizedDirectoryStillMatches(worktree.authorization, deps, budget))) {
+            return failure("sibling port claims could not be proven");
+          }
+          const source = await readClaims(path.join(worktree.id, CLAIM_FILE), deps, budget);
+          if (
+            source.kind === "invalid" ||
+            !(await authorizedDirectoryStillMatches(worktree.authorization, deps, budget))
+          ) {
+            return failure("sibling port claims could not be proven");
+          }
+          if (source.kind === "valid") {
+            for (const value of source.claims.values()) {
+              siblingClaims.add(value);
+            }
+          }
+        }
+
+        const target = path.join(input.worktreePath, CLAIM_FILE);
+        if (!(await authorizedDirectoryStillMatches(input.authorization, deps, budget))) {
+          return failure("the observed worktree directory changed before port claims could be read");
+        }
+        const source = await readClaims(target, deps, budget);
+        if (!(await authorizedDirectoryStillMatches(input.authorization, deps, budget))) {
+          return failure("the observed worktree directory changed while port claims were being read");
+        }
+        if (source.kind === "invalid") {
+          return failure("the existing port claim file is not supported");
+        }
+        const existing = source.kind === "valid" ? source.claims : new Map<string, number>();
+        const claimed = new Set<number>([...siblingClaims, ...existing.values()]);
+        const results = new Map<string, ProvisionPortResult>();
+        const pending = new Map<string, number>();
+        const groups = groupPorts(input.ports);
+
+        for (const [name, items] of groups) {
+          const put = (outcome: ProvisionPortResult["outcome"]) => {
+            for (const item of items) {
+              results.set(item.id, {
+                id: item.id,
+                name,
+                ...(item.port === undefined ? {} : { preview: item.port }),
+                outcome,
+              });
+            }
+          };
+          if (!NAME.test(name)) {
+            put({ kind: "failed", reason: "the port name is not a valid environment identifier" });
+            continue;
+          }
+          const retained = existing.get(name);
+          if (retained !== undefined) {
+            put(
+              siblingClaims.has(retained)
+                ? { kind: "failed", reason: "a sibling worktree already claims the existing value" }
+                : { kind: "reused", port: retained },
+            );
+            continue;
+          }
+          let allocated: number | undefined;
+          for (let attempt = 0; attempt < MAX_PROBES_PER_NAME && remaining(budget) > 0; attempt += 1) {
+            try {
+              const candidate = await withinBudget(budget, deps.probe);
+              if (Number.isSafeInteger(candidate) && candidate > 0 && candidate <= 65_535 && !claimed.has(candidate)) {
+                allocated = candidate;
+                claimed.add(candidate);
+                break;
+              }
+            } catch {
               break;
             }
-          } catch {
-            break;
+          }
+          if (allocated === undefined) {
+            put({ kind: "failed", reason: "no distinct port could be allocated" });
+          } else {
+            pending.set(name, allocated);
           }
         }
-        if (allocated === undefined) {
-          put({ kind: "failed", reason: "no distinct port could be allocated" });
-        } else {
-          pending.set(name, allocated);
-        }
-      }
 
-      let persisted = false;
-      let pendingFailure = "the port claim file could not be published";
-      if (pending.size > 0) {
-        const prefix = source.contents.length > 0 && !source.contents.endsWith("\n") ? "\n" : "";
-        const appended = [...pending].map(([name, value]) => `${name}=${value}`).join("\n");
-        const contents = `${source.contents}${prefix}${appended}\n`;
-        let staged: StagedReplacement | undefined;
-        if (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) {
-          try {
-            staged = await deps.lockedFile(target).stageReplacement(contents, source.mode);
-          } catch {
+        let persisted = false;
+        let pendingFailure = "the port claim file could not be published";
+        if (pending.size > 0) {
+          const prefix = source.contents.length > 0 && !source.contents.endsWith("\n") ? "\n" : "";
+          const appended = [...pending].map(([name, value]) => `${name}=${value}`).join("\n");
+          const contents = `${source.contents}${prefix}${appended}\n`;
+          let staged: StagedReplacement | undefined;
+          if (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) {
+            try {
+              staged = await deps.lockedFile(target).stageReplacement(contents, source.mode, gate);
+            } catch {
+              pendingFailure = "the port claim file could not be staged";
+            }
+          } else {
+            pendingFailure = "the worktree directory changed before port claims could be written";
+          }
+          if (staged === undefined && pendingFailure === "the port claim file could not be published") {
             pendingFailure = "the port claim file could not be staged";
           }
-        } else {
-          pendingFailure = "the worktree directory changed before port claims could be written";
-        }
-        if (staged === undefined && pendingFailure === "the port claim file could not be published") {
-          pendingFailure = "the port claim file could not be staged";
-        }
-        if (staged !== undefined) {
-          try {
+          if (staged !== undefined) {
             const sourceProven =
               (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) &&
               (await sourceStillMatches(target, source, deps, budget)) &&
@@ -639,7 +660,7 @@ export async function allocateWorktreePorts(
               pendingFailure = "the port claim file changed before it could be updated";
             } else {
               try {
-                persisted = await staged.commit(source.kind === "absent" ? "create" : "replace");
+                persisted = await staged.commit(source.kind === "absent" ? "create" : "replace", gate);
               } catch {
                 persisted = false;
               }
@@ -647,68 +668,100 @@ export async function allocateWorktreePorts(
                 pendingFailure = "the port claim file could not be published";
               }
             }
-          } finally {
-            await staged.discard();
+            if (persisted) {
+              postCommitCleanup = staged;
+            } else {
+              await staged.discard(gate);
+            }
           }
-        }
-        for (const [name, value] of pending) {
-          for (const item of groups.get(name) ?? []) {
-            results.set(item.id, {
-              id: item.id,
-              name,
-              ...(item.port === undefined ? {} : { preview: item.port }),
-              outcome: persisted ? { kind: "allocated", port: value } : { kind: "failed", reason: pendingFailure },
-            });
-          }
-        }
-      }
-
-      const hasRetainedSuccess = [...results.values()].some((item) => item.outcome.kind === "reused");
-      if (hasRetainedSuccess && !persisted) {
-        const retainedProven =
-          (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) &&
-          (await sourceStillMatches(target, source, deps, budget)) &&
-          (await authorizedDirectoryStillMatches(input.authorization, deps, budget));
-        if (!retainedProven) {
-          for (const [id, item] of results) {
-            if (item.outcome.kind === "reused") {
-              results.set(id, {
-                ...item,
-                outcome: { kind: "failed", reason: "the existing port claim file changed before reuse was proven" },
+          for (const [name, value] of pending) {
+            for (const item of groups.get(name) ?? []) {
+              results.set(item.id, {
+                id: item.id,
+                name,
+                ...(item.port === undefined ? {} : { preview: item.port }),
+                outcome: persisted ? { kind: "allocated", port: value } : { kind: "failed", reason: pendingFailure },
               });
             }
           }
         }
+
+        const hasRetainedSuccess = [...results.values()].some((item) => item.outcome.kind === "reused");
+        if (hasRetainedSuccess && !persisted) {
+          const retainedProven =
+            (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) &&
+            (await sourceStillMatches(target, source, deps, budget)) &&
+            (await authorizedDirectoryStillMatches(input.authorization, deps, budget));
+          if (!retainedProven) {
+            for (const [id, item] of results) {
+              if (item.outcome.kind === "reused") {
+                results.set(id, {
+                  ...item,
+                  outcome: { kind: "failed", reason: "the existing port claim file changed before reuse was proven" },
+                });
+              }
+            }
+          }
+        }
+
+        return {
+          ports: input.ports.map(
+            (item) =>
+              results.get(item.id) ?? {
+                id: item.id,
+                name: item.name,
+                ...(item.port === undefined ? {} : { preview: item.port }),
+                outcome: { kind: "failed" as const, reason: "the port allocation produced no result" },
+              },
+          ),
+          warnings: [],
+        };
+      },
+      failure("port allocation failed unexpectedly"),
+      (lockPath) => {
+        addWarning("lockReleaseFailed");
+        deps.warn(`[AnyWhere Terminal] could not release port-claim lock: ${lockPath}`);
+      },
+    );
+
+    let result: WorktreePortApplyResult;
+    if (lockedOutcome.kind === "done") {
+      result = lockedOutcome.value;
+    } else if (lockedOutcome.kind === "unavailable") {
+      result = failure("port claims could not be locked");
+    } else {
+      result = failure(
+        lockedOutcome.retainedLockPath === undefined
+          ? "port allocation timed out before publication"
+          : "port allocation timed out while a protected write was still pending",
+      );
+      if (lockedOutcome.retainedLockPath !== undefined) {
+        addWarning("lockRetained");
+        deps.warn(`[AnyWhere Terminal] port-claim lock retained after timeout: ${lockedOutcome.retainedLockPath}`);
       }
-
-      return {
-        ports: input.ports.map(
-          (item) =>
-            results.get(item.id) ?? {
-              id: item.id,
-              name: item.name,
-              ...(item.port === undefined ? {} : { preview: item.port }),
-              outcome: { kind: "failed" as const, reason: "the port allocation produced no result" },
-            },
-        ),
-        warnings: [],
-      };
-    },
-    failure("port claims could not be locked"),
-    failure("port allocation failed unexpectedly"),
-    (lockPath) => {
-      warnings.push("lockReleaseFailed");
-      deps.warn(`[AnyWhere Terminal] could not release port-claim lock: ${lockPath}`);
-    },
-  );
-
-  try {
-    const excluded = await deps.addExclude(input.repoId, EXCLUDE_PATTERN);
-    if ("failed" in excluded) {
-      warnings.push("excludeFailed");
     }
-  } catch {
-    warnings.push("excludeFailed");
+
+    if (postCommitCleanup !== undefined) {
+      const cleanup = postCommitCleanup.discard().catch(() => false);
+      const cleaned = await Promise.race([cleanup, deadline.elapsed.then(() => false)]);
+      if (!cleaned) {
+        addWarning("temporaryCleanupFailed");
+      }
+    }
+
+    try {
+      const excluded = await deps.addExclude(input.repoId, EXCLUDE_PATTERN, deadline);
+      if ("failed" in excluded) {
+        addWarning("excludeFailed");
+        if ("retainedLockPath" in excluded && excluded.retainedLockPath !== undefined) {
+          addWarning("lockRetained");
+        }
+      }
+    } catch {
+      addWarning("excludeFailed");
+    }
+    return { ports: result.ports, warnings: [...result.warnings, ...warnings] };
+  } finally {
+    deadline.cancel();
   }
-  return { ports: result.ports, warnings: [...result.warnings, ...warnings] };
 }

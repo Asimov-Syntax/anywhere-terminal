@@ -210,7 +210,7 @@ const provisionResult: WorktreeProvisionResultMessage = {
   worktreeId: "w1",
   steps: [stepForFile, stepForDirectory],
   ports: [allocatedPort, reusedPort, failedPort],
-  portWarnings: ["lockReleaseFailed", "excludeFailed"],
+  portWarnings: ["lockReleaseFailed", "excludeFailed", "lockRetained", "temporaryCleanupFailed"],
 };
 
 // @ts-expect-error every producer states the complete per-port result list, including an empty one
