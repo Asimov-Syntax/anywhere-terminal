@@ -3226,6 +3226,88 @@ describe("a notice outlives the row it was about", () => {
     expect(results[0]?.orphanedLabel).toBe("/var/wt/linked");
   });
 
+  it("keeps recreated setup results on an aliased row through its arrival", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    const worktreeId = "/private/var/wt/linked";
+    const displayPath = "/var/wt/linked";
+    const repoId = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+    const seeded = singleRepoTree();
+    const repo = seeded.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    const linked = worktree({ id: worktreeId, displayPath, branch: "feat/sym" });
+    repo.worktrees = [...repo.worktrees, linked];
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    h.controller.handleTreeResponse(response());
+
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [],
+      ports: [],
+      setup: [
+        {
+          id: "setup-1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "exit 1" },
+        },
+      ],
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ canonicalId: worktreeId, orphanedLabel: displayPath });
+
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    const attached = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(attached).toHaveLength(1);
+    expect(attached[0]).toMatchObject({
+      action: "create",
+      worktreeId,
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+    expect(attached[0]).not.toHaveProperty("orphanedLabel");
+
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            onRetrySetup(result: WorktreeActionResult): void;
+            onViewSetupOutput(result: WorktreeActionResult): void;
+          };
+        };
+      }
+    ).view.deps;
+    h.posts.length = 0;
+    deps.onViewSetupOutput(attached[0] as WorktreeActionResult);
+    deps.onRetrySetup(attached[0] as WorktreeActionResult);
+    expect(h.posts).toEqual([
+      { type: "worktreeSetupViewOutput", outputId: "output-1" },
+      { type: "worktreeSetupRetry", worktreeId, retryId: "retry-1" },
+    ]);
+  });
+
   it("still reports a removal after the row it removed has gone", () => {
     const h = mount();
     h.controller.setVisible(true);

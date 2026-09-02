@@ -246,6 +246,11 @@ export function worktreeMenuActions(
 const MAX_ORPHAN_NOTICES = 4;
 const MAX_DEPARTED = 64;
 
+/** Stable identity across attached, pending-arrival, and departed notice scopes. */
+function actionResultIdentity(result: WorktreeActionResult): string | undefined {
+  return result.worktreeId ?? result.canonicalId ?? result.orphanedLabel;
+}
+
 /** Drop the oldest entries until `map` fits. Insertion order is age. */
 function trim(map: Map<string, string>, limit: number): void {
   for (const key of map.keys()) {
@@ -1409,7 +1414,7 @@ export class WorktreeController {
     // — so the id-only key missed on every real create, which is what made the
     // service supplying an id (round-2 F017) only half the fix.
     const existing = this.actionResults.find(
-      (r) => r.action === "create" && (r.worktreeId ?? r.orphanedLabel) === msg.worktreeId,
+      (result) => result.action === "create" && actionResultIdentity(result) === msg.worktreeId,
     );
     this.showActionResult({
       ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
@@ -1459,10 +1464,14 @@ export class WorktreeController {
     // `orphanedLabel`, and a worktree made a moment ago is exactly that — so two
     // creates in one repository both keyed as `undefined` and the second ate the
     // first (.reviews/round-4.md F017).
-    const identity = (r: WorktreeActionResult): string | undefined => r.worktreeId ?? r.orphanedLabel;
     this.actionResults = [
       ...this.actionResults.filter(
-        (r) => !(r.action === result.action && identity(r) === identity(result) && r.repoId === result.repoId),
+        (candidate) =>
+          !(
+            candidate.action === result.action &&
+            actionResultIdentity(candidate) === actionResultIdentity(result) &&
+            candidate.repoId === result.repoId
+          ),
       ),
       result,
     ];
@@ -1685,22 +1694,18 @@ export class WorktreeController {
       // about: every real create is re-scoped first and reattached here, and a
       // one-way move left it at the repository anchor forever, still counted
       // against the orphan bound that can evict it (round-5 F017).
-      const { orphanedLabel: _shown, ...named } = result;
-      return result.worktreeId === undefined ? { ...named, worktreeId } : result;
+      const { canonicalId: _identity, orphanedLabel: _shown, ...named } = result;
+      return { ...named, worktreeId };
     }
     const label = result.orphanedLabel ?? this.departed.get(worktreeId);
-    const { worktreeId: _gone, ...rest } = result;
+    const { canonicalId: _identity, worktreeId: _gone, ...rest } = result;
     return {
       ...rest,
-      // Identity is kept only for a row that has NOT ARRIVED yet. A row that
-      // DEPARTED can be recreated at the same id, and handing the old notice
-      // back to it would report someone else's action on a worktree that never
-      // had it — so `departed`, which reconciliation has already filled by the
-      // time a removal's result lands, is what tells the two apart. An id aged
-      // out of that bounded map reads as never-arrived; the notice is then
-      // reattachable, which is the same answer it would get if it had been made
-      // after the eviction.
-      ...(label === undefined ? { canonicalId: worktreeId } : {}),
+      // An arriving successful create is a new generation even when an older
+      // row left this id behind in `departed`. Reconciliation passes `present`,
+      // so an older stored notice still loses its identity when its own row
+      // departs and cannot attach to a later recreation.
+      ...(result.action === "create" && present === undefined ? { canonicalId: worktreeId } : {}),
       orphanedLabel: label ?? worktreeId,
     };
   }

@@ -43,3 +43,4 @@ Round 4 grant: the user's prior instruction `cho phép replan, them round review
 Round 6 grant: the user's explicit instruction `cho phép round 6` authorizes remediation and one verification review for Round 5 F015-F017.
 Round 6 state caveat: the corrected APPROVE artifact conflicts with the earlier superseded entry because the CLI has no amend path and the ledger gate forbids hand-editing.
 Round 7 grant: the user's explicit instruction `cho phép round 7` authorizes one fresh discovery round solely to restore an authoritative supported-CLI review ledger entry.
+Round 8 grant: the user selected `Cho phép Round 8` to remediate and verify Round 7 F018.

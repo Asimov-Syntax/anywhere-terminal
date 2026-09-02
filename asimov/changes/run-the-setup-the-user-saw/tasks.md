@@ -179,3 +179,14 @@
     2. In `src/worktree/provisioning/setupTerminal.ts`, release fully evicted Buffer slots immediately and stream oversized live events in UTF-8-safe bounded slices without whole-event concatenation.
     3. Extend `src/worktree/provisioning/setupTerminal.test.ts` to account for backing allocations across the complete chunk array and assert oversized live output avoids retention in the batch queue while preserving exact UTF-8 output.
 
+- [x] 8_1 Preserve recreated setup-result identity through row arrival — verified: pnpm exec vitest run src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 7_1
+  - **Refs**: design.md D4, D6; .reviews/round-7.md F018
+  - **Acceptance**:
+    - Outcome: An aliased path recreation retains one actionable row-scoped setup notice
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeController.ts`, preserve canonical identity for a newly arrived create generation even when a departed label exists, while still preventing an older notice from attaching to a later recreation.
+    2. Use `worktreeId ?? canonicalId ?? orphanedLabel` consistently for provisioning lookup and action-result dedupe.
+    3. Add a remove → recreate normalized id with a different display path → provisioning-before-rebuild → row-arrival witness in `src/webview/worktree/WorktreeController.test.ts`, asserting one reattached notice retains output and retry actions.
+
