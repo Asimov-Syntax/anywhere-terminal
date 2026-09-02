@@ -173,7 +173,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     3. Witness that function returning 0 for a bare-only verdict list and nonzero for a relative one — the exit rule itself, not a proxy for it.
     4. Update the two bare-specifier witnesses in `src/test/invariants/bundleRequires.test.ts` to assert warning severity, rather than deleting them.
 
-- [ ] 6_4 Bound callable fanout so each propagation edge is processed once
+- [x] 6_4 Bound callable fanout so each propagation edge is processed once — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_3
   - **Refs**: design.md D2, .reviews/round-5.md F006
   - **Acceptance**:

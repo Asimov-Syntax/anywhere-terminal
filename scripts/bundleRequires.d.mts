@@ -31,6 +31,7 @@ export interface BundleDeps {
 export declare const RELATIVE_PREFIXES: readonly string[];
 export function isRelativeRequest(text: string): boolean;
 export function exitCodeFor(verdicts: readonly Verdict[]): number;
+export function propagationStats(bundleSource: string): { applications: number; distinct: number };
 export function relativeLiterals(bundleSource: string): string[];
 export function requiredSpecifiers(bundleSource: string): string[];
 export function declaredExternals(esbuildSource: string, outfile: string): Set<string>;

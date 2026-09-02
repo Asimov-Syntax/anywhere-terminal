@@ -10,6 +10,7 @@ import {
   classify,
   declaredExternals,
   exitCodeFor,
+  propagationStats,
   requiredSpecifiers,
   unresolvableRequires,
 } from "../../../scripts/bundleRequires.mjs";
@@ -520,5 +521,44 @@ describe("[round-5 D2] only the relative class fails the build", () => {
 
   it("exits 0 when there is nothing to report", () => {
     expect(exitCodeFor(verdicts(`require("vscode")`))).toBe(0);
+  });
+});
+
+// [round-5 F006] A call whose callee gained a callable re-applied EVERY target,
+// so N callables cost N^2/2 applications: 100/200/400/800 took 14/34/124/502ms.
+// Timing cannot witness the fix — the round-4 assertion passed while the fanout
+// was still quadratic — so the witness counts applications instead.
+describe("[round-5 F006] each propagation edge is applied once", () => {
+  const fanout = (n: number) => {
+    const lines: string[] = [];
+    for (let i = 0; i < n; i++) {
+      lines.push(`function t${i}(r){ r("./x${i}"); }`);
+    }
+    lines.push("var h = t0;");
+    for (let i = 1; i < n; i++) {
+      lines.push(`h = t${i};`);
+    }
+    lines.push("h(require);");
+    return lines.join("\n");
+  };
+
+  it("applies no edge twice", () => {
+    const stats = propagationStats(fanout(200));
+    expect(stats.applications).toBe(stats.distinct);
+  });
+
+  it("applies each of the callee's targets exactly once", () => {
+    expect(propagationStats(fanout(200)).distinct).toBe(200);
+  });
+
+  it("grows with callables rather than with callables squared", () => {
+    const small = propagationStats(fanout(100)).applications;
+    const large = propagationStats(fanout(400)).applications;
+    // Quadratic would be 16x. Linear is 4x; allow slack without admitting N^2.
+    expect(large).toBeLessThan(small * 8);
+  });
+
+  it("still finds the specifier every callable requires", () => {
+    expect(requiredSpecifiers(fanout(50))).toContain("./x49");
   });
 });

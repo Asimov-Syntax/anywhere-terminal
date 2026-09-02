@@ -83,7 +83,7 @@ function checkerFor(bundleSource) {
  * assignment to the name it binds (.reviews/round-3.md F005). Function
  * declarations are callable targets too (F004). Monotone, so it terminates.
  */
-function requireBindings(root, checker) {
+function requireBindings(root, checker, stats) {
   const symbolOf = (identifier) => checker.getSymbolAtLocation(identifier);
 
   /**
@@ -125,16 +125,21 @@ function requireBindings(root, checker) {
     }
   });
 
+  /** (symbol, fn) pairs held since the last drain, so a call revisits only what is new. */
+  const freshlyHeld = [];
+
   const hold = (symbol, fn) => {
     const held = holds.get(symbol);
     if (held === undefined) {
       holds.set(symbol, new Set([fn]));
+      freshlyHeld.push([symbol, fn]);
       return true;
     }
     if (held.has(fn)) {
       return false;
     }
     held.add(fn);
+    freshlyHeld.push([symbol, fn]);
     return true;
   };
 
@@ -236,9 +241,18 @@ function requireBindings(root, checker) {
     }
   }
 
-  const applyCall = (call) => {
+  const applyCall = (call, only) => {
     let grew = false;
-    for (const target of targetsOf(call)) {
+    for (const target of only === undefined ? targetsOf(call) : [only]) {
+      if (stats !== undefined) {
+        stats.applications += 1;
+        let applied = stats.pairs.get(call);
+        if (applied === undefined) {
+          applied = new Set();
+          stats.pairs.set(call, applied);
+        }
+        applied.add(target);
+      }
       target.parameters.forEach((parameter, position) => {
         if (ts.isIdentifier(parameter.name)) {
           grew = flow(symbolOf(parameter.name), valueOf(call.arguments[position])) || grew;
@@ -249,12 +263,24 @@ function requireBindings(root, checker) {
   };
 
   const queue = [...assignments.map((edge) => ({ assignment: edge })), ...calls.map((call) => ({ call }))];
+
+  /**
+   * A call whose CALLEE just gained a callable is revisited for that callable
+   * alone. Re-applying every target each time one was discovered is what made
+   * fanout quadratic: 800 callables cost 502ms (.reviews/round-5.md F006).
+   */
+  const drainFreshlyHeld = () => {
+    while (freshlyHeld.length > 0) {
+      const [symbol, fn] = freshlyHeld.pop();
+      for (const call of calledAs.get(symbol) ?? []) {
+        queue.push({ call, only: fn });
+      }
+    }
+  };
+
   const enqueue = (symbol) => {
     for (const edge of readsInAssignment.get(symbol) ?? []) {
       queue.push({ assignment: edge });
-    }
-    for (const call of calledAs.get(symbol) ?? []) {
-      queue.push({ call });
     }
     for (const call of passedAs.get(symbol) ?? []) {
       queue.push({ call });
@@ -269,18 +295,40 @@ function requireBindings(root, checker) {
       if (flow(symbol, valueOf(initializer))) {
         enqueue(symbol);
       }
+      drainFreshlyHeld();
       continue;
     }
-    if (applyCall(work.call)) {
-      for (const parameter of targetsOf(work.call).flatMap((t) => t.parameters)) {
+    if (applyCall(work.call, work.only)) {
+      const revisited = work.only === undefined ? targetsOf(work.call) : [work.only];
+      for (const parameter of revisited.flatMap((target) => target.parameters)) {
         if (ts.isIdentifier(parameter.name)) {
           enqueue(symbolOf(parameter.name));
         }
       }
     }
+    drainFreshlyHeld();
   }
 
   return (identifier) => isAmbientRequire(identifier) || tainted.has(symbolOf(identifier));
+}
+
+/**
+ * What the propagation actually did, so the edge-once claim is observable.
+ *
+ * `applications` counts every (call, target) application; `distinct` counts the
+ * pairs those applications covered. A wall-clock budget cannot witness this —
+ * the round-4 timing assertion passed while fanout was still quadratic
+ * (.reviews/round-5.md F006).
+ */
+export function propagationStats(bundleSource) {
+  const { checker, root } = checkerFor(bundleSource);
+  const stats = { applications: 0, pairs: new Map() };
+  requireBindings(root, checker, stats);
+  let distinct = 0;
+  for (const targets of stats.pairs.values()) {
+    distinct += targets.size;
+  }
+  return { applications: stats.applications, distinct };
 }
 
 /**
