@@ -244,3 +244,17 @@ Planned at: 1e4c335d
   The reader had never had this hole — `baseFor` routes the target through `openProviderFile`'s
   resolved containment — so the writer was reimplementing half of a check it should have been
   reusing whole. Third time a name-shaped check has stood in for a path-shaped one in this change.
+- Round 5 found the fourth partial boundary and named the pattern rather than the bug: four rounds,
+  four reconstructions of one check the reader owns whole. Probed — a contained, correctly named
+  `asimov/worktree.yaml` of `MAX_PROVIDER_BYTES + 1` gives writer `ok: true, wrote: true` and an
+  immediate production read `unreadable`/`EFBIG`, which is exactly the disagreement D17 exists to
+  prevent. Directories and permission-denied files do the same. Handed back rather than patched: the
+  fifth partial would have been the obvious next move and the chair is right that it fails again.
+- Knowledge candidate: a writer that validates the same subject as an existing reader will
+  reconstruct that reader's check one clause per review round, and each round looks like progress.
+  | Surprise: three consecutive fixes were each correct about the defect in front of them and each
+  left the next clause missing; the pattern was only visible in the inventory the fourth round wrote
+  out. | Evidence: `.reviews/round-5.md` F025 inventory; `readProvisioning.ts` `baseFor` versus
+  `writeNativeConfig.ts` base handling. | Consumer: plan | Action: when a change validates a subject
+  an existing module already authorizes, plan makes reuse of that module's whole operation the
+  decision, and never lets the new module carry a clause of it.
