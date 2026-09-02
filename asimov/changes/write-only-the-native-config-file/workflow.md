@@ -124,3 +124,20 @@ Planned at: a82ccc85
   `run(){ vitest $FILES }` passes the whole list as ONE filename, matches nothing, and prints a
   clean-looking `filter:` line with no failures. Four arm-checks read as green before this was
   caught; re-run with the paths inline, all four bite.
+- Review cycle 1 / round 1 returned BLOCK: 2 blockers, 10 warnings, 5 suggestions. All 17 accepted,
+  none rebutted, plus one author-raised blocker (A1) the chair did not report. Triage is in
+  `.reviews/round-1.md`.
+- HANDBACK rather than a fix loop. Thirteen of the eighteen are remediation and could land as fix
+  commits today. FOUR cannot, and the obligation test is what separates them: F002 and F008 both
+  need a refusal this system has no word for — D9 enumerates `unavailable | outside | malformed |
+  unwritable`, `ProvisionProblem.reason` enumerates five values that all describe a READ failing,
+  and every one of them lies about a source file that went away or a write that was refused. F006
+  asks what Configure MEANS when nothing diverges, which D6's table and D10's idempotence answer
+  differently. A1 asks what the form may offer while a switch is outstanding, which D8 does not
+  speak to at all. Each mints or moves a decision, so plan re-earns Gate 2 before build resumes.
+- The cycle closes as superseded. Round numbering is global to this change and does not reset.
+- The chair confirmed sound what I had built to be sound: the D8 host gate byte-identical to the
+  switch handler, `present` filled at every construction site, complete message registration across
+  all four lists, no webview string reaching a filesystem destination, permission preservation. The
+  blockers are in the seams between those, not in them.
+
