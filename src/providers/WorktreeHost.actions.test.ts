@@ -3529,6 +3529,12 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  /** The one problem detail a save produced, or "" when it produced none. */
+  function detailOf(h: { view: unknown }): string {
+    const last = offersIn(h.view as never).at(-1) as { model: ProvisionModel };
+    return last.model.problems.at(0)?.detail ?? "";
+  }
+
   it("keeps `malformed` for the one refusal that IS about the file", async () => {
     const h = await opened({ write: async () => ({ ok: false, reason: "malformed" }) });
 
@@ -3540,9 +3546,9 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
-  // The write LANDED, so this is not one of the refusals above. Reporting it as
-  // an ordinary success would leave the user with a file that quietly refuses
-  // every later save, because a live lock is never reclaimed by age.
+  // Three outcomes share one obligation — name the lock — and each must keep
+  // telling the truth about the write. Saying "was saved" for a no-op is the
+  // defect round-1 F001 found.
   it("tells the user a save that landed may have left the file locked", async () => {
     const h = await opened({
       write: async () => ({ ok: true, wrote: true, lockLeaked: "/repo/.vscode/worktree.json.anywhere-terminal.lock" }),
@@ -3551,9 +3557,41 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
     await settle();
 
-    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
-    expect(last.model.problems.map((p) => p.reason)).toEqual(["unsaved"]);
-    expect(last.model.problems.at(0)?.detail).toMatch(/saved.*still locked|locked/i);
+    const detail = detailOf(h);
+    expect(detail).toMatch(/saved/i);
+    expect(detail).toContain("worktree.json.anywhere-terminal.lock");
+    h.dispose();
+  });
+
+  it("does not say a no-op was saved, but still names the lock", async () => {
+    const h = await opened({
+      write: async () => ({ ok: true, wrote: false, lockLeaked: "/repo/.vscode/worktree.json.anywhere-terminal.lock" }),
+    });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const detail = detailOf(h);
+    expect(detail).not.toMatch(/was saved/i);
+    expect(detail).toContain("worktree.json.anywhere-terminal.lock");
+    h.dispose();
+  });
+
+  it("keeps a refusal's own reason and names the lock as well", async () => {
+    const h = await opened({
+      write: async () => ({
+        ok: false,
+        reason: "unwritable",
+        lockLeaked: "/repo/.vscode/worktree.json.anywhere-terminal.lock",
+      }),
+    });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const detail = detailOf(h);
+    expect(detail).toMatch(/could not be put in place/i);
+    expect(detail).toContain("worktree.json.anywhere-terminal.lock");
     h.dispose();
   });
 

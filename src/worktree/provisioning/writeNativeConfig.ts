@@ -44,21 +44,24 @@ export interface NativeConfigDivergence {
   readonly tookSource: boolean;
 }
 
+/**
+ * The lock this save took and could not remove, by exact path.
+ *
+ * ORTHOGONAL to the outcome, on purpose. `withLock` can fail to release after
+ * ANY outcome that acquired the lock, so hanging this off the success variant
+ * discarded it exactly on the refusal paths — where the user is already stuck —
+ * and let a save that wrote NOTHING be described as saved (design.md D4, review
+ * round-1 F001). Absent when the lock was released, and absent when another
+ * actor had already unlinked it: that pathname is free, and naming it would
+ * send the user after a file that is not there (F002).
+ */
+interface LeakedLock {
+  readonly lockLeaked?: string;
+}
+
 export type NativeConfigWrite =
-  | {
-      readonly ok: true;
-      readonly wrote: boolean;
-      /**
-       * The lock this save took and could not remove, by exact path.
-       *
-       * The write LANDED — this is not a refusal. But the next save on this file
-       * will wait on a lock nothing holds, and locks are deliberately never
-       * reclaimed by age, so a success reported without this is a success the
-       * user cannot act on (design.md D4).
-       */
-      readonly lockLeaked?: string;
-    }
-  | { readonly ok: false; readonly reason: NativeConfigRefusal };
+  | ({ readonly ok: true; readonly wrote: boolean } & LeakedLock)
+  | ({ readonly ok: false; readonly reason: NativeConfigRefusal } & LeakedLock);
 
 /**
  * Why a save did not happen.
@@ -540,5 +543,5 @@ export async function writeNativeConfig(
       leaked = lockPath;
     },
   );
-  return written.ok && leaked !== undefined ? { ...written, lockLeaked: leaked } : written;
+  return leaked === undefined ? written : { ...written, lockLeaked: leaked };
 }

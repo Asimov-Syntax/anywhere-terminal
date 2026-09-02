@@ -18,7 +18,7 @@
     7. Arm-check by narrowing the identities back to `Number` and by dropping the identity comparison.
   - **Boundary**: do not add directory identity checks — design.md D2 cuts them to WT-012.21
 
-- [ ] 1_2 Name a lock left behind, on every outcome that took one
+- [x] 1_2 Name a lock left behind, on every outcome that took one — verified: bun test 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-save-that-left-its-lock-behind-says-so-whatever-else-it-did, specs/worktree-panel/spec.md#an-ordinary-save-is-unaffected; design.md D4
   - **Acceptance**:
