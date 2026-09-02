@@ -40,3 +40,4 @@ Review round 1 handback: accepted F001-F010; the reserved-port collision changes
 Replan Oracle: F001-F010 supported; narrowed F006 ownership to tasks 5_1/5_2 and added oversized/UTF-8/batching/disposal plus controller stale-action witnesses.
 Validation warning accepted: completed task 4_4 is one behavior-free formatting pass despite spanning 11 already-changed files; splitting it retroactively adds no verification value.
 Round 4 grant: the user's prior instruction `cho phép replan, them round review` authorizes one bounded extra review; fix hypothesis is null-prototype environments, settle-before-kill, copied retained slices, and replay recreation.
+Round 6 grant: the user's explicit instruction `cho phép round 6` authorizes remediation and one verification review for Round 5 F015-F017.

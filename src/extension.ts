@@ -604,15 +604,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     setupSurfaceIds.set(surface, created);
     return created;
   };
-  const retireSetupOutput = (worktreeId: string): void => {
+  const retireSetupOutput = (worktreeId: string, expectedOutputId?: string): boolean => {
     const outputId = setupOutputByWorktree.get(worktreeId);
-    if (outputId === undefined) {
-      return;
+    if (outputId === undefined || (expectedOutputId !== undefined && outputId !== expectedOutputId)) {
+      return false;
     }
     setupOutputByWorktree.delete(worktreeId);
     const output = setupOutputs.get(outputId);
     setupOutputs.delete(outputId);
     output?.terminal.dispose();
+    return true;
   };
   const retainSetupOutput = (
     worktreeId: string,
@@ -1211,8 +1212,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (output === undefined) {
           return;
         }
-        if (!(await directoryStillAuthorized(output.authorization))) {
-          retireSetupOutput(output.worktreeId);
+        const authorized = await directoryStillAuthorized(output.authorization);
+        if (setupOutputs.get(outputId) !== output || setupOutputByWorktree.get(output.worktreeId) !== outputId) {
+          return;
+        }
+        if (!authorized) {
+          if (!retireSetupOutput(output.worktreeId, outputId)) {
+            return;
+          }
           worktreeHost.reportProvisioning?.(output.origin, {
             type: "worktreeProvisionResult",
             worktreeId: output.worktreeId,

@@ -126,6 +126,57 @@ describe("SetupTerminal", () => {
     );
   });
 
+  it("releases fully evicted transcript backing allocations immediately", async () => {
+    let pseudo: { open?: () => void } | undefined;
+    const terminal = new SetupTerminal({
+      createTerminal: vi.fn((options) => {
+        pseudo = options.pty as typeof pseudo;
+        return { show: vi.fn(), dispose: vi.fn() };
+      }),
+      createEmitter: () => ({ event: vi.fn(), fire: () => undefined, dispose: vi.fn() }),
+    });
+    const pty = child();
+    const opened = terminal.open();
+    pseudo?.open?.();
+    await opened;
+    terminal.attach(pty.child);
+
+    for (let index = 0; index < 200; index += 1) {
+      pty.data(String(index % 10).repeat(768 * 1024));
+    }
+
+    const retained = terminal as unknown as { tailChunks: Buffer[] };
+    const backingBytes = retained.tailChunks.reduce((total, chunk) => total + chunk.buffer.byteLength, 0);
+    expect(backingBytes).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(Buffer.byteLength(terminal.transcript())).toBeLessThanOrEqual(1024 * 1024);
+  });
+
+  it("streams one oversized live event without concatenating the whole event", async () => {
+    let pseudo: { open?: () => void } | undefined;
+    const fire = vi.fn();
+    const terminal = new SetupTerminal({
+      createTerminal: vi.fn((options) => {
+        pseudo = options.pty as typeof pseudo;
+        return { show: vi.fn(), dispose: vi.fn() };
+      }),
+      createEmitter: () => ({ event: vi.fn(), fire, dispose: vi.fn() }),
+    });
+    const pty = child();
+    const opened = terminal.open();
+    pseudo?.open?.();
+    await opened;
+    terminal.attach(pty.child);
+    const concat = vi.spyOn(Buffer, "concat");
+
+    const output = `start-${"🙂".repeat(40_000)}-end`;
+    pty.data(output);
+
+    expect(fire.mock.calls.map(([data]) => data).join("")).toBe(output);
+    expect(fire.mock.calls.every(([data]) => Buffer.byteLength(data) <= 64 * 1024)).toBe(true);
+    expect(concat.mock.calls.some(([, length]) => (length ?? 0) > 64 * 1024)).toBe(false);
+    concat.mockRestore();
+  });
+
   it("batches live writes by latency and size and drops a pending flush on disposal", async () => {
     vi.useFakeTimers();
     let pseudo: { open?: () => void } | undefined;

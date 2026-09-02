@@ -20,7 +20,7 @@ const setupAssembly = vi.hoisted(() => ({
   reveals: [] as unknown[],
   disposals: [] as number[],
   terminalSequence: 0,
-  authorized: true,
+  authorized: true as boolean | Promise<boolean>,
 }));
 
 vi.mock("./worktree/provisioning/setupRunner", () => ({
@@ -310,6 +310,57 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     received.actions?.reconcileFingerprints?.([]);
     expect(setupAssembly.disposals).toEqual([1, 2, 3, 4]);
     expect(replacement?.outputId).not.toBe(result?.outputId);
+  });
+
+  it("does not let a stale reveal retire a newer output generation", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    const posted: unknown[] = [];
+    const origin: WorktreeSurface = { isReady: () => true, post: (message) => posted.push(message) };
+    const authorization = { path: "/repo/wt", platform: "linux" as const, components: [] };
+    let resolveAuthorization: ((authorized: boolean) => void) | undefined;
+    setupAssembly.authorized = new Promise<boolean>((resolve) => {
+      resolveAuthorization = resolve;
+    });
+
+    const stale = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: [{ id: "old", source: "asimov/worktree.yaml", kind: "shell", script: "old" }],
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    const reveal = received.actions?.viewSetupOutput?.(stale?.outputId ?? "", origin);
+    const current = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: [{ id: "new", source: "asimov/worktree.yaml", kind: "shell", script: "new" }],
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+
+    resolveAuthorization?.(false);
+    await reveal;
+    expect(setupAssembly.disposals).toEqual([1]);
+    expect(posted).toEqual([]);
+
+    setupAssembly.authorized = true;
+    await received.actions?.viewSetupOutput?.(current?.outputId ?? "", origin);
+    expect(setupAssembly.reveals).toEqual([expect.objectContaining({ outputId: current?.outputId })]);
   });
 });
 

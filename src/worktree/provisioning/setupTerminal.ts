@@ -5,6 +5,7 @@ const TRANSCRIPT_LIMIT = 1024 * 1024;
 const MAX_TRANSCRIPT_CHUNKS = 256;
 const LIVE_FLUSH_BYTES = 64 * 1024;
 const LIVE_FLUSH_MS = 8;
+const EMPTY_BUFFER = Buffer.alloc(0);
 
 interface EmitterLike {
   readonly event: vscode.Event<string>;
@@ -210,6 +211,7 @@ export class SetupTerminal {
     while (excess > 0 && this.tailHead < this.tailChunks.length) {
       const oldest = this.tailChunks[this.tailHead];
       if (oldest.length <= excess) {
+        this.tailChunks[this.tailHead] = EMPTY_BUFFER;
         this.tailHead += 1;
         this.tailBytes -= oldest.length;
         excess -= oldest.length;
@@ -227,6 +229,11 @@ export class SetupTerminal {
   }
 
   private queueLiveWrite(data: Buffer): void {
+    if (data.length >= LIVE_FLUSH_BYTES) {
+      this.flushLiveWrites();
+      this.writeLive(data);
+      return;
+    }
     this.liveChunks.push(data);
     this.liveBytes += data.length;
     if (this.liveBytes >= LIVE_FLUSH_BYTES) {
@@ -249,6 +256,13 @@ export class SetupTerminal {
     const output = Buffer.concat(this.liveChunks, this.liveBytes);
     this.liveChunks = [];
     this.liveBytes = 0;
+    this.writeLive(output);
+  }
+
+  private writeLive(output: Buffer): void {
+    if (this.closed || this.disposed) {
+      return;
+    }
     let start = 0;
     while (start < output.length) {
       const end = utf8ChunkEnd(output, start, LIVE_FLUSH_BYTES);

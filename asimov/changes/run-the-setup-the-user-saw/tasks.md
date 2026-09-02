@@ -168,3 +168,14 @@
     4. Retain setup results plus the owning surface in `src/extension.ts` and post a setup-only retirement update when reveal finds replaced authority; cover capability disposal and stale action removal in `src/extension.worktreeMutations.test.ts`.
     5. In `src/extension.worktreeAssembly.test.ts`, replace the unrelated removal test's fixed event-loop pump with a wait for its exact confirmation control so the required full-suite verification is deterministic.
 
+- [x] 7_1 Close output-generation and retained-memory races — verified: pnpm exec vitest run src/worktree/provisioning/setupTerminal.test.ts src/extension.worktreeMutations.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 6_1
+  - **Refs**: design.md D2, D4; .reviews/round-5.md F015-F017
+  - **Acceptance**:
+    - Outcome: Stale reveals cannot mutate newer output generations, and terminal retention/live dispatch stay bounded under oversized and repeated events
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/setupTerminal.test.ts src/extension.worktreeMutations.test.ts
+  - **Plan**:
+    1. In `src/extension.ts`, make output retirement generation-conditional after reveal authorization and report only while the captured output remains current; add the controlled supersession witness in `src/extension.worktreeMutations.test.ts`.
+    2. In `src/worktree/provisioning/setupTerminal.ts`, release fully evicted Buffer slots immediately and stream oversized live events in UTF-8-safe bounded slices without whole-event concatenation.
+    3. Extend `src/worktree/provisioning/setupTerminal.test.ts` to account for backing allocations across the complete chunk array and assert oversized live output avoids retention in the batch queue while preserving exact UTF-8 output.
+
