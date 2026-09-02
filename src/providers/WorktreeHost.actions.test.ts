@@ -3629,6 +3629,48 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  // A refusal and a lock are ONE attempt's two reports, not two attempts. The
+  // first F004 fix dropped the refusal when the lock was posted after it, taking
+  // the row that says WHY the save did not happen with it.
+  it("keeps the refusal beside the lock when one attempt produces both", async () => {
+    const h = await opened({ write: async () => ({ ok: false, reason: "unwritable", mayStillBeLocked: true }) });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.map((p) => p.reason)).toEqual(["unsaved", "locked"]);
+    h.dispose();
+  });
+
+  // A clean save after a failed refresh posts NOTHING of its own, so a cleanup
+  // coupled to appending never runs and the previous attempt's reports are
+  // republished as if they were current (round-3 F004, boundary 1).
+  it("clears a stale report when the next save succeeds and the refresh fails", async () => {
+    let attempt = 0;
+    let reads = 0;
+    const writes: NativeConfigWrite[] = [
+      { ok: false, reason: "unwritable", mayStillBeLocked: true },
+      { ok: true, wrote: true },
+    ];
+    const h = await opened({
+      write: async () => writes[Math.min(attempt++, writes.length - 1)],
+      read: async () => {
+        reads += 1;
+        return reads === 1 ? OFFERED : Promise.reject(new Error("gone"));
+      },
+    });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 1 }));
+    await settle();
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 2 }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.filter((p) => p.reason === "unsaved" || p.reason === "locked")).toHaveLength(0);
+    h.dispose();
+  });
+
   it("keeps `malformed` for the one refusal that IS about the file", async () => {
     const h = await opened({ write: async () => ({ ok: false, reason: "malformed" }) });
 

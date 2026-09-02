@@ -170,15 +170,24 @@ export interface WorktreeSurface {
  */
 const postedBySave = new WeakSet<ProvisionProblem>();
 
-function post(model: ProvisionModel, problem: ProvisionProblem): ProvisionModel {
-  postedBySave.add(problem);
-  return {
-    ...model,
-    problems: [...model.problems.filter((p) => !postedBySave.has(p)), problem],
-  };
+/**
+ * Apply ONE attempt's reports, replacing whatever the last attempt left.
+ *
+ * All of an attempt's reports at once, because a refusal and a lock are two
+ * reports from the SAME attempt: applied one after another, the second call
+ * filtered out the first and the row saying why the save did not happen went
+ * with it. Called even with nothing to post, so a clean save after a failed
+ * refresh clears the previous attempt's refusal rather than leaving it standing.
+ */
+function withSaveReports(model: ProvisionModel, posts: readonly ProvisionProblem[]): ProvisionModel {
+  const kept = model.problems.filter((p) => !postedBySave.has(p));
+  for (const p of posts) {
+    postedBySave.add(p);
+  }
+  return { ...model, problems: [...kept, ...posts] };
 }
 
-function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): ProvisionModel {
+function refusedSave(reason: NativeConfigRefusal): ProvisionProblem {
   const detail: Record<NativeConfigRefusal, string> = {
     unavailable: "Another process is holding it, or the folder could not be created.",
     outside: "It does not resolve inside this repository.",
@@ -186,11 +195,11 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
     unwritable: "The replacement could not be put in place.",
     unnamed: "The source it builds on could not be read.",
   };
-  return post(model, {
+  return {
     file: NATIVE_PROVIDER_FILE,
     reason: reason === "malformed" ? "malformed" : "unsaved",
     detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
-  });
+  };
 }
 
 /**
@@ -216,13 +225,13 @@ const LOCK_WORDING: Record<ProvisionWriteOutcome, string> = {
  * forbids — "A save that wrote NOTHING SHALL NOT be described as written"
  * (design.md D4). It names no lock, deliberately (D1).
  */
-function leftLocked(model: ProvisionModel, writeOutcome: ProvisionWriteOutcome): ProvisionModel {
-  return post(model, {
+function leftLocked(writeOutcome: ProvisionWriteOutcome): ProvisionProblem {
+  return {
     file: NATIVE_PROVIDER_FILE,
     reason: "locked",
     writeOutcome,
     detail: `\`${NATIVE_PROVIDER_FILE}\` ${LOCK_WORDING[writeOutcome]}. Saving it again may not work until the lock clears.`,
-  });
+  };
 }
 
 export interface WorktreeHostOptions {
@@ -2552,12 +2561,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               return;
             }
             const base = reread ?? shown;
-            const said = written.ok ? base : refusedSave(base, written.reason);
-            // The writer's own answer, not a boolean collapse of it: `ok && wrote`
+            // The writer's answer, not a boolean collapse of it: `ok && wrote`
             // merged a refusal with a no-op and lost the distinction the summary
             // needs (round-1 F002).
             const did: ProvisionWriteOutcome = !written.ok ? "refused" : written.wrote ? "written" : "unchanged";
-            publish(written.mayStillBeLocked === true ? leftLocked(said, did) : said);
+            const posts: ProvisionProblem[] = [];
+            if (!written.ok) {
+              posts.push(refusedSave(written.reason));
+            }
+            if (written.mayStillBeLocked === true) {
+              posts.push(leftLocked(did));
+            }
+            publish(withSaveReports(base, posts));
           })
           // A save that throws leaves the form exactly as it was, and the
           // ceiling is NOT released — for the reason the switch records above.

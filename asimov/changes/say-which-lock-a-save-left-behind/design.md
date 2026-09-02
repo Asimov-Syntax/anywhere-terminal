@@ -128,6 +128,33 @@ No single neutral string works: `Saved, may still be locked` is false for the no
 `May still be locked` fails the written case's SHALL. Reading `"was saved"` back out of `detail`
 would make free-form prose an untyped discriminator, which is not a no-carrier answer.
 
+### D7: The save reports are the attempt's whole report, replaced as one
+
+Added after round 3, where the same invariant failed a second fix and the boundary inventory
+expanded again. Both attempts coupled cleanup to appending, and that coupling is the defect rather
+than any individual case:
+
+- append onto the fallback → two attempts stack (round 2);
+- clean up inside each append → the empty case never cleans, and a two-report attempt cleans away
+  its own first report (round 3).
+
+The rule, stated over the whole space rather than case by case. Let `posts` be what THIS attempt
+produced, and `prior` be what a previous attempt left on the model being republished:
+
+    published.problems  =  (base.problems \ prior)  ++  posts
+
+with `posts` ranging over `{}`, `{refusal}`, `{lock}`, `{refusal, lock}` and `base` being either a
+fresh reread or the previously shown model. Eight cases, one expression, and the removal does not
+depend on `posts` being non-empty — which is exactly what the two failed attempts got wrong.
+
+`prior` is identified by OBJECT IDENTITY, held in a `WeakSet` the save path adds to. Not by reason
+and not by filename: `refusedSave` posts a `malformed` refusal under the same reason a READ
+produces, so either of those keys would delete a genuine read problem. Identity survives the offer
+store's remint, which round 3 verified.
+
+Genuine read problems are never in that set, so they are never removed — the containment is
+structural rather than a rule someone has to remember.
+
 ### D5: The report rides with the write, and one publication is out of reach
 
 The lock is known before the reread is attempted (`WorktreeHost.ts:2483` vs `:2492`), so it is
@@ -163,6 +190,7 @@ changes neither caller's error handling.
 | No pathname for a lock reaches the user | Neither the panel nor the installer warning names one | The reverted attempt, and the installer's current `unresolved` join | A witness on the installer warning for a mismatch, and the absence of any path field on the panel's lock report (tasks 1_1, 1_2) | **refuted at round 1, re-specified** — the witness covered the mismatch arm only, and two arms still emit a path: `ClaudeHookInstaller.ts:107` names a lock never acquired, `:112` names one on `stuck`. Task 2_1 witnesses BOTH arms and the absence, not the mismatch alone |
 | A written file is never summarised as unsaved | Summary AND detail say written, on a model that actually carries problems | A witness on an empty model, which returns counts before inspecting problems | A renderer witness on a POPULATED written-but-locked model, asserting the summary string (task 2_2) | **refuted at round 1, re-specified** — the defeater named here is precisely the witness that got written, so the row was self-certifying. The re-specified witness asserts the summary on a model carrying contents, and is arm-checked by restoring the early return |
 | A save that wrote nothing is never called saved | The summary distinguishes `written`, `unchanged` and `refused`, which are orthogonal to the lock | Producing one `locked` problem for all three, or carrying the outcome in an OPTIONAL field a producer may omit | `writeOutcome` is required on the `locked` member, so a producer that omits it does not compile; one renderer witness per row of D4's summary table, plus a contract test asserting the outcome-less object is rejected (task 2_2) | supported — D4, and the three writer states already have real-filesystem witnesses at `writeNativeConfig.test.ts:998-1023` |
+| The panel's save answer describes the latest attempt, whole | `published.problems = (base.problems \\ prior) ++ posts`, over `posts` in `{}`/`{refusal}`/`{lock}`/`{refusal, lock}` and a reread that either succeeded or failed | Coupling the removal to the append — the empty case then never cleans, and a two-report attempt cleans away its own first report | A host witness per boundary: two attempts through the failed-reread fallback, a clean save after a failed reread, and one attempt producing BOTH a refusal and a lock (task 4_1) | supported — D7, after two patch-level attempts failed and the inventory expanded each time |
 | The disposition table is exhaustive | Every reachable exit of `releaseLock` maps to exactly one value | The `ENOENT` + `nlink > 0n` arm, which the first table omitted | D3's table, drawn against `:258-283`, with a witness per row (task 1_1) | supported as corrected — was `refuted`; `movedAway` is the added arm |
 | `released` and `stuck` are claims about a moment, not proofs | Neither is turned into an instruction to delete | Reading them as durable facts | D1's refusal to emit a pathname; D3 states both limits | supported |
 | A lock survives a failed reread | The report is carried on the write's outcome | Publishing it inside the reread's success path | A witness rejecting the reread and asserting the report still arrives (task 1_3) | supported — D5 |

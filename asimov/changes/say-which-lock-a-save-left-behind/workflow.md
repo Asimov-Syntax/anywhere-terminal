@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.22
 Lane: full
-Planned at: a8252482b8a6c50a3d4a5c5fcc5126b934f1d403
+Planned at: 7a473f9e8d6322ee5adcda61fe6b0ad4cc4e632e
 
 ## Plan attack triage (round 1, `asm-oracle`)
 
@@ -61,3 +61,5 @@ in this line of work that happened, the previous two attempts having been caught
 - Task 1_3's declared Verify moved from `unit` to `command pnpm exec vitest run ...`: the suite runs under jsdom, so the default `bun test` runner fails it wholesale on `document is not defined` rather than on anything the task built.
 - Round-1 handback: F002's no-op half needed a wire discriminator `ProvisionProblem` did not have, which is a changed D4 rather than remediation — parked before any fix edit, D4 revised, Gate 2 re-earned. Fixes land as tasks 2_1/2_2, so round 1 stands as cycle 1's discovery rather than being superseded.
 - The oracle's attack found a third reachable state I had collapsed: `WorktreeHost.ts:2531` passed `written.ok && written.wrote`, merging a REFUSED save with a no-op. All three states already had real-filesystem witnesses at `writeNativeConfig.test.ts:998-1023`, built in task 1_2 and thrown away at the host in 1_3.
+- Round-3 handback (thrash stop, option 1): the latest-attempt invariant survived two fix attempts and its boundary inventory expanded both times, so the rule is now stated once over the whole space as D7 rather than patched case by case. The chair independently named the same two boundaries I was mid-fix on.
+- Round-3 F005 was accepted on the author's evidence AFTER the chair reported zero warnings and stated all single-attempt summaries were correct; the round-3 arbiter then confirmed the author's reading. A specialist finding the chair drops is still the author's to verify.

@@ -89,3 +89,15 @@
     4. Witness a read problem beside a lock, asserting the read failure is not masked.
     5. Arm-check by restoring the append and by removing the non-lock guard.
   - **Boundary**: genuine read problems are preserved — the fix removes only what the save path itself added
+
+- [x] 4_1 Replace the save's whole report, whatever it contains — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && pnpm exec biome check src/providers/WorktreeHost.ts src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.ts src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/worktree-panel/spec.md#a-save-that-wrote-is-never-presented-as-unsaved; design.md D7; .reviews/round-3.md F004
+  - **Acceptance**:
+    - Outcome: the published problems carry this attempt's reports and no earlier one's
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. In `src/providers/WorktreeHost.ts` — make `refusedSave` and `leftLocked` return a problem rather than a model, collect the attempt's reports into one list at the publish site, and apply them with a single `withSaveReports` that removes `prior` UNCONDITIONALLY, per D7. A clean save posts an empty list and must still clean.
+    2. Witness all four `posts` shapes: both-reports in one attempt, a clean save after a failed reread, and the two repeated-save cases already covered.
+    3. Arm-check by coupling the removal back into the append, in both of the shapes that broke.
+  - **Boundary**: genuine read problems are identified by absence from the identity set, never by reason or filename
