@@ -52,14 +52,17 @@ path: absent, or a bounded hash over kind, mode, symlink target or file bytes. A
 names even though the form counts the record once. Immediately before the API call the source snapshot
 must still match and the destination must be clean.
 
-After a resolved call, `moved` requires an empty source status and a destination snapshot equal to the
-issued source snapshot's expected working-tree state, with no unmerged record. Thus a no-move API exit
-followed by unrelated path-name changes is not success; another actor reproducing the same bytes, modes,
-links and absences has already established the observable destination state the user asked for.
+Each pre-call and post-call snapshot is bracketed by source and destination evidence reads; both evidence
+reads must equal the retained incarnations. After a resolved call, `moved` requires those stable observed
+identities, an empty source status, and a destination snapshot equal to the issued source snapshot's
+expected working-tree state, with no unmerged record. Thus a no-move API exit followed by unrelated
+path-name changes is not success; another actor reproducing the same bytes, modes, links and absences in
+the same observed checkouts has established the observable destination state the user asked for.
 
-Every other resolved state, every rejection, every failed read, and every changed pre-call snapshot is
-`indeterminate`. The correlated snapshot proves the observable result, not which internal API exit
-produced it.
+Every other resolved state, every rejection, every failed read, every changed pre-call snapshot, and any
+observable post-call source or destination identity change is `indeterminate`. The correlated snapshot
+and identities prove the observable result within D8's accepted path-based observation boundary, not
+which internal API exit produced it.
 
 Indeterminate keeps the created worktree, runs no later step, and directs the user to inspect source,
 destination, and Git stashes. It does not say the work was restored, did not move, or exists in only
@@ -111,11 +114,21 @@ makes the source ineligible because the selected API's no-change check ignores i
 ordinary stash cannot migrate an unresolved merge.
 
 Complete each record with the current filesystem state of every affected path. Stream file bytes into
-a hash; hash symlink targets and kind/mode markers; record absence explicitly. One shared 10-second,
-512 MiB snapshot budget bounds status plus filesystem reads. A timeout, malformed/overflowed status,
-unreadable path, budget overflow, or unmerged record yields no offer. The same snapshot function runs
-at offer, submit, immediately before the API call, and after it. The form displays the record count;
-no Git-extension status array enters it.
+a hash; hash symlink targets and kind/mode markers; record absence explicitly. Resolve and revalidate
+every traversed parent component before and after the final no-follow read, rejecting static or
+persisting intermediate symlink replacement; a final symlink remains symlink state. Node exposes no
+cross-platform handle-relative `openat`, so D8 owns the remaining transient ABA interval.
+
+One shared 10-second, 512 MiB snapshot budget bounds status plus filesystem reads. Linked-worktree
+`.git` content is capped at 1 MiB before allocation and read into one buffer sized from the opened
+handle's `fstat`, avoiding chunk retention plus `Buffer.concat`. The cap remains above the supported
+hosts' usable path envelopes: Windows extended paths are at most 32,767 UTF-16 code units (under 132 KiB
+at worst-case UTF-8), while macOS and Linux path arguments are smaller. It therefore bounds strict
+UTF-8 decode/re-encode peak without rejecting a usable Git worktree path. A timeout,
+malformed/overflowed status, unreadable path, oversized gitfile, budget overflow, or unmerged record
+yields no offer. The
+same bracketed snapshot function runs at offer, submit, immediately before the API call, and after it.
+The form displays the record count; no Git-extension status array enters it.
 
 ## D5 — Actively open the exact source and destination
 
@@ -137,27 +150,34 @@ The Git API remains owned by VS Code; disposing our accessor does not dispose a 
 Offer and admit migration only for `fresh`, `fresh-detached`, and `reuse`. `reattach` and `adopt` act on
 surviving directories and cannot carry a migration offer.
 
-A create root may sit inside the source checkout. In that case `git worktree add` makes the new
-directory appear as untracked source work until the existing `info/exclude` rule is written. It must
-also be excluded before `migrateChanges(untracked: true)` so the API cannot try to stash its own
-destination. Therefore the sequence is:
+A create root may sit inside the selected source checkout, including a linked source outside the main
+checkout. In that case `git worktree add` makes the new directory appear as untracked source work until
+that source's common-repository `info/exclude` receives a source-relative rule. This migration-specific
+rule is derived from `request.migration.sourcePath`; it is migration-critical and a failed write stops
+migration as indeterminate. The existing main-checkout hygiene rule remains separate, retains its
+nonfatal reporting contract, and still applies to ordinary creates nested in the main checkout. When
+the two rules resolve to the same `(gitDir, pattern)`, one idempotent write satisfies both and is
+migration-critical. Therefore the sequence is:
 
 ```text
 git worktree add
-  → maintain info/exclude when the destination is inside the source
+  → capture the observed destination registration and back-pointer
+  → require the narrow source exclusion and attempt independent main-checkout hygiene
   → open source + destination repositories
-  → require authorized source snapshot and clean destination
+  → require bracketed source/destination evidence, authorized source snapshot, and clean destination
   → migrateChanges
-  → verify empty source + exact non-conflicted destination snapshot
-  → authorize directories
+  → verify bracketed identities, empty source, and exact non-conflicted destination snapshot
+  → authorize provisioning directories
   → materialize entries
   → allocate ports
   → afterCreate
 ```
 
-If exclusion fails, the immediate source snapshot detects the new destination and returns
-indeterminate without calling the API. For outside destinations there is no exclusion write. Any
-indeterminate migration returns from the successful-create arm before provisioning or launch.
+If the selected-source exclusion fails, migration returns indeterminate without calling the API; a
+resolved write that did not take is also detected by the immediate source snapshot. Failure of a
+separate main-checkout hygiene write remains nonfatal and is reported by its existing channel. For
+outside-source destinations there is no migration exclusion write. Any indeterminate migration returns
+from the successful-create arm before provisioning or launch.
 
 ## D7 — Carry the outcome on the successful create
 
@@ -171,14 +191,42 @@ A move-only create normalizes the created worktree id so its notice attaches aft
 steps did not run, and shows the bounded reason plus inspection instruction. The reason participates
 in the render signature and coexists with existing post-create fields.
 
+## D8 — Bind every observable destination incarnation
+
+After `git worktree add` succeeds, the mutation service immediately captures destination evidence before
+its own later work: authorized directory components, no-follow `.git` identity/content, resolved admin
+directory identity, `HEAD`/`gitdir`/`commondir` identities and hashes, the admin `gitdir` back-pointer,
+and the common repository path. The capture must prove that the observed destination registration
+belongs to `request.repoId`; absence, ambiguity, or mismatch returns a successful create with
+`migrationIndeterminate` before the API call.
+
+The adapter receives that evidence beside the source evidence and issued snapshot. Exact-path
+`openRepository` remains necessary but is not identity: evidence brackets each pre-call and post-call
+snapshot, and every observed destination mismatch is indeterminate. The capture and comparisons share
+the same bounded evidence machinery rather than introducing a second parser.
+
+VS Code and Node expose the migration and filesystem operands only by path. They cannot prove continuity
+between `git worktree add` returning and the first capture, between two bracket reads, or between the
+last comparison and the Git extension consuming the path. Gate 1 explicitly accepts those transient,
+unobservable ABA intervals under the same rule as the source-side final-check interval: persistent or
+observed substitution is refused or indeterminate; an unobserved occupant may receive the path-based
+operation. This best-effort boundary follows Orca's metadata/back-pointer fingerprint and cmux's
+post-add identity capture; cmux closes component traversal only with native `openat`, which this
+cross-platform extension does not ship.
+
 ## Accepted risk
 
-The user explicitly accepted that `migrateChanges` has no expected-snapshot parameter: another process
-can change source bytes or `.git` after the final recheck and before the Git extension creates its
-stash. The option authorizes execution-time uncommitted work at the named source path; post-verification
-reports observable divergence as indeterminate but cannot prevent the already-started move. Owner:
-worktree subsystem. Reactivate when `vscode.git` exposes a transactional expected-state input or typed
-result, or if source substitution is observed in practice.
+The user explicitly accepted the path-based best-effort boundary on 2026-09-02. `migrateChanges` has no
+expected-snapshot or destination-incarnation parameter, and Node exposes no cross-platform
+handle-relative `openat`: another process can transiently replace source bytes, an intermediate source
+component, source `.git`, or the destination after the last relevant comparison and before the path is
+consumed, and can restore it before a later comparison. The option authorizes execution-time work at the
+named source path and the observed destination registration; persistent or observable divergence is
+refused or indeterminate, but an unobservable ABA substitution cannot be prevented or reported.
+
+Owner: worktree subsystem. Reactivate when `vscode.git` exposes transactional expected-state and typed
+result inputs, Node exposes a cross-platform handle-relative filesystem primitive, or a source/destination
+substitution incident is observed in practice.
 
 ## Obligation ledger
 
@@ -188,10 +236,12 @@ result, or if source substitution is observed in practice.
 | The row appears only for callable source work | Exact source `openRepository` returns a repository with `migrateChanges`, and a bounded snapshot is positive and movable | Capability inferred from another repo; empty, failed, overflowed, unreadable, or unmerged source | Exact-source open plus every ineligible snapshot witness | supported |
 | The stated count is a truthful current snapshot | Displayed N is the issued record count; observed pre-call drift refuses before API entry | Same count with different path, rename origin, mode, link target, or bytes before the call | Replacement witnesses for every dimension plus wording that says "currently" and execution-time work | supported |
 | Untracked work is included | `untracked: true` reaches the API call | Omitting it leaves new files | Exact-options witness | supported |
-| The exact destination receives the call before expiry | The object returned by `openRepository(Uri.file(destination))` is called under 10 s | Passive discovery, path folding, null/rejected/late open | Out-of-workspace and deadline witnesses | supported |
-| Proven movement is correlated at both worktrees | Empty source plus destination path-state snapshot equal to the issued source outcome and no unmerged record | API refusal followed by source cleanup, destination conflict, or same-name different-content write | Post-state matrix varying bytes, mode, links, absence, paths and unmerged state independently | supported |
+| The observed destination receives the call before expiry | The object returned by `openRepository(Uri.file(destination))` is called under 10 s only while its registration/evidence equals the immediate post-create capture | Passive discovery, path folding, null/rejected/late open, or persistent clean same-path replacement | Out-of-workspace, deadline, wrong-repository/back-pointer, and persistent before/after substitution witnesses; transient ABA is accepted risk | supported |
+| Proven movement is correlated at both observed worktrees | Evidence brackets each snapshot; both brackets match retained incarnations, source is empty, destination states equal the issued outcome, and no unmerged record exists | API refusal followed by cleanup, observable source `.git` change, destination replacement/conflict, or mixed persistent incarnation | Post-state matrix varying both evidence brackets, bytes, mode, links, absence, paths and unmerged state; transient mixed ABA is accepted risk | supported |
 | Migration applies only to new checkouts | Only fresh, fresh-detached and reuse redeem | Reattach/adopt entering a surviving directory | Form and host witnesses for every mode | supported |
-| Nested destination cannot enter the moved set | Existing exclusion is attempted before pre-call status and API call | Recount before exclusion or calling after failed exclusion | Nested-root order and failed-exclusion drift witnesses | supported |
+| Nested destination cannot enter the moved set | Source-relative migration exclusion and independent main-checkout hygiene are established before pre-call status and API call | Linked source outside main, broad parent suppression, recount before exclusion, or calling after failed exclusion | Main-source, linked-source with sibling work, outside-source, narrow-pattern, and failed-exclusion witnesses | supported |
+| Persistent intermediate redirection is refused | Parent realpaths/component identities are checked around a no-follow final-component read | Static or persisting intermediate symlink points outside the source | Static and persistent intermediate replacement plus final-symlink and regular-file substitution witnesses; transient ABA is accepted risk | supported |
+| `.git` evidence stays within the general byte bound without rejecting usable host paths | Opened-handle size above 1 MiB is refused before allocation; accepted content uses one exact buffer and bounded decode/re-encode | A `.git` file approaches the 512 MiB budget or a valid Windows extended path exceeds the cap | Over-cap refusal, near-cap peak allocation, and 132 KiB worst-case UTF-8 path witnesses | supported |
 | Uncertain migration runs no later step | Indeterminate returns before authorization, entries, ports and afterCreate | Catch and continue | Rejection, resolved mismatch, failed read and set-drift witnesses | supported |
 | Uncertainty is reported truthfully | Notice says potentially partial and names inspection; no restoration or single-location claim | "Not moved", "restored", or ordinary create-error wording | View and forbidden-phrase assertions | supported |
 | Undelivered, retired, or replayed consent cannot enter the API | Random token binds surface, opening, repo and final pre-call evidence; post-recheck mutation is the accepted residual | Guessable id, dropped post, token reuse, or substitution detectable before API entry | Deterministic-random and pre-call substitution witnesses; no claim beyond the final recheck | supported |

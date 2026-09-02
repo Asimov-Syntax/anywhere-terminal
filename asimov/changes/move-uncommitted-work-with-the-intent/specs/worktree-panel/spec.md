@@ -34,10 +34,15 @@ a changed path set SHALL withdraw the earlier consent.
 - **WHEN** one path is staged and also changed in the working tree
 - **THEN** the form states it as one change
 
-#### Scenario: The count changes after consent
+#### Scenario: The count changes before create
 
-- **WHEN** the user selected the move at one count and the host observes a changed snapshot before execution
+- **WHEN** the user selected the move at one count and the host observes a changed snapshot while redeeming consent
 - **THEN** no worktree is created and the earlier selection authorizes no move
+
+#### Scenario: The count changes after create
+
+- **WHEN** git created the destination but the final pre-migration snapshot no longer matches
+- **THEN** the checkout remains created, no move or later step runs, and migration is reported indeterminate
 
 ### Requirement: Move consent applies to execution-time source work
 
@@ -53,7 +58,7 @@ Git operation; observable divergence SHALL make the result indeterminate.
 ### Requirement: The work moves between a new checkout and every later step
 
 For a fresh, detached, or reused-branch create, migration SHALL run after git creates the checkout and
-before any authorization, materialization, allocation, opening, or launch in it. Reattach and adopt
+before any provisioning authorization, materialization, allocation, opening, or launch in it. Reattach and adopt
 SHALL NOT offer or perform migration because they act on surviving directories.
 
 #### Scenario: A setup command sees the moved work
