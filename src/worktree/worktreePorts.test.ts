@@ -1,8 +1,22 @@
-import { chmod, mkdir, mkdtemp, open, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProvisionPort } from "../types/messages";
+import { authorizeDirectory } from "../utils/authorizedDirectory";
 import { LockedFile } from "../utils/lockedFile";
 import {
   allocateWorktreePorts,
@@ -14,8 +28,9 @@ import {
 const tempDirectories: string[] = [];
 
 async function fixture(names = ["main", "one", "two"]) {
-  const root = await mkdtemp(path.join(tmpdir(), "worktree-ports-"));
-  tempDirectories.push(root);
+  const created = await mkdtemp(path.join(tmpdir(), "worktree-ports-"));
+  tempDirectories.push(created);
+  const root = await realpath(created);
   const repoId = path.join(root, ".git");
   await mkdir(repoId, { recursive: true });
   const worktrees = await Promise.all(
@@ -38,6 +53,17 @@ function complete(paths: readonly string[]): PortWorktreeListing {
     reasons: [],
     skipped: 0,
   };
+}
+
+async function allocate(
+  input: Omit<Parameters<typeof allocateWorktreePorts>[0], "authorization">,
+  dependencies: WorktreePortsDeps,
+) {
+  const authorization = await authorizeDirectory(input.worktreePath);
+  if (authorization === undefined) {
+    throw new Error("the test worktree could not be authorized");
+  }
+  return allocateWorktreePorts({ ...input, authorization }, dependencies);
 }
 
 function probes(values: readonly number[]): WorktreePortsDeps["probe"] {
@@ -98,8 +124,8 @@ describe("allocateWorktreePorts", () => {
     const deps = { listWorktrees: async () => complete(worktrees), probe };
 
     const [first, second] = await Promise.all([
-      allocateWorktreePorts({ repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] }, deps),
-      allocateWorktreePorts({ repoId, repoPath, worktreePath: worktrees[2] as string, ports: [port("APP")] }, deps),
+      allocate({ repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] }, deps),
+      allocate({ repoId, repoPath, worktreePath: worktrees[2] as string, ports: [port("APP")] }, deps),
     ]);
 
     const values = [first, second].map((result) => {
@@ -114,7 +140,7 @@ describe("allocateWorktreePorts", () => {
     const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
     await writeFile(`${sentinel}.anywhere-terminal.lock`, "held");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
     );
@@ -123,12 +149,31 @@ describe("allocateWorktreePorts", () => {
     await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
   });
 
+  it("does not persist claims through a recreated mutation-authorized target", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const worktreePath = worktrees[1] as string;
+    const authorization = await authorizeDirectory(worktreePath);
+    if (authorization === undefined) {
+      throw new Error("the target could not be authorized");
+    }
+    await rename(worktreePath, `${worktreePath}-original`);
+    await mkdir(worktreePath);
+
+    const result = await allocateWorktreePorts(
+      { repoId, repoPath, worktreePath, ports: [port("APP")], authorization },
+      { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktreePath, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
   it("reuses an existing assignment and appends only missing names", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const target = path.join(worktrees[1] as string, ".env.worktree");
     await writeFile(target, "# keep\nAPP=5183\n");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       {
         repoId,
         repoPath,
@@ -142,13 +187,37 @@ describe("allocateWorktreePorts", () => {
     expect(await readFile(target, "utf8")).toBe("# keep\nAPP=5183\nDB=5433\n");
   });
 
+  it("refuses a claim file whose filesystem identity is unavailable", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    await writeFile(target, "APP=5183\n");
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        lstat: async (candidate) => {
+          const entry = await lstat(candidate);
+          return candidate === target
+            ? new Proxy(entry, {
+                get: (value, property) => (property === "ino" ? 0 : Reflect.get(value, property, value)),
+              })
+            : entry;
+        },
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(await readFile(target, "utf8")).toBe("APP=5183\n");
+  });
+
   it("preserves the existing claim file mode while appending", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const target = path.join(worktrees[1] as string, ".env.worktree");
     await writeFile(target, "APP=5183\n");
     await chmod(target, 0o640);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("DB")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([5433]) },
     );
@@ -163,7 +232,7 @@ describe("allocateWorktreePorts", () => {
     { name: "reason", listing: { ...complete([]), reasons: ["one record was omitted"] } },
   ])("fails fresh allocation for an incomplete $name listing", async ({ listing }) => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => listing, probe: probes([5183]) },
     );
@@ -178,7 +247,7 @@ describe("allocateWorktreePorts", () => {
     const original = "APP=5183\nDB=5183\n";
     await writeFile(target, original);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP"), port("DB")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([]) },
     );
@@ -198,7 +267,7 @@ describe("allocateWorktreePorts", () => {
     const target = path.join(worktrees[1] as string, ".env.worktree");
     await writeFile(target, original);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([5184]) },
     );
@@ -211,7 +280,7 @@ describe("allocateWorktreePorts", () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
     await writeFile(path.join(worktrees[2] as string, ".env.worktree"), "not an assignment\n");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([5183]) },
     );
@@ -224,7 +293,7 @@ describe("allocateWorktreePorts", () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
     await writeFile(path.join(worktrees[2] as string, ".env.worktree"), `#${"x".repeat(64 * 1024)}\n`);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([5184]) },
     );
@@ -238,7 +307,7 @@ describe("allocateWorktreePorts", () => {
     const siblingClaim = path.join(worktrees[2] as string, ".env.worktree");
     await writeFile(siblingClaim, "OTHER=5183\n");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),
@@ -263,7 +332,7 @@ describe("allocateWorktreePorts", () => {
     await writeFile(referent, "APP=5183\n");
     await symlink(referent, target);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([5184]) },
     );
@@ -278,7 +347,7 @@ describe("allocateWorktreePorts", () => {
     await writeFile(target, "# retained\nAPP=5183\n");
     await writeFile(path.join(worktrees[2] as string, ".env.worktree"), "OTHER=5183\n");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       { listWorktrees: async () => complete(worktrees), probe: probes([]) },
     );
@@ -291,7 +360,7 @@ describe("allocateWorktreePorts", () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const target = path.join(worktrees[1] as string, ".env.worktree");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       {
         repoId,
         repoPath,
@@ -312,7 +381,7 @@ describe("allocateWorktreePorts", () => {
   it("keeps name-local failures from stopping a valid name", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       {
         repoId,
         repoPath,
@@ -331,7 +400,7 @@ describe("allocateWorktreePorts", () => {
     await writeFile(path.join(worktrees[2] as string, ".env.worktree"), "OTHER=5183\n");
     const probe = probes([...Array.from({ length: 32 }, () => 5183), 5184]);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       {
         repoId,
         repoPath,
@@ -359,7 +428,7 @@ describe("allocateWorktreePorts", () => {
       }
     }
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),
@@ -376,7 +445,7 @@ describe("allocateWorktreePorts", () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const target = path.join(worktrees[1] as string, ".env.worktree");
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),
@@ -402,7 +471,7 @@ describe("allocateWorktreePorts", () => {
     const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
     const warned: string[] = [];
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),
@@ -433,7 +502,7 @@ describe("allocateWorktreePorts", () => {
   it("turns a thrown exclude update into a warning without rejecting allocation", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),
@@ -451,6 +520,10 @@ describe("allocateWorktreePorts", () => {
   it("refuses a substituted worktree root instead of publishing through it", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const worktreePath = worktrees[1] as string;
+    const authorization = await authorizeDirectory(worktreePath);
+    if (authorization === undefined) {
+      throw new Error("the target could not be authorized");
+    }
     const original = `${worktreePath}-original`;
     const redirected = path.join(path.dirname(worktreePath), "redirected");
     await mkdir(redirected);
@@ -458,7 +531,7 @@ describe("allocateWorktreePorts", () => {
     await symlink(redirected, worktreePath);
 
     const result = await allocateWorktreePorts(
-      { repoId, repoPath, worktreePath, ports: [port("APP")] },
+      { repoId, repoPath, worktreePath, ports: [port("APP")], authorization },
       { listWorktrees: async () => complete([repoPath, worktreePath]), probe: probes([5183]) },
     );
 
@@ -483,7 +556,7 @@ describe("allocateWorktreePorts", () => {
       }
     }
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       {
         repoId,
         repoPath,
@@ -507,7 +580,7 @@ describe("allocateWorktreePorts", () => {
     await writeFile(target, "APP=5183\n");
     let targetStats = 0;
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),
@@ -529,7 +602,7 @@ describe("allocateWorktreePorts", () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     let timeoutMs: number | undefined;
 
-    await allocateWorktreePorts(
+    await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         transactionMs: 50,
@@ -548,7 +621,7 @@ describe("allocateWorktreePorts", () => {
   it("stops waiting when a listing dependency ignores its timeout", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const started = Date.now();
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         transactionMs: 10,
@@ -565,7 +638,7 @@ describe("allocateWorktreePorts", () => {
 
   it("reports listing failures as proof failures rather than lock contention", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => {
@@ -587,7 +660,7 @@ describe("allocateWorktreePorts", () => {
     await writeFile(siblingClaim, "OTHER=5183\n");
     let largestRead = 0;
 
-    const result = await allocateWorktreePorts(
+    const result = await allocate(
       { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
       {
         listWorktrees: async () => complete(worktrees),

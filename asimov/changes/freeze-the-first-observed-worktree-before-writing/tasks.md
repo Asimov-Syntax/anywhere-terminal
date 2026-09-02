@@ -35,7 +35,7 @@ Build the shared authorizer, mint it at the mutation seam, apply it to file prov
     1. `src/worktree/provisioning/entryGate.ts`, `src/worktree/provisioning/applyEntries.ts`, `src/worktree/provisioning/entryGate.test.ts`, `src/worktree/provisioning/applyEntries.test.ts`, and `src/worktree/provisioning/applyEntries.node.test.ts`: prepare authorized roots and recheck source and destination immediately before each selected read or destination mutation while preserving existing no-follow and containment rules.
     2. `src/extension.ts` and `src/extension.worktreeAssembly.test.ts`: bind production file provisioning to mutation-issued authorizations and witness source, ancestor, and regular-root substitution without using replacement content or destination.
 
-- [ ] 1_4 Consume mutation-issued authority for target claims
+- [x] 1_4 Consume mutation-issued authority for target claims — verified: bun test 'src/worktree/worktreePorts.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/freeze-target-ports-recorded.log 2>&1 exit 0
   - **Deps**: 1_3
   - **Refs**: design.md D2, design.md D3, design.md D5; specs/worktree-panel/spec.md#selected-post-create-writes-retain-observed-checkout-identity
   - **Acceptance**:

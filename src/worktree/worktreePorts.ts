@@ -3,6 +3,13 @@ import { lstat, open } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import type { ProvisionPort, ProvisionPortResult, ProvisionPortWarning } from "../types/messages";
+import {
+  type AuthorizationBudget,
+  type AuthorizedDirectory,
+  directoryStillAuthorized,
+  fileIdentityOf,
+  sameFileIdentity,
+} from "../utils/authorizedDirectory";
 import { LockedFile, type StagedReplacement } from "../utils/lockedFile";
 import { addToGitExclude, type ExcludeResult } from "./gitExclude";
 
@@ -76,6 +83,7 @@ export interface AllocateWorktreePortsInput {
   readonly repoPath: string;
   readonly worktreePath: string;
   readonly ports: readonly ProvisionPort[];
+  readonly authorization: AuthorizedDirectory;
 }
 
 export interface WorktreePortApplyResult {
@@ -109,7 +117,7 @@ function isNotFound(error: unknown): boolean {
 }
 
 function sameIdentity(left: { dev: number | bigint; ino: number | bigint }, right: StatLike): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+  return sameFileIdentity(left, right);
 }
 
 function remaining(budget: Budget): number {
@@ -134,6 +142,18 @@ async function withinBudget<T>(budget: Budget, work: () => Promise<T>): Promise<
       clearTimeout(timer);
     }
   }
+}
+
+function authorizationBudget(budget: Budget): AuthorizationBudget {
+  return { run: <T>(work: () => Promise<T>) => withinBudget(budget, work) };
+}
+
+async function authorizedDirectoryStillMatches(
+  authorization: AuthorizedDirectory,
+  deps: Required<Pick<PreviewPortsDeps, "lstat">>,
+  budget: Budget,
+): Promise<boolean> {
+  return directoryStillAuthorized(authorization, { lstat: deps.lstat }, authorizationBudget(budget));
 }
 
 async function authorizeDirectory(
@@ -224,7 +244,12 @@ async function readClaims(
   } catch (error) {
     return isNotFound(error) ? { kind: "absent", contents: "", mode: 0o600 } : { kind: "invalid" };
   }
-  if (entry.isSymbolicLink() || !entry.isFile() || entry.size > MAX_CLAIM_BYTES) {
+  if (
+    entry.isSymbolicLink() ||
+    !entry.isFile() ||
+    entry.size > MAX_CLAIM_BYTES ||
+    fileIdentityOf(entry) === undefined
+  ) {
     return { kind: "invalid" };
   }
   let handle: HandleLike;
@@ -468,6 +493,9 @@ export async function allocateWorktreePorts(
   const result = await lock.withLock<WorktreePortApplyResult>(
     async () => {
       const budget = { deadline: deps.now() + deps.transactionMs, now: deps.now };
+      if (!samePath(input.authorization.path, input.worktreePath)) {
+        return failure("the observed worktree authority does not name the allocation target");
+      }
       let listing: PortWorktreeListing;
       try {
         listing = await withinBudget(budget, () =>
@@ -501,11 +529,13 @@ export async function allocateWorktreePorts(
       }
 
       const target = path.join(input.worktreePath, CLAIM_FILE);
-      const authorizedTarget = await readClaimsUnderRoot(input.worktreePath, deps, budget);
-      if (authorizedTarget === undefined) {
-        return failure("the worktree directory could not be authorized");
+      if (!(await authorizedDirectoryStillMatches(input.authorization, deps, budget))) {
+        return failure("the observed worktree directory changed before port claims could be read");
       }
-      const { authorization, source } = authorizedTarget;
+      const source = await readClaims(target, deps, budget);
+      if (!(await authorizedDirectoryStillMatches(input.authorization, deps, budget))) {
+        return failure("the observed worktree directory changed while port claims were being read");
+      }
       if (source.kind === "invalid") {
         return failure("the existing port claim file is not supported");
       }
@@ -566,7 +596,7 @@ export async function allocateWorktreePorts(
         const appended = [...pending].map(([name, value]) => `${name}=${value}`).join("\n");
         const contents = `${source.contents}${prefix}${appended}\n`;
         let staged: StagedReplacement | undefined;
-        if (await directoryStillMatches(input.worktreePath, authorization, deps, budget)) {
+        if (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) {
           try {
             staged = await deps.lockedFile(target).stageReplacement(contents, source.mode);
           } catch {
@@ -581,8 +611,9 @@ export async function allocateWorktreePorts(
         if (staged !== undefined) {
           try {
             const sourceProven =
-              (await directoryStillMatches(input.worktreePath, authorization, deps, budget)) &&
-              (await sourceStillMatches(target, source, deps, budget));
+              (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) &&
+              (await sourceStillMatches(target, source, deps, budget)) &&
+              (await authorizedDirectoryStillMatches(input.authorization, deps, budget));
             if (!sourceProven) {
               pendingFailure = "the port claim file changed before it could be updated";
             } else {
@@ -614,8 +645,9 @@ export async function allocateWorktreePorts(
       const hasRetainedSuccess = [...results.values()].some((item) => item.outcome.kind === "reused");
       if (hasRetainedSuccess && !persisted) {
         const retainedProven =
-          (await directoryStillMatches(input.worktreePath, authorization, deps, budget)) &&
-          (await sourceStillMatches(target, source, deps, budget));
+          (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) &&
+          (await sourceStillMatches(target, source, deps, budget)) &&
+          (await authorizedDirectoryStillMatches(input.authorization, deps, budget));
         if (!retainedProven) {
           for (const [id, item] of results) {
             if (item.outcome.kind === "reused") {
