@@ -10,7 +10,10 @@ import {
   classify,
   declaredExternals,
   exitCodeFor,
+  parseCount,
   propagationStats,
+  relativeLiterals,
+  relativeTemplates,
   requiredSpecifiers,
   unresolvableRequires,
 } from "../../../scripts/bundleRequires.mjs";
@@ -591,6 +594,43 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
 
   it("does not report a template with no substitution, which is already a literal", () => {
     expect(verdicts("var msg = `./plain`;", files("/repo/dist/plain"))).toEqual([]);
+  });
+});
+
+// [round-6 F015] Each collector parsed the artifact for itself, so a 1 MB
+// bundle paid three AST constructions and three walks per gate run, and the two
+// relative-prefix conditions could drift apart. One AST now serves all three.
+describe("[round-6 F015] one parse of the bundle serves every collector", () => {
+  const OPEN = `$${"{"}`;
+  const BUNDLE = [
+    'var r = require; r("./impl/format");',
+    'r("lodash");',
+    `r(\`../${OPEN}n}\`);`,
+    'var data = "./swept-only";',
+  ].join("\n");
+
+  it("builds one AST for the bundle, plus the one the esbuild config needs", () => {
+    const before = parseCount();
+    verdicts(BUNDLE);
+    expect(parseCount() - before).toBe(2);
+  });
+
+  it("charges the esbuild config exactly one of those two", () => {
+    const before = parseCount();
+    declaredExternals(ESBUILD, OUT);
+    expect(parseCount() - before).toBe(1);
+  });
+
+  it("agrees with each collector's own string-taking form", () => {
+    const shared = verdicts(BUNDLE).map((v) => v.specifier);
+    for (const specifier of requiredSpecifiers(BUNDLE)) {
+      if (specifier !== "lodash") {
+        expect(shared).toContain(specifier);
+      }
+    }
+    expect(shared).toContain("./swept-only");
+    expect(relativeLiterals(BUNDLE)).toContain("./swept-only");
+    expect(relativeTemplates(BUNDLE)).toEqual(["../"]);
   });
 });
 

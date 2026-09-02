@@ -30,6 +30,8 @@ export interface BundleDeps {
 
 export declare const RELATIVE_PREFIXES: readonly string[];
 export function isRelativeRequest(text: string): boolean;
+/** How many ASTs the module has built, so the one-parse claim is observable. */
+export function parseCount(): number;
 export function exitCodeFor(verdicts: readonly Verdict[]): number;
 export function propagationStats(bundleSource: string): { applications: number; distinct: number };
 export function relativeLiterals(bundleSource: string): string[];

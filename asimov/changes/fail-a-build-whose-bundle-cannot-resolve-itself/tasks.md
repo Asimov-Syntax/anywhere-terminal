@@ -237,7 +237,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, deduplicate argument-side arrivals by edge and fact identity, the way callee-target arrivals already are, so a generic re-enqueue cannot reapply every target.
     2. Witness the MIXED topology the round-6 probe used — callee targets and argument callables both growing — asserting applications equal distinct pairs. The committed witness varied only callee targets and therefore could not fail on this.
 
-- [ ] 7_5 Parse the artifact once
+- [x] 7_5 Parse the artifact once — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_4
   - **Refs**: design.md D1, .reviews/round-6.md#f015
   - **Acceptance**:
@@ -246,3 +246,4 @@ the extension failed to activate. No suite could catch it, because every suite i
   - **Plan**:
     1. In `scripts/bundleRequires.mjs`, build the source file and checker once in `unresolvableRequires` and pass them to the three collectors, keeping the string-taking exports as thin wrappers so the existing witnesses still drive them.
     2. Witness that the collectors agree with their wrapper forms on one bundle, so the shared parse is not a second implementation.
+    3. Declare the parse counter in `scripts/bundleRequires.d.mts` so the witness reads it with a real type rather than a suppression.

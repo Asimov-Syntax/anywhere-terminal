@@ -23,7 +23,23 @@ import ts from "typescript";
 
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
 
-const parse = (source, name) => ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+let parsesBuilt = 0;
+
+const parse = (source, name) => {
+  parsesBuilt += 1;
+  return ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+};
+
+/**
+ * How many ASTs this module has built, so the one-parse claim is observable.
+ *
+ * Each collector used to parse the artifact for itself: a 1 MB bundle paid
+ * three constructions and three walks per run, and the two relative-prefix
+ * conditions could drift apart (.reviews/round-6.md F015).
+ */
+export function parseCount() {
+  return parsesBuilt;
+}
 
 function walk(node, visit) {
   visit(node);
@@ -437,8 +453,12 @@ export function isRelativeRequest(text) {
  * so the literal is the one thing no spelling can hide (design.md D6).
  */
 export function relativeLiterals(bundleSource) {
+  return literalsIn(parse(bundleSource, "bundle.js"));
+}
+
+function literalsIn(root) {
   const seen = new Set();
-  walk(parse(bundleSource, "bundle.js"), (node) => {
+  walk(root, (node) => {
     if (!ts.isStringLiteralLike(node)) {
       return;
     }
@@ -465,8 +485,12 @@ export function relativeLiterals(bundleSource) {
  * call's (.reviews/round-6.md F018).
  */
 export function relativeTemplates(bundleSource) {
+  return templatesIn(parse(bundleSource, "bundle.js"));
+}
+
+function templatesIn(root) {
   const seen = new Set();
-  walk(parse(bundleSource, "bundle.js"), (node) => {
+  walk(root, (node) => {
     if (!ts.isTemplateExpression(node) || !isCallArgument(node)) {
       return;
     }
@@ -481,6 +505,10 @@ export function relativeTemplates(bundleSource) {
 /** Every distinct specifier the bundle still requires, in first-seen order. */
 export function requiredSpecifiers(bundleSource) {
   const { checker, root } = checkerFor(bundleSource);
+  return specifiersIn(root, checker);
+}
+
+function specifiersIn(root, checker) {
   const isTainted = requireBindings(root, checker);
   const seen = new Set();
   walk(root, (node) => {
@@ -731,14 +759,17 @@ export function unresolvableRequires(bundleSource, { esbuildSource, outfile, res
   // Two questions, neither subsuming the other: the sweep owns the relative
   // class soundly, and call detection owns bare and absolute specifiers, which
   // cannot be swept because every string would be a candidate (design.md D6).
-  const candidates = new Set([...requiredSpecifiers(bundleSource), ...relativeLiterals(bundleSource)]);
+  // One AST serves all three collectors; the wrappers above stay as thin
+  // string-taking forms so the witnesses can still drive each one alone.
+  const { checker, root } = checkerFor(bundleSource);
+  const candidates = new Set([...specifiersIn(root, checker), ...literalsIn(root)]);
   const resolved = [...candidates]
     .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory, readFile }))
     .filter((verdict) => !verdict.ok);
   // A relative request the gate cannot resolve is still a relative request
   // (design.md D7). It fails rather than warns because the real artifact
   // carries none, so the rule cannot reject a build that works today.
-  const computed = relativeTemplates(bundleSource).map((head) => ({
+  const computed = templatesIn(root).map((head) => ({
     specifier: `${head}\${...}`,
     ok: false,
     severity: "fails",
