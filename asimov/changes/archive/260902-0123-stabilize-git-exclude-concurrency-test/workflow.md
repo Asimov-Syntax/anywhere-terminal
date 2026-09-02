@@ -12,16 +12,16 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [-] Review done — localized test-only correction with unchanged product behavior
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -33,3 +33,4 @@ Blueprint: none
 Lane: light
 Planned at: 8dc9347c
 Fastlane: corrected only the inherited test's unsupported FIFO assumption; production behavior is unchanged.
+Verify baseline: Biome remains at the clean-tree 3 errors / 14 warnings / 1 info in AgentHookController.test.ts, ClaudeHookInstaller.test.ts, and CursorHookInstaller.test.ts; this change touches none of them.
