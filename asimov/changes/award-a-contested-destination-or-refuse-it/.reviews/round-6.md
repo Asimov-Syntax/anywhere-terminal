@@ -126,3 +126,56 @@ green. This change's whole subject is a destination that cannot be un-written, s
 there is worth a test that costs one case.
 
 No `D#` changes and no new invariant owner, so the remediation boundary is not crossed.
+
+---
+
+## Out-of-band findings reassigned to this change — 2026-09-02
+
+Two BLOCK findings against this change's apply-time owner were raised by the chair reviewing the
+sibling change `assemble-one-config-from-several-files` (its `.reviews/round-8.md`, F015 and F016),
+which reaches this owner through its integration seam. I verified both mechanisms in the code
+directly rather than accepting the report.
+
+### [OOB-F015] Two native contenders leave a group with no winner, and the inherited row takes the destination
+
+- Severity: BLOCK · Confidence: HIGH · Verified by author at HEAD
+- File: `src/worktree/provisioning/providerKit.ts:404`, `src/worktree/provisioning/applyProvisioning.ts:60-64`
+
+`contendersOf` sets `favoured` only when `native.length === 1`. A group of two native case-variants
+plus one inherited variant therefore carries no `favoured`, and `contestsOf` drops it on the branch
+whose comment reads "A group with no favoured member left is not a contest — nothing in it claims
+priority." That reasoning was written for a favoured member the user had unticked. Two natives is a
+different state: priority IS claimed, by two rows at once. The group falls through to the ordinary
+pass and the inherited declaration's material and `mode` land at the destination.
+
+This contradicts the spec delta's `MODIFIED` requirement — "where declarations may name one
+destination, the repository's own is materialized first and the others are refused" — and its
+`Scenario: More than two declarations may name one destination`.
+
+### [OOB-F016] A held member's own admission refusal vetoes an admissible native winner
+
+- Severity: BLOCK · Confidence: HIGH · Verified by author at HEAD
+- File: `src/worktree/provisioning/applyProvisioning.ts:171`
+
+`read()` collapses every `admitEntry` failure to `"inadmissible"`, and `contended()` refuses on any
+reading that is not `"absent"`. An inherited member refused by its own material rule — a link-mode
+entry over a directory, say — therefore proves the shared destination "not free" and the admissible
+native copy is refused at a destination that does not exist.
+
+The collapse is deliberate and D3 argues for it: a gate refusal reaches the filesystem and cannot be
+told apart from an unreadable destination. That argument holds for the destination reading itself.
+It does not hold for a refusal that is a property of the MEMBER — its mode, its material — and never
+of the destination.
+
+## Author disposition
+
+Both are **accepted**, and both are **artifact handbacks, not remediation**:
+
+- OOB-F015 needs a rule for what a group with more than one native member means. `favoured` is
+  currently a single optional id; either the type changes or a native-selection rule is chosen. That
+  is a new or changed `D#`, and § 4.3's "the repository's own declaration" needs to say what it means
+  when two rows are.
+- OOB-F016 needs `Reading` to distinguish a destination-observation failure from a member-specific
+  admission failure. `D3` explicitly argues the current collapse; changing it changes `D3`.
+
+Neither can land as a fix commit inside this cycle. Parking and returning to `asimov-plan`.
