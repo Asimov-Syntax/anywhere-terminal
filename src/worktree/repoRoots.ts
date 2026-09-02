@@ -4,6 +4,7 @@
 
 import * as path from "node:path";
 import type { API } from "../providers/git";
+import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import { isPathInside } from "../utils/pathBoundary";
 import type { TrackedPathResolver } from "../utils/resolvedPathMemo";
 import { describeGitFailure } from "./describeGitFailure";
@@ -18,12 +19,16 @@ export interface ResolvedRepo {
   repoId: string;
   /** Normalized repository root the git commands ran in. */
   rootPath: string;
+  /** Host-private common-directory incarnation; absent keeps discovery read-only. */
+  registration?: AuthorizedDirectory;
 }
 
 export interface RepoRootsDeps {
   runner: GitCommandRunner;
   capabilities: GitCapabilities;
   normalize(p: string): Promise<string | null>;
+  /** Optional so identity-unavailable hosts still enumerate repositories. */
+  authorizeCommonDirectory?(p: string): Promise<AuthorizedDirectory | undefined>;
   getGitApi?: GitApiAccessor;
   /**
    * Absent — every comparison below is lexical, exactly as before this existed.
@@ -209,7 +214,15 @@ async function resolveOne(folder: string, deps: RepoRootsDeps): Promise<RepoReso
     return { kind: "failed", reason: `Could not resolve a usable path for ${folder}.` };
   }
 
-  return { kind: "resolved", repo: { repoId, rootPath } };
+  const registration = await deps.authorizeCommonDirectory?.(repoId).catch(() => undefined);
+  return {
+    kind: "resolved",
+    repo: {
+      repoId,
+      rootPath,
+      ...(registration?.path === repoId ? { registration } : {}),
+    },
+  };
 }
 
 /**

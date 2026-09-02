@@ -3,6 +3,7 @@
 //      asimov/changes/enumerate-git-worktrees/design.md D6
 
 import * as path from "node:path";
+import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import { isPathInside } from "../utils/pathBoundary";
 import { describeGitFailure } from "./describeGitFailure";
 import { type GitCapabilities, isUnsupportedZResult } from "./gitCapabilities";
@@ -187,6 +188,7 @@ export async function listRepoWorktrees(
 }
 
 export interface WorktreeTreeDeps extends WorktreeListingDeps {
+  authorizeCommonDirectory?(p: string): Promise<AuthorizedDirectory | undefined>;
   getGitApi?: GitApiAccessor;
   /** Supplied by the presence projection (P4); absent here — design.md D4. */
   rank?: WorktreeActivityRank;

@@ -142,7 +142,7 @@
 
 ## 4. Bind the normalized source to its repository
 
-- [ ] 4_1 Capture the repository registration
+- [x] 4_1 Capture the repository registration — verified: pnpm exec vitest run 'src/worktree/repoRoots.test.ts' 'src/worktree/worktreeDeps.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 3_2
   - **Refs**: design.md D3, D5 <!-- review round 2 F006 -->
   - **Acceptance**:
@@ -150,7 +150,7 @@
     - Verify: command pnpm exec vitest run 'src/worktree/repoRoots.test.ts' 'src/worktree/worktreeDeps.test.ts'
   - **Plan**:
     1. `src/worktree/repoRoots.ts`, `src/worktree/repoRoots.test.ts`: capture authorized normalized common-directory evidence during repository resolution, while retaining an ordinary resolved repository without migration authority when filesystem identity is unavailable.
-    2. `src/worktree/worktreeDeps.ts`, `src/worktree/worktreeDeps.test.ts`: bind the existing authorized-directory mechanism to production repository discovery.
+    2. `src/worktree/WorktreeDiscovery.ts`, `src/worktree/worktreeDeps.ts`, `src/worktree/worktreeDeps.test.ts`: expose and bind the existing authorized-directory mechanism to production repository discovery.
 
 - [ ] 4_2 Publish only a bracketed registration
   - **Deps**: 4_1

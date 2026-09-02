@@ -7,6 +7,7 @@
 // host takes assembled deps and tests drive it with fakes.
 
 import * as fs from "node:fs/promises";
+import { authorizeDirectory } from "../utils/authorizedDirectory";
 import { createTrackedPathResolver, type ResolvedPathMemo } from "../utils/resolvedPathMemo";
 import { createGitCapabilities } from "./gitCapabilities";
 import { createGitCommandRunner, type GitCommandRunnerOptions } from "./gitCommandRunner";
@@ -36,6 +37,7 @@ export function createWorktreeTreeDeps(options: CreateWorktreeTreeDepsOptions = 
     runner,
     capabilities: createGitCapabilities(runner),
     normalize: (p) => normalizeWorktreePath(p),
+    authorizeCommonDirectory: (p) => authorizeDirectory(p),
     stat: (p) => fs.stat(p),
     ...(options.pathMemo ? { paths: createTrackedPathResolver(options.pathMemo) } : {}),
   };
