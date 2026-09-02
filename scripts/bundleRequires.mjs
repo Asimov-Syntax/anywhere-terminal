@@ -42,6 +42,21 @@ function unwrap(node) {
 const isFunction = (node) => node !== undefined && (ts.isFunctionExpression(node) || ts.isArrowFunction(node));
 
 /**
+ * Whether `node` sits where a module request can be passed.
+ *
+ * `parent.arguments` is checked by identity rather than by parent kind alone: a
+ * tagged template's own template is a child of a call-like node too, and it is
+ * the tag's input, never a request.
+ */
+function isCallArgument(node) {
+  const parent = node.parent;
+  if (parent === undefined || !(ts.isCallExpression(parent) || ts.isNewExpression(parent))) {
+    return false;
+  }
+  return (parent.arguments ?? []).some((argument) => unwrap(argument) === node);
+}
+
+/**
  * A checker over one in-memory bundle.
  *
  * Lexical identity is the binder's job, not this file's. Three rounds of
@@ -406,11 +421,16 @@ export function relativeLiterals(bundleSource) {
  * not knowable without running the program — so it is reported rather than
  * resolved (design.md D7). The bare-prefix limit does NOT apply here: a head of
  * exactly `./` is the dangerous case, not path data.
+ *
+ * Reported only in a CALL-ARGUMENT position. A relative-headed template is
+ * overwhelmingly path data — a URL, a CSS `url()`, a message — and only an
+ * argument can be a module request; a tagged template is its tag's input, not a
+ * call's (.reviews/round-6.md F018).
  */
 export function relativeTemplates(bundleSource) {
   const seen = new Set();
   walk(parse(bundleSource, "bundle.js"), (node) => {
-    if (!ts.isTemplateExpression(node)) {
+    if (!ts.isTemplateExpression(node) || !isCallArgument(node)) {
       return;
     }
     const head = node.head.text;

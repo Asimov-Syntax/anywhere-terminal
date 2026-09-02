@@ -594,6 +594,35 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
   });
 });
 
+// [round-6 F018] D7 narrows the template sweep to call-argument positions. A
+// relative-headed template is overwhelmingly path DATA — a URL, a CSS url(), a
+// message — and only an argument can be a module request. A tagged template is
+// its tag's input, never a request.
+describe("[round-6 F018] a template is reported only where a request can occur", () => {
+  const OPEN = `$${"{"}`;
+
+  it("does not report relative-headed path data", () => {
+    expect(verdicts(`var p = \`./${OPEN}name}/icon.svg\`;`)).toEqual([]);
+  });
+
+  it("does not report one assigned into an object the bundle carries", () => {
+    expect(verdicts(`var cfg = { base: \`../${OPEN}n}\` };`)).toEqual([]);
+  });
+
+  it("does not report a tagged template, which is its tag's input", () => {
+    expect(verdicts(`var t = tag; var s = t\`./${OPEN}n}\`;`)).toEqual([]);
+  });
+
+  it("still reports the UMD call shape this sweep exists for", () => {
+    const viaFactory = `(function (factory) { factory(require) })(function (e) { e(\`../${OPEN}n}\`); });`;
+    expect(
+      verdicts(viaFactory)
+        .map((v) => v.specifier)
+        .join(" "),
+    ).toContain("../");
+  });
+});
+
 // [round-6 F016] Detection used the four-prefix predicate while `classify` kept
 // its own `startsWith(".")` test. They disagree on a bare package whose NAME
 // begins with a dot — `.pkg` resolves from `node_modules/.pkg/` at runtime — so

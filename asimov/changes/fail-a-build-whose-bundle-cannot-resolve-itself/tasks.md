@@ -217,7 +217,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, normalize a Win32-spelled relative specifier to its POSIX equivalent before resolution, so one resolver answers both and no branch reads `process.platform`.
     2. Witness a Win32-spelled specifier RESOLVING against a file that exists beside the bundle, which the host-native path could not do, and witness one that does not resolve still failing.
 
-- [ ] 7_3 Report a template only where a module request can occur
+- [x] 7_3 Report a template only where a module request can occur — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_2
   - **Refs**: design.md D7, .reviews/round-6.md#f018
   - **Acceptance**:
