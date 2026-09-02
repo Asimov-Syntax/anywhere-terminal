@@ -8,6 +8,7 @@
 
 import { constants } from "node:fs";
 import { type FileHandle, lstat, open } from "node:fs/promises";
+import { type FileIdentity, sameIdentity } from "./fileIdentity";
 
 /** The `open` a caller with injected filesystem dependencies passes in. */
 export type OpenLike = (path: string, flags: number) => Promise<FileHandle>;
@@ -32,12 +33,6 @@ export interface Constants {
   O_NOFOLLOW?: number;
 }
 
-/** The identity a `stat` answers with, read at full precision. */
-interface Identity {
-  readonly dev: number | bigint;
-  readonly ino: number | bigint;
-}
-
 export interface OpenRegularFileOptions {
   /**
    * Refuse a symlink AT `filePath` itself, for a caller that edits the file in
@@ -50,7 +45,7 @@ export interface OpenRegularFileOptions {
   /** Overridable so the win32 arm — no `O_NOFOLLOW` — is witnessable anywhere. */
   constants?: Constants;
   /** Overridable so a substitution can be scheduled after the inspection. */
-  lstatFile?: (path: string) => Promise<Identity & { isSymbolicLink(): boolean }>;
+  lstatFile?: (path: string) => Promise<FileIdentity & { isSymbolicLink(): boolean }>;
 }
 
 /**
@@ -82,7 +77,7 @@ export async function openRegularFile(
   // Read before the open, so the identity below has something to compare
   // against. `O_NOFOLLOW` alone cannot carry the refusal: win32 does not define
   // it, exactly as it does not define `O_NONBLOCK`.
-  let inspected: Identity | undefined;
+  let inspected: FileIdentity | undefined;
   if (noFollow) {
     const seen = await (options.lstatFile ?? ((p: string) => lstat(p, { bigint: true })))(filePath);
     if (seen.isSymbolicLink()) {
@@ -99,10 +94,7 @@ export async function openRegularFile(
     // on a DIFFERENT object, and the two identities diverge. Bounded on purpose:
     // inode reuse defeats it, and Windows exposes a 64-bit id Microsoft does not
     // guarantee unique on ReFS (design.md D5).
-    regular =
-      opened.isFile() &&
-      (inspected === undefined ||
-        (BigInt(opened.dev) === BigInt(inspected.dev) && BigInt(opened.ino) === BigInt(inspected.ino)));
+    regular = opened.isFile() && (inspected === undefined || sameIdentity(opened, inspected));
   } finally {
     if (!regular) {
       await handle.close().catch(() => {});

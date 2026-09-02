@@ -90,7 +90,12 @@ export class ClaudeHookInstaller {
 
   private async run(path: string, operation: Operation): Promise<OperationOutcome> {
     const locked = this.locked(path);
+    // A path is collected ONLY for the one release this process can vouch for.
+    // `AgentHookController.formatWarning` joins these straight into the user's
+    // warning, and a name that now identifies another writer's live lock must
+    // never arrive there (design.md D1, D2).
     const unresolved: string[] = [];
+    let unreleased = false;
     const outcome = await locked.withLock<OperationOutcome>(
       async () => {
         const authorization = await this.authorize(path);
@@ -101,9 +106,14 @@ export class ClaudeHookInstaller {
       },
       this.failure(operation, "lock-unavailable", path, [path, locked.lockPath]),
       this.failure(operation, "write-failed", path),
-      (lockPath) => unresolved.push(lockPath),
+      (lockPath, release) => {
+        unreleased = true;
+        if (release === "stuck") {
+          unresolved.push(lockPath);
+        }
+      },
     );
-    if (unresolved.length === 0) {
+    if (!unreleased) {
       return outcome;
     }
     const committedOrAbsent =

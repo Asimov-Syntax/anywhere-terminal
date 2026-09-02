@@ -105,11 +105,15 @@ describe("ClaudeHookInstaller", () => {
       },
     );
 
+    // Fails closed, and names NO lock. The ancestor swap is exactly the case
+    // where the lock's name stopped identifying our lock, so the pathname would
+    // be another writer's to lose — the install still reports the failure and
+    // the file it touched (design.md D1, D2).
     await expect(installer.install()).resolves.toEqual({
       installed: false,
       reason: "write-failed",
       affected: [path],
-      unresolved: [`${path}.anywhere-terminal.lock`],
+      unresolved: [],
     });
     expect(await readFile(join(moved, "settings.json"), "utf8")).toBe("{}\n");
     await expect(readFile(join(replacement, "settings.json"), "utf8")).rejects.toThrow();
@@ -272,6 +276,34 @@ describe("ClaudeHookInstaller", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o640);
   });
 
+  // The lock name now identifies a DIFFERENT writer's live lock. The install
+  // still says the release did not resolve, but it must not hand that pathname
+  // to the user: `AgentHookController.formatWarning` joins `unresolved` straight
+  // into the warning, and acting on it would delete a live lock (design.md D1, D2).
+  it("warns without naming a lock whose identity is not ours", async () => {
+    const { directory, path } = await fixture();
+    await writeFile(path, "{}\n");
+    const installer = new ClaudeHookInstaller(
+      { configuredDirectory: () => directory },
+      {
+        fs: {
+          lstat: (async (file: string, options?: { bigint?: boolean }) => {
+            const real = await lstat(file, options as never);
+            if (String(file).endsWith(".anywhere-terminal.lock")) {
+              return { ...real, dev: real.dev, ino: options?.bigint ? 999999n : 999999 } as never;
+            }
+            return real;
+          }) as never,
+        },
+      },
+    );
+
+    const outcome = (await installer.install()) as { reason?: string; unresolved?: string[] };
+
+    expect(outcome.reason).toBe("lock-release-failed");
+    expect(outcome.unresolved ?? []).toEqual([]);
+  });
+
   it("performs no I/O on Windows", async () => {
     const readFile = vi.fn();
     const installer = new ClaudeHookInstaller({ platform: "win32" }, { fs: { readFile } });
@@ -423,18 +455,19 @@ describe("D7 frozen POSIX command", () => {
     });
   });
 
-  it.each(["A".repeat(64), "0".repeat(63), "0".repeat(65)])(
-    "rejects a malformed runtime token %s and sends nothing",
-    async (badToken) => {
-      await withHttpListener(async (port, requests) => {
-        const url = loopbackUrl(port, "segment", badToken);
-        const result = await runD7('{"event":"Stop"}', { ANYWHERE_TERMINAL_CLAUDE_URL: url });
-        expect(result.stdout).toBe("{}\n");
-        expect(result.code).toBe(0);
-        expect(requests).toHaveLength(0);
-      });
-    },
-  );
+  it.each([
+    "A".repeat(64),
+    "0".repeat(63),
+    "0".repeat(65),
+  ])("rejects a malformed runtime token %s and sends nothing", async (badToken) => {
+    await withHttpListener(async (port, requests) => {
+      const url = loopbackUrl(port, "segment", badToken);
+      const result = await runD7('{"event":"Stop"}', { ANYWHERE_TERMINAL_CLAUDE_URL: url });
+      expect(result.stdout).toBe("{}\n");
+      expect(result.code).toBe(0);
+      expect(requests).toHaveLength(0);
+    });
+  });
 
   it("rejects a non-HTTP scheme and sends nothing", async () => {
     await withHttpListener(async (port, requests) => {

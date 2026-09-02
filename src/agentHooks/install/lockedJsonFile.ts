@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
+import { sameIdentity } from "../../utils/fileIdentity";
 import { type OpenLike, openRegularFile } from "../../utils/regularFileRead";
 
 export type Platform = "darwin" | "linux" | "win32";
@@ -29,6 +30,32 @@ export interface LockedFileDependencies {
 }
 
 export type StagedCommit = "create" | "replace";
+
+/**
+ * What a release did — not whether it worked.
+ *
+ * A boolean collapsed situations that are not alike, and the caller then had to
+ * treat them alike: the one that matters is `notOurs`, where the name identifies
+ * a DIFFERENT writer's live lock, so offering that pathname for removal destroys
+ * the mutual exclusion the lock exists to provide (design.md D1, D3).
+ *
+ * `released` and `stuck` are claims about the NAME at the moment of the unlink,
+ * not proofs about the held inode — which is why neither becomes an instruction
+ * to delete anything.
+ */
+export type LockRelease =
+  /** The name identified this holder's lock and it is gone. */
+  | "released"
+  /** The held lock was already unlinked by someone else; the name is free. */
+  | "alreadyGone"
+  /** The held lock still exists under a name this process cannot address. */
+  | "movedAway"
+  /** The name identifies a different file — never this holder's to remove. */
+  | "notOurs"
+  /** The release could not be told apart from any of the above. */
+  | "indeterminate"
+  /** The name identified this holder's lock and removing it was refused. */
+  | "stuck";
 
 export interface StagedReplacement {
   readonly path: string;
@@ -70,7 +97,7 @@ export class LockedFile {
     work: () => Promise<T>,
     lockUnavailable: T,
     failed: T,
-    onLockReleaseFailed?: (lockPath: string) => void,
+    onLockReleaseFailed?: (lockPath: string, release: LockRelease) => void,
   ): Promise<T> {
     const lock = await this.acquireLock(this.lockPath);
     if (!lock) {
@@ -82,8 +109,9 @@ export class LockedFile {
     } catch {
       result = failed;
     }
-    if (!(await this.releaseLock(this.lockPath, lock))) {
-      onLockReleaseFailed?.(this.lockPath);
+    const release = await this.releaseLock(this.lockPath, lock);
+    if (release !== "released" && release !== "alreadyGone") {
+      onLockReleaseFailed?.(this.lockPath, release);
     }
     return result;
   }
@@ -255,45 +283,36 @@ export class LockedFile {
     return undefined;
   }
 
-  private async releaseLock(lockPath: string, handle: FileHandle): Promise<boolean> {
+  private async releaseLock(lockPath: string, handle: FileHandle): Promise<LockRelease> {
     try {
       const owned = await handle.stat({ bigint: true });
       let current: Awaited<ReturnType<typeof lstat>>;
       try {
         current = await this.fs.lstat(lockPath, { bigint: true });
       } catch (error) {
-        if (isNotFound(error) && owned.nlink === 0n) {
-          return true;
+        if (!isNotFound(error)) {
+          return "indeterminate";
         }
-        return false;
+        // Absent at the name, but the held lock may still EXIST — renamed out
+        // from under us, under a name nothing here can address. That arm is
+        // reachable and is not the same as the lock being gone (design.md D3).
+        return owned.nlink === 0n ? "alreadyGone" : "movedAway";
       }
       if (!sameIdentity(owned, current)) {
-        return false;
+        return "notOurs";
       }
       try {
         await this.fs.unlink(lockPath);
       } catch (error) {
-        return isNotFound(error);
+        return isNotFound(error) ? "released" : "stuck";
       }
-      return true;
+      return "released";
     } catch {
-      return false;
+      return "indeterminate";
     } finally {
       await handle.close().catch(() => undefined);
     }
   }
-}
-
-// Captured `{ bigint: true }` at every site, because libuv rounds `ino` into a
-// double otherwise and 2^53 and 2^53+1 then name the same file — which is how a
-// DIFFERENT leaf gets unlinked as an owned temporary or as this holder's lock
-// (design.md D3). The coercion keeps a caller that injects plain numbers
-// comparing correctly rather than silently never matching.
-function sameIdentity(
-  left: { dev: number | bigint; ino: number | bigint },
-  right: { dev: number | bigint; ino: number | bigint },
-): boolean {
-  return BigInt(left.dev) === BigInt(right.dev) && BigInt(left.ino) === BigInt(right.ino);
 }
 
 export function isAlreadyExists(error: unknown): boolean {

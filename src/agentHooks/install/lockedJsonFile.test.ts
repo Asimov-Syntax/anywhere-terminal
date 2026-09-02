@@ -176,6 +176,95 @@ describe("LockedFile", () => {
     expect(reported).toEqual([lockPath]);
   });
 
+  // One witness per row of design.md D3's table. `releaseLock` is private, so
+  // each drives it through `withLock` and reads the disposition the callback is
+  // handed — which is the value every caller decides on.
+  async function releaseOf(
+    over: Record<string, unknown>,
+    during: (lockPath: string) => Promise<void> = async () => undefined,
+  ): Promise<string> {
+    const { target, lockPath } = await fixture();
+    let seen: string | undefined;
+    const file = new LockedFile(target, over as never);
+    await file.withLock<string>(
+      async () => {
+        await during(lockPath);
+        return "ok";
+      },
+      "unavailable",
+      "failed",
+      (_lockPath, release) => {
+        seen = release;
+      },
+    );
+    // `released` and `alreadyGone` deliberately report NOTHING, so a caller
+    // cannot tell them apart — that is the contract, not a gap in the witness.
+    return seen ?? "not reported";
+  }
+
+  it("reports nothing for an ordinary release", async () => {
+    expect(await releaseOf({})).toBe("not reported");
+  });
+
+  it("reports nothing when the lock was already removed by someone else", async () => {
+    expect(await releaseOf({}, async (lockPath) => rm(lockPath, { force: true }))).toBe("not reported");
+  });
+
+  it("calls an unlink refused for a real reason stuck", async () => {
+    expect(
+      await releaseOf({
+        fs: {
+          unlink: async () => {
+            throw Object.assign(new Error("nope"), { code: "EACCES" });
+          },
+        },
+      }),
+    ).toBe("stuck");
+  });
+
+  it("calls a different file at the name notOurs, rather than deleting it", async () => {
+    expect(
+      await releaseOf({
+        fs: {
+          lstat: (async (_p: string, o?: { bigint?: boolean }) => ({
+            dev: o?.bigint ? 1n : 1,
+            ino: o?.bigint ? 4242n : 4242,
+            nlink: o?.bigint ? 1n : 1,
+            isFile: () => true,
+            isSymbolicLink: () => false,
+          })) as never,
+        },
+      }),
+    ).toBe("notOurs");
+  });
+
+  // The arm the first table omitted: absent at the name, but the lock we hold
+  // still has links — it was renamed out from under us and exists somewhere no
+  // pathname here reaches.
+  it("calls an absent name over a still-linked lock movedAway, not alreadyGone", async () => {
+    expect(
+      await releaseOf({
+        fs: {
+          lstat: (async () => {
+            throw Object.assign(new Error("gone"), { code: "ENOENT" });
+          }) as never,
+        },
+      }),
+    ).toBe("movedAway");
+  });
+
+  it("calls an inspection that fails for another reason indeterminate", async () => {
+    expect(
+      await releaseOf({
+        fs: {
+          lstat: (async () => {
+            throw Object.assign(new Error("busted"), { code: "EIO" });
+          }) as never,
+        },
+      }),
+    ).toBe("indeterminate");
+  });
+
   it("does not delete a lock pathname substituted while work is running", async () => {
     const { target, lockPath } = await fixture();
     const reported: string[] = [];
