@@ -269,22 +269,22 @@
         }
       ],
       "firstAt": 1788306331878,
-      "lastAt": 1788317801035,
+      "lastAt": 1788319673094,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "build",
           "agent": "asm-build-filler",
           "model": "claude-sonnet-5",
-          "messages": 165,
-          "inputTokens": 330,
-          "outputTokens": 46570,
-          "reasoningTokens": 30670,
-          "cacheWriteTokens": 715884,
-          "cacheReadTokens": 11380065,
+          "messages": 233,
+          "inputTokens": 466,
+          "outputTokens": 65141,
+          "reasoningTokens": 36921,
+          "cacheWriteTokens": 925027,
+          "cacheReadTokens": 16027209,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 715884,
+            "cacheWrite1hTokens": 925027,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -366,12 +366,12 @@
           "phase": "build",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 259,
-          "inputTokens": 786125,
-          "outputTokens": 65178,
+          "messages": 285,
+          "inputTokens": 865749,
+          "outputTokens": 69141,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 45917696,
+          "cacheReadTokens": 54373888,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

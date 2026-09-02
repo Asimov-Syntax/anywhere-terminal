@@ -66,14 +66,14 @@
     3. In `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeController.ts`, carry the optional dialog value into the posted `worktreeRemove` request only when it is ticked.
     4. In `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`, witness both the unchecked omission and checked end-to-end request.
 
-- [ ] 3_2 Wire the binding at the host
+- [x] 3_2 Wire the binding at the host — verified: pnpm exec vitest run 'src/extension.worktreeMutations.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 3_1, 4_3, 4_5
   - **Refs**: design.md D2
   - **Acceptance**:
     - Outcome: The opt-in reaches the guarded delete with the report's own evidence
     - Verify: unit src/extension.worktreeMutations.test.ts
   - **Plan**:
-    1. In `src/providers/WorktreeHost.ts`, validate `deleteBranch` at runtime beside the other inbound removal fields and pass it into the mutation request.
+    1. In `src/providers/WorktreeHost.ts` and `src/providers/WorktreeHost.test.ts`, validate `deleteBranch` at runtime beside the other inbound removal fields, pass only the exact five-field non-empty shape into the mutation request, and causally witness valid, absent, malformed, and extra-key inputs.
     2. In `src/extension.ts`, supply the `deleteBranch` binding built on `src/worktree/deleteBranch.ts` and the existing git runner.
     3. Resolve the evidence from the host's own report rather than from anything the webview sent.
 

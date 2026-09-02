@@ -63,6 +63,7 @@ import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
 import { afterDelay } from "./worktree/deadline";
 import { rosterFromDetail } from "./worktree/delegations";
+import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
@@ -752,6 +753,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           // holds, and `none` is the no-op it says it is.
         },
         now: () => Date.now(),
+        // The SAME shared git runner every other worktree read and write goes
+        // through, and the guarded delete itself: production supplies no
+        // parallel git invocation path, only this adapter from the wire shape
+        // to the evidence shape `deleteBranch` verifies (design.md D2).
+        deleteBranch: (repoPath, request) =>
+          runDeleteBranch(worktreeTreeDeps.runner, repoPath, {
+            branch: request.branch,
+            branchOid: request.expectedBranchOid,
+            defaultBranch: request.defaultBranch,
+            defaultOid: request.expectedDefaultOid,
+          }),
       });
     }
     return worktreeMutations;
@@ -1070,7 +1082,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // what it published rather than against what the registry would run.
       launchTargets: () => detectLaunchTargets("start"),
       resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
-      removeWorktree: (target, fingerprint) => mutations().removeWorktree(target, fingerprint),
+      removeWorktree: (target, fingerprint, deleteBranchRequest) =>
+        mutations().removeWorktree(target, fingerprint, deleteBranchRequest),
       // The service decides the authority; this only reshapes the assessment for
       // the wire, through the SAME converter the blocked path uses — a second
       // one would let the two reports disagree about what the user was shown.

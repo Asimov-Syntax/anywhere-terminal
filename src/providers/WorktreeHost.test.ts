@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionToWebViewMessage } from "../types/messages";
+import type { BranchDeleteRequest, ExtensionToWebViewMessage } from "../types/messages";
 import { createGitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
 import type { WorktreePresence } from "../worktree/presenceTypes";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
-import { createWorktreeHost, type WorktreeSurface } from "./WorktreeHost";
+import { createWorktreeHost, type WorktreeActions, type WorktreeSurface } from "./WorktreeHost";
 
 function res(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
@@ -1091,5 +1091,118 @@ describe("[1_1] a surface can subscribe to presence without drawing rows", () =>
     await settle();
 
     expect(s.posts).toEqual([]);
+  });
+});
+
+// [3_2] The host validates `worktreeRemove.deleteBranch` at runtime before it
+// ever reaches the mutation service: an unrecognized or malformed shape is
+// the same as no opt-in at all (design.md D2, D10).
+describe("WorktreeHost — the deleteBranch opt-in on a worktreeRemove", () => {
+  const VALID: BranchDeleteRequest = {
+    branch: "feat",
+    expectedBranchOid: "3".repeat(40),
+    defaultBranch: "main",
+    expectedDefaultOid: "4".repeat(40),
+    fingerprint: "fp-branch",
+  };
+
+  /** A host with a real worktree already registered, so the removal gate resolves. */
+  async function ready() {
+    const { runner } = oneRepo(MAIN, FEAT);
+    const calls: Array<[string, ...unknown[]]> = [];
+    const noop = async () => {};
+    const actions: WorktreeActions = {
+      openFolder: noop,
+      revealInOS: noop,
+      copyText: noop,
+      focusPane: noop,
+      copyResumeCommand: noop,
+      revealSessionCwd: noop,
+      copySessionCwd: noop,
+      removeWorktree: async (...args: unknown[]) => {
+        calls.push(["removeWorktree", ...args]);
+      },
+    };
+    const worktrees = createWorktreeHost({
+      deps: deps(runner, ["/repo"]),
+      workspaceFolders: () => ["/repo"],
+      pool,
+      now: () => 1000,
+      actions,
+    });
+    const view = surface();
+    attachShown(worktrees, view);
+    worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(view, { type: "requestWorktreeTree" });
+    await settle();
+    return { worktrees, view, calls };
+  }
+
+  it("passes a valid five-field opt-in through unchanged", async () => {
+    const { worktrees, view, calls } = await ready();
+    worktrees.handleMessage(view, {
+      type: "worktreeRemove",
+      worktreeId: "/repo-wt/feat",
+      fingerprint: "fp-branch",
+      deleteBranch: VALID,
+    });
+    await settle();
+
+    expect(calls).toEqual([
+      ["removeWorktree", { repoId: "/repo/.git", worktreeId: "/repo-wt/feat", origin: view }, "fp-branch", VALID],
+    ]);
+  });
+
+  it("omits an absent opt-in", async () => {
+    const { worktrees, view, calls } = await ready();
+    worktrees.handleMessage(view, { type: "worktreeRemove", worktreeId: "/repo-wt/feat", fingerprint: "fp-branch" });
+    await settle();
+
+    expect(calls).toEqual([
+      ["removeWorktree", { repoId: "/repo/.git", worktreeId: "/repo-wt/feat", origin: view }, "fp-branch"],
+    ]);
+  });
+
+  it("omits an opt-in with an empty or non-string field", async () => {
+    const { worktrees, view, calls } = await ready();
+    worktrees.handleMessage(view, {
+      type: "worktreeRemove",
+      worktreeId: "/repo-wt/feat",
+      fingerprint: "fp-branch",
+      deleteBranch: { ...VALID, branch: "" },
+    });
+    worktrees.handleMessage(view, {
+      type: "worktreeRemove",
+      worktreeId: "/repo-wt/feat",
+      fingerprint: "fp-branch",
+      deleteBranch: { ...VALID, expectedBranchOid: 12345 } as unknown as BranchDeleteRequest,
+    });
+    await settle();
+
+    expect(calls[0]).toEqual([
+      "removeWorktree",
+      { repoId: "/repo/.git", worktreeId: "/repo-wt/feat", origin: view },
+      "fp-branch",
+    ]);
+    expect(calls[1]).toEqual([
+      "removeWorktree",
+      { repoId: "/repo/.git", worktreeId: "/repo-wt/feat", origin: view },
+      "fp-branch",
+    ]);
+  });
+
+  it("omits an opt-in carrying an unrecognized extra key", async () => {
+    const { worktrees, view, calls } = await ready();
+    worktrees.handleMessage(view, {
+      type: "worktreeRemove",
+      worktreeId: "/repo-wt/feat",
+      fingerprint: "fp-branch",
+      deleteBranch: { ...VALID, extra: "unexpected" } as unknown as BranchDeleteRequest,
+    });
+    await settle();
+
+    expect(calls).toEqual([
+      ["removeWorktree", { repoId: "/repo/.git", worktreeId: "/repo-wt/feat", origin: view }, "fp-branch"],
+    ]);
   });
 });

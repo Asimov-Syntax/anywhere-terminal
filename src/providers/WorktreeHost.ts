@@ -1478,6 +1478,32 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /**
+   * A branch-delete opt-in: five non-empty strings echoed back from a report
+   * the host itself issued, and nothing else. Shape only — the guard replaces
+   * every OID here with the redeemed fingerprint's own issued evidence, so
+   * this check exists to keep a malformed payload from reaching that redeem
+   * call at all, not to make the OIDs here trustworthy (design.md D2, D10).
+   */
+  function isKnownDeleteBranchRequest(value: unknown): value is BranchDeleteRequest {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !onlyKeys(value, ["branch", "expectedBranchOid", "defaultBranch", "expectedDefaultOid", "fingerprint"])
+    ) {
+      return false;
+    }
+    const v = value as Record<string, unknown>;
+    const named = (field: unknown): field is string => typeof field === "string" && field.length > 0;
+    return (
+      named(v.branch) &&
+      named(v.expectedBranchOid) &&
+      named(v.defaultBranch) &&
+      named(v.expectedDefaultOid) &&
+      named(v.fingerprint)
+    );
+  }
+
+  /**
    * A switch is four scalars and nothing else.
    *
    * The Boundary this enforces: no field of it can carry a file, a path, a
@@ -2106,7 +2132,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           if (msg.fingerprint === undefined) {
             admitAssess(repoId, { kind: "rawRemoval", surface, worktreeId: msg.worktreeId });
           } else {
-            perform(() => remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint));
+            // Validated at runtime like every other inbound field on this
+            // message: an unrecognized or malformed `deleteBranch` is not a
+            // lesser opt-in, it is the same as none (round-1 W1 pattern).
+            const deleteBranchRequest = isKnownDeleteBranchRequest(msg.deleteBranch) ? msg.deleteBranch : undefined;
+            perform(() =>
+              deleteBranchRequest === undefined
+                ? remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint)
+                : remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint, deleteBranchRequest),
+            );
           }
         }
         return;
