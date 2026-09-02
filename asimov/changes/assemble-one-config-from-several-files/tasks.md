@@ -173,7 +173,7 @@
 
 ## 8. Round-7 handback — the keys a file really has, and the fact really found
 
-- [ ] 8_1 Read a JSONC file's keys from its parse tree
+- [x] 8_1 Read a JSONC file's keys from its parse tree — verified: pnpm exec vitest run 'src/worktree/provisioning/nativeProvider.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: none
   - **Refs**: design.md D12, specs/worktree-panel/spec.md#every-key-a-configuration-declares-is-judged-as-a-key-of-that-file, specs/worktree-panel/spec.md#one-unreadable-part-never-discards-the-rest-of-a-configuration
   - **Acceptance**:

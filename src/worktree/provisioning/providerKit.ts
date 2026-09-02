@@ -13,6 +13,7 @@
 // capability the interface withholds.
 
 import * as path from "node:path";
+import { getNodeValue, type ParseError, parseTree } from "jsonc-parser";
 import type {
   ProvisionContenders,
   ProvisionEntry,
@@ -156,6 +157,39 @@ export interface ProviderBudget {
    * collapses a contender group down a map keyed on it, silently and totally.
    */
   nextId: () => string;
+}
+
+/**
+ * Read a JSONC document without letting a member NAME reach the prototype.
+ *
+ * `jsonc-parser`'s `parse()` builds its result with ordinary property
+ * assignment, so a `"__proto__"` member does not become a key — it replaces the
+ * object's prototype. The parser reports no error, `Object.keys` never sees it,
+ * and an ordinary lookup for `extends` then resolves through the chain: values
+ * consumed from a key the file's own key list does not carry, and which the
+ * unknown-key report therefore never names (.reviews/round-7.md F012).
+ *
+ * `parseTree` keeps the member names it read, and `getNodeValue` materializes
+ * them onto `Object.create(null)` at every depth. So `__proto__` becomes an own
+ * key — reported like any other name the system does not read — and no lookup
+ * can resolve a value the file did not declare.
+ *
+ * Error tolerance is unchanged, which is the point: both forms report the same
+ * errors and recover the same keys, including a member whose value failed to
+ * parse, where `getNodeValue` skips the member exactly as `parse()` does.
+ * Building the record by hand instead is what a plan attack refuted — the
+ * obvious loop reads a value node that a damaged member does not have, and
+ * throws where the accepted contract says the file must be recovered.
+ */
+export function readJsonc(text: string, errors: ParseError[]): unknown {
+  const tree = parseTree(text, errors, {
+    // The format, not a defect in it: both files this reads are edited by hands
+    // that write comments and leave a trailing comma.
+    disallowComments: false,
+    allowTrailingComma: true,
+    allowEmptyContent: true,
+  });
+  return tree === undefined ? undefined : getNodeValue(tree);
 }
 
 export function newBudget(): ProviderBudget {
