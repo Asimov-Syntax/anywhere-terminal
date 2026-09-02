@@ -128,6 +128,48 @@ describe("LockedFile", () => {
     expect(reported).toEqual([lockPath]);
   });
 
+  // libuv rounds `ino` into a double unless the caller asks for bigint, so two
+  // DISTINCT files above 2^53 arrive as one number. This fake reproduces exactly
+  // that — precision on request, rounding otherwise — which is what makes the
+  // witness a test of the capture rather than of the fake.
+  function identity(dev: bigint, ino: bigint) {
+    return async (_path: unknown, options?: { bigint?: boolean }) =>
+      (options?.bigint
+        ? { dev, ino, nlink: 1n, isFile: () => true, isSymbolicLink: () => false }
+        : {
+            dev: Number(dev),
+            ino: Number(ino),
+            nlink: 1,
+            isFile: () => true,
+            isSymbolicLink: () => false,
+          }) as never;
+  }
+
+  it("does not release a lock whose identity differs from the held one only above 2^53", async () => {
+    const { target, lockPath } = await fixture();
+    const statOf = identity(1n, 2n ** 53n + 1n);
+    // 2^53 and 2^53+1 are DISTINCT integers that round to the SAME double.
+    const unlinked: string[] = [];
+    const reported: string[] = [];
+    const file = new LockedFile(target, {
+      fs: {
+        open: (async () => ({ stat: (o?: { bigint?: boolean }) => statOf(undefined, o), close: async () => undefined })) as never,
+        lstat: identity(1n, 2n ** 53n),
+        unlink: (async (path: string) => {
+          unlinked.push(path);
+        }) as never,
+      },
+    });
+
+    const outcome = await file.withLock<string>(async () => "committed", "unavailable", "failed", (path) =>
+      reported.push(path),
+    );
+
+    expect(outcome).toBe("committed");
+    expect(unlinked).toEqual([]);
+    expect(reported).toEqual([lockPath]);
+  });
+
   it("does not delete a lock pathname substituted while work is running", async () => {
     const { target, lockPath } = await fixture();
     const reported: string[] = [];

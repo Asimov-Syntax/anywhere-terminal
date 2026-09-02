@@ -206,3 +206,69 @@ describe("the injected open", () => {
     expect(closed).toBe(true);
   });
 });
+
+describe("refusing a link at the name itself", () => {
+  it("still reads a plain file when the option is on", async () => {
+    const at = path.join(root, "plain-nofollow");
+    await fs.writeFile(at, "copy:\n", "utf8");
+
+    const handle = await openRegularFile(at, undefined, { noFollow: true });
+    await handle.close();
+  });
+
+  it("refuses a symlink to an ordinary file when the option is on", async () => {
+    const at = path.join(root, "target");
+    await fs.writeFile(at, "copy:\n", "utf8");
+    const link = path.join(root, "pointer");
+    await fs.symlink(at, link);
+
+    await expect(openRegularFile(link, undefined, { noFollow: true })).rejects.toMatchObject({ code: "ENOTSUP" });
+  });
+
+  // The win32 arm: no `O_NOFOLLOW` in the constants record, so the refusal has
+  // to come from the inspection before the open. Arm-checked — this one stays
+  // green when the identity comparison is disabled, which is exactly why the
+  // substitution witness below exists as a separate test.
+  it("refuses one without the flag, on the inspection before the open", async () => {
+    const at = path.join(root, "target");
+    await fs.writeFile(at, "copy:\n", "utf8");
+    const link = path.join(root, "pointer");
+    await fs.symlink(at, link);
+
+    await expect(
+      openRegularFile(link, undefined, { noFollow: true, constants: { O_RDONLY: constants.O_RDONLY } }),
+    ).rejects.toMatchObject({ code: "ENOTSUP" });
+  });
+
+  // A link substituted AFTER the caller inspected the name — the race the
+  // native writer's own `lstat` cannot close. The injected inspection reports
+  // what was there before the swap, so only the opened handle's identity can
+  // tell the difference.
+  it("refuses a file substituted between the inspection and the open", async () => {
+    const at = path.join(root, "real");
+    await fs.writeFile(at, "copy:\n", "utf8");
+    const before = await fs.lstat(at, { bigint: true });
+    const other = path.join(root, "other");
+    await fs.writeFile(other, "elsewhere\n", "utf8");
+    await fs.rm(at);
+    await fs.symlink(other, at);
+
+    await expect(
+      openRegularFile(at, undefined, {
+        noFollow: true,
+        constants: { O_RDONLY: constants.O_RDONLY },
+        lstatFile: async () => before,
+      }),
+    ).rejects.toMatchObject({ code: "ENOTSUP" });
+  });
+
+  it("reads through a hard link with the option on, since it is the same object", async () => {
+    const at = path.join(root, "linked");
+    await fs.writeFile(at, "copy:\n", "utf8");
+    const other = path.join(root, "other");
+    await fs.link(at, other);
+
+    const handle = await openRegularFile(other, undefined, { noFollow: true });
+    await handle.close();
+  });
+});

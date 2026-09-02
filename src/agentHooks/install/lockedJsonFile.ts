@@ -96,7 +96,7 @@ export class LockedFile {
       `.${path.basename(this.path) || "hooks.json"}.${Buffer.from(this.createRandomBytes(16)).toString("hex")}.tmp`,
     );
     let handle: FileHandle | undefined;
-    let ownedIdentity: { dev: number | bigint; ino: number | bigint } | undefined;
+    let ownedIdentity: { dev: bigint; ino: bigint } | undefined;
     let live = false;
 
     const ownsTemporaryPath = async (): Promise<boolean> => {
@@ -104,7 +104,7 @@ export class LockedFile {
         return false;
       }
       try {
-        const current = await this.fs.lstat(temporaryPath);
+        const current = await this.fs.lstat(temporaryPath, { bigint: true });
         return !current.isSymbolicLink() && current.isFile() && sameIdentity(ownedIdentity, current);
       } catch {
         return false;
@@ -135,7 +135,7 @@ export class LockedFile {
       if (mode !== undefined) {
         await handle.chmod(mode);
       }
-      const opened = await handle.stat();
+      const opened = await handle.stat({ bigint: true });
       if (!opened.isFile()) {
         await discard();
         return undefined;
@@ -144,7 +144,7 @@ export class LockedFile {
     } catch {
       if (live && !ownedIdentity) {
         try {
-          const opened = await handle?.stat();
+          const opened = await handle?.stat({ bigint: true });
           if (opened) {
             ownedIdentity = { dev: opened.dev, ino: opened.ino };
           }
@@ -216,7 +216,12 @@ export class LockedFile {
   public async readText(): Promise<string | undefined> {
     let handle: FileHandle;
     try {
-      handle = await openRegularFile(this.path, this.fs.open as OpenLike);
+      // A file this class EDITS IN PLACE is not the provider file the helper was
+      // written for: a link at the name is refused rather than followed (D5).
+      handle = await openRegularFile(this.path, this.fs.open as OpenLike, {
+        noFollow: true,
+        lstatFile: (target) => this.fs.lstat(target, { bigint: true }),
+      });
     } catch (error) {
       if (isNotFound(error)) {
         return undefined;
@@ -252,12 +257,12 @@ export class LockedFile {
 
   private async releaseLock(lockPath: string, handle: FileHandle): Promise<boolean> {
     try {
-      const owned = await handle.stat();
+      const owned = await handle.stat({ bigint: true });
       let current: Awaited<ReturnType<typeof lstat>>;
       try {
-        current = await this.fs.lstat(lockPath);
+        current = await this.fs.lstat(lockPath, { bigint: true });
       } catch (error) {
-        if (isNotFound(error) && owned.nlink === 0) {
+        if (isNotFound(error) && owned.nlink === 0n) {
           return true;
         }
         return false;
@@ -279,11 +284,16 @@ export class LockedFile {
   }
 }
 
+// Captured `{ bigint: true }` at every site, because libuv rounds `ino` into a
+// double otherwise and 2^53 and 2^53+1 then name the same file — which is how a
+// DIFFERENT leaf gets unlinked as an owned temporary or as this holder's lock
+// (design.md D3). The coercion keeps a caller that injects plain numbers
+// comparing correctly rather than silently never matching.
 function sameIdentity(
   left: { dev: number | bigint; ino: number | bigint },
   right: { dev: number | bigint; ino: number | bigint },
 ): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+  return BigInt(left.dev) === BigInt(right.dev) && BigInt(left.ino) === BigInt(right.ino);
 }
 
 export function isAlreadyExists(error: unknown): boolean {
