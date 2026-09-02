@@ -1279,6 +1279,21 @@ export interface WorktreeProvisionSaveMessage {
   kept: readonly string[];
 }
 
+/** Retry the host-retained setup for one surviving worktree. */
+export interface WorktreeSetupRetryMessage {
+  type: "worktreeSetupRetry";
+  worktreeId: string;
+  /** Opaque and rotating. It resolves to no command or path in the webview. */
+  retryId: string;
+}
+
+/** Reveal the setup output the host retained for this surface. */
+export interface WorktreeSetupViewOutputMessage {
+  type: "worktreeSetupViewOutput";
+  /** Opaque and surface-scoped. It is neither a path nor terminal identity. */
+  outputId: string;
+}
+
 export interface WorktreeRefsRequestMessage {
   type: "requestWorktreeRefs";
   repoId: string;
@@ -1661,6 +1676,8 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateClosedMessage
   | WorktreeProvisionSwitchMessage
   | WorktreeProvisionSaveMessage
+  | WorktreeSetupRetryMessage
+  | WorktreeSetupViewOutputMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
@@ -1701,6 +1718,8 @@ export const WORKTREE_MESSAGE_TYPES = [
   "worktreeCreateClosed",
   "worktreeProvisionSwitch",
   "worktreeProvisionSave",
+  "worktreeSetupRetry",
+  "worktreeSetupViewOutput",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
   "worktreeAuthorizeDebris",
@@ -2685,6 +2704,48 @@ export interface ProvisionPortResult {
 /** A batch condition that does not change any committed per-port outcome. */
 export type ProvisionPortWarning = "lockReleaseFailed" | "excludeFailed" | "lockRetained" | "temporaryCleanupFailed";
 
+/** One selected setup step's outcome, echoed from the host-held offer. */
+export interface ProvisionSetupResult {
+  readonly id: string;
+  readonly source: string;
+  /** Display text only. Retry never accepts it back from the webview. */
+  readonly script: string;
+  readonly outcome:
+    | { readonly kind: "ok" }
+    | { readonly kind: "failed"; readonly reason: string }
+    | { readonly kind: "skipped"; readonly reason: string };
+}
+
+interface WorktreeProvisionResultBase {
+  type: "worktreeProvisionResult";
+  worktreeId: string;
+  setup?: readonly ProvisionSetupResult[];
+  /** Reveals host-retained output and carries no path or terminal id. */
+  setupOutputId?: string;
+  /** Rotating capability for setup-only retry. */
+  setupRetryId?: string;
+  /** The manifest is descriptive; failure to record it changes no prior outcome. */
+  manifestWarning?: string;
+}
+
+/** The first provisioning report carries the complete entry and port answer. */
+type WorktreeProvisionInitialResult = WorktreeProvisionResultBase & {
+  steps: readonly ProvisionStepResult[];
+  ports: readonly ProvisionPortResult[];
+  portWarnings?: readonly ProvisionPortWarning[];
+  /** Referenced by `ProvisionStepResult.contest`; absent when nothing contested. */
+  contests?: readonly ProvisionResultContest[];
+};
+
+/** Retry updates setup only; prior contest indices therefore cannot dangle. */
+type WorktreeProvisionSetupUpdate = WorktreeProvisionResultBase & {
+  setup: readonly ProvisionSetupResult[];
+  steps?: never;
+  ports?: never;
+  portWarnings?: never;
+  contests?: never;
+};
+
 /**
  * Extension → WebView: what provisioning did, per item, after a create.
  *
@@ -2694,15 +2755,7 @@ export type ProvisionPortWarning = "lockReleaseFailed" | "excludeFailed" | "lock
  *
  * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
  */
-export interface WorktreeProvisionResultMessage {
-  type: "worktreeProvisionResult";
-  worktreeId: string;
-  steps: readonly ProvisionStepResult[];
-  ports: readonly ProvisionPortResult[];
-  portWarnings?: readonly ProvisionPortWarning[];
-  /** Referenced by `ProvisionStepResult.contest`; absent when nothing contested. */
-  contests?: readonly ProvisionResultContest[];
-}
+export type WorktreeProvisionResultMessage = WorktreeProvisionInitialResult | WorktreeProvisionSetupUpdate;
 
 /**
  * Extension → WebView: the repository's open pull requests, or the one state

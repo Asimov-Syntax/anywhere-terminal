@@ -33,4 +33,5 @@ Blueprint: docs/PLAN.md task WT-012.11
 Lane: full (standard) — setup execution crosses host, shell, worktree lifecycle, and UI state | flags: security-privacy
 Mode: fastlane — direction, plan, build, review, approval, blueprint sync, and archive auto-proceed within accepted scope
 Oracle triage: accepted four blockers and five warnings into D2-D6/tasks; Windows now uses EncodedCommand, setup-only creates mint authority/id, retry is provisioning-only and preserves contests, PTY starts after open with a bounded transcript; rejected the asimov-provenance warning because native plus its named base are both active in the shipped model
+Plan drift check: HEAD advanced only by the approved plan commit; all named source seams remain byte-identical to 628c2ec9
 Planned at: 628c2ec9

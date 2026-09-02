@@ -1,6 +1,6 @@
 ## 1. Freeze the cross-boundary contract
 
-- [ ] 1_1 Add setup outcomes and opaque setup actions to the wire
+- [x] 1_1 Add setup outcomes and opaque setup actions to the wire — verified: bun test 'src/types/messages.contract.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{only-setup-the-user-selected-runs, setup-failure-leaves-the-successful-create-standing} <!-- design.md D1, D4, D6 -->
   - **Acceptance**:
@@ -9,7 +9,7 @@
   - **Plan**:
     1. Extend `src/types/messages.ts` with `ProvisionSetupResult`; make `WorktreeProvisionResultMessage` a full initial-result or setup-only update union; add exact `worktreeSetupRetry` and `worktreeSetupViewOutput` inbound messages carrying opaque ids only.
     2. Register both inbound types in `WebViewToExtensionMessage` and `WORKTREE_MESSAGE_TYPES`; update `src/types/messages.contract.test.ts` to prove malformed variants cannot be constructed.
-    3. Extend the exhaustive inbound sample inventory in `src/providers/TerminalViewProvider.worktree.test.ts` for both action types.
+    3. Extend the exhaustive inbound sample inventory in `src/providers/TerminalViewProvider.worktree.test.ts`; narrow existing initial-result assertions in `src/extension.worktreeAssembly.test.ts` across the new full-or-setup-update union.
 
 ## 2. Execute and record setup
 

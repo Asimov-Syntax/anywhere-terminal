@@ -1513,7 +1513,8 @@ describe("the invariants that span the host and the webview", () => {
       ?.click();
     await settleUntil(() => provisionResults.length > 0, "the failed provisioning result");
 
-    expect(provisionResults[0]?.steps[0]?.outcome.kind).toBe("failed");
+    const provision = provisionResults[0];
+    expect(provision?.steps?.[0]?.outcome.kind).toBe("failed");
     expect(fs.existsSync(path.join(destination, ".env"))).toBe(false);
   });
 
@@ -1586,9 +1587,10 @@ describe("the invariants that span the host and the webview", () => {
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
     expect(fs.readFileSync(path.join(destination, ".env.worktree"), "utf8")).toMatch(/^APP=[1-9][0-9]{0,4}\n$/);
     expect(provisionResults).toHaveLength(1);
-    expect(provisionResults[0]?.steps).toHaveLength(1);
-    expect(provisionResults[0]?.ports).toHaveLength(1);
-    expect(provisionResults[0]?.ports[0]?.outcome.kind).toBe("allocated");
+    const provision = provisionResults[0];
+    expect(provision?.steps).toHaveLength(1);
+    expect(provision?.ports).toHaveLength(1);
+    expect(provision?.ports?.[0]?.outcome.kind).toBe("allocated");
     expect(authorizedPaths).toContain(REPO);
     expect(authorizedPaths).toContain(LINKED);
     expect(authorizedPaths).toContain(destination);
