@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { chmod, lstat, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
+import { LockedFile } from "../agentHooks/install/lockedJsonFile";
 import { posixShellQuote } from "../utils/posixShellQuote";
 
 export const CURSOR_HOOK_EVENTS = [
@@ -73,8 +74,6 @@ export interface CursorHookRemoveResult {
   unresolved?: readonly string[];
 }
 
-const LOCK_WAIT_MS = 25;
-const LOCK_MAX_WAIT_MS = 1_000;
 const MAX_RECONCILE_ATTEMPTS = 3;
 
 /** Reconciles only AnyWhere Terminal's observational entries in Cursor's user hook file. */
@@ -269,55 +268,37 @@ export class CursorHookInstaller {
     }
   }
 
+  /**
+   * The shared lock, not a second one.
+   *
+   * This class kept its own: it closed the acquired handle immediately, so it
+   * held nothing to release AGAINST, and its release unlinked the pathname
+   * unconditionally — destroying a different writer's live lock whenever ours had
+   * been renamed away or replaced. `LockedFile` compares the held inode first and
+   * refuses when the name is `notOurs` (install-claude-hooks-v1 D1, D3).
+   *
+   * The trade is not free and is stated in `docs/design/worktree-provisioning.md`
+   * § 7 as R4: where the name was replaced by something abandoned, the old code
+   * unlinked it and freed the name, and this one leaves it for a holder that may
+   * not exist. Locks are deliberately never reclaimed by age, so that lock stays.
+   */
   private async withLock<T>(
     work: () => Promise<T>,
     lockUnavailable: T,
     writeFailed: T,
     lockReleaseFailed: (result: T) => T,
   ): Promise<T> {
-    const lockPath = this.lockPath();
-    if (!(await this.acquireLock(lockPath))) {
-      return lockUnavailable;
-    }
-    let result: T;
-    try {
-      result = await work();
-    } catch {
-      result = writeFailed;
-    }
-    try {
-      await this.fs.unlink(lockPath);
-    } catch (error) {
-      if (!isNotFound(error)) {
-        return lockReleaseFailed(result);
-      }
-    }
-    return result;
-  }
-
-  private lockPath(): string {
-    return `${this.options.configPath}.anywhere-terminal.lock`;
-  }
-
-  private async acquireLock(lockPath: string): Promise<boolean> {
-    const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
-    for (let attempt = 0; attempt <= attempts; attempt += 1) {
-      try {
-        const handle = await this.fs.open(lockPath, "wx");
-        await handle.close();
-        return true;
-      } catch (error) {
-        if (!isAlreadyExists(error)) {
-          return false;
-        }
-        // Age is not ownership. A paused extension host can legitimately hold
-        // this lock beyond any wall-clock threshold; deleting it would let two
-        // hosts replace the same user config concurrently. Fail closed after
-        // the bounded wait instead (inline-cursor-hooks D8).
-        await this.sleep(LOCK_WAIT_MS);
-      }
-    }
-    return false;
+    let releaseFailed = false;
+    const result = await new LockedFile(this.options.configPath, {
+      fs: this.fs,
+      sleep: this.sleep,
+      platform: this.platform,
+    }).withLock(work, lockUnavailable, writeFailed, () => {
+      releaseFailed = true;
+    });
+    // The reason only — never the pathname. `LockedFile` hands the callback a
+    // lock path and this deliberately drops it.
+    return releaseFailed ? lockReleaseFailed(result) : result;
   }
 
   private async reconcile(
@@ -472,10 +453,6 @@ function isSupportedDocument(document: JsonObject): boolean {
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
 }
 
 function isNotFound(error: unknown): boolean {

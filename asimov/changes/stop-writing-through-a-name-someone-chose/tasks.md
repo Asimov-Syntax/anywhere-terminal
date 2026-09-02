@@ -13,7 +13,7 @@
     4. In `src/cursor/CursorHookInstaller.test.ts`, add a witness against a real temp directory that pre-places a symlink at the injected staging name pointing at a decoy file, asserts the replace fails, and asserts the decoy's contents are unchanged. Arm-check it by restoring `writeFile` and confirming the decoy IS overwritten.
     5. In the same test file, add a witness asserting the staging name contains neither the injected clock value nor the name a second staging of the same file produced.
 
-- [ ] 1_2 Give Cursor the shared lock instead of its own
+- [x] 1_2 Give Cursor the shared lock instead of its own — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts src/cursor/CursorHookInstaller.runtime.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/agent-hook-installation/spec.md#a-release-removes-only-the-lock-the-operation-still-identifies; design.md D2
   - **Acceptance**:

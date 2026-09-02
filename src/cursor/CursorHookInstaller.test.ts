@@ -1,5 +1,19 @@
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
@@ -35,6 +49,23 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
     files.set(wrapperPath, wrapperContents);
   }
   const replacements: Array<[string, string]> = [];
+  // Identities, because the lock now decides ownership on them: `LockedFile`
+  // compares the held handle's inode against the name's before it unlinks, and a
+  // double that cannot answer `stat` sends it down the `indeterminate` arm — which
+  // reads as a release failure and is NOT what these Windows tests are about.
+  // Anything this double leaves out is filled from the real `node:fs/promises`
+  // (lockedJsonFile.ts:80), so an omission would reach the actual filesystem.
+  let nextInode = 1n;
+  const inodes = new Map<string, bigint>();
+  const identify = (path: string) => {
+    let ino = inodes.get(path);
+    if (ino === undefined) {
+      ino = nextInode;
+      nextInode += 1n;
+      inodes.set(path, ino);
+    }
+    return { dev: 1n, ino, nlink: 1n, mode: 0o600n, isFile: () => true, isSymbolicLink: () => false };
+  };
   const memoryFsImpl = {
     mkdir: vi.fn(async () => undefined),
     chmod: vi.fn(async () => undefined),
@@ -42,15 +73,17 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
       if (!files.has(path)) {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       }
-      return { isSymbolicLink: () => false };
+      return identify(path);
     }),
     open: vi.fn(async (path: string) => {
       if (files.has(path)) {
         throw Object.assign(new Error("exists"), { code: "EEXIST" });
       }
       files.set(path, "");
+      identify(path);
       return {
         close: async () => undefined,
+        stat: async () => identify(path),
         writeFile: async (contents: string) => {
           files.set(path, contents);
         },
@@ -83,6 +116,7 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
       if (!files.delete(path)) {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       }
+      inodes.delete(path);
     }),
     writeFile: vi.fn(async (path: string, contents: string | Uint8Array) => {
       files.set(path, typeof contents === "string" ? contents : Buffer.from(contents).toString("utf8"));
@@ -426,38 +460,38 @@ describe("CursorHookInstaller", () => {
     await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.each(["install", "uninstall"] as const)(
-    "reports a final POSIX lock-release failure after %s without erasing committed state",
-    async (operation) => {
-      const paths = await fixture();
-      await writeFile(
-        paths.configPath,
-        JSON.stringify({
-          version: 1,
-          hooks: operation === "uninstall" ? { sessionStart: [{ command: CURSOR_HOOK_COMMAND, timeout: 2 }] } : {},
-        }),
-      );
-      const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
-      const installer = new CursorHookInstaller(paths, {
-        fs: {
-          unlink: async (path) => {
-            if (String(path) === lockPath) {
-              throw Object.assign(new Error("denied"), { code: "EACCES" });
-            }
-            await unlink(path);
-          },
+  it.each([
+    "install",
+    "uninstall",
+  ] as const)("reports a final POSIX lock-release failure after %s without erasing committed state", async (operation) => {
+    const paths = await fixture();
+    await writeFile(
+      paths.configPath,
+      JSON.stringify({
+        version: 1,
+        hooks: operation === "uninstall" ? { sessionStart: [{ command: CURSOR_HOOK_COMMAND, timeout: 2 }] } : {},
+      }),
+    );
+    const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
+    const installer = new CursorHookInstaller(paths, {
+      fs: {
+        unlink: async (path) => {
+          if (String(path) === lockPath) {
+            throw Object.assign(new Error("denied"), { code: "EACCES" });
+          }
+          await unlink(path);
         },
-      });
+      },
+    });
 
-      const result = await installer[operation]();
-      expect(result).toEqual(
-        operation === "install"
-          ? { installed: true, reason: "lock-release-failed" }
-          : { removed: true, reason: "lock-release-failed" },
-      );
-      expect(await readFile(lockPath, "utf8")).toBe("");
-    },
-  );
+    const result = await installer[operation]();
+    expect(result).toEqual(
+      operation === "install"
+        ? { installed: true, reason: "lock-release-failed" }
+        : { removed: true, reason: "lock-release-failed" },
+    );
+    expect(await readFile(lockPath, "utf8")).toBe("");
+  });
 
   it("returns lock-unavailable after a bounded number of lock attempts", async () => {
     const paths = await fixture();
@@ -647,70 +681,70 @@ describe("CursorHookInstaller", () => {
     expect(document).toMatchObject({ version: 1, hooks: { sessionStart: [] } });
   });
 
-  it.each(["install", "uninstall"] as const)(
-    "retains the released Windows wrapper when %s preserves a custom event reference",
-    async (operation) => {
-      const storagePath =
-        "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
-      const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
-      const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
-        {
-          version: 1,
-          hooks: {
-            sessionStart: [{ command: legacyCommand, timeout: 2 }],
-            customEvent: [{ command: legacyCommand, timeout: 2 }],
-          },
+  it.each([
+    "install",
+    "uninstall",
+  ] as const)("retains the released Windows wrapper when %s preserves a custom event reference", async (operation) => {
+    const storagePath =
+      "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
+    const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
+    const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
+      {
+        version: 1,
+        hooks: {
+          sessionStart: [{ command: legacyCommand, timeout: 2 }],
+          customEvent: [{ command: legacyCommand, timeout: 2 }],
         },
-        "legacy",
-      );
-      const installer = new CursorHookInstaller(paths, { fs: memoryFs });
+      },
+      "legacy",
+    );
+    const installer = new CursorHookInstaller(paths, { fs: memoryFs });
 
-      await expect(installer[operation]()).resolves.toEqual(
-        operation === "install"
-          ? { installed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] }
-          : { removed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] },
-      );
-      const document = JSON.parse(files.get(paths.configPath) ?? "") as {
-        hooks: Record<string, Array<Record<string, unknown>>>;
-      };
-      expect(document.hooks.sessionStart).toEqual([]);
-      expect(document.hooks.customEvent).toEqual([{ command: legacyCommand, timeout: 2 }]);
-      expect(files.get(wrapperPath)).toBe("legacy");
-    },
-  );
+    await expect(installer[operation]()).resolves.toEqual(
+      operation === "install"
+        ? { installed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] }
+        : { removed: false, reason: "legacy-wrapper-referenced", unresolved: [wrapperPath] },
+    );
+    const document = JSON.parse(files.get(paths.configPath) ?? "") as {
+      hooks: Record<string, Array<Record<string, unknown>>>;
+    };
+    expect(document.hooks.sessionStart).toEqual([]);
+    expect(document.hooks.customEvent).toEqual([{ command: legacyCommand, timeout: 2 }]);
+    expect(files.get(wrapperPath)).toBe("legacy");
+  });
 
-  it.each(["install", "uninstall"] as const)(
-    "reports a final Windows lock-release failure after %s without erasing committed state",
-    async (operation) => {
-      const storagePath =
-        "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
-      const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
-      const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
-        {
-          version: 1,
-          hooks: { sessionStart: [{ command: legacyCommand, timeout: 2 }] },
-        },
-        "legacy",
-      );
-      const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
-      const baseUnlink = memoryFs.unlink;
-      memoryFs.unlink = vi.fn(async (path: import("node:fs").PathLike) => {
-        if (String(path) === lockPath) {
-          throw Object.assign(new Error("denied"), { code: "EACCES" });
-        }
-        await baseUnlink(path);
-      });
-      const installer = new CursorHookInstaller(paths, { fs: memoryFs });
+  it.each([
+    "install",
+    "uninstall",
+  ] as const)("reports a final Windows lock-release failure after %s without erasing committed state", async (operation) => {
+    const storagePath =
+      "C:\\Users\\alice\\AppData\\Roaming\\Code\\User\\globalStorage\\huybuidac.anywhere-terminal\\cursor-hooks";
+    const legacyCommand = `"${win32.join(storagePath, "cursor-hook-observer.cmd")}"`;
+    const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture(
+      {
+        version: 1,
+        hooks: { sessionStart: [{ command: legacyCommand, timeout: 2 }] },
+      },
+      "legacy",
+    );
+    const lockPath = `${paths.configPath}.anywhere-terminal.lock`;
+    const baseUnlink = memoryFs.unlink;
+    memoryFs.unlink = vi.fn(async (path: import("node:fs").PathLike) => {
+      if (String(path) === lockPath) {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      }
+      await baseUnlink(path);
+    });
+    const installer = new CursorHookInstaller(paths, { fs: memoryFs });
 
-      await expect(installer[operation]()).resolves.toEqual(
-        operation === "install"
-          ? { installed: false, reason: "lock-release-failed" }
-          : { removed: true, reason: "lock-release-failed" },
-      );
-      expect(files.has(wrapperPath)).toBe(false);
-      expect(files.has(lockPath)).toBe(true);
-    },
-  );
+    await expect(installer[operation]()).resolves.toEqual(
+      operation === "install"
+        ? { installed: false, reason: "lock-release-failed" }
+        : { removed: true, reason: "lock-release-failed" },
+    );
+    expect(files.has(wrapperPath)).toBe(false);
+    expect(files.has(lockPath)).toBe(true);
+  });
 
   it("returns unsupported-platform without creating a Windows wrapper when nothing was installed", async () => {
     const { files, memoryFs, paths, wrapperPath } = windowsMemoryFixture({ version: 1, hooks: {} });
@@ -720,7 +754,13 @@ describe("CursorHookInstaller", () => {
       reason: "unsupported-platform",
     });
     expect(files.has(wrapperPath)).toBe(false);
-    expect(memoryFs.mkdir).not.toHaveBeenCalled();
+    // The subject is the WRAPPER's directory. "mkdir was never called" used to
+    // stand in for that, and stopped distinguishing when the shared lock started
+    // ensuring the config's own directory — which is recursive, already exists,
+    // and is not what this test guards.
+    for (const [target] of memoryFs.mkdir.mock.calls as unknown as Array<[string]>) {
+      expect(target).not.toContain("cursor-hooks");
+    }
   });
 
   describe("the frozen POSIX literal", () => {
@@ -992,5 +1032,67 @@ describe("where a replacement is staged", () => {
     expect(seen).toHaveLength(2);
     expect(seen[0]).not.toContain("1756800000000");
     expect(seen[0]).not.toBe(seen[1]);
+  });
+});
+
+// Release, against a real filesystem. `beforeReplace` runs inside the lock, so it
+// is where a competing writer's substitution is scheduled.
+describe("which lock a release removes", () => {
+  const lockOf = (configPath: string) => `${configPath}.anywhere-terminal.lock`;
+
+  it("leaves a lock the name no longer identifies, rather than deleting it", async () => {
+    const paths = await fixture();
+    await writeFile(paths.configPath, `${JSON.stringify({ version: 1, hooks: {} })}\n`, "utf8");
+    const lock = lockOf(paths.configPath);
+
+    const result = await new CursorHookInstaller(paths, {
+      beforeReplace: async () => {
+        // Someone else's live lock now sits at the name ours did.
+        await unlink(lock);
+        await writeFile(lock, "SOMEONE ELSE\n", "utf8");
+      },
+    }).install();
+
+    expect(await readFile(lock, "utf8")).toBe("SOMEONE ELSE\n");
+    expect(result.reason).toBe("lock-release-failed");
+  });
+
+  // R2, and it stays red-by-design: the comparison and the unlink are two calls,
+  // so a substitution scheduled BETWEEN them is unlinked by the second. No
+  // pure-Node mechanism closes this — Node exposes no `*at` (design.md D3). The
+  // witness pins the boundary so a future runtime that closes it fails here
+  // loudly instead of silently.
+  it("R2 — cannot see a substitution that lands between the comparison and the unlink", async () => {
+    const paths = await fixture();
+    await writeFile(paths.configPath, `${JSON.stringify({ version: 1, hooks: {} })}\n`, "utf8");
+    const lock = lockOf(paths.configPath);
+    let swapped = false;
+
+    await new CursorHookInstaller(paths, {
+      fs: {
+        lstat: (async (path: string, options?: unknown) => {
+          const seen = await lstat(path, options as Parameters<typeof lstat>[1]);
+          if (path === lock && !swapped) {
+            swapped = true;
+            await unlink(lock);
+            await writeFile(lock, "SOMEONE ELSE\n", "utf8");
+          }
+          return seen;
+        }) as unknown as typeof lstat,
+      },
+    }).install();
+
+    expect(swapped).toBe(true);
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("never reaches the real filesystem from the in-memory Windows fixture", async () => {
+    const { memoryFs, paths } = windowsMemoryFixture({ version: 1, hooks: {} });
+    const probe = await mkdtemp(join(tmpdir(), "cursor-untouched-"));
+    tempDirectories.push(probe);
+
+    await new CursorHookInstaller(paths, { fs: memoryFs }).install();
+
+    expect(await readdir(probe)).toEqual([]);
   });
 });
