@@ -143,4 +143,14 @@
     2. `src/worktree/provisioning/applyProvisioning.ts` exports one builder for "every entry failed for one reason" that recomputes the contests and attaches each member's index (F011).
     3. `src/extension.ts` builds the unreadable-root result through it, and stages its memberships like the ordinary path.
     4. `asimov/changes/award-a-contested-destination-or-refuse-it/design.md` D4a and the ledger describe the shipped representation — local reason, contest index, membership once — not the withdrawn per-reason expansion (F008).
-    5. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/worktree/provisioning/applyProvisioning.test.ts` witness each. The unreadable-root case is witnessed on the builder rather than through the activation path: `src/extension.worktreeAssembly.test.ts` has no harness that can make `prepareEntryGate` answer `null`, and the staging the call site does on that path is the same two lines the ordinary path already has under integration test.
+    5. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/worktree/provisioning/applyProvisioning.test.ts` witness each. The unreadable-root case is witnessed on the builder. (Corrected after round 6 F012: this step originally justified that by claiming `src/extension.worktreeAssembly.test.ts` has no harness that can make `prepareEntryGate` answer `null`. That was false — the neighbouring bring-over case creates the destination precisely because it otherwise does. Task 8_1 adds the missing call-site witness.)
+
+- [x] 8_1 Arm the assembly bypass that F011 came through — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Refs**: .reviews/round-6.md#f012
+  - **Acceptance**:
+    - Outcome: Reverting the unreadable-root wiring alone fails an assembly test
+    - Verify: unit src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts` submits two contested declarations and deliberately does NOT create the destination, so `prepareEntryGate` answers `null` and the create takes the unreadable-root path — the same harness the neighbouring bring-over case uses in reverse.
+    2. It asserts both failed rows resolve through ONE contest membership naming every member's path and declaring file, so the wiring is witnessed at the call site rather than only on the builder.
+    3. Round 5's Plan step 5 claim that this file has no such harness is corrected in place — it was wrong, not merely optimistic.
