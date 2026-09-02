@@ -535,3 +535,68 @@ describe("[round-5 F011] the worktree could not be read at all", () => {
     expect(contests).toEqual([]);
   });
 });
+
+// [OOB-F016 / D3a] `read` collapsed every gate refusal into `inadmissible`, so
+// an inherited member refused by its OWN material rule proved the shared
+// destination "not free" and the admissible native member was refused at a
+// destination that did not exist. A refusal reached before the gate touched
+// anything is a fact about the entry, not a reading of the destination.
+describe("[OOB-F016] a member's own refusal is not an observation of the destination", () => {
+  const DEPS = {
+    [`${MAIN}/node_modules`]: { kind: "dir" },
+    [`${MAIN}/node_modules/pkg`]: { kind: "file", size: 7 },
+  } as const;
+
+  it("lets the favoured member claim a destination no reading found present", async () => {
+    // One destination, two modes: the repository's own says copy it, the
+    // inherited file says link it — and linking node_modules is refused by a
+    // rule that never opens anything.
+    const { steps, fs } = await applyTo(DEPS, [
+      entry("node_modules", "copy", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    expect(fs.nodes.has(`${WT}/node_modules/pkg`)).toBe(true);
+    // Production order, per D5: this refusal is settled in the reading pass
+    // that precedes the ordered one, alongside the group refusals, because
+    // that is where the gate answered it.
+    expect(steps.map((s) => [s.id, s.outcome.kind])).toEqual([
+      ["i2", "refused"],
+      ["i1", "copied"],
+    ]);
+  });
+
+  it("refuses that member with the rule that actually fired, naming the contest", async () => {
+    // D4b: the reason stays the member's own; D4a: the membership rides the
+    // contest index, so the reader still sees what it was weighed against.
+    const { steps, contests } = await applyTo(DEPS, [
+      entry("node_modules", "copy", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    const refused = steps.find((s) => s.id === "i2");
+    expect(refused?.outcome).toMatchObject({ reason: expect.stringContaining("node_modules is never linked") });
+    expect(named(contests, refused)).toEqual([
+      "node_modules (declared in .vscode/worktree.json)",
+      "node_modules (declared in asimov/worktree.yaml)",
+    ]);
+  });
+
+  it("still refuses the whole contest when the refusal DID observe the destination", async () => {
+    // A containment refusal reaches realpath and lstat, so it cannot be told
+    // apart from an unreadable destination — the narrowing must not reopen
+    // what D3 closed.
+    const { steps, fs } = await applyTo(
+      {
+        [`${MAIN}/escape`]: { kind: "dir" },
+        [`${MAIN}/escape/a`]: { kind: "file", size: 3 },
+        [`${WT}/escape`]: { kind: "link", target: "/outside" },
+        "/outside": { kind: "dir" },
+      },
+      [entry("escape/a", "copy", NATIVE, "i1"), entry("Escape/a", "copy", INHERITED, "i2")],
+    );
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
+    expect(fs.created).toEqual([]);
+  });
+});

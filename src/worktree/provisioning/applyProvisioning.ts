@@ -81,8 +81,14 @@ function contestsOf(entries: readonly ProvisionEntry[]): Contest[] {
  * free, and collapsing `inadmissible` into `present` reports a collision
  * nobody observed while discarding the refusal the gate actually had
  * (.reviews/round-1.md F002).
+ *
+ * `refused` and `inadmissible` are both gate refusals and are NOT the same
+ * reading (design.md D3a). Only `inadmissible` reached the filesystem, so only
+ * it leaves the destination unproven; `refused` is a fact about this member's
+ * own name or mode and says nothing about the destination at all
+ * (.reviews/round-6.md OOB-F016).
  */
-type Reading = "absent" | "present" | "unreadable" | "inadmissible";
+type Reading = "absent" | "present" | "unreadable" | "inadmissible" | "refused";
 
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code;
 
@@ -168,9 +174,16 @@ export async function applyProvisioning(
    * The gate owns where an entry lands, so this asks it rather than resolving
    * the path a second way.
    */
+  /** The reason a member was refused for what it IS, until it can be answered. */
+  const refusedItself = new Map<ProvisionEntry, string>();
+
   const read = async (entry: ProvisionEntry): Promise<Reading> => {
     const admitted = await admitEntry(entry, roots, deps);
     if (!admitted.ok) {
+      if (!admitted.observedDestination) {
+        refusedItself.set(entry, admitted.reason);
+        return "refused";
+      }
       return "inadmissible";
     }
     try {
@@ -187,7 +200,8 @@ export async function applyProvisioning(
    * filesystem itself and so cannot be told apart from an unreadable
    * destination (`resolvedPathBoundary.ts:117-121`).
    */
-  const contended = (readings: readonly Reading[]): boolean => readings.some((reading) => reading !== "absent");
+  const contended = (readings: readonly Reading[]): boolean =>
+    readings.some((reading) => reading !== "absent" && reading !== "refused");
 
   /** Refuse every member that is still claiming, naming the whole contest. */
   const refuseContest = async (contest: Contest, why: string): Promise<void> => {
@@ -218,9 +232,26 @@ export async function applyProvisioning(
       );
       continue;
     }
-    live.set(contest.favoured, contest);
+    // A member refused for what it IS is refused ALONE, keeping the rule that
+    // actually fired (D4b) decorated with its contest (D4a). The contest goes
+    // on without it, so an admissible favoured member still claims a
+    // destination no reading found present (design.md D3a).
+    for (const member of members) {
+      const reason = refusedItself.get(member);
+      if (reason !== undefined) {
+        answered.set(member, step(member, reason, contest));
+      }
+    }
     for (const member of contest.held) {
-      held.set(member, contest);
+      if (!answered.has(member)) {
+        held.set(member, contest);
+      }
+    }
+    // A favoured member refused this way did not claim, which is D4 row 3 —
+    // the held members are refused by the pass below, never written in its
+    // place.
+    if (!answered.has(contest.favoured)) {
+      live.set(contest.favoured, contest);
     }
   }
 

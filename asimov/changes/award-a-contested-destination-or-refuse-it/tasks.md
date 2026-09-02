@@ -167,7 +167,7 @@
     1. In `src/worktree/provisioning/entryGate.ts`, have a refusal carry whether it was reached before or after the filesystem was touched, keeping every existing reason string unchanged.
     2. Witness a name refusal and a material refusal reporting no observation, and a containment refusal reporting one.
 
-- [ ] 9_2 Refuse a member for what it is without refusing the contest
+- [x] 9_2 Refuse a member for what it is without refusing the contest — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 9_1
   - **Refs**: design.md D3a, .reviews/round-6.md
   - **Acceptance**:
