@@ -199,7 +199,7 @@
     3. Witness a present `extends` target whose read fails: the reported problem is the unreadable one, `missingExtends` is absent, and the native file's own material is still offered with Create available.
     4. Witness the two that must NOT move, so the narrowing has a failure mode: `readProvisioning.test.ts:451-460`'s out-of-tree symlink still reports `missingExtends`, and a root failure does too. Neither existing assertion changes — if one has to, stop, because the split has taken a case D13 says it must not.
 
-- [ ] 8_3 Compute the contest over the entries the merge kept
+- [x] 8_3 Compute the contest over the entries the merge kept — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 8_1, 8_2
   - **Refs**: design.md D14
   - **Acceptance**:
@@ -208,5 +208,5 @@
   - **Plan**:
     1. Verify against the shipped code first, in `src/worktree/provisioning/readProvisioning.ts`: the groups are already built after the merge, so this task may be a witness in `src/worktree/provisioning/readProvisioning.test.ts` rather than a change. If it is, say so in the commit and do not move code to make the task look like work.
     2. Witness over the ASSEMBLED model — not one adapter's — that a native spelling superseding an inherited one, and an `exclude` removing a second, leave every group naming only ids the model still carries, and that a group's repository-declared members are exactly the entries whose `source` is the native file.
-    3. Assert group SIZES survive an offer round trip, not only that every id resolves. `remint` drops an unknown id silently, so a broken invariant would shrink a group rather than leave a dangling id — asserting membership alone gives it no failure mode.
+    3. In `src/worktree/provisioning/offerStore.test.ts`, assert group SIZES survive an offer round trip, not only that every id resolves. `remint` drops an unknown id silently, so a broken invariant would shrink a group rather than leave a dangling id — asserting membership alone gives it no failure mode.
 

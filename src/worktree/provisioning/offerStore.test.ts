@@ -293,3 +293,30 @@ describe("ids are scoped to the offer, not to the adapter (round-2 W4)", () => {
     expect(new Set([...idsOf(first.model), ...idsOf(second.model)]).size).toBe(10);
   });
 });
+
+describe("[D14] a group's size is what a silent drop would change", () => {
+  it("carries every member across a remint, counted", () => {
+    // `remint` drops an id it cannot translate rather than failing on it. So a
+    // broken translation SHRINKS a group instead of leaving a dangling id, and
+    // an assertion that only checks "every id resolves" passes on the wreck.
+    // Counting is the failure mode.
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, {
+      ...model("MixedCase"),
+      entries: [
+        { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i2", path: "MIXEDCASE", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i3", path: "mixedcase", mode: "copy", source: "orca.yaml" },
+      ],
+      contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1", "i2"] }],
+    });
+
+    expect(offer.model.contenders).toHaveLength(1);
+    expect(offer.model.contenders[0]?.members).toHaveLength(3);
+    expect(offer.model.contenders[0]?.natives).toHaveLength(2);
+    // And every id a group names is one the offer actually carries.
+    const live = new Set(offer.model.entries.map((e) => e.id));
+    const named = offer.model.contenders.flatMap((g) => [...g.members, ...g.natives]);
+    expect(named.filter((id) => !live.has(id))).toEqual([]);
+  });
+});

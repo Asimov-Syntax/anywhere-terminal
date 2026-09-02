@@ -1099,3 +1099,63 @@ describe("[round-7 F014] a source found and unreadable is not a source that is a
     expect(model.problems.map((p) => p.reason)).toEqual(["missingExtends"]);
   });
 });
+
+describe("[D14] a contest names only rows the offer actually carries", () => {
+  /** Every id any group names, against the ids the model kept. */
+  const dangling = (model: Awaited<ReturnType<typeof readProvisioning>>): readonly string[] => {
+    const held = new Set(model.entries.map((e) => e.id));
+    return model.contenders.flatMap((g) => [...g.members, ...g.natives]).filter((id) => !held.has(id));
+  };
+
+  it("drops a spelling the native file superseded, and keeps the one it contests", async () => {
+    // The inherited file declares BOTH spellings. One is deduped away by the
+    // native declaration of the same path; the other survives and is what the
+    // native row actually contests. A group built before the merge would still
+    // name the superseded row.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [MixedCase, mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => [e.path, e.source])).toEqual([
+      ["mixedcase", ORCA_YAML_FILE],
+      ["MixedCase", NATIVE_PROVIDER_FILE],
+    ]);
+    expect(dangling(model)).toEqual([]);
+    expect(model.contenders[0]?.members.length).toBe(2);
+  });
+
+  it("names nothing a rule removed", async () => {
+    // `exclude` runs after the merge and before the grouping. A member removed
+    // there is not contesting a destination — nothing will write it.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"], "exclude": ["mixedcase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["MixedCase"]);
+    expect(model.excluded.map((e) => e.path)).toEqual(["mixedcase"]);
+    expect(dangling(model)).toEqual([]);
+    expect(model.contenders).toEqual([]);
+  });
+
+  it("names only the entries whose own file is the repository's as native", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    const own = new Set(model.entries.filter((e) => e.source === NATIVE_PROVIDER_FILE).map((e) => e.id));
+    expect(model.contenders[0]?.natives.every((id) => own.has(id))).toBe(true);
+    expect(model.contenders[0]?.natives.length).toBe(1);
+  });
+});
