@@ -1155,6 +1155,25 @@ describe("Bring over — a repository that declares nothing, and a file that can
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Could not be read");
   });
 
+  it("says a save did not happen, rather than that a file could not be read", () => {
+    // The one problem reason that is not about a read. Reporting it as unread
+    // would say the section could not read a file whose contents it has just
+    // rendered — the category error `unsaved` exists to end (design.md D13).
+    const { host } = withModel({
+      ...emptyProvisionModel(),
+      problems: [
+        {
+          file: ".vscode/worktree.json",
+          reason: "unsaved",
+          detail: "`.vscode/worktree.json` was not saved. Another process is holding it.",
+        },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Not saved");
+    expect(host.querySelector(".wt-bring-problem")?.textContent).toContain("was not saved");
+  });
+
   it("still offers Create when the provider file is malformed", () => {
     // A broken provisioning config is not a reason to refuse to make a worktree.
     const { host, q } = withModel(malformedProvisionModel());
@@ -1489,34 +1508,103 @@ describe("Bring over — recording the choice in the repository's own configurat
     expect(posted).toEqual([{ repoId: REPO_ID, switch: 1, offerId: "provision-1", kept: ["i1", "i3", "i4"] }]);
   });
 
+  const TWO_SOURCES = [
+    { id: "asimov" as const, files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+    { id: "orca" as const, files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+  ];
+
+  /** A form with a source to take and a channel the replacement offer arrives on. */
+  function switchable() {
+    const posted: unknown[] = [];
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const { host } = open({
+      repos: [createDefaults({ provisioning: provisionOffer({ model: provisionModel({ providers: TWO_SOURCES }) }) })],
+      onProvisionSwitch: (request) => posted.push(request),
+      onProvisionSave: (request) => posted.push(request),
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    return {
+      host,
+      posted,
+      take: () => host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click(),
+      configure: () => host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click(),
+      answered: (offerId: string) =>
+        applyOffer?.(REPO_ID, provisionOffer({ offerId, model: provisionModel({ providers: TWO_SOURCES }) })),
+    };
+  }
+
   it("shares one sequence with the source switch, so the two order against each other", () => {
     // The host takes the ceiling from this number. Two counters would let a
     // save begun against the offer on screen finish after a later switch had
     // published, and overwrite the choice the user actually made (design.md D8).
-    const posted: unknown[] = [];
-    const { host } = open({
-      repos: [
-        createDefaults({
-          provisioning: provisionOffer({
-            model: provisionModel({
-              providers: [
-                { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
-                { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false },
-              ],
-            }),
-          }),
-        }),
-      ],
-      onProvisionSwitch: (request) => posted.push(request),
-      onProvisionSave: (request) => posted.push(request),
-    });
-    host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
-    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+    const form = switchable();
 
-    expect(posted).toEqual([
+    form.take();
+    form.answered("provision-2");
+    form.configure();
+
+    expect(form.posted).toEqual([
       { repoId: REPO_ID, switch: 1, provider: "orca" },
-      { repoId: REPO_ID, switch: 2, offerId: "provision-1", kept: ["i1", "i2", "i3", "i4"] },
+      { repoId: REPO_ID, switch: 2, offerId: "provision-2", kept: ["i1", "i2", "i3", "i4"] },
     ]);
+  });
+
+  it("offers no save between taking a source and being shown the result", () => {
+    // The offer on screen is superseded the moment a source is taken. A save
+    // pressed here would record the SUPERSEDED source, and — minting the higher
+    // sequence — would make the switch fail its own re-check and disappear with
+    // no report. Both halves obey D8 exactly; what is missing is a rule about
+    // what the form may OFFER while a switch is outstanding (design.md D15).
+    const form = switchable();
+
+    form.take();
+
+    expect(form.host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
+    form.configure();
+    expect(form.posted).toEqual([{ repoId: REPO_ID, switch: 1, provider: "orca" }]);
+  });
+
+  it("offers the save again once the replacement offer is drawn", () => {
+    // Removal is not a dead end: the answer restores the control, and it is a
+    // NEW offer id that counts as the answer.
+    const form = switchable();
+    form.take();
+
+    form.answered("provision-2");
+
+    expect(form.host.querySelectorAll(".wt-bring-save")).toHaveLength(1);
+  });
+
+  it("keeps the save out while a redraw arrives that is not the answer", () => {
+    // Re-delivering the SAME offer is the form being redrawn, not the switch
+    // being answered.
+    const form = switchable();
+    form.take();
+
+    form.answered("provision-1");
+
+    expect(form.host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
+  });
+
+  it("offers no save where nothing is listening for one", () => {
+    // The same statement the missing offer already makes: a control whose press
+    // the host would never hear is nothing at all (.reviews/round-1.md F009).
+    const { host } = open({ repos: [createDefaults({ provisioning: provisionOffer() })] });
+
+    expect(host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
+  });
+
+  it("names the note as the button's description", () => {
+    // Sighted, the note sits beside the button and completes the sentence. To a
+    // screen reader walking the controls, the button announced alone is the half
+    // that sounds complete (.reviews/round-1.md F014).
+    const { host, configure } = withSave();
+    const note = host.querySelector(".wt-bring-save-note");
+
+    expect(note?.id).toBeTruthy();
+    expect(configure?.getAttribute("aria-describedby")).toBe(note?.id);
   });
 
   it("states which of the user's choices this create keeps rather than the repository", () => {

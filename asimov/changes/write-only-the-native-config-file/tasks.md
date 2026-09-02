@@ -121,7 +121,7 @@ genuinely parallel, so nothing here pretends to be.
     5. Deliver the latest live switch through the guarded post helper rather than the direct `surface.post`, so a throw cannot strand a form (D19).
     6. Cover each in `src/providers/WorktreeHost.actions.test.ts`, including a save payload carrying an extra key, and add the wire sample in `src/providers/TerminalViewProvider.worktree.test.ts`.
 
-- [ ] 2_4 Offer the save only where it can be honoured
+- [x] 2_4 Offer the save only where it can be honoured — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_3
   - **Refs**: specs/worktree-panel/spec.md#{no-save-is-offered-against-a-source-change-still-in-progress} <!-- design.md D15, D19; .reviews/round-1.md F009, F014 -->
   - **Acceptance**:

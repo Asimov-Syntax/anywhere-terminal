@@ -186,3 +186,7 @@ Planned at: a82ccc85
   form holding an evicted id, and F007's refresh is what answers it. That composition is the test.
 - 2_3 step 6, already satisfied: `TerminalViewProvider.worktree.test.ts` has carried the
   `worktreeProvisionSave` wire sample without `provider` since 1_5, so this task added no sample.
+- 2_4 steps 2 and 6, already satisfied and so not re-done: the form never sent a source-change flag —
+  D14's `took` was refuted at plan time and never implemented — so `WorktreeController.ts` needed no
+  change and its test no addition. The take-then-configure interleaving is witnessed in
+  `WorktreeCreateDialog.test.ts`, where the control lives.

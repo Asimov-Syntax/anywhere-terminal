@@ -572,9 +572,10 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
 /**
  * `2 copied · 1 linked · 1 port · 1 setup step` — what the section will do.
  *
- * Three states, three sentences. "Nothing configured" is a repository that
- * declares nothing; "Could not be read" is a provider file that failed. They are
- * not the same claim, and a single blank summary would make them look alike.
+ * Four states, four sentences. "Nothing configured" is a repository that
+ * declares nothing; "Could not be read" is a provider file that failed; "Not
+ * saved" is a save that was refused about a file that read fine. They are not
+ * the same claim, and a single blank summary would make them look alike.
  */
 function bringSummary(model: WorktreeProvisionOffer["model"], selected: ReadonlySet<string>): string {
   // The entry counts follow the SELECTION, not the model. A member yielding to
@@ -646,7 +647,14 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
   }
   // Nothing to do. WHY there is nothing is the distinction that matters: a file
   // that failed to parse would have produced entries if it had parsed.
-  return model.problems.length > 0 ? "Could not be read" : "Nothing configured";
+  if (model.problems.length === 0) {
+    return "Nothing configured";
+  }
+  // And a save that was refused is a fourth statement, not the third one: the
+  // file read perfectly well, and saying it could not be read about a file this
+  // form has just rendered the contents of is the category error `unsaved`
+  // exists to end (design.md D13).
+  return model.problems.every((p) => p.reason === "unsaved") ? "Not saved" : "Could not be read";
 }
 
 /**
@@ -1195,13 +1203,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // unallocated port has no path for `exclude` to match (design.md D6).
   const saveNote = document.createElement("span");
   saveNote.className = "wt-bring-save-note";
+  saveNote.id = "wt-bring-save-note";
   saveNote.textContent = "Setup steps and ports apply to this create only.";
+  // The note states what pressing this does NOT record. A sighted user reads it
+  // beside the button; without the association a screen reader announces the
+  // button alone, which is the half of the sentence that sounds complete
+  // (.reviews/round-1.md F014).
+  saveButton.setAttribute("aria-describedby", saveNote.id);
   saveRow.append(saveButton, saveNote);
   saveButton.addEventListener("click", () => {
     // Resolved at event time, never captured: item ids are offer-local and
     // every offer starts at `i1`, so a handler closing over one redraw's set
     // would write another offer's selection under a colliding id (round-2 W5).
-    if (drawnOfferId === null) {
+    if (drawnOfferId === null || awaitingSwitch) {
       return;
     }
     const ticked = checkedByOffer.get(drawnOfferId);
@@ -1219,6 +1233,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
   /** The offer currently drawn, so an unchanged one is not redrawn. */
   let drawnOfferId: string | null = null;
+  /**
+   * A switch this form took and has not been answered for.
+   *
+   * The offer on screen is superseded the moment a source is taken, so a save
+   * pressed before the replacement arrives would record the SUPERSEDED source —
+   * and, because it mints the higher sequence, would make the switch fail its
+   * own re-check and vanish with no report. The control is removed for exactly
+   * as long as that is true, which is the same statement its absence already
+   * makes when no offer has arrived: there is nothing here this save can
+   * honestly be about (design.md D15).
+   */
+  let awaitingSwitch = false;
   // The model behind `drawnOfferId`, so the toggle handler can restate the
   // summary without a redraw — redrawing on a tick is what W2 forbids.
   let drawnModel: WorktreeProvisionOffer["model"] | null = null;
@@ -1335,7 +1361,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     drawnOfferId = offer.offerId;
     drawnModel = offer.model;
     bringField.hidden = false;
-    bringField.appendChild(saveRow);
+    // A NEW offer id is the answer the removed control was waiting for.
+    awaitingSwitch = false;
+    // And only where a save can actually be made: a control whose press the
+    // host would never hear is the same nothing as a control with no offer
+    // behind it (.reviews/round-1.md F009).
+    if (deps.onProvisionSave !== undefined) {
+      bringField.appendChild(saveRow);
+    }
     let ticked = checkedByOffer.get(offer.offerId);
     if (ticked === undefined) {
       ticked = new Set(
@@ -1363,6 +1396,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       ...inactive.map((provider) =>
         switchRow(provider, () => {
           switchSeq += 1;
+          awaitingSwitch = true;
+          saveRow.remove();
           deps.onProvisionSwitch?.({ repoId: draft.repoId, switch: switchSeq, provider: provider.id });
         }),
       ),
