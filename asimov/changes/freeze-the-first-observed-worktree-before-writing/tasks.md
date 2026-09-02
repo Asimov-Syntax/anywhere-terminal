@@ -53,3 +53,12 @@ Build the shared authorizer, mint it at the mutation seam, apply it to file prov
   - **Plan**:
     1. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: require budgeted listing-issued sibling authorizations, sample them around each claim read, and exclude the normalized target row by authorized leaf identity.
     2. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`, and `src/extension.worktreeAssembly.test.ts`: authorize normalized `WorktreeInfo.id` values at the fresh listing boundary and cover raw alias display, expired authorization, and substituted sibling schedules.
+
+- [x] 1_6 Bind provisioning authority to the root it names — verified: bun test 'src/worktree/provisioning/entryGate.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/freeze-path-binding-recorded.log 2>&1 exit 0
+  - **Deps**: 1_5
+  - **Refs**: design.md D3; .reviews/round-1.md F001
+  - **Acceptance**:
+    - Outcome: Provisioning rejects source or destination authority issued for another root
+    - Verify: unit src/worktree/provisioning/entryGate.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/entryGate.ts` and `src/worktree/provisioning/entryGate.test.ts`: compare each operated root with its carried authority using the authority platform's path semantics and reject mismatched pairs before preparing the gate.

@@ -17,7 +17,7 @@
 // it back inside a root, which would turn a suspicious entry into a silently
 // different one.
 
-import path from "node:path";
+import path, { posix, win32 } from "node:path";
 import type { ProvisionEntry } from "../../types/messages";
 import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { isWindowsAbsPath } from "../../utils/pathBoundary";
@@ -90,6 +90,18 @@ export async function prepareEntryGate(
   authorization: EntryAuthorizations,
   deps: ResolvedPathInsideDeps = {},
 ): Promise<EntryGateRoots | null> {
+  const authorityNames = (target: string, observed: AuthorizedDirectory): boolean => {
+    const windows = observed.platform === "win32";
+    const paths = windows ? win32 : posix;
+    const normalizedTarget = paths.normalize(target);
+    const normalizedObserved = paths.normalize(observed.path);
+    return windows
+      ? normalizedTarget.toLowerCase() === normalizedObserved.toLowerCase()
+      : normalizedTarget === normalizedObserved;
+  };
+  if (!authorityNames(mainCheckout, authorization.source) || !authorityNames(worktree, authorization.destination)) {
+    return null;
+  }
   const [source, destination] = await Promise.all([
     prepareResolvedRoot(mainCheckout, deps),
     prepareResolvedRoot(worktree, deps),

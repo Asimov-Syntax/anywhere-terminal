@@ -71,6 +71,26 @@ async function verdictFor(e: ProvisionEntry, deps: ResolvedPathInsideDeps = fs()
 }
 
 describe("an entry is admitted or refused before anything opens it", () => {
+  it("rejects a source authority issued for another root", async () => {
+    const roots = await prepareEntryGate(MAIN, WT, { ...AUTHORIZATION, source: observed("/other") }, fs());
+
+    expect(roots).toBeNull();
+  });
+
+  it("rejects a destination authority issued for another root", async () => {
+    const roots = await prepareEntryGate(MAIN, WT, { ...AUTHORIZATION, destination: observed("/other") }, fs());
+
+    expect(roots).toBeNull();
+  });
+
+  it("uses Win32 case-insensitive path semantics for authority binding", async () => {
+    const source = { ...observed("C:\\Repo"), platform: "win32" as const };
+    const destination = { ...observed("C:\\Worktree"), platform: "win32" as const };
+    const roots = await prepareEntryGate("c:\\repo", "c:\\worktree", { source, destination }, fs());
+
+    expect(roots).not.toBeNull();
+  });
+
   it("retains the mutation-issued source and destination authorizations", async () => {
     const roots = await gate(fs());
 
