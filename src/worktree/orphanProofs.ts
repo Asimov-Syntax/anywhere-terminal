@@ -31,6 +31,24 @@ export interface OrphanProofs {
   lockAged: ProofOutcome;
   ownerGone: ProofOutcome;
   branchMerged: ProofOutcome;
+  /**
+   * What the merge was proven against, present only when it PASSED.
+   *
+   * A verdict alone cannot support the delete guard: by the time the user opts
+   * in, the thing that was proven is unidentified. Both refs are carried by NAME
+   * as well as by commit, because the default branch's SELECTOR is mutable — a
+   * guard that re-derives the default and verifies it against a recorded commit
+   * is verifying a different ref than the one it proved (design.md D8).
+   */
+  mergeEvidence?: MergeEvidence;
+}
+
+/** The two refs a merge proof was taken against, as they stood when it was taken. */
+export interface MergeEvidence {
+  branch: string;
+  branchOid: string;
+  base: string;
+  baseOid: string;
 }
 
 /** Only the two fields the ownership proof asks about. */
@@ -85,12 +103,17 @@ export interface OrphanProofDeps {
  * point to an assessment rather than three.
  */
 export async function readOrphanProofs(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<OrphanProofs> {
-  const [lockAged, branchMerged, ownerGone] = await Promise.all([
+  const [lockAged, merge, ownerGone] = await Promise.all([
     lockProof(subject, deps),
     mergeProof(subject, deps),
     ownerProof(subject),
   ]);
-  return { lockAged, ownerGone, branchMerged };
+  return {
+    lockAged,
+    ownerGone,
+    branchMerged: merge.outcome,
+    ...(merge.evidence === undefined ? {} : { mergeEvidence: merge.evidence }),
+  };
 }
 
 async function lockProof(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<ProofOutcome> {
@@ -139,28 +162,48 @@ async function ownerProof(subject: OrphanProofSubject): Promise<ProofOutcome> {
   return sessions.partial === true ? "unproven" : "passed";
 }
 
-async function mergeProof(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<ProofOutcome> {
+interface MergeProof {
+  outcome: ProofOutcome;
+  evidence?: MergeEvidence;
+}
+
+async function mergeProof(subject: OrphanProofSubject, deps: OrphanProofDeps): Promise<MergeProof> {
   const branch = subject.branch;
   if (branch === undefined) {
-    return "notApplicable";
+    return { outcome: "notApplicable" };
   }
   const base = await resolveDefaultBranch(subject.path, deps.git);
   if (base === undefined || base === branch) {
     // A branch is trivially an ancestor of itself, and reporting the default
     // branch as "merged into itself" would offer to delete it (§ 5 rule 4).
-    return base === branch ? "notApplicable" : "unproven";
+    return { outcome: base === branch ? "notApplicable" : "unproven" };
   }
-  const result = await deps.git(["merge-base", "--is-ancestor", branch, base], subject.path);
+  // Resolve the pair BEFORE asking about ancestry. Testing mutable names and
+  // resolving them afterwards can issue evidence for commits Git never compared.
+  const [branchOid, baseOid] = await Promise.all([
+    revParse(branch, subject.path, deps.git),
+    revParse(base, subject.path, deps.git),
+  ]);
+  if (branchOid === undefined || baseOid === undefined) {
+    return { outcome: "unproven" };
+  }
+  const result = await deps.git(["merge-base", "--is-ancestor", branchOid, baseOid], subject.path);
   if (result.timedOut) {
-    return "unproven";
+    return { outcome: "unproven" };
   }
   // Exactly two codes carry meaning: 0 is merged and 1 is not. Everything else
-  // is an error — git exits 128 for a ref it cannot resolve — and reading an
-  // error as "not merged" states a fact nobody established (design.md D5).
-  if (result.code === 0) {
-    return "passed";
+  // is an error, and reading an error as "not merged" states a fact nobody
+  // established (design.md D5).
+  if (result.code !== 0) {
+    return { outcome: result.code === 1 ? "failed" : "unproven" };
   }
-  return result.code === 1 ? "failed" : "unproven";
+  return { outcome: "passed", evidence: { branch, branchOid, base, baseOid } };
+}
+
+/** The commit a local head names, or nothing. Never a partial answer. */
+async function revParse(ref: string, cwd: string, git: ProofGitRun): Promise<string | undefined> {
+  const oid = await ok(git(["rev-parse", "--verify", "--quiet", `refs/heads/${ref}`], cwd));
+  return oid === undefined || oid.length === 0 ? undefined : oid;
 }
 
 /**

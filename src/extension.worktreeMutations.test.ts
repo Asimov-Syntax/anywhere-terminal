@@ -10,6 +10,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorktreeActions, WorktreeHostOptions, WorktreeSurface } from "./providers/WorktreeHost";
+import type { BranchDeleteRequest } from "./types/messages";
+import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import type { MutationOutcome, MutationServiceDeps } from "./worktree/worktreeMutationService";
 
 const received: {
@@ -147,6 +149,85 @@ describe("the shipped extension supplies its mutating capabilities", () => {
   });
 });
 
+describe("the shipped removal assessment payload", () => {
+  const mergeEvidence = {
+    branch: "feature",
+    branchOid: "1".repeat(40),
+    base: "main",
+    baseOid: "2".repeat(40),
+  };
+
+  function assessment(branchMerged: "passed" | "unproven"): Exclude<RemovalAssessment, { kind: "unavailable" }> {
+    return {
+      kind: "confirmable",
+      evidence: {
+        dirtyPaths: [],
+        untrackedPaths: [],
+        paneIds: [],
+        externalSessionIds: [],
+        locked: false,
+        lockReason: null,
+        notApplicable: [],
+        ignored: { kind: "measured", entries: 0, bytes: 0 },
+        proofs: {
+          lockAged: "unproven",
+          ownerGone: "unproven",
+          branchMerged,
+          ...(branchMerged === "passed" ? { mergeEvidence } : {}),
+        },
+      },
+    };
+  }
+
+  it("emits the recorded merge evidence only when the proof passed", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    const posted: unknown[] = [];
+    const origin: WorktreeSurface = { isReady: () => true, post: (message) => posted.push(message) };
+    const report = received.deps?.report;
+    expect(report).toBeInstanceOf(Function);
+
+    report?.(
+      {
+        kind: "blocked",
+        verb: "remove",
+        repoId: "/repo/.git",
+        worktreeId: "/repo-feature",
+        assessment: assessment("passed"),
+        fingerprint: "fp-1",
+      },
+      origin,
+    );
+    report?.(
+      {
+        kind: "blocked",
+        verb: "remove",
+        repoId: "/repo/.git",
+        worktreeId: "/repo-other",
+        assessment: assessment("unproven"),
+        fingerprint: "fp-2",
+      },
+      origin,
+    );
+
+    expect(posted[0]).toMatchObject({
+      type: "worktreeMutationResult",
+      result: {
+        kind: "blocked",
+        assessment: {
+          branchDelete: {
+            branch: "feature",
+            branchOid: mergeEvidence.branchOid,
+            defaultBranch: "main",
+            defaultOid: mergeEvidence.baseOid,
+          },
+        },
+      },
+    });
+    expect(posted[1]).not.toHaveProperty("result.assessment.branchDelete");
+  });
+});
+
 describe("what the shipped observation makes of an unreadable path", () => {
   // The classifier is unit-tested next to its own definition. What no unit test
   // could see is whether PRODUCTION calls it — the wiring is the whole of B13.
@@ -222,7 +303,7 @@ describe("an outcome comes back to the surface that started it (design.md D17)",
     it(`routes every mutating capability's outcome back to the ${name} that asked`, async () => {
       const origin = surface(name);
       await drive(async (a) => {
-        await a.removeWorktree?.({ repoId: REPO, worktreeId: WT, origin }, false, undefined);
+        await a.removeWorktree?.({ repoId: REPO, worktreeId: WT, origin }, undefined);
         await a.lockWorktree?.({ repoId: REPO, worktreeId: WT, origin }, undefined);
         await a.unlockWorktree?.({ repoId: REPO, worktreeId: WT, origin });
         await a.pruneRepo?.(REPO, 0, origin);
@@ -255,5 +336,82 @@ describe("an outcome comes back to the surface that started it (design.md D17)",
     });
     expect(received.reports).toHaveLength(1);
     expect(received.reports[0]?.origin).toBeUndefined();
+  });
+});
+
+// [3_2] Production supplies the `deleteBranch` binding the mutation service
+// only DECLARES (task 2_2) — through the same shared git runner every other
+// worktree read and write goes through, never a parallel invocation path.
+describe("the shipped branch-delete binding (design.md D2)", () => {
+  const request: BranchDeleteRequest = {
+    branch: "feature",
+    expectedBranchOid: "3".repeat(40),
+    defaultBranch: "main",
+    expectedDefaultOid: "4".repeat(40),
+    fingerprint: "fp-branch",
+  };
+
+  it("maps the redeemed evidence's own field names into the guard, through the same runner discovery uses", async () => {
+    let deleteBranchRunner: unknown;
+    let discoveryRunner: unknown;
+    vi.doMock("./worktree/deleteBranch", async (importOriginal) => {
+      const real = await importOriginal<typeof import("./worktree/deleteBranch")>();
+      return {
+        ...real,
+        deleteBranch: async (runner: unknown, repoPath: string, evidence: unknown) => {
+          deleteBranchRunner = runner;
+          expect(repoPath).toBe("/repo");
+          // The SERVICE'S own field names (`expectedBranchOid`, `expectedDefaultOid`),
+          // carried into the shape `deleteBranch` verifies against — a swap here
+          // would silently check the wrong ref against the wrong OID.
+          expect(evidence).toEqual({
+            branch: "feature",
+            branchOid: request.expectedBranchOid,
+            defaultBranch: "main",
+            defaultOid: request.expectedDefaultOid,
+          });
+          return { kind: "deleted", branch: "feature" };
+        },
+      };
+    });
+    vi.doMock("./worktree/WorktreeDiscovery", async (importOriginal) => {
+      const real = await importOriginal<typeof import("./worktree/WorktreeDiscovery")>();
+      return {
+        ...real,
+        listRepoWorktrees: async (_repoPath: string, deps: { runner: unknown }) => {
+          discoveryRunner = deps.runner;
+          return { degraded: undefined, worktrees: [] };
+        },
+      };
+    });
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    await received.deps?.listWorktrees?.("/repo");
+    const outcome = await received.deps?.deleteBranch?.("/repo", request);
+    expect(outcome).toEqual({ kind: "deleted", branch: "feature" });
+    expect(deleteBranchRunner).toBeDefined();
+    // Identity, not merely shape: a second git-runner construction here would
+    // be a parallel invocation path the design ruled out (D2).
+    expect(deleteBranchRunner).toBe(discoveryRunner);
+  });
+
+  it("never runs the guarded delete for an opt-in the service redeems nothing for", async () => {
+    let called = false;
+    vi.doMock("./worktree/deleteBranch", () => ({ deleteBranch: async () => (called = true) }));
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    // A target the tree does not register: the service refuses before it ever
+    // redeems a fingerprint, let alone reads the branch opt-in riding it.
+    await received.actions?.removeWorktree?.({ repoId: "/repo/.git", worktreeId: "/repo-missing" }, "fp-1", request);
+    expect(called).toBe(false);
+  });
+
+  it("never runs the guarded delete when removal carries no opt-in at all", async () => {
+    let called = false;
+    vi.doMock("./worktree/deleteBranch", () => ({ deleteBranch: async () => (called = true) }));
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    await received.actions?.removeWorktree?.({ repoId: "/repo/.git", worktreeId: "/repo-missing" }, "fp-1", undefined);
+    expect(called).toBe(false);
   });
 });

@@ -11,6 +11,7 @@
 // derivations in worktreeFormat.ts, and this class holds only the state the DOM
 // cannot — collapse sets, the focused row, the query, and the render guard.
 
+import type { BranchDeleteRequest } from "../../types/messages";
 import { attachTooltipDelegate } from "../ui/Tooltip";
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
 import { openWorktreeCreateDialog, type WorktreeCreateDialogDeps } from "./WorktreeCreateDialog";
@@ -47,6 +48,7 @@ import {
 } from "./worktreeTreeView";
 import type {
   PresenceDegradation,
+  ProvisionResultContest,
   ProvisionStepResult,
   WorktreeActionResult,
   WorktreeAgentRow,
@@ -165,8 +167,11 @@ export interface WorktreeViewDeps {
    * The user answered the report. `fingerprint` is what that report carried and
    * nothing more: null means it authorized no force, and the caller sends the
    * ordinary removal (design.md D7).
+   *
+   * `deleteBranch` is present only when the dialog's opt-in checkbox was
+   * ticked — its absence is how "removal only" travels (design.md D1).
    */
-  onForceRemove?: (info: WorktreeInfo, fingerprint: string | null) => void;
+  onForceRemove?: (info: WorktreeInfo, fingerprint: string, deleteBranch?: BranchDeleteRequest) => void;
   /**
    * Ask again for an action whose risk could not be READ. Offered only there:
    * a failure already has its answer, and an unclear outcome has state to
@@ -381,7 +386,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.ports, r.portWarnings)}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests, r.ports, r.portWarnings)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -682,9 +687,9 @@ export class WorktreeView {
     this.closeDialog = openWorktreeRemoveDialog(this.deps.host, {
       ...args,
       now: this.now(),
-      onConfirm: (fingerprint) => {
+      onConfirm: (fingerprint, deleteBranch) => {
         this.closeDialog = null;
-        this.deps.onForceRemove?.(args.info, fingerprint);
+        this.deps.onForceRemove?.(args.info, fingerprint, deleteBranch);
       },
       onCancel: () => {
         this.closeDialog = null;
@@ -1513,7 +1518,7 @@ export class WorktreeView {
       });
     }
     if (result.outcome === "ok") {
-      const brought = provisionSummary(result.provisioned);
+      const brought = provisionSummary(result.provisioned, result.provisionContests);
       const ported = portSummary(result.ports, result.portWarnings);
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
@@ -1523,14 +1528,22 @@ export class WorktreeView {
       return renderNotice({
         // A create that succeeded while some of its material did not arrive is
         // still a success and still needs saying — the same rule the launch
-        // failure above follows (round-4 W7).
+        // failure above follows (round-4 W7). A refused branch delete is the
+        // same shape: the removal still succeeded, but "done" alone would
+        // hide that the opt-in did not go through.
         tone:
-          result.openFailed === undefined && brought?.tone !== "warn" && ported?.tone !== "warn" ? "neutral" : "warn",
+          result.openFailed === undefined &&
+          result.branchDelete?.kind !== "refused" &&
+          brought?.tone !== "warn" &&
+          ported?.tone !== "warn"
+            ? "neutral"
+            : "warn",
         live: "status",
         title: `${titleForAction(result.action)} done.`,
         body: withAbout(
           [
             result.openFailed === undefined ? undefined : "It could not be opened afterwards.",
+            branchDeleteLine(result.branchDelete),
             brought?.body,
             ported?.body,
           ]
@@ -1538,8 +1551,9 @@ export class WorktreeView {
             .join(" ") || undefined,
         ),
         reason:
-          [result.openFailed, brought?.reason, ported?.reason].filter((line) => line !== undefined).join("\n") ||
-          undefined,
+          [result.openFailed, branchDeleteReason(result.branchDelete), brought?.reason, ported?.reason]
+            .filter((line) => line !== undefined)
+            .join("\n") || undefined,
         onDismiss: dismiss,
       });
     }
@@ -1778,6 +1792,33 @@ export class WorktreeView {
   }
 }
 
+/** What the notice says happened to the opted-in branch, apart from the removal itself. */
+function branchDeleteLine(outcome: WorktreeActionResult["branchDelete"]): string | undefined {
+  if (outcome === undefined) {
+    return undefined;
+  }
+  return outcome.kind === "deleted" ? `The branch ${outcome.branch} was also deleted.` : "The branch was not deleted.";
+}
+
+/** Which guard refused the branch delete, in the user's terms — never a bare "refused". */
+function branchDeleteReason(outcome: WorktreeActionResult["branchDelete"]): string | undefined {
+  if (outcome === undefined || outcome.kind !== "refused") {
+    return undefined;
+  }
+  switch (outcome.reason) {
+    case "branch-in-use":
+      return "It is checked out in another worktree.";
+    case "default-branch":
+      return "It is the default branch.";
+    case "holders-unavailable":
+      return "The branch deletion could not be safely authorized or completed.";
+    case "refs-moved":
+      return "It moved since it was checked.";
+    default:
+      return undefined;
+  }
+}
+
 function titleForAction(action: WorktreeActionResult["action"]): string {
   switch (action) {
     case "remove":
@@ -1805,19 +1846,13 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
  */
 function provisionKey(
   steps: readonly ProvisionStepResult[] | undefined,
+  contests: readonly ProvisionResultContest[] | undefined,
   ports: WorktreeActionResult["ports"],
   warnings: WorktreeActionResult["portWarnings"],
 ): string {
-  const material = steps?.map((step) => `${step.id}=${step.outcome.kind}`).join(",") ?? "";
-  const namedPorts =
-    ports
-      ?.map((port) => {
-        const outcome =
-          port.outcome.kind === "failed" ? port.outcome.reason : `${port.outcome.kind}:${port.outcome.port}`;
-        return `${port.id}:${port.name}:${port.preview ?? ""}:${outcome}`;
-      })
-      .join(",") ?? "";
-  return `${material}|${namedPorts}|${warnings?.join(",") ?? ""}`;
+  // Structural, over exactly what the two provisioning summaries read. Free
+  // text in a delimiter-joined key can collide and leave a stale notice.
+  return JSON.stringify([steps ?? [], contests ?? [], ports ?? [], warnings ?? []]);
 }
 
 function portSummary(
@@ -1889,7 +1924,43 @@ function portSummary(
  */
 function provisionSummary(
   steps: readonly ProvisionStepResult[] | undefined,
+  contests: readonly ProvisionResultContest[] = [],
 ): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
+  /**
+   * Which contest a row belongs to — a marker, never the membership.
+   *
+   * Rebuilding the full list per row put the `O(N²)` the wire had just shed
+   * straight back into the notice and the DOM (.reviews/round-1.md F001). The
+   * membership is listed once, below the rows, and each row carries only a
+   * number into it.
+   *
+   * An index that does not resolve is SAID rather than dropped: silently
+   * falling back to the bare reason removes every declaring file exactly where
+   * the obligation to name them lives (F002).
+   */
+  const cited = new Set<number>();
+  const withContest = (step: ProvisionStepResult, reason: string): string => {
+    if (step.contest === undefined) {
+      return reason;
+    }
+    const members = contests[step.contest]?.members;
+    if (members === undefined || members.length === 0) {
+      return `${reason} [contest ${step.contest + 1}, which was not reported]`;
+    }
+    cited.add(step.contest);
+    return `${reason} [contest ${step.contest + 1}]`;
+  };
+
+  /** Each cited contest's membership, once, in index order. */
+  const contestLines = (): readonly string[] =>
+    [...cited]
+      .sort((a, b) => a - b)
+      .map(
+        (at) =>
+          `Contest ${at + 1}, one destination these may all name: ${(contests[at]?.members ?? [])
+            .map((member) => `${member.path} (declared in ${member.source})`)
+            .join(", ")}`,
+      );
   if (steps === undefined || steps.length === 0) {
     return undefined;
   }
@@ -1920,10 +1991,14 @@ function provisionSummary(
     body: inside.length === 0 ? body : `${body} ${inside.length} inside them did not arrive.`,
     tone: "warn",
     reason: [
-      ...bad.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
+      ...bad.map((s) => `${s.path}: ${withContest(s, "reason" in s.outcome ? s.outcome.reason : s.outcome.kind)}`),
       ...degraded.map((s) => `${s.path}: the platform had no symlink to give, so it was copied`),
-      ...untouched.map((s) => `${s.path}: ${"reason" in s.outcome ? s.outcome.reason : s.outcome.kind}`),
+      ...untouched.map(
+        (s) => `${s.path}: ${withContest(s, "reason" in s.outcome ? s.outcome.reason : s.outcome.kind)}`,
+      ),
       ...inside.map((d) => `${d.path}: ${d.reason}`),
+      // After the rows, because it explains them.
+      ...contestLines(),
     ].join("\n"),
   };
 }

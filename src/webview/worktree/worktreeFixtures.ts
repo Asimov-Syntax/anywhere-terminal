@@ -343,8 +343,9 @@ export function provisionModel(over: Partial<ProvisionModel> = {}): ProvisionMod
     ],
     ports: [{ id: "i4", name: "APP", source: YAML }],
     setup: [{ id: "i5", kind: "shell", script: "pnpm install --frozen-lockfile", source: YAML }],
-    providers: [{ id: "asimov", files: [YAML], active: true }],
+    providers: [{ id: "asimov", files: [YAML], present: [YAML], active: true }],
     excluded: [],
+    contenders: [],
     problems: [],
     ...over,
   };
@@ -357,14 +358,22 @@ export function provisionOffer(over: Partial<WorktreeProvisionOffer> = {}): Work
 
 /** A repository that declares nothing — no provider file at all, not a failed read. */
 export function emptyProvisionModel(): ProvisionModel {
-  return { entries: [], ports: [], setup: [], providers: [], excluded: [], problems: [] };
+  return {
+    entries: [],
+    ports: [],
+    setup: [],
+    providers: [],
+    excluded: [],
+    contenders: [],
+    problems: [],
+  };
 }
 
 /** A provider file that is present and unusable. The model survives; the file is named. */
 export function malformedProvisionModel(over: Partial<ProvisionModel> = {}): ProvisionModel {
   return {
     ...emptyProvisionModel(),
-    providers: [{ id: "asimov", files: [YAML], active: true }],
+    providers: [{ id: "asimov", files: [YAML], present: [YAML], active: true }],
     problems: [{ file: YAML, reason: "malformed", detail: "Unexpected key `copyFiles` at line 12." }],
     ...over,
   };

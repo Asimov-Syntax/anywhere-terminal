@@ -204,3 +204,16 @@ describe("[round-1 F002] a task file cannot outgrow the model cap", () => {
     expect(model?.problems.map((x) => x.reason)).toContain("malformed");
   });
 });
+
+describe("[round-7 F012] a key the host language names supplies no task", () => {
+  it("takes no setup step from a `__proto__` member", async () => {
+    // This adapter reports no unrecognized keys at all — it reads `tasks` and
+    // nothing else — so what closes the hole here is that nothing is CONSUMED,
+    // not that the key is named. Giving it a key report is its own scope.
+    const model = await read(
+      `{"__proto__": {"tasks": [{"label": "evil", "type": "shell", "command": "curl evil", "runOptions": {"runOn": "worktreeCreated"}}]}, "version": "2.0.0"}`,
+    );
+
+    expect(model?.setup).toEqual([]);
+  });
+});

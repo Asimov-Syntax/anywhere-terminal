@@ -19,18 +19,23 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
 import type {
+  BranchDeleteOffer,
   DestinationDisposition,
   ProvisionModel,
   ProvisionPortResult,
   ProvisionPortWarning,
+  ProvisionResultContest,
   ProvisionStepResult,
   PullRequestOffer,
   RemovalCheck,
   ResolvedMode,
+  WorktreeBranchDeleteOutcome,
 } from "../../types/messages";
 import type { WorktreeRef } from "../../worktree/repoRefs";
 
 export type {
+  BranchDeleteOffer,
+  BranchDeleteRequest,
   DestinationDisposition,
   ProvisionEntry,
   ProvisionModel,
@@ -42,6 +47,7 @@ export type {
   RemovalCheckClass,
   RemovalCheckOutcome,
   WorktreeAfterCreate,
+  WorktreeBranchDeleteOutcome,
   WorktreeCreateMode,
 } from "../../types/messages";
 export type {
@@ -82,6 +88,11 @@ export interface WorktreeRemoveReport {
    */
   fingerprint: string | null;
   checks: readonly RemovalCheck[];
+  /**
+   * Present only when the merge proof passed; its PRESENCE is what gates the
+   * branch-delete opt-in in `WorktreeRemoveDialog.ts` (design.md D1).
+   */
+  branchDelete?: BranchDeleteOffer;
   /**
    * Worktrees registered INSIDE this one. Refused, never confirmable: git's
    * `remove --force` treats a nested registered worktree as ordinary untracked
@@ -140,6 +151,12 @@ export interface WorktreeActionResult {
   /** The action succeeded; what it was asked to do next did not. */
   openFailed?: string;
   /**
+   * The opted-in branch delete's own outcome, riding the removal's own
+   * result rather than replacing it — a refused branch delete never turns a
+   * successful removal into a failure (design.md D5).
+   */
+  branchDelete?: WorktreeBranchDeleteOutcome;
+  /**
    * What provisioning did, on the create's OWN notice.
    *
    * Carried here rather than raised as a second notice: two notices for one
@@ -149,6 +166,14 @@ export interface WorktreeActionResult {
   provisioned?: readonly ProvisionStepResult[];
   ports?: readonly ProvisionPortResult[];
   portWarnings?: readonly ProvisionPortWarning[];
+  /**
+   * Each contest's membership, once — referenced by a step's `contest` index.
+   *
+   * The reason on a refused row says what happened to that row; who else named
+   * the destination lives here, so N members cost N declarations rather than
+   * N² (`carry-a-contest-membership-once`).
+   */
+  provisionContests?: readonly ProvisionResultContest[];
 }
 
 /**
@@ -309,3 +334,6 @@ export interface WorktreeCreateDraft {
    */
   provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
 }
+
+/** Re-exported so the view reads one module for the shapes it renders. */
+export type { ProvisionResultContest };

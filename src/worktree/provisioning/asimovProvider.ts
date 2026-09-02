@@ -19,7 +19,6 @@ import {
   type Authorized,
   type Draft,
   emptyModel,
-  ids,
   modelFromDraft,
   newBudget,
   newDraft,
@@ -49,7 +48,11 @@ const ASIMOV: ProviderContext = { id: "asimov", file: ASIMOV_PROVIDER_FILE };
 /** The four keys § 3.1 maps. Anything else is reported rather than ignored. */
 const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);
 
-const PROVIDERS = [{ id: "asimov" as const, files: [ASIMOV_PROVIDER_FILE], active: true }];
+// Only ever returned from `fromOpened`, which absence never reaches, so the
+// file this names is one that was there.
+const PROVIDERS = [
+  { id: "asimov" as const, files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+];
 
 /**
  * The repository's own provisioning file, as the normalized model.
@@ -141,7 +144,7 @@ async function fromOpened(
     return { ...modelFromDraft(draft), providers: PROVIDERS };
   }
 
-  const nextId = ids();
+  const nextId = draft.budget.nextId;
   await readInlineKeys(parsed as Record<string, unknown>, KNOWN_KEYS, repoRoot, root, deps, nextId, draft);
 
   // `providers` is the one field this reader owns: `readAsimovProvisioning` is

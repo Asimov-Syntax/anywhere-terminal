@@ -10,7 +10,7 @@
 // and `notApplicable` is produced only where a source said its question did not
 // arise — never as a default for a check this module did not compute.
 
-import type { RemovalCheck, RemovalCheckClass } from "../types/messages";
+import type { BranchDeleteOffer, RemovalCheck, RemovalCheckClass } from "../types/messages";
 import type { IgnoredMaterial } from "./ignoredMaterial";
 import type { ProofOutcome } from "./orphanProofs";
 import type { RemovalAssessment, UnreadableSource } from "./worktreeBlockers";
@@ -121,6 +121,19 @@ function check(id: string, assessment: RemovalAssessment, failed: boolean, count
  * removal was already refused. Reporting the confirmable ones as `passed` there
  * would claim a check ran that never did.
  */
+export function branchDeleteOfferFor(assessment: RemovalAssessment): BranchDeleteOffer | undefined {
+  if (assessment.kind !== "confirmable" || assessment.evidence.proofs.mergeEvidence === undefined) {
+    return undefined;
+  }
+  const evidence = assessment.evidence.proofs.mergeEvidence;
+  return {
+    branch: evidence.branch,
+    branchOid: evidence.branchOid,
+    defaultBranch: evidence.base,
+    defaultOid: evidence.baseOid,
+  };
+}
+
 export function checksFor(assessment: RemovalAssessment): readonly RemovalCheck[] {
   switch (assessment.kind) {
     case "unavailable":

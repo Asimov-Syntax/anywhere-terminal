@@ -27,7 +27,7 @@ import {
   prepareResolvedRoot,
   type ResolvedPathInsideDeps,
 } from "../../utils/resolvedPathBoundary";
-import { platformFoldsFilenameCase } from "./providerKit";
+import { foldWin32Name, platformUsesWin32FilenameRules } from "./providerKit";
 
 /** A root an entry's repo-relative spelling joins onto, resolved once for the pass. */
 export interface GateRoot {
@@ -50,7 +50,15 @@ export interface EntryGateRoots {
 
 export type EntryVerdict =
   | { readonly ok: true; readonly source: string; readonly destination: string }
-  | { readonly ok: false; readonly reason: string };
+  /**
+   * `observedDestination` says whether this refusal was reached AFTER the gate
+   * read the filesystem. A name rule and a material rule are decided lexically,
+   * so they establish nothing about the destination — only the containment
+   * check does (design.md D3a). Without the distinction one member's own rule
+   * proves a shared destination occupied and refuses an admissible member
+   * beside it (.reviews/round-6.md OOB-F016).
+   */
+  | { readonly ok: false; readonly reason: string; readonly observedDestination: boolean };
 
 /**
  * Lockfiles this refuses by name.
@@ -180,19 +188,10 @@ const LOCKFILE_REASON = "a lockfile is never brought over — this branch's own 
  */
 function filesystemIdentity(base: string, win32: boolean): string {
   const name = base.toLowerCase();
-  if (!win32) {
-    return name;
-  }
-  const STREAM = "::$data";
-  let folded = name;
-  for (;;) {
-    const trimmed = folded.replace(/[. ]+$/, "");
-    const unstreamed = trimmed.endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
-    if (unstreamed === folded) {
-      return folded;
-    }
-    folded = unstreamed;
-  }
+  // The strip itself lives in `providerKit.ts`: the contender detector needs
+  // the same rule for a different reason, and this module used to be the only
+  // place it existed (design.md D8).
+  return win32 ? foldWin32Name(name) : name;
 }
 
 /**
@@ -204,7 +203,7 @@ function filesystemIdentity(base: string, win32: boolean): string {
  */
 export function refusedLockfile(
   resolvedDestination: string,
-  win32: boolean = platformFoldsFilenameCase(),
+  win32: boolean = platformUsesWin32FilenameRules(),
 ): string | null {
   return LOCKFILES.has(filesystemIdentity(path.basename(resolvedDestination), win32)) ? LOCKFILE_REASON : null;
 }
@@ -218,7 +217,7 @@ function refusedMaterial(resolvedDestination: string, mode: ProvisionEntry["mode
   if (lockfile !== null) {
     return lockfile;
   }
-  const base = filesystemIdentity(path.basename(resolvedDestination), platformFoldsFilenameCase());
+  const base = filesystemIdentity(path.basename(resolvedDestination), platformUsesWin32FilenameRules());
   if (base === "node_modules" && mode === "link") {
     return "node_modules is never linked: a shared tree defeats per-branch lockfiles and corrupts concurrent installs";
   }
@@ -237,12 +236,20 @@ export async function admitEntry(
   deps: ResolvedPathInsideDeps = {},
 ): Promise<EntryVerdict> {
   if (isAbsoluteSpelling(entry.path)) {
-    return { ok: false, reason: "an entry names a path relative to the repository, not an absolute one" };
+    return {
+      ok: false,
+      reason: "an entry names a path relative to the repository, not an absolute one",
+      observedDestination: false,
+    };
   }
   // AFTER the absolute check, so a Windows absolute spelling still refuses with
   // the reason that actually describes it rather than with this one.
   if (hasBackslash(entry.path)) {
-    return { ok: false, reason: "a backslash is not a path separator here — declare entries with forward slashes" };
+    return {
+      ok: false,
+      reason: "a backslash is not a path separator here — declare entries with forward slashes",
+      observedDestination: false,
+    };
   }
 
   const source = path.resolve(roots.source.path, entry.path);
@@ -253,7 +260,7 @@ export async function admitEntry(
   // and `path.resolve` is not one.
   const material = refusedMaterial(destination, entry.mode);
   if (material !== null) {
-    return { ok: false, reason: material };
+    return { ok: false, reason: material, observedDestination: false };
   }
 
   // Both, separately, and both must hold. Checked in parallel because neither
@@ -263,10 +270,10 @@ export async function admitEntry(
     isResolvedPathInsideRoot(destination, roots.destination.prepared, deps),
   ]);
   if (!sourceInside) {
-    return { ok: false, reason: REFUSED_OUTSIDE_SOURCE };
+    return { ok: false, reason: REFUSED_OUTSIDE_SOURCE, observedDestination: true };
   }
   if (!destinationInside) {
-    return { ok: false, reason: REFUSED_OUTSIDE_DESTINATION };
+    return { ok: false, reason: REFUSED_OUTSIDE_DESTINATION, observedDestination: true };
   }
   return { ok: true, source, destination };
 }

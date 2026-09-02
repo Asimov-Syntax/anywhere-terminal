@@ -181,7 +181,10 @@ describe("the merge proof", () => {
   const merged = {
     "symbolic-ref --short refs/remotes/origin/HEAD": { code: 0, stdout: "origin/main\n" },
     "rev-parse --verify --quiet refs/heads/main": { code: 0, stdout: "abc\n" },
-    "merge-base --is-ancestor feat main": { code: 0 },
+    // A passed proof now also reads the branch's own commit, because the delete
+    // guard verifies BOTH refs it was proven against (WT-013.3 D1).
+    "rev-parse --verify --quiet refs/heads/feat": { code: 0, stdout: "def\n" },
+    "merge-base --is-ancestor def abc": { code: 0 },
   };
 
   it("passes when the branch is an ancestor of the default", async () => {
@@ -196,7 +199,7 @@ describe("the merge proof", () => {
   it("fails on exit 1, which is the one code that means NOT merged", async () => {
     const proofs = await readOrphanProofs(
       { path: WT, locked: false, branch: "feat", sessions: { ok: true, value: [] } },
-      deps({ git: gitTable({ ...merged, "merge-base --is-ancestor feat main": { code: 1 } }) }),
+      deps({ git: gitTable({ ...merged, "merge-base --is-ancestor def abc": { code: 1 } }) }),
     );
 
     expect(proofs.branchMerged).toBe("failed");
@@ -209,7 +212,7 @@ describe("the merge proof", () => {
     // withholds a destructive option.
     const proofs = await readOrphanProofs(
       { path: WT, locked: false, branch: "feat", sessions: { ok: true, value: [] } },
-      deps({ git: gitTable({ ...merged, "merge-base --is-ancestor feat main": { code: 128 } }) }),
+      deps({ git: gitTable({ ...merged, "merge-base --is-ancestor def abc": { code: 128 } }) }),
     );
 
     expect(proofs.branchMerged).toBe("unproven");
@@ -427,5 +430,55 @@ describe("resolveDefaultBranch", () => {
 
   it("names nothing when no candidate exists as a local ref", async () => {
     expect(await resolveDefaultBranch(WT, gitTable({}))).toBeUndefined();
+  });
+});
+
+// [WT-013.3 D1/D8] A verdict cannot support the guard: by the time the user opts
+// in, the thing that was proven is unidentified. The proof records the two refs
+// it was taken against, BY NAME as well as by commit — a selector move must not
+// be able to redirect what the delete verifies.
+describe("the merge proof records what it proved against", () => {
+  const table = {
+    "symbolic-ref --short refs/remotes/origin/HEAD": { code: 0, stdout: "origin/main\n" },
+    "rev-parse --verify --quiet refs/heads/main": { code: 0, stdout: "base111\n" },
+    "rev-parse --verify --quiet refs/heads/feat": { code: 0, stdout: "feat222\n" },
+    "merge-base --is-ancestor feat222 base111": { code: 0 },
+  };
+  const subject = { path: WT, locked: false, branch: "feat", sessions: { ok: true as const, value: [] } };
+
+  it("carries both ref names and the exact commits whose ancestry passed", async () => {
+    const seen: string[][] = [];
+    const proofs = await readOrphanProofs(subject, deps({ git: gitTable(table, seen) }));
+
+    expect(seen).toContainEqual(["merge-base", "--is-ancestor", "feat222", "base111"]);
+    expect(proofs.branchMerged).toBe("passed");
+    expect(proofs.mergeEvidence).toEqual({
+      branch: "feat",
+      branchOid: "feat222",
+      base: "main",
+      baseOid: "base111",
+    });
+  });
+
+  it("carries nothing when the branch is not merged", async () => {
+    const proofs = await readOrphanProofs(
+      subject,
+      deps({ git: gitTable({ ...table, "merge-base --is-ancestor feat222 base111": { code: 1 } }) }),
+    );
+
+    expect(proofs.branchMerged).toBe("failed");
+    expect(proofs.mergeEvidence).toBeUndefined();
+  });
+
+  it.each(["feat", "main"])("is unproven rather than passed when %s's commit cannot be read", async (ref) => {
+    // Evidence is never PARTIALLY present: a guard built from half a pair would
+    // verify one ref and wave the other through.
+    const proofs = await readOrphanProofs(
+      subject,
+      deps({ git: gitTable({ ...table, [`rev-parse --verify --quiet refs/heads/${ref}`]: { code: 128 } }) }),
+    );
+
+    expect(proofs.branchMerged).toBe("unproven");
+    expect(proofs.mergeEvidence).toBeUndefined();
   });
 });

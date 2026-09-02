@@ -77,7 +77,9 @@ describe("readAsimovProvisioning", () => {
     expect(model.setup.map((s) => s.script)).toEqual(["pnpm install --frozen-lockfile", "node esbuild.js"]);
     expect(model.setup.every((s) => s.kind === "shell")).toBe(true);
     expect(model.problems).toEqual([]);
-    expect(model.providers).toEqual([{ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true }]);
+    expect(model.providers).toEqual([
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+    ]);
   });
 
   it("attributes every row, expanded ones included", async () => {
@@ -241,6 +243,24 @@ describe("readAsimovProvisioning", () => {
       expect(model.entries).toEqual([]);
       expect(model.providers).toHaveLength(1);
     });
+  });
+});
+
+describe("a directly-read model carries the contender relation too", () => {
+  it("groups two spellings that fold together, exactly as the offered model does", async () => {
+    // `readAsimovProvisioning` is exported and read directly — the dispatcher is
+    // not the only door. Round-3 F006: the grouping lived behind the dispatcher,
+    // so a caller holding this model saw two independent rows for one
+    // destination and no sign that either could clobber the other.
+    const deps = withYaml("copy:\n  - MixedCase\n  - mixedcase\n  - other\n");
+    const model = await readAsimovProvisioning(deps, ROOT);
+
+    const grouped = model.contenders.map((g) => g.members.map((id) => model.entries.find((e) => e.id === id)?.path));
+
+    expect(grouped).toEqual([["MixedCase", "mixedcase"]]);
+    // One declaring file, so nothing in it is "the repository's own" relative
+    // to the rest — the row the user keeps is theirs to pick (design.md D3).
+    expect(model.contenders[0]?.natives).toEqual([]);
   });
 });
 

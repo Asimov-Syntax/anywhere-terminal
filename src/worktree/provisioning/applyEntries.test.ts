@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
 import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { afterDelay } from "../deadline";
-import { applyEntry } from "./applyEntries";
+import { applyEntry, applyExclusiveEntry, CLAIM_LOST } from "./applyEntries";
 import { type FakeNode, fakeFs } from "./applyEntries.fake";
 import { prepareEntryGate } from "./entryGate";
 
@@ -205,6 +205,35 @@ describe("the walk never follows something it did not check", () => {
     });
     expect(result.outcome.kind).toBe("copied");
     expect(fs.nodes.get("/wt/feature/cfg/link.json")).toEqual({ kind: "link", target: "target.json" });
+  });
+
+  it("refuses a recreated symlink that would resolve to itself", async () => {
+    // `self -> self` resolves to its own destination on every filesystem, so
+    // recreating it puts a loop in the worktree that no reader can follow.
+    // Nothing else in the walk catches it: both containment sides pass, because
+    // the path it resolves to IS inside the worktree.
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/self": { kind: "link", target: "self" },
+    });
+
+    expect(result.details?.[0]?.reason).toMatch(/resolve to itself/);
+    expect(fs.nodes.get("/wt/feature/cfg/self")).toBeUndefined();
+  });
+
+  it("still recreates a link whose target differs from its own name only by case", async () => {
+    // The refusal above is EXACT self-reference, never the folding key. On a
+    // case-sensitive volume `Foo -> foo` beside a real `foo` is an ordinary
+    // in-repository link, and refusing it on a shared fold would destroy
+    // material to prevent a loop this filesystem cannot have (design.md D6).
+    const { result, fs } = await apply(entry("cfg"), {
+      "/repo/cfg": { kind: "dir" },
+      "/repo/cfg/foo": { kind: "file" },
+      "/repo/cfg/Foo": { kind: "link", target: "foo" },
+    });
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.get("/wt/feature/cfg/Foo")).toEqual({ kind: "link", target: "foo" });
   });
 
   it("refuses a relative link that is inside at its source and outside once relocated", async () => {
@@ -588,5 +617,51 @@ describe("a link points at the main checkout, or says the platform would not let
     });
     expect(result.outcome.kind).toBe("skipped");
     expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ kind: "file", size: 99 });
+  });
+});
+
+describe("a destination that must be created by this call", () => {
+  const tree = {
+    "/repo/cfg": { kind: "dir" } as const,
+    "/repo/cfg/inner": { kind: "file", size: 5 } as const,
+  };
+
+  it("still merges into a directory that was already there, for an ordinary entry", async () => {
+    // The behaviour the apply has always had, and the reason the exclusive
+    // claim is opt-in: a worktree git checked out can legitimately hold the
+    // directory a declared entry lands in.
+    const { result, fs } = await apply(entry("cfg"), { ...tree, "/wt/feature/cfg": { kind: "dir", mode: 0o700 } });
+
+    expect(result.outcome.kind).toBe("copied");
+    expect(fs.nodes.has("/wt/feature/cfg/inner")).toBe(true);
+  });
+
+  it("refuses the same directory when the entry must create it itself", async () => {
+    const fs = fakeFs({ ...base, ...tree, "/wt/feature/cfg": { kind: "dir", mode: 0o700 } });
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const result = await applyExclusiveEntry(entry("cfg"), roots, budget(), fs, AUTHORITY);
+
+    expect(result).toBe(CLAIM_LOST);
+    // Nothing went in under the other writer's mode.
+    expect(fs.nodes.has("/wt/feature/cfg/inner")).toBe(false);
+  });
+
+  it("refuses a file destination that is already there when it must create it itself", async () => {
+    const fs = fakeFs({
+      ...base,
+      "/repo/.env": { kind: "file", size: 3 },
+      "/wt/feature/.env": { kind: "file", size: 9 },
+    });
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    const result = await applyExclusiveEntry(entry(".env"), roots, budget(), fs, AUTHORITY);
+
+    expect(result).toBe(CLAIM_LOST);
+    expect(fs.nodes.get("/wt/feature/.env")).toMatchObject({ size: 9 });
   });
 });

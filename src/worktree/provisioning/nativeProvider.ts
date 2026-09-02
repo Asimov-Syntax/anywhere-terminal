@@ -11,12 +11,11 @@
 // so this file and `asimov/worktree.yaml` cannot learn a key separately
 // (design.md D7).
 
-import { type ParseError, parse as parseJsonc } from "jsonc-parser";
+import type { ParseError } from "jsonc-parser";
 import {
   type AdapterRead,
   type Authorized,
   type Draft,
-  ids,
   modelFromDraft,
   newDraft,
   openProviderFile,
@@ -26,6 +25,7 @@ import {
   type ProviderDeps,
   problem,
   readInlineKeys,
+  readJsonc,
   report,
 } from "./providerKit";
 
@@ -102,13 +102,7 @@ export const nativeAdapter: ProviderAdapter = {
     }
 
     const errors: ParseError[] = [];
-    const parsed: unknown = parseJsonc(opened.text, errors, {
-      // The format, not a defect in it: this lives beside `.vscode/tasks.json`
-      // and is edited by the same hands, which write comments in it.
-      disallowComments: false,
-      allowTrailingComma: true,
-      allowEmptyContent: true,
-    });
+    const parsed: unknown = readJsonc(opened.text, errors);
     // Reported, and then read anyway. `jsonc-parser` is error-tolerant: it hands
     // back the keys it could read alongside the errors it hit, so a damaged
     // `exclude` between a valid `copy` and a valid `setup` still yields both.
@@ -142,7 +136,7 @@ export const nativeAdapter: ProviderAdapter = {
     const record = parsed as Record<string, unknown>;
     const base = extendsOf(record, draft);
     const dropped = excludeOf(record, draft);
-    await readInlineKeys(record, KNOWN_KEYS, repoRoot, opened.root, deps, ids(), draft);
+    await readInlineKeys(record, KNOWN_KEYS, repoRoot, opened.root, deps, draft.budget.nextId, draft);
 
     return { model: modelFromDraft(draft), extends: base, exclude: dropped };
   },

@@ -24,6 +24,14 @@ describe("createGitCommandRunner", () => {
     expect([...result.stdout]).toEqual([97, 0, 98]);
   });
 
+  it("writes per-call input to stdin", async () => {
+    const result = await nodeRunner().run(["-e", "process.stdin.pipe(process.stdout)"], cwd, {
+      input: "start\nverify refs/heads/main abc\ncommit\n",
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout.toString()).toBe("start\nverify refs/heads/main abc\ncommit\n");
+  });
+
   it("returns a non-zero exit code as a value instead of throwing", async () => {
     const result = await nodeRunner().run(["-e", "process.exit(3)"], cwd);
     expect(result.code).toBe(3);

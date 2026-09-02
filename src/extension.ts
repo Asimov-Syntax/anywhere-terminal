@@ -45,7 +45,7 @@ import {
 import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
-  ProvisionStepResult,
+  ProvisionResultContest,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
@@ -64,6 +64,7 @@ import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
 import { afterDelay } from "./worktree/deadline";
 import { rosterFromDetail } from "./worktree/delegations";
+import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
@@ -72,12 +73,14 @@ import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
 import { createPresenceProjector } from "./worktree/presenceProjector";
 import type { DelegationRoster } from "./worktree/presenceTypes";
-import { applyEntry, nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
+import { nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
+import { applyProvisioning, failEveryEntry } from "./worktree/provisioning/applyProvisioning";
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
+import { writeNativeConfig } from "./worktree/provisioning/writeNativeConfig";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
-import { checksFor } from "./worktree/removalChecks";
+import { branchDeleteOfferFor, checksFor } from "./worktree/removalChecks";
 import { readPullRequests } from "./worktree/repoPullRequests";
 import { readRepoRefs } from "./worktree/repoRefs";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
@@ -218,9 +221,11 @@ export function createDelegationReader(
 function toAssessmentPayload(
   assessment: Exclude<RemovalAssessment, { kind: "unavailable" }>,
 ): WorktreeRemoveAssessmentPayload {
+  const branchDelete = branchDeleteOfferFor(assessment);
   return {
     checks: checksFor(assessment),
     contained: assessment.kind === "refused" ? assessment.containsWorktrees : [],
+    ...(branchDelete === undefined ? {} : { branchDelete }),
   };
 }
 
@@ -235,7 +240,13 @@ function toResultMessage(outcome: MutationOutcome): WorktreeMutationResultMessag
     case "ok":
       return {
         ...head,
-        result: { kind: "ok", ...(outcome.openFailed === undefined ? {} : { openFailed: outcome.openFailed }) },
+        result: {
+          kind: "ok",
+          ...(outcome.openFailed === undefined ? {} : { openFailed: outcome.openFailed }),
+          // The optional branch outcome rides beside `openFailed` rather than
+          // dropping it — a refused branch delete is not the removal failing.
+          ...(outcome.branchDelete === undefined ? {} : { branchDelete: outcome.branchDelete }),
+        },
       };
     case "indeterminate":
       return { ...head, result: { kind: "indeterminate", observed: outcome.observed } };
@@ -558,29 +569,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * all, so the host declared five optional capabilities and production
    * supplied none of them.
    */
+  /**
+   * Each apply's contest membership, waiting for the message that reports it.
+   *
+   * The mutation service's `applyProvision` answers with steps alone, and that
+   * contract is not this change's to move. A step carries the INDEX of its
+   * contest, so the membership travels here — written by the apply, read once
+   * by the message assembly below, and deleted, so nothing accumulates across
+   * creates.
+   */
+  const provisionContests = new Map<string, readonly ProvisionResultContest[]>();
+  /** Read once and forgotten — a create that never reports leaves nothing behind. */
+  const takeContests = (worktreePath: string): { contests?: readonly ProvisionResultContest[] } => {
+    const contests = provisionContests.get(worktreePath);
+    provisionContests.delete(worktreePath);
+    return contests === undefined ? {} : { contests };
+  };
   let worktreeMutations: ReturnType<typeof createWorktreeMutationService> | undefined;
   function mutations(): ReturnType<typeof createWorktreeMutationService> {
     if (worktreeMutations === undefined) {
       const bindings = worktreeHost.mutationBindings();
       worktreeMutations = createWorktreeMutationService({
         authorizeDirectory,
-        // Sequential, and every entry answers. `applyEntry` never throws, so a
-        // rejection here would be a bug rather than a bad entry — the call site
-        // catches one anyway, because the create has already succeeded by then.
+        // Sequential, and every entry answers. `applyProvisioning` never
+        // throws, so a rejection here would be a bug rather than a bad entry —
+        // the call site catches one anyway, because the create has already
+        // succeeded by then.
+        provisionUnavailable: (worktreePath, entries, reason) => {
+          const unavailable = failEveryEntry(entries, reason);
+          if (unavailable.contests.length > 0) {
+            provisionContests.set(worktreePath, unavailable.contests);
+          }
+          return unavailable.steps;
+        },
         applyProvision: async (mainCheckout, worktreePath, entries, authorization) => {
           const roots = await prepareEntryGate(mainCheckout, worktreePath, authorization);
           if (roots === null) {
-            return entries.map((entry) => ({
-              id: entry.id,
-              path: entry.path,
-              outcome: { kind: "failed" as const, reason: "the worktree could not be read after it was created" },
-            }));
+            // Through the same builder as the ordinary path, and staging its
+            // memberships the same way: a contested declaration is in a contest
+            // whether or not the apply could read the worktree, and a step with
+            // no index reads as a row unrelated to the dispute beside it
+            // (.reviews/round-5.md F011).
+            const unread = failEveryEntry(entries, "the worktree could not be read after it was created");
+            if (unread.contests.length > 0) {
+              provisionContests.set(worktreePath, unread.contests);
+            }
+            return unread.steps;
           }
-          const steps: ProvisionStepResult[] = [];
-          // Copy before link, whatever order the provider listed them in
-          // (worktree-apply.md § 1). A link is only ever to material the copy
-          // pass may have just put there.
-          const ordered = [...entries].sort((a, b) => Number(a.mode === "link") - Number(b.mode === "link"));
           // ONE budget for the whole apply, shared by every entry. Minting it
           // per iteration multiplied D10's bound by the entry count — against
           // the provider's own row cap that is hours of wall clock and a
@@ -592,13 +627,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             deadline: afterDelay(60_000),
           };
           try {
-            for (const entry of ordered) {
-              steps.push(await applyEntry(entry, roots, budget, nodeApplyFsDeps, { directoryStillAuthorized }));
+            const applied = await applyProvisioning(entries, roots, budget, nodeApplyFsDeps, {
+              directoryStillAuthorized,
+            });
+            if (applied.contests.length > 0) {
+              provisionContests.set(worktreePath, applied.contests);
             }
+            return applied.steps;
           } finally {
             budget.deadline.cancel();
           }
-          return steps;
         },
         applyPorts: (input) =>
           allocateWorktreePorts(input, {
@@ -721,6 +759,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     ...(outcome.provision.portWarnings === undefined
                       ? {}
                       : { portWarnings: outcome.provision.portWarnings }),
+                    ...takeContests(outcome.provision.path),
                   },
                 }
               : {}),
@@ -755,6 +794,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           // holds, and `none` is the no-op it says it is.
         },
         now: () => Date.now(),
+        // The SAME shared git runner every other worktree read and write goes
+        // through, and the guarded delete itself: production supplies no
+        // parallel git invocation path, only this adapter from the wire shape
+        // to the evidence shape `deleteBranch` verifies (design.md D2).
+        deleteBranch: (repoPath, request) =>
+          runDeleteBranch(worktreeTreeDeps.runner, repoPath, {
+            branch: request.branch,
+            branchOid: request.expectedBranchOid,
+            defaultBranch: request.defaultBranch,
+            defaultOid: request.expectedDefaultOid,
+          }),
       });
     }
     return worktreeMutations;
@@ -871,6 +921,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // because they all supplied their own (.reviews/round-1.md B1).
     readProvisioning: (mainWorktree, prefer) => readProvisioning(createProvisioningDeps(), mainWorktree, prefer),
     previewProvisioningPorts: (ports, worktreePaths) => previewWorktreePorts(ports, worktreePaths),
+    // And the same reason again for the save: without this the Configure
+    // control is inert in the shipped extension while every module test passes
+    // against its own fake.
+    writeNativeConfig: (mainWorktree, divergence) =>
+      writeNativeConfig({ realpath: (p) => fsp.realpath(p), lstat: (p) => fsp.lstat(p) }, mainWorktree, divergence),
     // Same reason as the offer above: without this the create form never
     // receives a branch list and the combobox is a plain text field in the
     // shipped extension, with every module test green against its own fake.
@@ -1074,7 +1129,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // what it published rather than against what the registry would run.
       launchTargets: () => detectLaunchTargets("start"),
       resumeSessionAt: (entryId, cwd) => vaultLauncher.resolve(entryId, "resume", undefined, undefined, cwd),
-      removeWorktree: (target, force, fingerprint) => mutations().removeWorktree(target, force, fingerprint),
+      removeWorktree: (target, fingerprint, deleteBranchRequest) =>
+        mutations().removeWorktree(target, fingerprint, deleteBranchRequest),
       // The service decides the authority; this only reshapes the assessment for
       // the wire, through the SAME converter the blocked path uses — a second
       // one would let the two reports disagree about what the user was shown.

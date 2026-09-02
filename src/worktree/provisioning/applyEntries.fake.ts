@@ -41,11 +41,37 @@ export type FakeFs = ApplyFsDeps &
     beforeLstat?: (p: string) => void;
   };
 
-export function fakeFs(initial: Record<string, FakeNode>): FakeFs {
+/**
+ * `folds: true` makes the volume case-insensitive, the way APFS and NTFS are.
+ *
+ * Two spellings then name ONE object, which is the state the apply's claim
+ * discipline exists for and the one a Map keyed by exact strings cannot hold.
+ * Resolved by scanning rather than by a second index: these trees are a handful
+ * of nodes, and a test may `nodes.set` behind the fake's back.
+ */
+export interface FakeFsOptions {
+  readonly folds?: boolean;
+}
+
+export function fakeFs(initial: Record<string, FakeNode>, options: FakeFsOptions = {}): FakeFs {
   const nodes = new Map<string, FakeNode>(Object.entries(initial));
   const created: string[] = [];
+  const folds = options.folds === true;
 
-  const at = (p: string): FakeNode | undefined => nodes.get(p);
+  const spelled = (p: string): string => {
+    if (!folds || nodes.has(p)) {
+      return p;
+    }
+    const wanted = p.toUpperCase();
+    for (const key of nodes.keys()) {
+      if (key.toUpperCase() === wanted) {
+        return key;
+      }
+    }
+    return p;
+  };
+
+  const at = (p: string): FakeNode | undefined => nodes.get(spelled(p));
 
   /** Resolve symlinks component by component, the way realpath does. */
   const realpath = (p: string): string => {
@@ -100,14 +126,14 @@ export function fakeFs(initial: Record<string, FakeNode>): FakeFs {
       if (at(p) !== undefined) {
         return err("EEXIST", p);
       }
-      nodes.set(p, { kind: "dir", mode });
+      nodes.set(spelled(p), { kind: "dir", mode });
       created.push(p);
     },
     symlink: async (target, p) => {
       if (at(p) !== undefined) {
         return err("EEXIST", p);
       }
-      nodes.set(p, { kind: "link", target });
+      nodes.set(spelled(p), { kind: "link", target });
       created.push(p);
     },
     copyFileNoFollow: async (source, destination, mode) => {
@@ -126,7 +152,7 @@ export function fakeFs(initial: Record<string, FakeNode>): FakeFs {
       if (at(destination) !== undefined) {
         return err("EEXIST", destination);
       }
-      nodes.set(destination, { kind: "file", mode, size: from.size ?? 1 });
+      nodes.set(spelled(destination), { kind: "file", mode, size: from.size ?? 1 });
       created.push(destination);
       return from.size ?? 1;
     },

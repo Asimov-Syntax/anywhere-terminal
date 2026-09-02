@@ -13,7 +13,9 @@
 // capability the interface withholds.
 
 import * as path from "node:path";
+import { getNodeValue, type ParseError, parseTree } from "jsonc-parser";
 import type {
+  ProvisionContenders,
   ProvisionEntry,
   ProvisionModel,
   ProvisionPort,
@@ -107,7 +109,11 @@ export function errnoOf(error: unknown): string {
 }
 
 /**
- * Ids are minted per offer as a counter.
+ * A counter, one per read.
+ *
+ * Callers take theirs from `ProviderBudget.nextId` rather than calling this,
+ * so every row of one read is numbered from one sequence (design.md D7). This
+ * stays exported for the budget to build and for tests that want a bare one.
  *
  * Deliberately not derived from the path: an id that encoded one would be a
  * path the webview could read back out and reason about, and an id from a
@@ -140,10 +146,54 @@ export interface ProviderBudget {
   scanned: number;
   /** The cap's reason has been recorded against this budget; do not record it again. */
   capped: boolean;
+  /**
+   * One id sequence for the whole read (design.md D7).
+   *
+   * It lives here because this object already has exactly the scope wanted: D9
+   * gives one budget to every adapter consulted in one read, and `assemble`
+   * hands the same one to the base adapter it builds on. An adapter that mints
+   * from its own `ids()` restarts at `i1`, so a base row and a native row that
+   * both survive the merge can carry the same id — which round-1 F003 showed
+   * collapses a contender group down a map keyed on it, silently and totally.
+   */
+  nextId: () => string;
+}
+
+/**
+ * Read a JSONC document without letting a member NAME reach the prototype.
+ *
+ * `jsonc-parser`'s `parse()` builds its result with ordinary property
+ * assignment, so a `"__proto__"` member does not become a key — it replaces the
+ * object's prototype. The parser reports no error, `Object.keys` never sees it,
+ * and an ordinary lookup for `extends` then resolves through the chain: values
+ * consumed from a key the file's own key list does not carry, and which the
+ * unknown-key report therefore never names (.reviews/round-7.md F012).
+ *
+ * `parseTree` keeps the member names it read, and `getNodeValue` materializes
+ * them onto `Object.create(null)` at every depth. So `__proto__` becomes an own
+ * key — reported like any other name the system does not read — and no lookup
+ * can resolve a value the file did not declare.
+ *
+ * Error tolerance is unchanged, which is the point: both forms report the same
+ * errors and recover the same keys, including a member whose value failed to
+ * parse, where `getNodeValue` skips the member exactly as `parse()` does.
+ * Building the record by hand instead is what a plan attack refuted — the
+ * obvious loop reads a value node that a damaged member does not have, and
+ * throws where the accepted contract says the file must be recovered.
+ */
+export function readJsonc(text: string, errors: ParseError[]): unknown {
+  const tree = parseTree(text, errors, {
+    // The format, not a defect in it: both files this reads are edited by hands
+    // that write comments and leave a trailing comma.
+    disallowComments: false,
+    allowTrailingComma: true,
+    allowEmptyContent: true,
+  });
+  return tree === undefined ? undefined : getNodeValue(tree);
 }
 
 export function newBudget(): ProviderBudget {
-  return { rows: 0, scanned: 0, capped: false };
+  return { rows: 0, scanned: 0, capped: false, nextId: ids() };
 }
 
 export type Draft = {
@@ -259,6 +309,145 @@ export function scanExhausted(budget: ProviderBudget): boolean {
 }
 
 /**
+ * Which destination a declared path names.
+ *
+ * Two files spelling one destination differently — `node_modules` against
+ * `./node_modules`, or `a/../node_modules` — compared as raw strings stayed two
+ * rows, so an inherited LINK survived beside the native COPY for the same place,
+ * and `exclude: ["./x"]` matched an inherited `x` not at all
+ * (.reviews/round-1.md F001). Normalization closes that on every platform.
+ *
+ * Case is folded on the PLATFORM's answer and nothing else. Five mechanisms that
+ * asked the FILESYSTEM instead were each refuted, always in the same direction:
+ * a probe reads an OBJECT, and the question is about a NAME. Existence is not
+ * folding (round-4 F005); a case-toggled symlink makes two spellings resolve
+ * alike on a volume that folds nothing; `realpath` dereferences, so two symlink
+ * aliases to one file collapsed into one row and a declared row vanished
+ * (round-5 F008); `dev`+`ino` is object identity, so two hard links and a
+ * symlinked parent collapse the same way. Merging is the direction that DISCARDS
+ * something the repository asked for, and no available primitive can prove two
+ * names are one destination slot (design.md D11).
+ *
+ * So this reads nothing. The identity path makes no filesystem call at all,
+ * which is also why a raw `exclude` spelling can no longer reach outside the
+ * checkout (round-5 F009) and why there is nothing here to bound (F010).
+ *
+ * A seventh answer was tested and rejected before this landed: folding ASCII
+ * only. It closes the over-merge (`İ`/`i̇`, `ẞ`/`ß`, `Ϗ`/`ϗ` stay apart, as NTFS
+ * keeps them) but makes the other direction worse — `Straße`/`STRASSE` and
+ * `ﬀ`/`ff` are ONE file on APFS, so splitting them reproduces the defect. Every
+ * fold has a volume it is wrong on, because folding is a property of the
+ * destination directory and this code runs before that directory exists.
+ *
+ * So there is no fold here at all. Two spellings that differ stay two rows; a
+ * pair that MAY be one destination travels as a contender group instead, and
+ * the apply side settles it where the answer can actually be observed
+ * (design.md D1, D2, D3).
+ *
+ * Used for identity only. What a row DISPLAYS and what it names as its `source`
+ * are never touched — § 4.3 forbids rewriting either, and a row that showed the
+ * canonical form would be telling the user something their file does not say.
+ */
+export function identityOf(declared: string): string {
+  const normalized = path.posix.normalize(declared);
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+}
+
+/**
+ * A key two spellings share when some supported filesystem would fold them.
+ *
+ * Deliberately generous and deliberately not a proof (design.md D4). Three
+ * attempts at this predicate have now been rejected, each of which passed its
+ * own witnesses, so the shape of the answer matters more than the characters:
+ *
+ * - Lexical normalization only. Missed everything.
+ * - `NFC` + `toLowerCase`. Missed `Straße`/`STRASSE`, the `ﬀ` ligature, and a
+ *   Win32 dot on a non-final segment.
+ * - `NFKC` + lowercase + a curated expansion list. Missed Greek `σ`/`ς`.
+ *
+ * A union with `Intl.Collator` was proposed to close the third and refuted
+ * before it was built: against every default full fold in Unicode 16 it still
+ * missed 64 pairs, all of which are one file on APFS — Greek ypogegrammeni
+ * expansion, where `ᾳ` and `αι` name one destination. `ᾼ`/`ᾳ` is ordinary case
+ * mapping and was always grouped, which is exactly why no curated witness
+ * revealed the class.
+ *
+ * `toUpperCase` is what performs the multi-character and Greek expansions
+ * `toLowerCase` does not, so the key uppercases LAST (design.md D9). Two
+ * orderings are load-bearing and are asserted rather than trusted: lowercase
+ * must precede uppercase, because it is what turns `ẞ` into `ß` so the
+ * uppercase step can expand it to `SS`; and the FINAL `NFKC` is not decoration,
+ * because without it eight Greek iota-with-dialytika code points stop folding.
+ *
+ * Per SEGMENT, because Win32 strips trailing dots and spaces from every
+ * component rather than from the end of the path.
+ *
+ * It over-groups — `NFKC` alone maps `Ⅻ` onto `xii`, and `I`/`ı` group though
+ * APFS keeps them apart. That is the direction D4 permits.
+ */
+export function foldSegment(segment: string): string {
+  return foldWin32Name(segment.normalize("NFKC").toLowerCase()).toUpperCase().normalize("NFKC");
+}
+
+/**
+ * The key a common filesystem might fold two spellings onto.
+ *
+ * Deliberately NOT a proof, and never used to merge. It answers "could these be
+ * one destination", and it is allowed to say yes when the answer is no: a false
+ * positive costs an ordering constraint on two entries that never collide. A
+ * false NEGATIVE is the one that still loses a guarantee, so this folds
+ * everything a supported filesystem is known to fold and does not try to be
+ * exact (design.md D4):
+ *
+ *  - Win32 ignores trailing dots and spaces and the `::$DATA` stream suffix, so
+ *    `foo` and `foo.` are one object there — and no case fold closes that.
+ *  - APFS and NTFS both compare case-insensitively by default, though NOT by the
+ *    same table, which is why the answer belongs to the volume and not here.
+ *  - macOS stores NFD and compares canonically, so `é` composed and `é` decomposed
+ *    are one name.
+ */
+
+function foldable(declared: string): string {
+  return identityOf(declared)
+    .split("/")
+    .map((segment) => foldSegment(segment))
+    .join("/");
+}
+
+export function contendersOf(entries: readonly ProvisionEntry[], favouredSource?: string): ProvisionContenders[] {
+  const byKey = new Map<string, ProvisionEntry[]>();
+  for (const entry of entries) {
+    const key = foldable(entry.path);
+    const held = byKey.get(key);
+    if (held === undefined) {
+      byKey.set(key, [entry]);
+    } else {
+      held.push(entry);
+    }
+  }
+  const groups: ProvisionContenders[] = [];
+  for (const members of byKey.values()) {
+    if (members.length < 2) {
+      continue;
+    }
+    // By declaring FILE, not by id: `ids()` mints a fresh sequence per adapter,
+    // so a base row and a native row can carry the same id, and identifying the
+    // repository's own row that way silently matched both — which cost every
+    // group its favoured member. The source is what "the repository's own
+    // declaration" actually means anyway (§ 4.3).
+    const native = favouredSource === undefined ? [] : members.filter((e) => e.source === favouredSource);
+    groups.push({
+      members: members.map((e) => e.id),
+      // Reported, not adjudicated. Which members are the repository's own is a
+      // fact about the offer; which one wins depends on what is still selected,
+      // and only the caller looking at a selection can answer that (D3c).
+      natives: native.map((e) => e.id),
+    });
+  }
+  return groups;
+}
+
+/**
  * The model an adapter's draft became.
  *
  * One assembly point, so a field added to `ProvisionModel` cannot reach two
@@ -273,6 +462,12 @@ export function modelFromDraft(draft: Draft): ProvisionModel {
     ports: draft.ports,
     providers: [],
     excluded: [],
+    // Filled HERE, at the one model assembly point, so no adapter can ship a
+    // model whose contender relation was never computed — which is what
+    // round-3 F006 found behind the directly-exported reader. No favoured
+    // source: one draft carries one declaring file, so nothing in it can be
+    // "the repository's own" relative to the rest (design.md D3).
+    contenders: contendersOf(draft.entries),
     problems: draft.problems,
   };
 }
@@ -358,7 +553,7 @@ export async function readInlineKeys(
 }
 
 export function emptyModel(): ProvisionModel {
-  return { entries: [], setup: [], ports: [], providers: [], excluded: [], problems: [] };
+  return { entries: [], setup: [], ports: [], providers: [], excluded: [], contenders: [], problems: [] };
 }
 
 /**
@@ -731,31 +926,54 @@ export interface ProviderAdapter {
 }
 
 /**
- * Does this platform treat two case spellings of a filename as one name?
+ * Whether the platform underneath applies Win32 filename rules.
  *
- * A PLATFORM question, deliberately, and never a question about a volume. Two
- * shipped implementations of the same problem answer it this way and neither
- * probes a filesystem: `orca/src/relay/git-handler-worktree-ops.ts` compares
- * worktree paths case-insensitively only when both are Windows-spelled, and
- * `t3code/apps/mobile/src/features/files/filePath.ts` does the same for
- * workspace-relative paths.
+ * NOT "does this platform fold filename case" — it was called that while the
+ * read path used it to fold identity, and that use is gone. Folding is a
+ * property of a DIRECTORY, not of a platform: a case-sensitive APFS volume
+ * mounts inside a case-insensitive one, and Windows carries case sensitivity
+ * per directory. Every fold keyed on the platform is therefore wrong on some
+ * volume, which is why identity no longer asks (design.md D1).
  *
- * Asking the volume was tried five times here and refuted five times, in the
- * same direction each time: every probe that reads a filesystem OBJECT — does a
- * toggled spelling exist, do two spellings resolve alike, do two paths share
- * `dev` and `ino` — answers "one object" when the question is "one name". Hard
- * links, symlink aliases and symlinked parents are each two names for one
- * object, and merging them silently discards a declaration the user made. A
- * platform answer can only be wrong the visible way: on a case-insensitive POSIX
- * volume, two spellings of one file stay two rows, which the user can see and
- * remove (design.md D11).
+ * What survives is the one question a platform CAN answer: which naming rules
+ * the kernel applies, so `entryGate.ts` can strip the trailing dots, trailing
+ * spaces and `::$DATA` suffix Win32 treats as the same name before it decides
+ * whether a destination is a lockfile it must refuse. That refusal is safe to
+ * be over-eager — it stays visible to the user — which a merge key never was.
  *
- * The exception it accepts, named rather than hidden: a Windows directory with
- * per-directory case sensitivity enabled holds two real files this folds to one.
- *
- * `path.sep` is the plainest true statement about which naming rules the kernel
- * underneath applies, and `path` here is the platform-bound module.
+ * `path.sep` is the plainest true statement about it, and `path` here is the
+ * platform-bound module.
  */
-export function platformFoldsFilenameCase(): boolean {
+/**
+ * The trailing dots, trailing spaces and `::$DATA` suffix Win32 treats as the
+ * same name, removed to a fixed point. Expects an already-lower-cased segment.
+ *
+ * To a fixed point because the two compose in either order and one pass cannot
+ * follow them: `pnpm-lock.yaml::$DATA.` needs the dot stripped before the
+ * stream suffix is even visible, and `pnpm-lock.yaml. ::$DATA` needs the
+ * reverse.
+ *
+ * One owner for two callers with different reasons to ask. `entryGate.ts` asks
+ * about the destination it is deciding whether to refuse, and asks only where
+ * the platform actually applies these rules. The contender detector asks about
+ * a declared spelling, on every platform, because it is looking for a pair some
+ * supported filesystem would fold and it is allowed to be generous
+ * (design.md D4, D8). Two implementations of one rule drift, and `oneOwner.test.ts`
+ * exists because that drift has already happened here twice.
+ */
+export function foldWin32Name(lowerName: string): string {
+  const STREAM = "::$data";
+  let folded = lowerName;
+  for (;;) {
+    const trimmed = folded.replace(/[. ]+$/, "");
+    const unstreamed = trimmed.endsWith(STREAM) ? trimmed.slice(0, -STREAM.length) : trimmed;
+    if (unstreamed === folded) {
+      return folded;
+    }
+    folded = unstreamed;
+  }
+}
+
+export function platformUsesWin32FilenameRules(): boolean {
   return path.sep === "\\";
 }

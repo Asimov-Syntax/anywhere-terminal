@@ -12,6 +12,7 @@
 import * as nodePath from "node:path";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
 import type {
+  BranchDeleteRequest,
   ProvisionEntry,
   ProvisionPort,
   ProvisionPortResult,
@@ -29,6 +30,7 @@ import {
   type DebrisAuthorizationStore,
   type DebrisIssueResult,
 } from "./debrisAuthorization";
+import type { DeleteBranchOutcome } from "./deleteBranch";
 import { messageOf } from "./errorMessage";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
@@ -85,6 +87,8 @@ export type MutationOutcome =
        * a follow-up notice sharing this one's scope replaces it (round-4 W7).
        */
       openFailed?: string;
+      /** The optional branch action runs only after the removal itself succeeded. */
+      branchDelete?: DeleteBranchOutcome;
       /**
        * What provisioning did, per entry and selected port, and the worktree it did it in.
        *
@@ -221,6 +225,11 @@ export interface MutationServiceDeps {
     entries: readonly ProvisionEntry[],
     authorization: { readonly source: AuthorizedDirectory; readonly destination: AuthorizedDirectory },
   ): Promise<readonly ProvisionStepResult[]>;
+  provisionUnavailable?(
+    worktreePath: string,
+    entries: readonly ProvisionEntry[],
+    reason: string,
+  ): readonly ProvisionStepResult[];
   applyPorts?(input: {
     repoId: string;
     repoPath: string;
@@ -237,6 +246,9 @@ export interface MutationServiceDeps {
    * null for a path it cannot normalize, and the path is used then.
    */
   normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
+
+  /** Delete the requested branch only after the worktree removal is known to have succeeded. */
+  deleteBranch?(repoPath: string, request: BranchDeleteRequest): Promise<DeleteBranchOutcome>;
 
   runner: GitCommandRunner;
   /**
@@ -338,11 +350,10 @@ export interface MutationServiceDeps {
 /**
  * What a removal WOULD cost, and what answering the report is worth.
  *
- * `fingerprint` is non-null under exactly `atRisk` — the same predicate, in the
- * same module, that the blocked path issues under. That colocation is the point
- * of putting this here rather than in the host: deciding it anywhere else would
- * be a second copy of `atRisk`, and the two would drift on the one action that
- * cannot be undone (design.md D7).
+ * Every readable non-refused report carries a fingerprint authorizing one
+ * confirmed attempt. Git's force mode is derived later from fresh evidence by
+ * the same module's single `atRisk` predicate; the panel never chooses it
+ * (design.md D7).
  */
 export type RemovalReport =
   | {
@@ -446,16 +457,13 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
     if (assessment.kind === "refused") {
       return { kind: "assessed", assessment, fingerprint: null };
     }
-    // The whole of D7 is this line. `atRisk` false means the ordinary unforced
-    // removal is legal, so the report needs no force authority and gets none:
-    // asking what a clean worktree would cost must not be the door that makes
-    // destroying one possible.
+    // Confirmation authority and Git force are orthogonal (D7). A clean report
+    // still needs proof that the dialog it opened was answered; fresh evidence
+    // later decides whether the resulting Git command needs force.
     return {
       kind: "assessed",
       assessment,
-      fingerprint: atRisk(assessment.evidence)
-        ? fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now())
-        : null,
+      fingerprint: fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now()),
     };
   }
 
@@ -497,7 +505,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // and the mutation result `withTarget` publishes are separable, and only
       // the second is what D6 was right to avoid. Reading from the cache instead
       // let a rebuild still pending hand the predecessor's report the
-      // replacement's evidence, and mint force authority over it (round-4 B3).
+      // replacement's evidence and removal authority (round-4 B3).
       return coordinator.run<ResolvedTarget, RemovalReport | null>(target.repoId, {
         resolve: async () => deps.resolve(target),
         // The other silent exit. The departure is only the user's answer while
@@ -543,23 +551,21 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         settled("unlock", target.repoId, await unlockWorktree(deps.runner, paths(t))),
       ),
 
-    removeWorktree: (target, force, fingerprint) =>
+    removeWorktree: (target, fingerprint, deleteBranchRequest?: BranchDeleteRequest) =>
       withTarget(
         "remove",
         target,
         async (t, ctx) => {
-          // Assessed on EVERY removal, forced or not. Gating this behind `force`
-          // meant an unforced removal evaluated no blockers at all and went
-          // straight to git — and since only the confirmable branch issues a
-          // token, nothing ever called `issueFingerprint` either (round-2 B1).
-          // Git refuses a dirty worktree itself; idle panes and external sessions
-          // are not git's concern and would have been destroyed unannounced.
-          // EVERY forced exit spends the token, including the ones below that
+          // Assessed on EVERY removal. A request with no fingerprint reports;
+          // a request with one re-evaluates before it may execute. Git refuses a
+          // dirty worktree itself, but idle panes and external sessions are not
+          // Git's concern and would otherwise be destroyed unannounced.
+          // EVERY confirmed exit spends the token, including the ones below that
           // never reach git. Returning `reprompt` without redeeming left it live
           // after an evidence-read failure, so the next message could retry a
           // removal that may already have run half-way (round-2 B5).
           const spend = (): void => {
-            if (force && fingerprint !== undefined) {
+            if (fingerprint !== undefined) {
               fingerprints.forget(target.worktreeId);
             }
           };
@@ -599,34 +605,35 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             };
           }
 
-          if (!force) {
-            // Nothing at risk is the only case an unforced removal may run.
-            // Anything else comes back as the blocker set the user must see,
-            // carrying the token that will authorize exactly it.
-            if (atRisk(assessment.evidence)) {
-              return {
-                kind: "blocked",
-                verb: "remove",
-                repoId: target.repoId,
-                worktreeId: target.worktreeId,
-                assessment,
-                fingerprint: fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now()),
-              };
-            }
-          } else {
-            const verdict =
-              fingerprint === undefined
-                ? "reprompt"
-                : fingerprints.redeem({ worktreeId: target.worktreeId }, fingerprint, assessment.evidence, deps.now());
-            if (verdict === "reprompt") {
-              return {
-                kind: "error",
-                verb: "remove",
-                repoId: target.repoId,
-                message: "What is at risk here changed since you confirmed it. Please review it again.",
-              };
-            }
+          if (fingerprint === undefined) {
+            // A fingerprint-free request is an ask, never execution authority.
+            // Every readable non-refused assessment therefore returns the report
+            // and the one-shot token its dialog callback must send back (D7).
+            return {
+              kind: "blocked",
+              verb: "remove",
+              repoId: target.repoId,
+              worktreeId: target.worktreeId,
+              assessment,
+              fingerprint: fingerprints.issue({ worktreeId: target.worktreeId }, assessment.evidence, deps.now()),
+            };
           }
+
+          const redemption = fingerprints.redeem(
+            { worktreeId: target.worktreeId },
+            fingerprint,
+            assessment.evidence,
+            deps.now(),
+          );
+          if (redemption.kind === "reprompt") {
+            return {
+              kind: "error",
+              verb: "remove",
+              repoId: target.repoId,
+              message: "What is at risk here changed since you confirmed it. Please review it again.",
+            };
+          }
+          const force = atRisk(assessment.evidence);
           const journal = {
             worktreePath: t.worktreePath,
             wasRegistered: t.wasRegistered,
@@ -658,7 +665,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           if (deps.resolve(target) === null) {
             fingerprints.forget(target.worktreeId);
           }
-          return asOutcome(
+          const removal = asOutcome(
             "remove",
             target.repoId,
             classifyRemoval({
@@ -668,6 +675,43 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               after: await deps.observeAfter(target, journal.worktreePath),
             }),
           );
+          if (removal.kind !== "ok" || deleteBranchRequest === undefined) {
+            return removal;
+          }
+          // The transaction's OIDs come from what was ISSUED with the
+          // fingerprint (`redemption.approved`), never from a fresh
+          // assessment and never from the caller's own claim — that is the
+          // exact substitution the guard exists to prevent (design.md D10).
+          const mergeEvidence = redemption.approved.proofs.mergeEvidence;
+          if (
+            mergeEvidence === undefined ||
+            deleteBranchRequest.fingerprint !== fingerprint ||
+            deleteBranchRequest.branch !== mergeEvidence.branch ||
+            deleteBranchRequest.expectedBranchOid !== mergeEvidence.branchOid ||
+            deleteBranchRequest.defaultBranch !== mergeEvidence.base ||
+            deleteBranchRequest.expectedDefaultOid !== mergeEvidence.baseOid
+          ) {
+            // The opt-in authorizes only the offer echoed from THIS report.
+            // Another report can replace the stored evidence while retaining
+            // the same removal-risk fingerprint, so every field is part of the
+            // consent binding even though none is trusted as Git evidence.
+            return { ...removal, branchDelete: { kind: "refused", reason: "holders-unavailable" } };
+          }
+          const guardedRequest: BranchDeleteRequest = {
+            branch: mergeEvidence.branch,
+            expectedBranchOid: mergeEvidence.branchOid,
+            defaultBranch: mergeEvidence.base,
+            expectedDefaultOid: mergeEvidence.baseOid,
+            fingerprint,
+          };
+          const branchDelete = await (
+            deps.deleteBranch?.(t.repoPath, guardedRequest) ??
+            Promise.resolve({ kind: "refused" as const, reason: "holders-unavailable" as const })
+          ).catch(() => ({
+            kind: "refused" as const,
+            reason: "holders-unavailable" as const,
+          }));
+          return { ...removal, branchDelete };
         },
         // The id resolved to nothing on the far side of the forced rebuild, so
         // the worktree is already gone. That IS D15's observation, and it has to
@@ -990,9 +1034,13 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                   path: entry.path,
                   outcome: { kind: "failed" as const, reason },
                 }));
+              const unavailableReason =
+                destinationAuthorization === undefined
+                  ? "the worktree could not be read after it was created"
+                  : "the main checkout could not be read after the worktree was created";
               provisioned =
                 sourceAuthorization === undefined || destinationAuthorization === undefined
-                  ? failed("the checkout identity could not be verified after creation")
+                  ? (deps.provisionUnavailable?.(check.path, wanted, unavailableReason) ?? failed(unavailableReason))
                   : deps.applyProvision === undefined
                     ? // A host with no binding cannot provision, but it CAN say so.
                       // Dropping the selection produced an outcome byte-identical

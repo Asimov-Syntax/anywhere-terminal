@@ -532,6 +532,24 @@ export class WorktreeController {
             provider: request.provider as WorktreeProvisionOffer["model"]["providers"][number]["id"],
           });
         },
+        // The user's selection, named by the host's own ids against the offer
+        // that issued them. No path and no key: the host derives the file it
+        // writes and the root it writes under from its own cache, and the
+        // message's `repoId` selects a record rather than becoming a
+        // destination (design.md D1).
+        onProvisionSave: (request) => {
+          deps.postMessage({
+            type: "worktreeProvisionSave",
+            repoId: request.repoId,
+            // The opening this form was composed in, like every other request
+            // from it. A save naming a retired opening is not honoured, which
+            // is what stops a dismissed form writing.
+            opening: this.refsToken,
+            switch: request.switch,
+            offerId: request.offerId,
+            kept: request.kept,
+          });
+        },
         bindPullRequests: (apply) => {
           this.applyPullRequests = apply;
         },
@@ -569,16 +587,13 @@ export class WorktreeController {
         this.actionResults = this.actionResults.filter((r) => r !== result);
         this.push();
       },
-      // The fingerprint decides the verb. A report that carried one is answered
-      // with the forced removal it authorizes; one that carried none is answered
-      // with the ORDINARY removal, which re-evaluates host-side and blocks if the
-      // worktree stopped being clean while the user was reading (design.md D7).
-      onForceRemove: (info, fingerprint) => {
-        deps.postMessage(
-          fingerprint === null
-            ? { type: "worktreeRemove", worktreeId: info.id, force: false }
-            : { type: "worktreeRemove", worktreeId: info.id, force: true, fingerprint },
-        );
+      onForceRemove: (info, fingerprint, deleteBranch) => {
+        deps.postMessage({
+          type: "worktreeRemove",
+          worktreeId: info.id,
+          fingerprint,
+          ...(deleteBranch === undefined ? {} : { deleteBranch }),
+        });
       },
       onPrune: (repoId) => this.confirmPrune(repoId),
       // Only `unavailable` reaches here — the read failed, so asking again is
@@ -1391,6 +1406,7 @@ export class WorktreeController {
       provisioned: msg.steps,
       ports: msg.ports,
       ...(msg.portWarnings === undefined ? {} : { portWarnings: msg.portWarnings }),
+      provisionContests: msg.contests,
     });
   }
 
@@ -1740,6 +1756,7 @@ function toActionResult(msg: WorktreeMutationResultMessage): WorktreeActionResul
         ...scope,
         outcome: "ok",
         ...(msg.result.openFailed === undefined ? {} : { openFailed: msg.result.openFailed }),
+        ...(msg.result.branchDelete === undefined ? {} : { branchDelete: msg.result.branchDelete }),
       };
     case "indeterminate":
       return { action: msg.verb, ...scope, outcome: "indeterminate", observed: msg.result.observed };

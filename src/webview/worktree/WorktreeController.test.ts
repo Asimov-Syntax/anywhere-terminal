@@ -8,10 +8,14 @@ import type {
 } from "../../types/messages";
 import type { PaneAttribution, PaneReport } from "../paneAttribution";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
+import { openWorktreeCreateDialog } from "./WorktreeCreateDialog";
 import {
   agentRow,
+  createDefaults,
   noRepoTree,
   provisionModel,
+  provisionOffer,
+  REPO_ID,
   singleRepoPresence,
   singleRepoTree,
   twoRepoTree,
@@ -652,10 +656,8 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
   });
 
   it("ASKS what a removal would cost, and posts no removal at all", () => {
-    // The webview never decides a removal is safe, and it no longer starts one to
-    // find out: the unforced `worktreeRemove` this used to post is answered by
-    // deleting a clean worktree, because the host reports only from the path that
-    // already attempted it (round-3 B1, design.md D6).
+    // The webview never decides a removal is safe; it asks for the report whose
+    // fingerprint can authorize the later removal (design.md D6, D7).
     const { actions, posted } = controllerActions();
     actions.removeWorktree?.(worktree({ id: "/wt" }));
     expect(posted).toEqual([{ type: "worktreeRemoveAssess", worktreeId: "/wt", token: expect.any(String) }]);
@@ -2755,43 +2757,80 @@ describe("what a mutation did comes back to the panel", () => {
     expect(h.posts).toEqual([]);
   });
 
-  it("forces a removal with the fingerprint the user was actually shown", () => {
+  function forceRemoveDeps(h: ReturnType<typeof ready>) {
+    return (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            onForceRemove(
+              i: { id: string },
+              fp: string,
+              deleteBranch?: {
+                branch: string;
+                expectedBranchOid: string;
+                defaultBranch: string;
+                expectedDefaultOid: string;
+                fingerprint: string;
+              },
+            ): void;
+          };
+        };
+      }
+    ).view;
+  }
+
+  it("requests removal with the fingerprint the user was actually shown", () => {
     const h = ready();
-    const view = (h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string): void } } })
-      .view;
+    const view = forceRemoveDeps(h);
     view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9");
 
     expect(h.posts).toEqual([
       {
         type: "worktreeRemove",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
-        force: true,
         fingerprint: "fp-9",
       },
     ]);
   });
 
-  // The other half of the same rule: a report that carried NO fingerprint carried
-  // no force authority, so answering it sends the ordinary removal — which the
-  // host re-evaluates, and blocks if the worktree stopped being clean while the
-  // user was reading it (design.md D7).
-  it("answers a report that authorized no force with an ordinary removal", () => {
+  it("[3_1] omits deleteBranch from the posted removal when the dialog's opt-in was left unchecked", () => {
+    // The dialog answers `undefined` when its checkbox was never ticked
+    // (WorktreeRemoveDialog.ts), and that omission has to survive the
+    // controller unchanged — a field present-but-empty would still read as
+    // an opt-in on the wire (spec: deleting the branch is a separate opt-in).
     const h = ready();
-    const view = (
-      h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string | null): void } } }
-    ).view;
-    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, null);
+    const view = forceRemoveDeps(h);
+    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9", undefined);
 
     expect(h.posts).toEqual([
       {
         type: "worktreeRemove",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
-        force: false,
+        fingerprint: "fp-9",
       },
     ]);
-    // Not `fingerprint: undefined`: the key is ABSENT. A present-but-undefined key
-    // survives a structured clone as a present key, and the host reads presence.
-    expect(Object.hasOwn(h.posts[0] as object, "fingerprint")).toBe(false);
+  });
+
+  it("[3_1] carries the exact deleteBranch payload the dialog echoed back", () => {
+    const h = ready();
+    const view = forceRemoveDeps(h);
+    const deleteBranch = {
+      branch: "spike/hooks",
+      expectedBranchOid: "a".repeat(40),
+      defaultBranch: "main",
+      expectedDefaultOid: "b".repeat(40),
+      fingerprint: "fp-9",
+    };
+    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9", deleteBranch);
+
+    expect(h.posts).toEqual([
+      {
+        type: "worktreeRemove",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        fingerprint: "fp-9",
+        deleteBranch,
+      },
+    ]);
   });
 });
 
@@ -3201,14 +3240,14 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(h.posts).toEqual([{ type: "worktreeRemoveAssess", worktreeId: VALIDATOR, token: expect.any(String) }]);
   });
 
-  it("answers a clean report with an ordinary removal, carrying no fingerprint", () => {
+  it("answers a clean report with the authority it carried", () => {
     const h = ready();
     const token = ask(h);
     h.controller.handleRemoveAssessment({
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     const button = danger();
@@ -3216,7 +3255,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     expect(button?.textContent).toBe("Remove");
     button?.click();
 
-    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, force: false }]);
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-clean" }]);
   });
 
   it("answers a report with a failed risk using the fingerprint that report carried", () => {
@@ -3244,9 +3283,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
     }
     danger()?.click();
 
-    expect(h.posts).toEqual([
-      { type: "worktreeRemove", worktreeId: VALIDATOR, force: true, fingerprint: "fp-assess-1" },
-    ]);
+    expect(h.posts).toEqual([{ type: "worktreeRemove", worktreeId: VALIDATOR, fingerprint: "fp-assess-1" }]);
   });
 
   it("routes an assessment the host could not make to the retry surface, not to a refusal", () => {
@@ -3313,7 +3350,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: first,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     // The launch dialog is what the user is looking at, and a global
     // `closeDialog` is exactly how a stale report would take it down.
@@ -3323,7 +3360,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: second,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     expect(danger()?.textContent, "the live reply opened nothing either").toBe("Remove");
   });
@@ -3353,7 +3390,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     // Still the forced one. The clean report would have replaced its typed
@@ -3368,7 +3405,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/worktree-panel",
       token: `${token}-other`,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -3402,7 +3439,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: first,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     expect(document.querySelector('[role="dialog"]'), "the superseded answer opened a report").toBeNull();
 
@@ -3410,7 +3447,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: second,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
@@ -3427,7 +3464,7 @@ describe("[2_4] Remove Worktree opens the report before anything is deleted", ()
       type: "worktreeRemoveAssessment",
       worktreeId: VALIDATOR,
       token: retried,
-      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: null },
+      result: { kind: "assessed", assessment: { checks: PASSING, contained: [] }, fingerprint: "fp-clean" },
     });
 
     expect(document.querySelector('[role="dialog"]'), "the row stayed dead after a dropped reply").not.toBeNull();
@@ -3482,5 +3519,70 @@ describe("[D5] the switch the dialog takes reaches the host as a request", () =>
     const defaults = h.posts.find((m) => m.type === "requestWorktreeCreateDefaults") as { opening: number };
     const swap = h.posts.find((m) => m.type === "worktreeProvisionSwitch") as { opening: number };
     expect(swap.opening).toBe(defaults.opening);
+  });
+});
+
+describe("[D1, D8] pressing Configure in the real form reaches the host as a save", () => {
+  /**
+   * The dialog opened on the CONTROLLER's own deps.
+   *
+   * Calling `createDialogDeps().onProvisionSave` by hand proves only that the
+   * conversion works — it would keep passing with a form that renders no
+   * control, or one whose control calls nothing. The button here is the shipped
+   * one, and the assertion is on what the controller posted.
+   */
+  function form(h: Harness) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const made = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): Record<string, unknown> } };
+      }
+    ).view.deps.createDialogDeps();
+    const dispose = openWorktreeCreateDialog(host, {
+      ...(made as unknown as Parameters<typeof openWorktreeCreateDialog>[1]),
+      repos: [createDefaults({ provisioning: provisionOffer() })],
+      onSubmit: () => {},
+    });
+    return { host, dispose };
+  }
+
+  it("posts the ticked ids against the offer that named them, on the form's opening", () => {
+    const h = mount();
+    const { host, dispose } = form(h);
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+    dispose();
+
+    const posted = h.posts.filter((m) => m.type === "worktreeProvisionSave");
+    expect(posted).toHaveLength(1);
+    // Nothing on this message can carry a path, a key or file text: the host
+    // derives the file it writes and the root it writes under from its own
+    // cache, and `repoId` selects a record rather than becoming a destination.
+    expect(Object.keys(posted[0] ?? {}).sort()).toEqual(["kept", "offerId", "opening", "repoId", "switch", "type"]);
+    expect(posted[0]).toMatchObject({
+      repoId: REPO_ID,
+      switch: 1,
+      offerId: "provision-1",
+      kept: ["i1", "i2", "i3", "i4"],
+    });
+  });
+
+  it("rides the same opening every other request from the form rides", () => {
+    const h = mount();
+    const { host, dispose } = form(h);
+    const deps = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { onSelectionChange(s: { repoId: string; branch: string }): void } } };
+      }
+    ).view.deps.createDialogDeps();
+    deps.onSelectionChange({ repoId: "/repo/.git", branch: "feat" });
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+    dispose();
+
+    // A save naming a retired opening is not honoured host-side, which is what
+    // stops a dismissed form writing to the repository's configuration.
+    const asked = h.posts.find((m) => m.type === "requestWorktreeCreateDefaults") as { opening: number };
+    const save = h.posts.find((m) => m.type === "worktreeProvisionSave") as { opening: number };
+    expect(save.opening).toBe(asked.opening);
   });
 });

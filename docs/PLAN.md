@@ -324,9 +324,12 @@ nothing to provision.
 
 ## Phase 11 — Recorded Debts
 
-> **Goal**: the subsystem holds one rule per concept rather than one per call site. Every task
-> here closes a finding review already adjudicated valid and then deferred with a written reason —
+> **Goal**: the subsystem holds one rule per concept rather than one per call site. Most tasks
+> here close a finding review already adjudicated valid and then deferred with a written reason —
 > see [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) for each one's triage line.
+> WT-011.11 and WT-011.12 arrived differently: both were found by build evidence rather than by
+> review, and both are recorded here because they are debts of the same kind, not because a round
+> deferred them.
 > Nothing here changes what the panel presents when everything is healthy, which is what makes the
 > phase reviewable as hardening rather than as feature work.
 
@@ -471,6 +474,35 @@ nothing to provision.
 | **Acceptance** | A projection whose preview enrichment was skipped does not leave the envelope recorded as enriched; a surface reopening after such a pass is served a replacement pass rather than waiting for the next external scan; the fix does not fire on mutations that changed nothing |
 | **Status** | done |
 
+### [WT-011.11] One Clock Decides Whether a Deadline Has Passed
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A deadline reports itself expired the moment the wait it hands out completes, so a caller that awaits one and then reads it cannot be told it has not passed yet |
+| **Design Ref** | [worktree-subsystem-debts.md](design/worktree-subsystem-debts.md) § 2.1 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | XS |
+| **Labels** | None |
+| **Notes** | Found while confirming a verify-gate failure was not mine, and it is a real defect rather than a flaky test. The deadline is built from two clocks that do not agree: the expiry instant is computed from `Date.now()` while the wait is a `setTimeout` of the same duration, and Node's timer may fire up to a millisecond early against `Date.now()`. Reproduced 1 run in 25 at commit 414b0aef on an otherwise quiet machine, so it is not CPU contention — the contention flakes are a separate and unrelated population in `extension.worktreeAssembly`, `snapshotPool` and `VaultPanel`. The margin only has to be one millisecond, so the shortest deadlines are the ones that hit it, which is why the existing test uses `1` and why raising that number would hide the defect rather than fix it |
+| **Acceptance** | Awaiting a deadline's completion and then reading whether it expired answers yes, for every duration including the shortest one; the guarantee holds without depending on how promptly the host's timer fires; the existing test keeps its one-millisecond deadline rather than being relaxed to pass |
+| **Status** | done |
+
+### [WT-011.12] The Shipped Bundle Resolves Every Module It Requires
+
+| Field | Value |
+|-------|-------|
+| **Goal** | A packaged extension that would fail to activate because a dependency left an unresolvable module reference in the bundle fails the build instead of the user's editor |
+| **Design Ref** | [DESIGN.md](DESIGN.md) § 8.5 |
+| **Depends On** | None |
+| **Stage** | 8 |
+| **Size** | S |
+| **Labels** | infra |
+| **Notes** | Written after an activation failure that no suite could have caught. A dependency whose package `main` is a UMD bundle calls its factory with `require` as a parameter and the factory then requires a relative path; the bundler cannot follow a require reached through a parameter, so the call survives into the output and resolves against the output directory at runtime. The whole test suite stayed green because the test runner resolves the dependency's ESM entry and never loads the bundle at all — so the gate has to read the built artifact, not the source. The immediate instance was fixed by aliasing that dependency to its ESM build; this task is the tripwire that would have caught it, and it must fail on the artifact rather than assert against a list of known-bad package names |
+| **Acceptance** | A build whose output holds a relative `require` that will not resolve at runtime fails the build; the check reads the built artifact rather than the sources; a deliberately reintroduced instance is caught, so the check is not vacuous; node builtins and the editor host module are not reported |
+| **Status** | done |
+
+
 ---
 
 ## Phase 12 — Provisioned Create
@@ -552,19 +584,47 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Acceptance** | An orca repo populates the section from `orca.yaml` and `.worktreeinclude` with the right copy/link modes; a repo whose only config is a `worktreeCreated` task populates its setup rows; detection follows the recorded order and the first hit supplies the model; a second detected provider appears as one quiet row offering to switch, never as a merge and never hidden; a JSONC file with comments and trailing commas parses; orca keys outside the two that map are ignored without reporting the repo as misconfigured |
 | **Status** | done |
 
+### [WT-012.17] Two Spellings, One Destination Slot
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Decide, without reading the filesystem, when two declared paths are provably one destination — and surface every pair it cannot prove instead of guessing either way |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4.2, § 4.3; [worktree-apply.md](design/worktree-apply.md) § 2.1, § 2.2 |
+| **Depends On** | WT-012.2 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | new-api-contract |
+| **Notes** | The read-time half of the split; WT-012.18 owns the apply-time half. An oracle attack established the boundary: git creates the worktree BEFORE provisioning runs, so the folding rule that decides the answer belongs to a directory that does not exist while the offer is drawn — demanding one row before creation is not satisfiable under the available primitives, which is why this task no longer asks for it. Split out of WT-012.4 after its review reopened the question a sixth time. Six mechanisms are already refuted and the counterexamples are recorded in that change's design.md attack log — a single-file case probe (a case-toggled symlink answers for the wrong volume), `realpath` per path (two aliases, one answer, two slots), `lstat` dev+ino per path (two hard links share an inode; a symlinked parent defeats no-follow; Windows `st_ino` collides past 2^53 without `{ bigint: true }`), and lexical folding on platform alone. That last one is what shipped and what round 7 refuted on BOTH axes: on a folding POSIX volume `mixedcase` and `MixedCase` stay two default-selected rows, copy is applied before link, and the second is charged EEXIST, so the inherited mode wins a destination the merge rule awards to the native entry; on Windows `toLowerCase()` merges `İ` with `i̇` and `ẞ` with `ß`, which NTFS keeps distinct through its own `$UpCase` table with no normalization, silently dropping a declaration. Node exposes no no-follow canonical-directory-entry-name primitive. A conservative fold is NOT the answer either: ASCII-only folding closes the Windows over-merge but makes the other failure worse, because `Straße` and `STRASSE` are one file on APFS and splitting them recreates exactly the round-7 defect. `entryGate.ts` folding case for its lockfile rule is not a precedent — an over-conservative refusal stays visible, while a merge key deletes a row and its provenance for good |
+| **Acceptance** | Two declarations whose normalized paths are exactly equal produce one entry, and the native one wins including its `mode` while keeping its own `source`; two declarations related only by case or Unicode folding are neither merged nor discarded — both stay offered, each with the spelling and source its own file wrote, travelling as a group that records the native declaration as the one the merge rule favours; `exclude` matches on the same rule the merge uses, and an exclusion matching nothing is reported rather than dropped; no identity or exclusion decision reads any path at all, on any platform; the read path still imports nothing that executes or mutates |
+| **Status** | done |
+
+### [WT-012.18] The Entry That Wins Is the Entry That Lands
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Arbitrate a destination two selected entries both claim, at the moment that destination exists, so the repository's own declaration wins it or the pair is refused where the user can see it |
+| **Design Ref** | [worktree-apply.md](design/worktree-apply.md) § 2.1, § 2.2, § 3; [worktree-provisioning.md](design/worktree-provisioning.md) § 4.2 |
+| **Depends On** | WT-012.17 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | new-api-contract |
+| **Notes** | The other half of the split that WT-012.17 records, and the half that can actually observe the destination: git creates the worktree before provisioning runs, so the folding rule that decides the answer is a property of a directory that does not exist while the offer is being drawn. Two mechanisms here are already refuted. Reading `EEXIST` as the collision signal fails four ways — `makeDirectory` returns `written` for a directory that was already there and the second walk merges into it, `EEXIST` cannot tell a rival declaration from material `git worktree add` checked out, a native claimant that fails before claiming leaves no `EEXIST` at all, and the global copy-before-link sort is a prerequisite rule rather than a precedence one. Adopting orca's behaviour also fails: it dedupes exact strings and is first-write-wins, which is not provenance-wins. What is reusable is its no-clobber shape and the exclusive primitives already here — `copyFileNoFollow` opens the destination `O_CREAT \| O_EXCL` and links are one `symlink` call. Two states this task MUST settle with a `D#`, both found by attacking WT-012.17's plan rather than by review: a directory destination that already exists returns `written` and the walk MERGES the loser's children in, so for directory entries ordering alone never yields native-wins; and `Copying SHALL happen before linking` is an ACCEPTED requirement (`asimov/specs/worktree-panel/spec.md:1810-1815`), which a native link claiming its slot ahead of an inherited copy violates outright — two hard requirements over one state, so write both as predicates over one model and either show a construction satisfying both or name the one that yields. Also unowned so far: an unchecked favoured member must neither claim nor block a selected inherited one, and a copied symlink can become a self-loop when a case-sensitive source lands on a case-insensitive destination. Follow-up, deliberately NOT assumed by this task: a twin-create probe inside a private directory under the real destination parent would test two NAMES by creating them rather than testing object identity, which is the one thing the six refuted mechanisms never did — it needs a stated filesystem-support contract and an owner for the artifact a crash leaves behind, and provisioning currently deletes nothing |
+| **Acceptance** | When a native and an inherited entry claim one destination slot, the material and the `mode` the worktree ends up with are the native entry's; a directory this apply created is distinguished from one that was already there, and an existing destination stops the lower-priority walk instead of merging into it; a collision the apply cannot causally attribute — the destination pre-existed, the native claimant failed before claiming it, or another process created the name concurrently — is reported as a refused pair naming both declarations and is never resolved in favour of the inherited entry; provisioning still deletes nothing |
+| **Status** | done |
+
 ### [WT-012.4] One Configuration Assembled From Several Files
 
 | Field | Value |
 |-------|-------|
 | **Goal** | Support `.vscode/worktree.json` with `extends`, inline keys and `exclude`, rendering per-entry provenance for a merged model and naming a config that could not be read |
 | **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 3.4, § 4.2, § 4.3, § 9; [worktree-create.md](design/worktree-create.md) § 4.3 |
-| **Depends On** | WT-012.3 |
+| **Depends On** | WT-012.3, WT-012.17, WT-012.18 |
 | **Stage** | 9 |
 | **Size** | L |
 | **Labels** | new-api-contract, user-visible-ui |
 | **Notes** | The merge rule is the contract the UI's per-row badge depends on, so it is what breaks quietly if provenance is dropped anywhere in the pipeline. Four problem reasons are distinct on purpose — a missing `extends` target is not an unreadable file, and the difference decides whether the inline keys still apply |
 | **Acceptance** | A native file extending a provider produces one list whose entries each name their own origin; an inline entry sharing a path with an inherited one wins including its mode; an excluded path is shown as deliberate rather than missing and is not counted in the row total; setup steps from two sources are neither deduped nor reordered; a malformed file, an unknown key, and a missing `extends` target each report distinctly and none of them discards the rest of the file; a missing `extends` target still applies the native file's own inline keys; Create stays enabled through every one of these states |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.5] Configure Writes Our File and Only Ours
 
@@ -578,7 +638,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | The only task in the phase that writes a config file, sequenced last among the read tasks for that reason. Switching the active provider is also a write to this file — it rewrites `extends`, never the other framework's file |
 | **Acceptance** | Changing an inherited entry produces an inline entry or an exclude rather than an edit to the provider's file; a provider file is byte-identical after any operation this control offers; a first write points `extends` at whatever detection made active rather than freezing today's resolved list; an existing native file keeps its formatting and comments; switching the active provider rewrites only `extends` |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.6] Ports Are Allocated and Named Before They Collide
 
@@ -769,7 +829,7 @@ refused outright.
 | **Labels** | security-privacy |
 | **Notes** | **Reverses a recorded rule** that branch deletion is never part of removal. The reasoning behind that rule is preserved — what changed is that it turned on the word *silently*, and an off-by-default, proof-gated, guarded opt-in is not what it refused. The guard is what makes it safe rather than merely careful: a branch can advance between the merge check and the delete, and without an expected-old-value the window is unbounded |
 | **Acceptance** | The control is off by default and never implied by removing the worktree; it is absent rather than disabled when the merge proof is false or unproven; typing the confirmation never unlocks it; both the branch OID and the default-branch OID recorded with the proof are verified immediately before the delete, and a move in either one fails the delete rather than discarding work; the default branch is never offered for deletion; a branch checked out in another worktree is re-checked immediately before the delete and refused; the control is offered in the pre-removal report and executed only after the removal succeeds; a failed branch delete leaves the removal reported as successful and the branch failure reported separately; `git worktree remove` itself never touches the branch |
-| **Status** | todo |
+| **Status** | done |
 ### [WT-013.4] The Report Is Legible Before It Is Dangerous
 
 | Field | Value |
@@ -778,11 +838,11 @@ refused outright.
 | **Design Ref** | [worktree-removal.md](design/worktree-removal.md) § 1, § 2.1, § 2.3, § 2.4, § 3, § 4 |
 | **Depends On** | WT-013.1, WT-013.2 |
 | **Stage** | 10 |
-| **Size** | M |
-| **Labels** | user-visible-ui |
+| **Size** | L |
+| **Labels** | user-visible-ui, new-api-contract, security-privacy, cross-boundary |
 | **Notes** | Split from the assessment because a check taxonomy and a dialog are different failures with different tests. The class travels on the wire so the typed-confirmation rule is not re-derived in the webview — a safety rule implemented in two places is a safety rule that will disagree with itself |
-| **Acceptance** | Every check renders with its outcome including the ones that passed, the ordinary checks and the orphan proofs alike; an unproven check never renders as passed and `notApplicable` never renders as either; typed confirmation appears only when a confirmable risk failed or could not be evaluated, and a withheld proof-gated option never triggers it; a hard refusal renders as a refusal with no confirmation control present at all; the confirmation names every failed check at once; the report states that panes inside the worktree are left running rather than closed |
-| **Status** | in_progress |
+| **Acceptance** | Every check renders with its outcome including the ones that passed, the ordinary checks and the orphan proofs alike; an unproven check never renders as passed and `notApplicable` never renders as either; typed confirmation appears only when a confirmable risk failed or could not be evaluated, and a withheld proof-gated option never triggers it; a hard refusal renders as a refusal with no confirmation control present at all; the confirmation names every failed check at once; the report states that panes inside the worktree are left running rather than closed; every removal presents this report before deletion, including a clean worktree, and no removal executes until the report's confirmation is answered |
+| **Status** | done |
 
 ---
 

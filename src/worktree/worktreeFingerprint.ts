@@ -13,7 +13,15 @@ import type { RemovalEvidence } from "./worktreeBlockers";
 /** Long enough to read a confirmation, short enough that stale state cannot act. */
 export const FINGERPRINT_TTL_MS = 2 * 60 * 1000;
 
-export type FingerprintVerdict = "proceed" | "reprompt";
+/**
+ * What a redemption returns.
+ *
+ * `proceed` carries the evidence issued alongside the fingerprint — not
+ * `current`, and not a fresh re-assessment — so a guard reading it can never
+ * be handed OIDs the user was not shown (design.md D10). A sibling of
+ * `debrisAuthorization.ts`'s `DebrisVerdict`, which already answers this way.
+ */
+export type FingerprintVerdict = { kind: "reprompt" } | { kind: "proceed"; approved: RemovalEvidence };
 
 /**
  * WHICH worktree. And only that — see `forget`.
@@ -40,6 +48,14 @@ export interface FingerprintStore {
    * authorizes one attempt. A retry after an error, a timeout, or an
    * `indeterminate` outcome must be confirmed again, because by then the
    * evidence the user read is exactly what the failed attempt may have changed.
+   *
+   * `current` gates whether the redemption proceeds; it never supplies what
+   * the caller acts on. The `proceed` verdict answers with the evidence
+   * ISSUED, so a caller guarding a delete against a proven pair of OIDs reads
+   * the pair the user was shown, never one re-derived after the fact — a
+   * branch that moved between issue and redemption is still described by its
+   * old OID, which is what lets the guard it feeds refuse rather than
+   * substitute (design.md D10).
    */
   redeem(target: FingerprintTarget, fingerprint: string, current: RemovalEvidence, now: number): FingerprintVerdict;
   /**
@@ -100,9 +116,11 @@ export function createFingerprintStore(): FingerprintStore {
       // evidence set that happens to satisfy it.
       issued.delete(target.worktreeId);
       if (record === undefined || record.fingerprint !== fingerprint) {
-        return "reprompt";
+        return { kind: "reprompt" };
       }
-      return isIdentityPreservingSubset(current, record.evidence) ? "proceed" : "reprompt";
+      return isIdentityPreservingSubset(current, record.evidence)
+        ? { kind: "proceed", approved: record.evidence }
+        : { kind: "reprompt" };
     },
 
     forget(worktreeId) {

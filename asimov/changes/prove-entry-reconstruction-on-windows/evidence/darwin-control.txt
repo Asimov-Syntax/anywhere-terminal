@@ -1,0 +1,37 @@
+════════ RESULT — paste this block back verbatim ════════
+platform:        darwin (darwin) sep="/"
+git:             git version 2.50.1 (Apple Git-155)
+node:            v24.7.0
+verdict:         RECIPE WORKS
+
+checks:
+  [x] the checkout is unregistered once its entry is gone — git lists 1 worktree(s)
+  [x] `worktree repair` still refuses to create a missing entry — exit 1: error: unable to locate repository; .git file broken: /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/surviving-checkout/.git
+  [x] `worktree add --force --force` still refuses a non-empty destination — exit 128: Preparing worktree (checking out 'adopt-me')
+  [x] no live worktree claims the branch — 0 claim(s)
+  [x] `worktree repair` accepts the reconstructed entry — exit 0
+  [x] `reset --mixed` rebuilds the per-worktree index — exit 0
+  [x] it lists — /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/repo | /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/surviving-checkout
+  [x] it keeps its branch tip — 69016a6e → 69016a6e
+  [x] the working tree reports clean (the index was really rebuilt) — clean
+  [x] it survives a prune — /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/repo | /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/surviving-checkout
+  [x] it commits back, and the repository sees the commit — branch e2b74c3c / worktree e2b74c3c
+
+the four files, as git wrote them itself:
+  <wt>/.git                 "gitdir: /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/repo/.git/worktrees/surviving-checkout"
+  worktrees/<id>/gitdir     "/private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/surviving-checkout/.git"
+  worktrees/<id>/commondir  "../.."
+  worktrees/<id>/HEAD       "ref: refs/heads/adopt-me"
+
+the four files, as this recipe wrote them:
+  <wt>/.git                 "gitdir: /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/repo/.git/worktrees/surviving-checkout"
+  worktrees/<id>/gitdir     "/private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/surviving-checkout/.git"
+  worktrees/<id>/commondir  "../.."
+  worktrees/<id>/HEAD       "ref: refs/heads/adopt-me"
+
+the four files, after `git worktree repair` normalised them:
+  <wt>/.git                 "gitdir: /private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/repo/.git/worktrees/surviving-checkout"
+  worktrees/<id>/gitdir     "/private/var/folders/by/4z9g8yl951ggbn9hs7jfcgcm0000gn/T/wt-012-14-KmnaYQ/surviving-checkout/.git"
+  worktrees/<id>/commondir  "../.."
+  worktrees/<id>/HEAD       "ref: refs/heads/adopt-me"
+═════════════════════════════════════════════════════════

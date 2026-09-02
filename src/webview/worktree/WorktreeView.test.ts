@@ -2395,6 +2395,53 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
   });
 
+  it("names a branch the removal also deleted", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "remove",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          orphanedLabel: "worktree-panel",
+          branchDelete: { kind: "deleted", branch: "worktree-panel" },
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent ?? "").toContain("Remove done.");
+    expect(notice?.textContent ?? "").toContain("The branch worktree-panel was also deleted.");
+  });
+
+  it.each([
+    ["branch-in-use", "It is checked out in another worktree."],
+    ["default-branch", "It is the default branch."],
+    ["holders-unavailable", "The branch deletion could not be safely authorized or completed."],
+    ["refs-moved", "It moved since it was checked."],
+  ] as const)("says the removal succeeded but the branch delete was refused: %s", (reason, text) => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "remove",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          orphanedLabel: "worktree-panel",
+          branchDelete: { kind: "refused", reason },
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    // "Remove done." is not the whole story: the removal succeeded and the
+    // branch it was asked to also delete did not, said in the same notice.
+    expect(notice?.textContent ?? "").toContain("Remove done.");
+    expect(notice?.textContent ?? "").toContain("The branch was not deleted.");
+    expect(notice?.textContent ?? "").toContain(text);
+    expect(notice?.className).toContain("wt-notice--warn");
+  });
+
   it("[round-4 F026] does not call a skipped entry brought over", () => {
     // `skipped` means the destination was already there — this apply wrote
     // nothing, and "1 of 1 brought over" says the opposite.
@@ -2462,6 +2509,141 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").toContain("Create done.");
     expect(notice?.textContent ?? "").toContain("1 of 2 brought over.");
     expect(notice?.textContent ?? "").toContain("a lockfile is never brought over");
+  });
+
+  it("names every declaration of a contest beside the row that lost it", () => {
+    // The membership travels once per contest and a step points at it by
+    // index, so the notice is where the two are put back together — a reason
+    // that repeated it made the report quadratic in the members
+    // (`carry-a-contest-membership-once`).
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          worktreeId: "/wt/feature",
+          outcome: "ok",
+          provisioned: [
+            { id: "i1", path: "MixedCase", outcome: { kind: "copied" }, contest: 0 },
+            {
+              id: "i2",
+              path: "mixedcase",
+              outcome: { kind: "refused", reason: "it was claimed by the repository's own declaration" },
+              contest: 0,
+            },
+            {
+              id: "i3",
+              path: "MIXEDCASE",
+              outcome: { kind: "refused", reason: "it was claimed by the repository's own declaration" },
+              contest: 0,
+            },
+          ],
+          provisionContests: [
+            {
+              members: [
+                { id: "i1", path: "MixedCase", source: ".vscode/worktree.json" },
+                { id: "i2", path: "mixedcase", source: "asimov/worktree.yaml" },
+                { id: "i3", path: "MIXEDCASE", source: "tools/worktree.yaml" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
+
+    // Once each, in the contest's own line — not rebuilt per row, which is the
+    // quadratic this change removed from the wire and must not reintroduce
+    // here (.reviews/round-1.md F001).
+    for (const declaration of [
+      "MixedCase (declared in .vscode/worktree.json)",
+      "mixedcase (declared in asimov/worktree.yaml)",
+      "MIXEDCASE (declared in tools/worktree.yaml)",
+    ]) {
+      expect(text.split(declaration)).toHaveLength(2);
+    }
+    // And EVERY refused row points into it, asserted per row rather than
+    // against the combined notice, where one row can supply the other's
+    // strings (F005).
+    const lines = (view.element.querySelector(".wt-reason")?.textContent ?? "").split("\n");
+    for (const path of ["mixedcase", "MIXEDCASE"]) {
+      const row = lines.find((line) => line.startsWith(`${path}:`));
+      expect(row).toBeDefined();
+      expect(row).toContain("it was claimed by the repository's own declaration");
+      expect(row).toContain("[contest 1]");
+    }
+  });
+
+  it("re-renders when only the contest membership changed", () => {
+    // The signature the render guard compares hashed step id and outcome kind
+    // alone, so a corrected membership under identical kinds was skipped and
+    // the stale refusal stayed on screen.
+    const { view } = mount();
+    const resultWith = (source: string) => ({
+      action: "create" as const,
+      worktreeId: "/wt/feature",
+      outcome: "ok" as const,
+      provisioned: [
+        { id: "i1", path: "MixedCase", outcome: { kind: "copied" as const }, contest: 0 },
+        { id: "i2", path: "mixedcase", outcome: { kind: "refused" as const, reason: "it lost" }, contest: 0 },
+      ],
+      provisionContests: [
+        {
+          members: [
+            { id: "i1", path: "MixedCase", source: ".vscode/worktree.json" },
+            { id: "i2", path: "mixedcase", source },
+          ],
+        },
+      ],
+    });
+    view.setData({ ...populated(), actionResults: [resultWith("asimov/worktree.yaml")] });
+    view.setData({ ...populated(), actionResults: [resultWith("tools/worktree.yaml")] });
+
+    expect(view.element.querySelector(".wt-reason")?.textContent ?? "").toContain("tools/worktree.yaml");
+  });
+
+  it.each([
+    ["a step's path", { path: "renamed" }],
+    ["a descendant detail", { details: [{ path: "inner", reason: "a lockfile is never brought over" }] }],
+  ])("re-renders when a second result differs only in %s", (_what, changed) => {
+    // The signature was an enumeration of remembered fields, and the notice
+    // renders more than those (.reviews/round-2.md F006).
+    const { view } = mount();
+    const resultWith = (over: Record<string, unknown>) => ({
+      action: "create" as const,
+      worktreeId: "/wt/feature",
+      outcome: "ok" as const,
+      provisioned: [
+        { id: "i1", path: "kept", outcome: { kind: "copied" as const } },
+        { id: "i2", path: "lost", outcome: { kind: "refused" as const, reason: "it lost" }, ...over },
+      ],
+    });
+    view.setData({ ...populated(), actionResults: [resultWith({})] });
+    view.setData({ ...populated(), actionResults: [resultWith(changed)] });
+    const text = view.element.querySelector(".wt-reason")?.textContent ?? "";
+
+    expect(text).toContain("path" in changed ? "renamed" : "a lockfile is never brought over");
+  });
+
+  it("says so when a row cites a contest the report did not carry", () => {
+    // Falling back to the bare reason removes every declaring file exactly
+    // where the obligation to name them lives (.reviews/round-1.md F002).
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          worktreeId: "/wt/feature",
+          outcome: "ok",
+          provisioned: [{ id: "i2", path: "mixedcase", outcome: { kind: "refused", reason: "it lost" }, contest: 3 }],
+          provisionContests: [],
+        },
+      ],
+    });
+
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("was not reported");
   });
 
   it("[F018] names what was left INSIDE a directory that itself copied", () => {

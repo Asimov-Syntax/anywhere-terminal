@@ -9,6 +9,7 @@
 import type * as vscode from "vscode";
 import type {
   BaseVerdict,
+  BranchDeleteRequest,
   DebrisAuthorization,
   DestinationDisposition,
   ExtensionToWebViewMessage,
@@ -27,6 +28,7 @@ import type {
   WorktreeCreateMode,
   WorktreeMutationResultMessage,
   WorktreeProvisionResultMessage,
+  WorktreeProvisionSaveMessage,
   WorktreeProvisionSwitchMessage,
   WorktreeRemoveAssessmentMessage,
   WorktreeSubscriptionLevel,
@@ -51,7 +53,14 @@ import type {
   WorktreePresence,
 } from "../worktree/presenceTypes";
 import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
+import { NATIVE_PROVIDER_FILE } from "../worktree/provisioning/nativeProvider";
 import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
+import {
+  divergenceOf,
+  type NativeConfigDivergence,
+  type NativeConfigRefusal,
+  type NativeConfigWrite,
+} from "../worktree/provisioning/writeNativeConfig";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRequests";
@@ -133,6 +142,35 @@ export interface WorktreeSurface {
    * turned that into argv; the surface only spawns it.
    */
   launchAgent?(options: CreateSessionOptions): Promise<void>;
+}
+
+/**
+ * A save that did not happen, said on the model the section is already showing.
+ *
+ * The four refusals map onto the two problem reasons the wire has, rather than
+ * widening it: `malformed` is the file's own state, and everything else is "the
+ * write could not be made". Create stays enabled either way — a configuration
+ * that could not be saved is not a reason to refuse to make a worktree
+ * (worktree-provisioning.md § 9, design.md D9).
+ */
+function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): ProvisionModel {
+  const detail: Record<NativeConfigRefusal, string> = {
+    unavailable: "Another process is holding it, or the folder could not be created.",
+    outside: "It does not resolve inside this repository.",
+    malformed: "It could not be edited without rewriting parts this did not change.",
+    unwritable: "The replacement could not be put in place.",
+  };
+  return {
+    ...model,
+    problems: [
+      ...model.problems,
+      {
+        file: NATIVE_PROVIDER_FILE,
+        reason: reason === "malformed" ? "malformed" : "unreadable",
+        detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
+      },
+    ],
+  };
 }
 
 export interface WorktreeHostOptions {
@@ -249,6 +287,15 @@ export interface WorktreeHostOptions {
     worktreePaths: readonly string[],
   ): Promise<readonly ProvisionPort[]>;
   /**
+   * Record the user's choice in the repository's OWN provisioning file, and in
+   * no other (worktree-provisioning.md § 6). Absent on every surface but the
+   * real extension entry point, and the form simply offers no save.
+   *
+   * Takes the same main-worktree path `readProvisioning` does, and a divergence
+   * the host derived — never a path, key or text the webview sent.
+   */
+  writeNativeConfig?(mainWorktree: string, divergence: NativeConfigDivergence): Promise<NativeConfigWrite>;
+  /**
    * Enumerate a repository's local branches. Absent — every surface but the
    * real extension entry point — and the create form gets no list, exactly as
    * it behaved before this existed.
@@ -354,7 +401,11 @@ export interface WorktreeActions {
     ports?: readonly ProvisionPort[];
     origin?: WorktreeSurface;
   }): Promise<void>;
-  removeWorktree?(target: WorktreeMutationTarget, force: boolean, fingerprint: string | undefined): Promise<void>;
+  removeWorktree?(
+    target: WorktreeMutationTarget,
+    fingerprint: string | undefined,
+    deleteBranch?: BranchDeleteRequest,
+  ): Promise<void>;
   /**
    * What removing this worktree WOULD cost, without removing it.
    *
@@ -774,11 +825,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * still owed. Service is round-robin over `rotation`, not newest-first: two
    * panels asking continuously must each be answered.
    */
-  interface PendingAssess {
-    surface: WorktreeSurface;
-    worktreeId: string;
-    token: string;
-  }
+  type PendingAssess =
+    | {
+        kind: "assessment";
+        surface: WorktreeSurface;
+        worktreeId: string;
+        token: string;
+      }
+    | {
+        kind: "rawRemoval";
+        surface: WorktreeSurface;
+        worktreeId: string;
+      };
   interface AssessLane {
     /** The latest unanswered request per surface, keyed by `surfaceKey`. */
     pending: Map<string, PendingAssess>;
@@ -789,6 +847,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
   type AssessCapability = NonNullable<WorktreeActions["assessRemovalReport"]>;
   const assessLanes = new Map<string, AssessLane>();
+
+  /** Replace this surface's pending report request and enqueue at most one repository job. */
+  function admitAssess(repoId: string, request: PendingAssess): void {
+    const laneKey = surfaceKey(request.surface);
+    const fresh: AssessLane = { pending: new Map(), rotation: [], outstanding: false };
+    const lane = assessLanes.get(repoId) ?? fresh;
+    assessLanes.set(repoId, lane);
+    // Against the ROTATION, not against `pending`: a surface being served has
+    // already had its pending entry taken, so testing `pending` here re-appends
+    // its key on every re-ask and grows the rotation without bound.
+    if (!lane.rotation.includes(laneKey)) {
+      lane.rotation.push(laneKey);
+    }
+    lane.pending.set(laneKey, request);
+    if (lane.outstanding) {
+      return;
+    }
+    lane.outstanding = true;
+    void runAssessLane(repoId);
+  }
 
   /** Everything one surface has pending, dropped when it detaches. */
   const forgetSurfaceAssessments = (key: string): void => {
@@ -832,7 +910,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     return undefined;
   }
 
-  async function runAssessLane(repoId: string, assess: AssessCapability): Promise<void> {
+  async function runAssessLane(repoId: string): Promise<void> {
     const lane = assessLanes.get(repoId);
     if (lane === undefined) {
       return;
@@ -840,7 +918,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     try {
       const request = takeNextAssess(lane);
       if (request !== undefined) {
-        await serveAssess(repoId, request, assess);
+        await serveAssess(repoId, request);
       }
     } finally {
       // Synchronous, in one block: the flag falls and the re-enqueue decision
@@ -850,19 +928,30 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       lane.outstanding = false;
       if (lane.pending.size > 0) {
         lane.outstanding = true;
-        void runAssessLane(repoId, assess);
+        void runAssessLane(repoId);
       } else if (assessLanes.get(repoId) === lane) {
         assessLanes.delete(repoId);
       }
     }
   }
 
-  /**
-   * One request, answered exactly once while its surface is attached (D12, as
-   * amended by design.md D3).
-   */
-  async function serveAssess(repoId: string, request: PendingAssess, assess: AssessCapability): Promise<void> {
-    const { surface: origin, worktreeId, token } = request;
+  /** Serve one report-producing request while its surface remains attached. */
+  async function serveAssess(repoId: string, request: PendingAssess): Promise<void> {
+    const { surface: origin, worktreeId } = request;
+    if (request.kind === "rawRemoval") {
+      const remove = options.actions?.removeWorktree;
+      if (remove === undefined) {
+        return;
+      }
+      try {
+        await remove({ repoId, worktreeId, origin }, undefined);
+      } catch (err) {
+        console.warn(`${LOG_PREFIX} worktree action failed`, err);
+      }
+      return;
+    }
+
+    const { token } = request;
     const unavailable = (unreadable: readonly string[]): void => {
       if (surfaces.has(origin)) {
         origin.post({
@@ -877,6 +966,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // lane, and the registration can leave while it does.
     if (actionPath(worktreeId, true) === undefined) {
       unavailable(["the worktree is no longer registered"]);
+      return;
+    }
+    const assess = options.actions?.assessRemovalReport;
+    if (assess === undefined) {
+      unavailable(["the assessment"]);
       return;
     }
     let result: Awaited<ReturnType<AssessCapability>>;
@@ -1458,6 +1552,32 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   }
 
   /**
+   * A branch-delete opt-in: five non-empty strings echoed back from a report
+   * the host itself issued, and nothing else. Shape only — the guard replaces
+   * every OID here with the redeemed fingerprint's own issued evidence, so
+   * this check exists to keep a malformed payload from reaching that redeem
+   * call at all, not to make the OIDs here trustworthy (design.md D2, D10).
+   */
+  function isKnownDeleteBranchRequest(value: unknown): value is BranchDeleteRequest {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !onlyKeys(value, ["branch", "expectedBranchOid", "defaultBranch", "expectedDefaultOid", "fingerprint"])
+    ) {
+      return false;
+    }
+    const v = value as Record<string, unknown>;
+    const named = (field: unknown): field is string => typeof field === "string" && field.length > 0;
+    return (
+      named(v.branch) &&
+      named(v.expectedBranchOid) &&
+      named(v.defaultBranch) &&
+      named(v.expectedDefaultOid) &&
+      named(v.fingerprint)
+    );
+  }
+
+  /**
    * A switch is four scalars and nothing else.
    *
    * The Boundary this enforces: no field of it can carry a file, a path, a
@@ -1482,6 +1602,35 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       Number.isInteger(m.switch) &&
       m.switch > 0 &&
       typeof m.provider === "string"
+    );
+  }
+
+  function isKnownSave(msg: unknown): msg is WorktreeProvisionSaveMessage {
+    if (
+      typeof msg !== "object" ||
+      msg === null ||
+      !onlyKeys(msg, ["type", "repoId", "opening", "switch", "offerId", "kept", "provider"])
+    ) {
+      return false;
+    }
+    const m = msg as {
+      repoId?: unknown;
+      opening?: unknown;
+      switch?: unknown;
+      offerId?: unknown;
+      kept?: unknown;
+    };
+    return (
+      typeof m.repoId === "string" &&
+      m.repoId.length > 0 &&
+      namedOpening(m.opening) &&
+      typeof m.switch === "number" &&
+      Number.isInteger(m.switch) &&
+      m.switch > 0 &&
+      typeof m.offerId === "string" &&
+      m.offerId.length > 0 &&
+      Array.isArray(m.kept) &&
+      m.kept.every((id) => typeof id === "string")
     );
   }
 
@@ -2058,27 +2207,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           }
           return;
         }
-        // Admission, and nothing else — every write below is synchronous in
-        // this handler turn, before any await (design.md D6). A request always
-        // REPLACES this surface's pending one; it adds a job only when this
-        // repository has none outstanding, which is the whole bound (D1).
-        const laneKey = surfaceKey(surface);
-        const fresh: AssessLane = { pending: new Map(), rotation: [], outstanding: false };
-        const lane = assessLanes.get(assessRepo) ?? fresh;
-        assessLanes.set(assessRepo, lane);
-        // Against the ROTATION, not against `pending`: a surface being served
-        // has already had its pending entry taken, so testing `pending` here
-        // re-appended its key on every re-ask and grew the rotation without
-        // bound — the shape this lane exists to prevent.
-        if (!lane.rotation.includes(laneKey)) {
-          lane.rotation.push(laneKey);
-        }
-        lane.pending.set(laneKey, { surface, worktreeId: assessTarget, token: msg.token });
-        if (lane.outstanding) {
-          return;
-        }
-        lane.outstanding = true;
-        void runAssessLane(assessRepo, assess);
+        // Admission is shared with fingerprint-free raw intents: both produce
+        // reports and therefore contribute to the same per-repository bound.
+        admitAssess(assessRepo, {
+          kind: "assessment",
+          surface,
+          worktreeId: assessTarget,
+          token: msg.token,
+        });
         return;
       }
       case "worktreeRemove": {
@@ -2089,19 +2225,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // a fail-fast so an id the host never published spawns nothing at all;
         // it is not the resolution the action acts on (B2).
         const gate = actionPath(msg.worktreeId, true);
-        // A force with no fingerprint authorizes nothing, and an unforced call
-        // carrying one is a payload we did not issue — both refused here rather
-        // than deeper, where a partial check could act on the wrong half.
-        if (msg.force !== (msg.fingerprint !== undefined)) {
-          return;
-        }
         // Deliberately NOT pre-resolved: the capability re-resolves this id
         // after its own forced rebuild (B2). A `missing` worktree still
         // resolves there — `git worktree remove` is how its stale registration
         // gets pruned (worktree-rpc.md:241).
+        //
+        // The host forwards confirmation authority, not Git's execution mode.
+        // No fingerprint means "report this target"; only the service owns the
+        // fresh evidence that can choose ordinary versus forced execution (D7).
         const repoId = repoIdOf(msg.worktreeId);
         if (remove && repoId !== undefined && gate !== undefined) {
-          perform(() => remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.force, msg.fingerprint));
+          if (msg.fingerprint === undefined) {
+            admitAssess(repoId, { kind: "rawRemoval", surface, worktreeId: msg.worktreeId });
+          } else {
+            // Validated at runtime like every other inbound field on this
+            // message: an unrecognized or malformed `deleteBranch` is not a
+            // lesser opt-in, it is the same as none (round-1 W1 pattern).
+            const deleteBranchRequest = isKnownDeleteBranchRequest(msg.deleteBranch) ? msg.deleteBranch : undefined;
+            perform(() =>
+              deleteBranchRequest === undefined
+                ? remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint)
+                : remove({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.fingerprint, deleteBranchRequest),
+            );
+          }
         }
         return;
       }
@@ -2265,6 +2411,76 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // `switch` strictly increasing, so a retry already outranks whatever
           // is held here. The map is swept by `retireOpening`, which is what
           // bounds it (.reviews/round-1.md F001).
+          .catch(() => {});
+        return;
+      }
+      case "worktreeProvisionSave": {
+        if (!isKnownSave(msg)) {
+          return;
+        }
+        const key = surfaceKey(surface);
+        // A retired or never-seen opening has no authority to spend, exactly as
+        // for a switch: nothing is written and nothing is published for a form
+        // the user has closed.
+        if (liveOpening.get(key) !== msg.opening) {
+          return;
+        }
+        const offerKey = { surface: key, repoId: msg.repoId };
+        // The model the user was LOOKING at, resolved by the host. An unknown,
+        // expired or foreign id writes nothing — the same defined outcome a
+        // submission gets (design.md D1).
+        const shown = offers.lookup(offerKey, msg.offerId);
+        if (shown === undefined || options.readProvisioning === undefined || options.writeNativeConfig === undefined) {
+          return;
+        }
+        // `msg.repoId` selects a record; it never becomes a destination. The
+        // root the write is given is the host's own, which is what keeps a path
+        // the webview spelled out of the file.
+        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        if (repo === undefined) {
+          return;
+        }
+        // THE SAME slot the switch uses, so the two order against each other.
+        // Taken synchronously, before the write starts, so a later switch
+        // raises the ceiling immediately and this save can never find itself
+        // still highest when it lands (design.md D8).
+        const slot = `${key} ${msg.repoId} ${msg.opening}`;
+        if (msg.switch <= (provisionSwitch.get(slot) ?? 0)) {
+          return;
+        }
+        provisionSwitch.set(slot, msg.switch);
+        const mine = msg.switch;
+        void options
+          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept)))
+          .then(async (written) => {
+            if (disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // Re-read whatever happened: a refusal is reported ON the model, so
+            // the section that shows it is the section the user is reading.
+            // Plain precedence, with no provider preferred. The write just made
+            // the native file the thing to read, and preferring the source it
+            // extends would answer with the view from BEFORE the write.
+            const model = await options.readProvisioning?.(repo.mainPath);
+            if (model === undefined || disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // Checked AGAIN, after the write and the read. A save is slower
+            // than a switch and this is the window D8 exists for.
+            if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
+              return;
+            }
+            const offer = offers.issue(offerKey, written.ok ? model : refusedSave(model, written.reason));
+            surface.post({
+              type: "worktreeProvisionOffer",
+              repoId: msg.repoId,
+              opening: msg.opening,
+              offerId: offer.offerId,
+              model: offer.model,
+            });
+          })
+          // A save that throws leaves the form exactly as it was, and the
+          // ceiling is NOT released — for the reason the switch records above.
           .catch(() => {});
         return;
       }
@@ -3399,6 +3615,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "requestWorktreeCreateDefaults":
       case "worktreeCreateClosed":
       case "worktreeProvisionSwitch":
+      case "worktreeProvisionSave":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
       case "worktreeAuthorizeDebris":

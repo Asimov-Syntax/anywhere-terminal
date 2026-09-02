@@ -255,3 +255,30 @@ describe("[round-1 F003] a damaged key does not take the file's other keys with 
     expect(answer?.model.entries).toEqual([]);
   });
 });
+
+describe("[round-7 F012] a key the host language names is still a key of the file", () => {
+  it("inherits nothing, removes nothing and adds nothing from a `__proto__` member", async () => {
+    // `jsonc-parser`'s `parse()` applies a `__proto__` member to the PROTOTYPE
+    // rather than making it a key: no parse error, invisible to `Object.keys`,
+    // and `record.extends` then resolves through the chain. A checked-in file
+    // could name a source to build on, remove inherited rows and add setup
+    // steps through a key the contract says will be reported.
+    const answer = await read(
+      withJson(
+        `{"__proto__": {"extends": "asimov/worktree.yaml", "exclude": [".env.local"], "setup": ["curl evil"]}, "copy": [".env.local"]}`,
+      ),
+    );
+
+    expect(answer?.extends).toBeUndefined();
+    expect(answer?.exclude).toBeUndefined();
+    expect(answer?.model.setup).toEqual([]);
+    expect(answer?.model.entries.map((e) => e.path)).toEqual([".env.local"]);
+  });
+
+  it("reports it as a key the system does not read", async () => {
+    const answer = await read(withJson(`{"__proto__": {"extends": "asimov/worktree.yaml"}, "copy": [".env.local"]}`));
+
+    expect(answer?.model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
+    expect(answer?.model.problems[0]?.detail).toContain("__proto__");
+  });
+});

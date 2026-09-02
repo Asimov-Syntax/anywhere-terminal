@@ -762,15 +762,42 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(dialog, "the menu click opened no report").not.toBeNull();
     // A report, not a bare "are you sure": every check the host evaluated is named.
     expect([...(dialog?.querySelectorAll("[data-check]") ?? [])].length).toBeGreaterThan(0);
+    const answer = posted.find((message) => message.type === "worktreeRemoveAssessment");
+    expect(answer, "the clean report carried no host answer").toBeDefined();
+    if (answer?.type !== "worktreeRemoveAssessment" || answer.result.kind !== "assessed") {
+      throw new Error("the clean assessment did not produce a confirmable report");
+    }
+    expect(answer.result.fingerprint).toEqual(expect.any(String));
     expect(gitCalls("remove"), "git ran before the user had answered anything").toEqual([]);
 
-    // Nothing at risk, so the host issued no fingerprint and the ordinary control
-    // is what is offered — a typed confirmation here would mean force authority
-    // was minted for a healthy worktree (design.md D7).
+    // Confirmation authority is universal; the report's checks still choose the
+    // ordinary control, while fresh host evidence chooses ordinary Git execution.
     expect(dialog?.querySelector("#wt-confirm-name")).toBeNull();
     confirmRemoval("feature");
     await settle();
 
+    expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
+  });
+
+  it("[4_4] turns a raw removal intent into a report before one ordinary removal", async () => {
+    const { host, surface } = await assemble();
+
+    void host.handleMessage(surface, { type: "worktreeRemove", worktreeId: LINKED });
+    await settle();
+
+    expect(gitCalls("remove"), "a fingerprint-free request reached git").toEqual([]);
+    const openReport = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      /force remove/i.test(button.textContent ?? ""),
+    );
+    expect(openReport, "the blocked notice offered no report opener").toBeDefined();
+
+    openReport?.click();
+    await settle();
+    expect(document.querySelector('[role="dialog"]'), "the notice action opened no report").not.toBeNull();
+    expect(gitCalls("remove"), "opening the report reached git").toEqual([]);
+
+    confirmRemoval("feature");
+    await settle();
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
 
@@ -1575,6 +1602,77 @@ describe("the invariants that span the host and the webview", () => {
     );
     expect(notices).toHaveLength(1);
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
+  });
+
+  it("[8_1] refuses both contenders through one contest when the destination cannot be read", async () => {
+    // Round-6 F012. F011 shipped through `extension.ts`'s unreadable-root
+    // branch, and round 5 witnessed the FIX on `failEveryEntry` alone because I
+    // claimed this file could not make `prepareEntryGate` answer `null`. It can:
+    // the bring-over case above creates the destination precisely so that it
+    // does not. Not creating it is the whole harness, and reverting the wiring
+    // in `extension.ts` leaves the builder's own tests green.
+    noProviderFiles();
+    fs.mkdirSync(path.join(REPO, ".vscode"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    fs.writeFileSync(
+      path.join(REPO, ".vscode", "worktree.json"),
+      '{"extends": "asimov/worktree.yaml", "copy": [".ENV"]}\n',
+    );
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow-cb").length > 0,
+      "the create form to offer the contenders",
+    );
+
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.value = "feat/contested-unreadable";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    for (const box of document.querySelectorAll<HTMLInputElement>(".wt-bring-box .wt-brow-cb")) {
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    await settle();
+
+    // Deliberately NOT created, unlike the case above. This is what drives
+    // `prepareEntryGate` to `null` and takes the create down the branch F011 was
+    // found on.
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => /create worktree/i.test(b.textContent ?? ""))
+      ?.click();
+    await settleUntil(
+      () => document.querySelectorAll(".wt-notice").length > 0,
+      "the create to report something back to the panel",
+    );
+    await settle();
+
+    const created = [...document.querySelectorAll(".wt-notice")].filter((n) =>
+      (n.textContent ?? "").includes("Create done."),
+    );
+    expect(created).toHaveLength(1);
+    const reason = [...(created[0]?.querySelectorAll(".wt-reason") ?? [])].map((n) => n.textContent ?? "").join("\n");
+
+    // Neither contender was materialized, and the count says so.
+    expect(created[0]?.textContent).toContain("0 of 2 brought over.");
+
+    // Each member carries its OWN refusal, tagged into the same contest.
+    expect(reason).toContain(".env: the worktree could not be read after it was created [contest 1]");
+    expect(reason).toContain(".ENV: the worktree could not be read after it was created [contest 1]");
+
+    // D4a: the membership is stated ONCE for the contest, and names every
+    // member by path and by declaring file — its own included.
+    expect(reason.match(/one destination these may all name/g)).toHaveLength(1);
+    expect(reason).toContain(".ENV (declared in .vscode/worktree.json)");
+    expect(reason).toContain(".env (declared in asimov/worktree.yaml)");
   });
 
   /**

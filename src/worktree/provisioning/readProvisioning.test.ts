@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
-import { MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps, platformFoldsFilenameCase } from "./providerKit";
+import { foldSegment, MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
 import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
@@ -52,7 +52,9 @@ describe("one source answers", () => {
     const model = await readProvisioning(fs({ asimov: ASIMOV_YAML }), ROOT);
 
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
-    expect(model.providers).toEqual([{ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true }]);
+    expect(model.providers).toEqual([
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+    ]);
   });
 
   it("reads orca alone", async () => {
@@ -94,9 +96,14 @@ describe("exactly one detected source supplies the offer", () => {
     expect(model.entries.map((e) => e.source)).toEqual([ASIMOV_PROVIDER_FILE]);
     expect(model.setup).toEqual([]);
     expect(model.providers).toEqual([
-      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
-      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], active: false },
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+      {
+        id: "orca",
+        files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE],
+        present: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE],
+        active: false,
+      },
+      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], present: [VSCODE_TASKS_FILE], active: false },
     ]);
   });
 
@@ -106,6 +113,47 @@ describe("exactly one detected source supplies the offer", () => {
     // One provider over two files by orca's own design; with either present, no
     // single value truthfully answers which file it read.
     expect(model.providers.find((p) => p.id === "orca")?.files).toEqual([ORCA_YAML_FILE, ORCA_INCLUDE_FILE]);
+  });
+
+  it("[D11] names only the files that are actually there", async () => {
+    // `files` is the adapter's DECLARED list; `present` is a finding. Orca is
+    // one provider over two independently optional files, so a first `extends`
+    // written from `files[0]` would name `orca.yaml` in a repository that has
+    // only the include — and the read side then reports that as
+    // `missingExtends`, breaking the save it was supposed to record.
+    const model = await readProvisioning(fs({ asimov: ASIMOV_YAML, orcaInclude: "x\n" }), ROOT);
+    const orca = model.providers.find((p) => p.id === "orca");
+
+    expect(orca?.files).toEqual([ORCA_YAML_FILE, ORCA_INCLUDE_FILE]);
+    expect(orca?.present).toEqual([ORCA_INCLUDE_FILE]);
+  });
+
+  it("[D11] finds the active provider's own present files, not just a detected one's", async () => {
+    const model = await readProvisioning(fs({ orcaInclude: "x\n" }), ROOT);
+
+    expect(model.providers[0]?.active).toBe(true);
+    expect(model.providers[0]?.present).toEqual([ORCA_INCLUDE_FILE]);
+  });
+
+  it("[D11] counts a file that is there and unreadable as present", async () => {
+    // Presence is the same question `anyFilePresent` already answered: a denied
+    // or oversized file is one `extends` can name without producing
+    // `missingExtends`. Reducing it to "readable" would split the two answers.
+    const deps: ProviderDeps = {
+      ...fs({ asimov: ASIMOV_YAML }),
+      readFile: async (path: string) => {
+        if (path.endsWith(ORCA_YAML_FILE)) {
+          throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        }
+        if (path.endsWith(ASIMOV_PROVIDER_FILE)) {
+          return ASIMOV_YAML;
+        }
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+    };
+    const model = await readProvisioning(deps, ROOT);
+
+    expect(model.providers.find((p) => p.id === "orca")?.present).toEqual([ORCA_YAML_FILE]);
   });
 
   it("chooses without enumerating a single directory", async () => {
@@ -124,7 +172,12 @@ describe("exactly one detected source supplies the offer", () => {
     // directory to find its providers could answer differently on two machines;
     // this asserts none is listed at all, so none can.
     expect(listed).toEqual([]);
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({
+      id: "asimov",
+      files: [ASIMOV_PROVIDER_FILE],
+      present: [ASIMOV_PROVIDER_FILE],
+      active: true,
+    });
   });
 
   it("is the order the constant declares", () => {
@@ -144,8 +197,8 @@ describe("[D3] a present source answers even when its answer is nothing", () => 
     expect(model.setup).toEqual([]);
     expect(model.problems).toEqual([]);
     expect(model.providers).toEqual([
-      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: false },
     ]);
   });
 
@@ -165,7 +218,12 @@ describe("[D3] a present source answers even when its answer is nothing", () => 
 
     expect(model.problems.map((p) => p.file)).toEqual([ASIMOV_PROVIDER_FILE]);
     expect(model.entries).toEqual([]);
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({
+      id: "asimov",
+      files: [ASIMOV_PROVIDER_FILE],
+      present: [ASIMOV_PROVIDER_FILE],
+      active: true,
+    });
   });
 });
 
@@ -177,15 +235,20 @@ describe("a preference reorders one entry, it does not replace the order", () =>
 
     expect(model.entries.map((e) => e.path)).toEqual(["node_modules"]);
     expect(model.providers).toEqual([
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: true },
-      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: false },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: true },
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: false },
     ]);
   });
 
   it("falls back to the plain order for a preference that is not there", async () => {
     const model = await readProvisioning(fs(BOTH), ROOT, "vscodeTasks");
 
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({
+      id: "asimov",
+      files: [ASIMOV_PROVIDER_FILE],
+      present: [ASIMOV_PROVIDER_FILE],
+      active: true,
+    });
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
   });
 
@@ -282,9 +345,9 @@ describe("a repository can build on a source instead of replacing it", () => {
     );
 
     expect(model.providers).toEqual([
-      { id: "native", files: [NATIVE_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: true },
-      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], active: false },
+      { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: true },
+      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], present: [VSCODE_TASKS_FILE], active: false },
     ]);
   });
 
@@ -311,8 +374,8 @@ describe("a repository can build on a source instead of replacing it", () => {
 
     expect(model.entries.map((e) => e.path)).toEqual([".env.local"]);
     expect(model.providers).toEqual([
-      { id: "native", files: [NATIVE_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
+      { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: false },
     ]);
   });
 
@@ -472,8 +535,8 @@ describe("[D5] a preference for a framework answers alone; a preference for nati
 
     expect(model.entries.map((e) => [e.path, e.source])).toEqual([["node_modules", ORCA_YAML_FILE]]);
     expect(model.providers).toEqual([
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: true },
-      { id: "native", files: [NATIVE_PROVIDER_FILE], active: false },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: true },
+      { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: false },
     ]);
   });
 
@@ -684,7 +747,7 @@ describe("[round-3 F002] authorization is a result, not a byte source", () => {
   });
 });
 
-describe("[round-3 F001, round-5 F008] identity is the declared path, folded where the platform folds", () => {
+describe("[round-7 F001, F013] identity is the declared spelling, and nothing folds it", () => {
   const CASE_REPO: Repo = {
     native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
     orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
@@ -705,20 +768,39 @@ describe("[round-3 F001, round-5 F008] identity is the declared path, folded whe
     expect(model.entries.map((e) => [e.path, e.mode])).toEqual([["a/../node_modules", "copy"]]);
   });
 
-  it("keeps case-variant spellings apart on a platform whose filenames are bytes", async () => {
-    // The residual this decision accepts, stated as a test rather than left to
-    // a comment. On POSIX the two rows both show, and the user can see and
-    // remove the one they did not want — which is the failure direction that
-    // does not silently discard a declaration (design.md D11).
-    if (platformFoldsFilenameCase()) {
-      return;
-    }
+  it("keeps case-variant spellings apart on EVERY platform", async () => {
+    // No platform guard, deliberately. The version this replaced skipped itself
+    // wherever the fold was active, so it could only ever pass — the one lane
+    // that could have caught round-7 F013 was the lane it declined to run on.
     const model = await readProvisioning(fs(CASE_REPO), ROOT);
 
     expect(model.entries.map((e) => [e.path, e.source])).toEqual([
       ["mixedcase", ORCA_YAML_FILE],
       ["MixedCase", NATIVE_PROVIDER_FILE],
     ]);
+  });
+
+  it.each([
+    ["\u0130", "i\u0307", "NTFS keeps these apart; toLowerCase does not"],
+    ["\u1E9E", "\u00DF", "same"],
+    ["\u03CF", "\u03D7", "same"],
+    ["Stra\u00DFe", "STRASSE", "one file on APFS, two keys under any fold"],
+    ["\uFB00", "ff", "same"],
+    ["foo", "foo.", "one object to Win32; no case fold closes it"],
+  ])("conserves both declarations for %s against %s", async (inherited, native) => {
+    // The count is the claim. Every mechanism this replaced failed by mapping
+    // two declarations to one key, and every one of those failures deleted a
+    // row the repository had written down (design.md, obligation ledger).
+    const model = await readProvisioning(
+      fs({
+        native: JSON.stringify({ extends: "orca.yaml", copy: [native] }),
+        orcaYaml: `worktree:\n  sharedDirectories: [${JSON.stringify(inherited)}]\n`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length + model.excluded.length).toBe(2);
+    expect(model.entries.map((e) => e.path).sort()).toEqual([inherited, native].sort());
   });
 
   it("[round-5 F009] makes NO filesystem call to decide identity, not even for a raw exclusion", async () => {
@@ -751,7 +833,39 @@ describe("[round-3 F001, round-5 F008] identity is the declared path, folded whe
     expect(model.entries.map((e) => e.path)).toEqual(["kept"]);
     // ...but nothing outside the checkout was ever named to the filesystem.
     expect(asked.filter((p) => !p.startsWith(`${ROOT}/`) && p !== ROOT)).toEqual([]);
+    // NOT asserted: that `asked` is empty, nor that no declared path appears in
+    // it. Both are false and would have to be weakened later — provider files
+    // are opened, and `kept` is resolved on purpose, because CONTAINMENT must
+    // check where a declared path lands. That is the security property and it
+    // stays. What identity must not do is let the answer change the model.
     expect(asked.some((p) => p.includes("outside") || p.includes("passwd"))).toBe(false);
+  });
+
+  it("gives the same model whatever the filesystem answers about the declared paths", async () => {
+    // The witness for "identity reads nothing", stated so it can fail. Identity
+    // is a pure function of the declared spelling, so two filesystems that
+    // disagree about every declared path — one resolving each to itself, one
+    // resolving each to a single shared canonical path, which is exactly what a
+    // case-folding volume would report — must still produce the same rows.
+    // Under the mechanism this replaced the second fake collapsed the two rows.
+    const repo = {
+      native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+      orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+    };
+    const asItself = await readProvisioning(fs(repo), ROOT);
+    const base = fs(repo);
+    const asOneFile = await readProvisioning(
+      {
+        ...base,
+        realpath: async (p) => (p.endsWith("MixedCase") || p.endsWith("mixedcase") ? `${ROOT}/mixedcase` : p),
+      },
+      ROOT,
+    );
+
+    expect(asOneFile.entries.map((e) => [e.path, e.mode, e.source])).toEqual(
+      asItself.entries.map((e) => [e.path, e.mode, e.source]),
+    );
+    expect(asOneFile.entries.length).toBe(2);
   });
 
   it("matches an exclusion against the normalized path, not the raw spelling", async () => {
@@ -767,11 +881,344 @@ describe("[round-3 F001, round-5 F008] identity is the declared path, folded whe
     expect(model.excluded.map((e) => [e.path, e.source])).toEqual([["mixedcase", ORCA_YAML_FILE]]);
   });
 
+  it.each([
+    ["MixedCase", "mixedcase", true, "native and inherited"],
+    ["foo.", "foo", true, "Win32 trailing dot, which no case fold closes"],
+    ["\u00E9clair", "e\u0301clair", true, "NFC against NFD"],
+  ])("groups %s with %s as one contender pair", async (native, inherited, favoured) => {
+    const model = await readProvisioning(
+      fs({
+        native: JSON.stringify({ extends: "orca.yaml", copy: [native] }),
+        orcaYaml: `worktree:\n  sharedDirectories: [${JSON.stringify(inherited)}]\n`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    const group = model.contenders[0];
+    expect(group?.members.length).toBe(2);
+    // The repository's own row is named as such — the one the merge rule would
+    // pick if it could prove the two are one destination. Which member wins is
+    // the apply's and the dialog's answer against a selection, never the read
+    // path's (design.md D3c).
+    const native_ = model.entries.find((e) => e.path === native);
+    expect(group?.natives.length === 1).toBe(favoured);
+    expect(group?.natives).toEqual([native_?.id]);
+  });
+
+  it("leaves a group of two inherited declarations with no favoured member", async () => {
+    // Nothing for the merge rule to prefer, so nothing is claimed. A fabricated
+    // winner here would be a decision no file asked for.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml"}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase, MixedCase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.natives).toEqual([]);
+  });
+
+  it("makes three spellings of one name ONE group, not three pairs", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["STRASSE"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [strasse, Strasse]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(3);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.members.length).toBe(3);
+  });
+
+  it.each([
+    ["Stra\u00dfe", "STRASSE", "a multi-character fold lowercasing cannot reach"],
+    ["\ufb00", "ff", "a ligature only compatibility composition brings together"],
+    ["parent./child", "parent/child", "a Win32 dot on a NON-FINAL segment"],
+  ])("[round-1 F001] groups %s with %s — %s", async (native, inherited) => {
+    // Each of these is one file on a common filesystem and each was MISSED:
+    // `toLowerCase` is simple case mapping, `NFC` leaves ligatures alone, and
+    // the Win32 strip only ever saw the end of the whole path. A false negative
+    // is the one direction D4 forbids, so these are the assertions that matter.
+    const model = await readProvisioning(
+      fs({
+        native: JSON.stringify({ extends: "orca.yaml", copy: [native] }),
+        orcaYaml: `worktree:\n  sharedDirectories: [${JSON.stringify(inherited)}]\n`,
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.members.length).toBe(2);
+  });
+
+  it("[round-1 F003] gives a base row and a native row different ids, so a group keeps both", async () => {
+    // Every adapter used to call `ids()` for itself and each sequence restarts
+    // at `i1`, so these two rows were both `i1`. A group then named the same id
+    // twice and any map keyed on it collapsed the pair into one member — below
+    // the two-member contract, with the first row left outside its own group.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+    const ids = model.entries.map((e) => e.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(model.contenders[0]?.members).size).toBe(2);
+  });
+
+  it("[round-1 F002] groups a framework winner's own declarations, with no native file at all", async () => {
+    // The branch that needed the relation most was the one branch that never
+    // computed it: a non-native winner returns its adapter's model straight
+    // out, and every adapter answers `contenders: []`.
+    const model = await readProvisioning(
+      fs({ orcaYaml: "worktree:\n  sharedDirectories: [mixedcase, MixedCase]\n" }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders.length).toBe(1);
+    expect(model.contenders[0]?.members.length).toBe(2);
+    // No native declaration exists, so nothing claims priority rather than one of
+    // the two inherited rows being promoted.
+    expect(model.contenders[0]?.natives).toEqual([]);
+  });
+
+  it("[round-3 F001] groups the pairs a curated list kept missing", async () => {
+    // Each of these was verified against the real volume, not reasoned about:
+    // writing both names into a temp directory on this APFS mount leaves one
+    // file. `σ`/`ς` is the pair that rejected the second attempt; `ᾳ`/`αι` is
+    // the ypogegrammeni class that the proposed Collator union ALSO missed.
+    for (const [a, b] of [
+      ["\u03c3", "\u03c2"],
+      ["Stra\u00dfe", "STRASSE"],
+      ["\u1fb3", "\u03b1\u03b9"],
+      ["\u1f80", "\u1f00\u03b9"],
+      ["\u1ffc", "\u03c9\u03b9"],
+    ]) {
+      expect([a, foldSegment(a ?? "")]).toEqual([a, foldSegment(b ?? "")]);
+    }
+  });
+
+  it("groups nothing when the spellings are unrelated", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": [".env"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [node_modules]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.length).toBe(2);
+    expect(model.contenders).toEqual([]);
+  });
+
+  it("reports an exclusion that matched nothing, and keeps the row it missed", async () => {
+    // Both halves. Reporting alone would be noise; keeping the row alone is the
+    // old silent behaviour. Under D1 the spelling IS the identity, so a rule
+    // spelled one way against an entry spelled another does nothing at all, and
+    // the only thing that tells the user is this report.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "exclude": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["mixedcase"]);
+    expect(model.excluded).toEqual([]);
+    expect(model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
+    expect(model.problems[0]?.detail).toContain("MixedCase");
+  });
+
   it("still reports the contradiction when one file both declares and excludes a path", async () => {
     const model = await readProvisioning(fs({ native: `{"copy": ["x"], "exclude": ["./x"]}` }), ROOT);
 
     expect(model.entries.map((e) => e.path)).toEqual(["x"]);
     expect(model.problems.map((p) => p.reason)).toEqual(["unknownKey"]);
     expect(model.excluded).toEqual([]);
+  });
+});
+
+describe("[round-3 F001] the fold key is gated over the range, not over examples", () => {
+  /**
+   * Three attempts at this predicate each passed their own witnesses and each
+   * missed a class the next review round found. So the gate is a property over
+   * every code point Unicode casing can move, not another list of characters:
+   * a curated list can only ever confirm what its author already thought of.
+   */
+  function caseVarying(): string[] {
+    const out: string[] = [];
+    for (let cp = 0; cp < 0x30000; cp += 1) {
+      const c = String.fromCodePoint(cp);
+      if (c.toLowerCase() !== c || c.toUpperCase() !== c) {
+        out.push(c);
+      }
+    }
+    return out;
+  }
+
+  it("gives a character, its lowercase and its uppercase one key", () => {
+    const broken = caseVarying().filter(
+      (c) => foldSegment(c) !== foldSegment(c.toLowerCase()) || foldSegment(c) !== foldSegment(c.toUpperCase()),
+    );
+
+    expect(broken).toEqual([]);
+    // The scan has to be doing work: an empty range would satisfy the filter.
+    expect(caseVarying().length).toBeGreaterThan(2000);
+  });
+
+  it("fails without the final normalization, so nobody tidies it away", () => {
+    // Eight Greek iota-with-dialytika code points stop folding without it. The
+    // exact set moves between runtimes — the oracle's node named a different
+    // character — so the ASSERTION is that the step is load-bearing, never that
+    // one character breaks.
+    const withoutFinal = (s: string) => s.normalize("NFKC").toLowerCase().toUpperCase();
+    const broken = caseVarying().filter(
+      (c) => withoutFinal(c) !== withoutFinal(c.toLowerCase()) || withoutFinal(c) !== withoutFinal(c.toUpperCase()),
+    );
+
+    expect(broken.length).toBeGreaterThan(0);
+  });
+
+  it("fails if the uppercase step runs before the lowercase step", () => {
+    // Lowercasing first is what turns capital sharp s into `ß`, so that the
+    // uppercase step can then expand it to `SS`. Reversed, `ẞ` stays `ß` while
+    // its own lowercase becomes `ss`, and one file gets two keys.
+    //
+    // `Straße`/`STRASSE` is NOT the witness for this, though it looks like it:
+    // `toUpperCase` expands `ß` directly, so that pair survives either order.
+    // Asserting it here would have been a test that could not fail.
+    const reversed = (s: string) => s.normalize("NFKC").toUpperCase().toLowerCase().normalize("NFKC");
+    const broken = caseVarying().filter(
+      (c) => reversed(c) !== reversed(c.toLowerCase()) || reversed(c) !== reversed(c.toUpperCase()),
+    );
+
+    expect(foldSegment("\u1e9e")).toBe(foldSegment("\u00df"));
+    expect(reversed("\u1e9e")).not.toBe(reversed("\u00df"));
+    expect(broken).toEqual(["\u1e9e"]);
+  });
+});
+
+describe("[round-7 F014] a source found and unreadable is not a source that is absent", () => {
+  const NATIVE_WITH_BASE = `{"extends": "${ASIMOV_PROVIDER_FILE}", "copy": [".env.local"]}`;
+
+  /** The named base is there; opening it fails for a reason that is not absence. */
+  function denied(code: string): ProviderDeps {
+    const base = fs({ native: NATIVE_WITH_BASE, asimov: ASIMOV_YAML });
+    return {
+      ...base,
+      readFile: async (p) => {
+        if (p.endsWith(ASIMOV_PROVIDER_FILE)) {
+          throw Object.assign(new Error(`${code} ${p}`), { code });
+        }
+        return base.readFile(p);
+      },
+    };
+  }
+
+  it("reports the read failure rather than a missing file", async () => {
+    // EACCES on a file that IS there says something different from "add this
+    // file", and "add this file" is the one repair that cannot work.
+    const model = await readProvisioning(denied("EACCES"), ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["unreadable"]);
+    expect(model.problems[0]?.detail).toContain("EACCES");
+    expect(model.problems.map((p) => p.reason)).not.toContain("missingExtends");
+  });
+
+  it("still offers the repository's own material", async () => {
+    const model = await readProvisioning(denied("ELOOP"), ROOT);
+
+    expect(model.entries.map((e) => e.path)).toEqual([".env.local"]);
+  });
+
+  it("leaves a target that resolves out of the checkout on `missingExtends`", async () => {
+    // NOT a read that failed — a name that was never eligible. D2 answers it,
+    // and moving it here would contradict a decision this change already made.
+    const base = fs({ native: NATIVE_WITH_BASE, asimov: ASIMOV_YAML });
+    const model = await readProvisioning(
+      { ...base, realpath: async (p) => (p.endsWith(ASIMOV_PROVIDER_FILE) ? "/elsewhere/worktree.yaml" : p) },
+      ROOT,
+    );
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["missingExtends"]);
+  });
+
+  it("leaves an absent target on `missingExtends`", async () => {
+    const model = await readProvisioning(fs({ native: NATIVE_WITH_BASE }), ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["missingExtends"]);
+  });
+});
+
+describe("[D14] a contest names only rows the offer actually carries", () => {
+  /** Every id any group names, against the ids the model kept. */
+  const dangling = (model: Awaited<ReturnType<typeof readProvisioning>>): readonly string[] => {
+    const held = new Set(model.entries.map((e) => e.id));
+    return model.contenders.flatMap((g) => [...g.members, ...g.natives]).filter((id) => !held.has(id));
+  };
+
+  it("drops a spelling the native file superseded, and keeps the one it contests", async () => {
+    // The inherited file declares BOTH spellings. One is deduped away by the
+    // native declaration of the same path; the other survives and is what the
+    // native row actually contests. A group built before the merge would still
+    // name the superseded row.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [MixedCase, mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => [e.path, e.source])).toEqual([
+      ["mixedcase", ORCA_YAML_FILE],
+      ["MixedCase", NATIVE_PROVIDER_FILE],
+    ]);
+    expect(dangling(model)).toEqual([]);
+    expect(model.contenders[0]?.members.length).toBe(2);
+  });
+
+  it("names nothing a rule removed", async () => {
+    // `exclude` runs after the merge and before the grouping. A member removed
+    // there is not contesting a destination — nothing will write it.
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"], "exclude": ["mixedcase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    expect(model.entries.map((e) => e.path)).toEqual(["MixedCase"]);
+    expect(model.excluded.map((e) => e.path)).toEqual(["mixedcase"]);
+    expect(dangling(model)).toEqual([]);
+    expect(model.contenders).toEqual([]);
+  });
+
+  it("names only the entries whose own file is the repository's as native", async () => {
+    const model = await readProvisioning(
+      fs({
+        native: `{"extends": "orca.yaml", "copy": ["MixedCase"]}`,
+        orcaYaml: "worktree:\n  sharedDirectories: [mixedcase]\n",
+      }),
+      ROOT,
+    );
+
+    const own = new Set(model.entries.filter((e) => e.source === NATIVE_PROVIDER_FILE).map((e) => e.id));
+    expect(model.contenders[0]?.natives.every((id) => own.has(id))).toBe(true);
+    expect(model.contenders[0]?.natives.length).toBe(1);
   });
 });

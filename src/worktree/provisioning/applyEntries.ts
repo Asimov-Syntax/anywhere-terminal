@@ -122,9 +122,13 @@ interface Detail {
  * whose single file was skipped, or whose source turned out to be a socket, is
  * exactly the overclaim `skipped` and `refused` exist to prevent.
  */
-type NodeResult = { kind: "written" } | { kind: "skipped"; reason: string } | { kind: "refused"; reason: string };
+type NodeResult =
+  | { kind: "written" }
+  | { kind: "skipped"; reason: string }
+  | { kind: "refused"; reason: string }
+  | { kind: "claimLost" };
 
-const WRITTEN: NodeResult = { kind: "written" };
+const WRITTEN = { kind: "written" } as const;
 
 /**
  * How many per-descendant rows one entry reports.
@@ -179,13 +183,58 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
  * Every exit is a `ProvisionStepResult`: the caller reports it beside the
  * create's own outcome and the create's success does not depend on it.
  */
-export async function applyEntry(
+/**
+ * The exclusive claim was lost — something else created the destination between
+ * the moment it was read and this write.
+ *
+ * Its own answer, not a `refused` reason: an entry has many rules that refuse
+ * it, the caller has to act on exactly one of them, and prose is not a channel
+ * it can read (design.md D4b, .reviews/round-3.md F006).
+ */
+export const CLAIM_LOST = "claim-lost";
+
+/** Apply one entry, and answer for it. Never throws. */
+export function applyEntry(
   entry: ProvisionEntry,
   roots: EntryGateRoots,
   budget: ApplyBudget,
   deps: ApplyFsDeps & ResolvedPathInsideDeps,
   authority: ApplyAuthorizationDeps,
 ): Promise<ProvisionStepResult> {
+  // `exclusive` is off, so the union's other arm is unreachable here.
+  return apply(entry, roots, budget, deps, authority, false) as Promise<ProvisionStepResult>;
+}
+
+/**
+ * Apply one entry that must create its own top-level destination.
+ *
+ * An ordinary entry merging into a directory `git worktree add` checked out is
+ * the behaviour the apply has always had, which is why this is a separate door
+ * rather than a default. It is taken only for a member of a contested group,
+ * where the destination was read `absent` moments earlier and no
+ * repository-owned flow can have created it since — so there, and only there,
+ * `EEXIST` is the exclusive claim being lost rather than an ambiguous signal
+ * (design.md D3).
+ */
+export function applyExclusiveEntry(
+  entry: ProvisionEntry,
+  roots: EntryGateRoots,
+  budget: ApplyBudget,
+  deps: ApplyFsDeps & ResolvedPathInsideDeps,
+  authority: ApplyAuthorizationDeps,
+): Promise<ProvisionStepResult | typeof CLAIM_LOST> {
+  return apply(entry, roots, budget, deps, authority, true);
+}
+
+async function apply(
+  entry: ProvisionEntry,
+  roots: EntryGateRoots,
+  budget: ApplyBudget,
+  deps: ApplyFsDeps & ResolvedPathInsideDeps,
+  authority: ApplyAuthorizationDeps,
+  exclusive: boolean,
+): Promise<ProvisionStepResult | typeof CLAIM_LOST> {
+  const LOST = { kind: "claimLost" } as const;
   const step = (outcome: ProvisionStepResult["outcome"], details?: readonly Detail[]): ProvisionStepResult => ({
     id: entry.id,
     path: entry.path,
@@ -349,6 +398,18 @@ export async function applyEntry(
     ]);
     const fromSource = path.resolve(sourceDir, target);
     const fromDestination = path.resolve(destinationDir, target);
+    // Before containment, not after: a self-referential link cannot be resolved
+    // at all, so the checks below answer "outside" for a path that is plainly
+    // inside and the refusal names the wrong rule. It resolves to itself on
+    // every filesystem, which is reason enough on its own.
+    //
+    // EXACT self-reference only. The folding key is over-inclusive by
+    // construction, so refusing `Foo -> foo` beside a real `foo` would destroy
+    // material to prevent a loop a case-sensitive volume cannot have
+    // (design.md D6).
+    if (fromDestination === path.join(destinationDir, path.basename(destination))) {
+      return { kind: "refused", reason: "a symlink whose target is its own name would resolve to itself" };
+    }
     const [sourceInside, destinationInside] = await Promise.all([
       isResolvedPathInsideRoot(fromSource, roots.source.prepared, deps),
       isResolvedPathInsideRoot(fromDestination, roots.destination.prepared, deps),
@@ -378,13 +439,19 @@ export async function applyEntry(
    * the same way: a symlink is a refusal, because an intermediate swap is the
    * escape `O_CREAT | O_EXCL` structurally cannot see (D5).
    */
-  async function makeDirectory(destination: string, mode: number): Promise<NodeResult> {
+  async function makeDirectory(destination: string, mode: number, mustCreate = false): Promise<NodeResult> {
     try {
       await requireDestination();
       await deps.mkdir(destination, mode);
     } catch (error) {
       if (codeOf(error) !== "EEXIST") {
         throw error;
+      }
+      if (mustCreate) {
+        // A directory that is already here has a mode and children this apply
+        // did not install, and merging into it reports the declaration as the
+        // owner of both (.reviews/round-2.md F001).
+        return LOST;
       }
       const existing = await deps.lstat(destination);
       if (existing.isSymbolicLink()) {
@@ -439,7 +506,7 @@ export async function applyEntry(
     return WRITTEN;
   }
 
-  async function walk(source: string, destination: string): Promise<NodeResult> {
+  async function walk(source: string, destination: string, own = false): Promise<NodeResult> {
     spend();
     await requireSource();
     const node = await deps.lstat(source);
@@ -472,7 +539,8 @@ export async function applyEntry(
 
     if (node.isSymbolicLink()) {
       // Never traversed, which is also why a loop terminates here.
-      return copyLink(source, destination);
+      const linked = await copyLink(source, destination);
+      return own && exclusive && linked.kind === "skipped" ? LOST : linked;
     }
 
     if (node.isFile()) {
@@ -487,7 +555,7 @@ export async function applyEntry(
       } catch (error) {
         if (codeOf(error) === "EEXIST") {
           settleBytes(node.size, 0);
-          return { kind: "skipped", reason: "already there" };
+          return own && exclusive ? LOST : { kind: "skipped", reason: "already there" };
         }
         // A failure is not a refund. The bytes a partial transfer forwarded are
         // in the worktree — D9 never deletes them — so they are charged before
@@ -514,7 +582,7 @@ export async function applyEntry(
     // EEXIST is not "fine, carry on". What is actually THERE decides whether
     // there is anything to descend into — and a symlink there is the
     // intermediate-component escape the exclusive primitive cannot see.
-    const made = await makeDirectory(destination, node.mode);
+    const made = await makeDirectory(destination, node.mode, own && exclusive);
     if (made.kind !== "written") {
       return made;
     }
@@ -526,6 +594,11 @@ export async function applyEntry(
     for (const child of children) {
       const childDestination = path.join(destination, child);
       const result = await walk(path.join(source, child), childDestination);
+      if (result.kind === "claimLost") {
+        // Unreachable: `own` is false for every child, and only an own
+        // top-level creation can lose a claim. Propagated rather than assumed.
+        return result;
+      }
       if (result.kind !== "written") {
         note({ path: shown(childDestination), reason: result.reason });
       }
@@ -542,7 +615,7 @@ export async function applyEntry(
    * gate put the target inside the main checkout and the link inside the
    * worktree.
    */
-  async function makeLink(): Promise<NodeResult | "degrade"> {
+  async function makeLink(): Promise<Exclude<NodeResult, { kind: "claimLost" }> | "degrade"> {
     // One node, charged and checked like any other. A root-level link creates
     // no parent, so `ensureParents` spends nothing and this arm reached the
     // filesystem with `maxNodes: 0` and an expired deadline both unconsulted
@@ -568,27 +641,40 @@ export async function applyEntry(
 
   try {
     const parents = await ensureParents();
+    if (parents.kind === "claimLost") {
+      return CLAIM_LOST;
+    }
     if (parents.kind !== "written") {
       return step({ kind: parents.kind, reason: parents.reason }, reported());
     }
     if (entry.mode === "link") {
       const linked = await makeLink();
       if (linked !== "degrade") {
-        return linked.kind === "written"
-          ? step({ kind: "linked" })
-          : step({ kind: linked.kind, reason: linked.reason });
+        if (linked.kind === "written") {
+          return step({ kind: "linked" });
+        }
+        if (exclusive && linked.kind === "skipped") {
+          return CLAIM_LOST;
+        }
+        return step({ kind: linked.kind, reason: linked.reason });
       }
       // The material still arrives; it just arrives as a copy, and the report
       // says which — a link and a copy differ in the way the dialog told the
       // user about, so neither a silent success nor a failure is honest here.
-      const copied = await walk(entrySource, entryDestination);
+      const copied = await walk(entrySource, entryDestination, true);
+      if (copied.kind === "claimLost") {
+        return CLAIM_LOST;
+      }
       if (copied.kind !== "written") {
         return step({ kind: copied.kind, reason: copied.reason }, reported());
       }
       return step({ kind: "degradedToCopy" }, reported());
     }
 
-    const result = await walk(entrySource, entryDestination);
+    const result = await walk(entrySource, entryDestination, true);
+    if (result.kind === "claimLost") {
+      return CLAIM_LOST;
+    }
     if (result.kind === "skipped" || result.kind === "refused") {
       return step({ kind: result.kind, reason: result.reason }, reported());
     }

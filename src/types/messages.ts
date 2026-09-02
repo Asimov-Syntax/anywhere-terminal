@@ -906,6 +906,25 @@ export interface ProvisionProvider {
    * D8). A row's `source` still names ONE file: that is a different question.
    */
   readonly files: readonly string[];
+  /**
+   * The subset of `files` that is actually there, in read order.
+   *
+   * `files` is what the adapter DECLARES it can read; this is what was found.
+   * The two differ wherever a provider is optional over several files — orca is
+   * one provider over two — and a consumer that must name one existing file
+   * cannot get it from `files`: writing `files[0]` as `extends` in a repository
+   * carrying only the other one names a file that is not there, which the read
+   * side then reports as `missingExtends`
+   * (worktree-provisioning.md § 6, design.md D11).
+   *
+   * Presence, not readability: a file that is there and denied still counts,
+   * because it is one `extends` can name without producing `missingExtends`.
+   *
+   * Can be EMPTY on a provider that was nonetheless detected — the file was
+   * there when it was read and gone when presence was taken. A consumer that
+   * needs a name has none, which is the truthful answer rather than a stale one.
+   */
+  readonly present: readonly string[];
   /** True for the provider whose model the native file extended or detection chose. */
   readonly active: boolean;
 }
@@ -917,6 +936,31 @@ export interface ProvisionProblem {
   readonly detail: string;
 }
 
+/**
+ * Declarations that may turn out to name one destination.
+ *
+ * Ids, never paths: the wire carries one copy of a path, on the row that
+ * declared it. Both members stay offered — withholding them would deliver
+ * nothing in the ordinary case where a repository and the source it builds on
+ * spell one path two ways.
+ */
+export interface ProvisionContenders {
+  /** Two or more entry ids from the same model. */
+  readonly members: readonly string[];
+  /**
+   * The members the repository's own file declared, in `members` order.
+   *
+   * Which members are the repository's own, rather than a pre-computed winner:
+   * a winner is decided against the whole offer and goes stale the moment the
+   * user unticks a row, so both the dialog and the apply answer from this list
+   * against the selection in front of them (design.md D3c) — more than one is
+   * refused entire, exactly one is favoured, none claims priority. The three
+   * states are ranges of one list's length, so no pair of fields can contradict
+   * each other.
+   */
+  readonly natives: readonly string[];
+}
+
 export interface ProvisionModel {
   readonly entries: readonly ProvisionEntry[];
   readonly setup: readonly ProvisionSetupStep[];
@@ -925,6 +969,15 @@ export interface ProvisionModel {
   readonly providers: readonly ProvisionProvider[];
   /** Entries an `exclude` rule removed, kept so the UI can show them as deliberate. */
   readonly excluded: readonly ProvisionEntry[];
+  /**
+   * Entries that MAY name one destination, grouped.
+   *
+   * Never a claim that they do. Whether two spellings are one file is a property
+   * of the directory they land in, and this model is built before that directory
+   * exists — so the read path groups what a common filesystem could fold and
+   * leaves the answer to the apply side (worktree-provisioning.md § 4.2).
+   */
+  readonly contenders: readonly ProvisionContenders[];
   /** Populated when a provider file was found but could not be read. */
   readonly problems: readonly ProvisionProblem[];
 }
@@ -1003,6 +1056,21 @@ export interface BranchDeleteRequest {
   /** The assessment whose `BranchDeleteOffer` carried these values. */
   readonly fingerprint: string;
 }
+
+/**
+ * The opted-in branch delete's own outcome, riding the removal's result
+ * rather than replacing it — a failed branch delete never fails the removal
+ * (design.md D5, worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal).
+ *
+ * A named guard on refusal, never a bare boolean: the notice states WHICH
+ * check declined rather than only that the branch survived.
+ */
+export type WorktreeBranchDeleteOutcome =
+  | { readonly kind: "deleted"; readonly branch: string }
+  | {
+      readonly kind: "refused";
+      readonly reason: "branch-in-use" | "default-branch" | "holders-unavailable" | "refs-moved";
+    };
 
 /**
  * WebView → Extension: create a worktree at a path the host will re-validate.
@@ -1171,6 +1239,36 @@ export interface WorktreeProvisionSwitchMessage {
  * as the user types, and shipping it per keystroke answers a question nobody
  * asked again (offer-every-ref-in-one-box/design.md D1).
  */
+/**
+ * WebView → Extension: record what the user has chosen in the repository's own
+ * provisioning configuration (worktree-provisioning.md § 6).
+ *
+ * Ids and ordering, and nothing else. No path, no key and no file text: the
+ * host resolves `offerId` against the model it issued and computes every value
+ * it writes. A webview that could supply the path to exclude would be the
+ * authority on what the repository's configuration says, which is § 4.0's rule
+ * for what EXECUTES applied one hop later (design.md D1).
+ *
+ * `repoId` selects a record in the host's own cache; it never becomes a
+ * destination, even though it is spelled like a path.
+ *
+ * `switch` comes from the SAME sequence `worktreeProvisionSwitch` mints, so a
+ * save and a source change order against each other. Without one shared
+ * sequence, a save begun against the offer on screen can finish after a later
+ * switch has published and overwrite the choice the user actually made
+ * (design.md D8).
+ */
+export interface WorktreeProvisionSaveMessage {
+  type: "worktreeProvisionSave";
+  repoId: string;
+  opening: number;
+  switch: number;
+  /** From `worktreeProvisionOffer`. Names the model the user was looking at. */
+  offerId: string;
+  /** Which of the host's own offered items the user left checked. */
+  kept: readonly string[];
+}
+
 export interface WorktreeRefsRequestMessage {
   type: "requestWorktreeRefs";
   repoId: string;
@@ -1267,8 +1365,9 @@ export interface WorktreeCreateProbeMessage {
 export interface WorktreeRemoveRequestMessage {
   type: "worktreeRemove";
   worktreeId: string;
-  force: boolean;
   fingerprint?: string;
+  /** Absent by default: removal alone never implies deleting its branch. */
+  deleteBranch?: BranchDeleteRequest;
 }
 
 /**
@@ -1315,14 +1414,11 @@ export interface WorktreeRemoveAssessmentMessage {
         kind: "assessed";
         assessment: WorktreeRemoveAssessmentPayload;
         /**
-         * PRESENCE is the authority to force, and its absence is not a missing
-         * field but an answer: this removal has nothing to force past.
-         *
-         * Non-null under exactly the predicate the blocked path already issues
-         * under — `atRisk(evidence)` — and null for a refusal, as that path also
-         * already sends. So asking what a clean worktree would cost mints no
-         * deletion authority, and its confirmation travels the ordinary unforced
-         * path, which re-evaluates before it acts (design.md D7).
+         * PRESENCE is authority for one confirmed removal attempt, not authority
+         * to force Git. Every readable non-refused assessment carries one; a
+         * refusal carries null and mounts no confirmation control. The host
+         * re-evaluates and derives ordinary versus forced execution from the fresh
+         * evidence after redemption (design.md D7).
          */
         fingerprint: string | null;
       }
@@ -1554,6 +1650,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeCreateClosedMessage
   | WorktreeProvisionSwitchMessage
+  | WorktreeProvisionSaveMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
@@ -1593,6 +1690,7 @@ export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
   "worktreeCreateClosed",
   "worktreeProvisionSwitch",
+  "worktreeProvisionSave",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
   "worktreeAuthorizeDebris",
@@ -2359,6 +2457,8 @@ export interface WorktreeRemoveAssessmentPayload {
   readonly checks: readonly RemovalCheck[];
   /** Named, not just counted — the refusal tells the user what to remove first. */
   readonly contained: readonly { worktreeId: string; displayPath: string }[];
+  /** Present only when the merge proof passed; presence gates the opt-in. */
+  readonly branchDelete?: BranchDeleteOffer;
 }
 
 export interface WorktreeMutationResultMessage {
@@ -2368,7 +2468,7 @@ export interface WorktreeMutationResultMessage {
   /** The row the notice attaches to. Absent for the repo-scoped verbs. */
   worktreeId?: string;
   result:
-    | { kind: "ok"; openFailed?: string }
+    | { kind: "ok"; openFailed?: string; branchDelete?: WorktreeBranchDeleteOutcome }
     | { kind: "error"; message: string }
     | { kind: "indeterminate"; observed: string }
     | { kind: "unavailable"; unreadable: readonly string[] }
@@ -2515,6 +2615,28 @@ export type ProvisionStepOutcome =
  * Documented at worktree-rpc.md § 2.2 since before there was a producer; this
  * is its first definition.
  */
+/**
+ * One declaration in a contest, as a refusal names it.
+ *
+ * Carried once per contest rather than repeated inside every member's reason:
+ * every member naming every member is `O(N²)` of text over a wire whose input
+ * the model already caps, so a valid group could expand a few hundred kilobytes
+ * of declarations into tens of megabytes of report
+ * (`award-a-contested-destination-or-refuse-it/.reviews/round-3.md` F008).
+ */
+export interface ProvisionResultMember {
+  readonly id: string;
+  /** Repo-relative POSIX path, for display. */
+  readonly path: string;
+  /** The provider file that declared it, for display. */
+  readonly source: string;
+}
+
+/** A set of declarations that may name one destination, as the apply found them. */
+export interface ProvisionResultContest {
+  readonly members: readonly ProvisionResultMember[];
+}
+
 export interface ProvisionStepResult {
   /** The offer item this answers. Opaque and per-offer — never a path. */
   readonly id: string;
@@ -2529,6 +2651,11 @@ export interface ProvisionStepResult {
    * `copied` cannot express. Bounded and display-ready; absent for a file entry.
    */
   readonly details?: readonly { readonly path: string; readonly reason: string }[];
+  /**
+   * Index into the result message's `contests`, when this step is a member of
+   * one. The reason says what happened; the contest says who else was named.
+   */
+  readonly contest?: number;
 }
 
 /** One selected named port's authoritative outcome. */
@@ -2563,6 +2690,8 @@ export interface WorktreeProvisionResultMessage {
   steps: readonly ProvisionStepResult[];
   ports: readonly ProvisionPortResult[];
   portWarnings?: readonly ProvisionPortWarning[];
+  /** Referenced by `ProvisionStepResult.contest`; absent when nothing contested. */
+  contests?: readonly ProvisionResultContest[];
 }
 
 /**
