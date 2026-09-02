@@ -2514,7 +2514,7 @@ describe("the provisioning offer the create form is given", () => {
       entries: [{ id: "i1", path, mode: "copy", source: "asimov/worktree.yaml" }],
       setup: [],
       ports: [],
-      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
       contenders: [],
       problems: [],
@@ -3010,8 +3010,8 @@ describe("[D5] a switch is a new request with its own identity", () => {
     setup: [],
     ports: [],
     providers: [
-      { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
-      { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: false },
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml", ".worktreeinclude"], active: false },
     ],
     excluded: [],
     contenders: [],
@@ -3026,8 +3026,8 @@ describe("[D5] a switch is a new request with its own identity", () => {
       ...OFFERED,
       entries: [{ id: "i1", path: "node_modules", mode: "link", source: "orca.yaml" }],
       providers: [
-        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: true },
-        { id: "asimov", files: ["asimov/worktree.yaml"], active: false },
+        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml", ".worktreeinclude"], active: true },
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
       ],
     };
   }
@@ -5092,7 +5092,7 @@ describe("the provisioning a create is actually given", () => {
       ],
       setup: [],
       ports: [],
-      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
       contenders: [],
       problems: [],

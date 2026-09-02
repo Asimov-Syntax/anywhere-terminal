@@ -87,6 +87,18 @@ function ordered(prefer: ProvisionProvider["id"] | undefined): readonly Provider
  * nobody is shown. Present is present whatever the file then yields, so a file
  * that is refused or unreadable counts too (design.md D3).
  */
+async function filesPresent(deps: ProviderDeps, repoRoot: string, adapter: ProviderAdapter): Promise<string[]> {
+  const found: string[] = [];
+  for (const file of adapter.files) {
+    const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file });
+    if (opened.kind === "text" || (opened.kind === "problem" && opened.at === "file")) {
+      found.push(file);
+    }
+  }
+  return found;
+}
+
+/** Does any of this adapter's files exist? Stops at the first one, so it opens no more than it must. */
 async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: ProviderAdapter): Promise<boolean> {
   for (const file of adapter.files) {
     const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file });
@@ -95,6 +107,39 @@ async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: Pro
     }
   }
   return false;
+}
+
+/**
+ * Fill `present` for every adapter detection kept, in detection order.
+ *
+ * Runs AFTER the model is assembled, and that ordering is load-bearing rather
+ * than tidy. Probing presence is an OPEN, and `openProviderFile` authorizes the
+ * bytes it returns — so a probe that runs before the assembly consumes the read
+ * the assembly was going to authorize. A `.worktreeinclude` that goes away
+ * between two opens then loses its rows to a sibling the user never named,
+ * which is the defect round-1 F002 exists to prevent. Probing last cannot take
+ * a read from anything.
+ *
+ * `present` can therefore come back EMPTY for a provider that was detected: the
+ * file was there when it was read and gone when it was probed. That is the
+ * truthful answer for the question `present` is asked — a file that is no
+ * longer there is not one `extends` can name — and a consumer must handle it.
+ */
+async function publish(
+  deps: ProviderDeps,
+  repoRoot: string,
+  detected: readonly { adapter: ProviderAdapter; active: boolean }[],
+): Promise<ProvisionProvider[]> {
+  const published: ProvisionProvider[] = [];
+  for (const { adapter, active } of detected) {
+    published.push({
+      id: adapter.id,
+      files: [...adapter.files],
+      present: await filesPresent(deps, repoRoot, adapter),
+      active,
+    });
+  }
+  return published;
 }
 
 /**
@@ -313,7 +358,7 @@ export async function readProvisioning(
   const budget = newBudget();
   const adapters = ordered(prefer);
   let chosen: { adapter: ProviderAdapter; answer: AdapterRead } | null = null;
-  const providers: ProvisionProvider[] = [];
+  const detected: { adapter: ProviderAdapter; active: boolean }[] = [];
 
   for (const adapter of adapters) {
     if (chosen === null) {
@@ -323,13 +368,17 @@ export async function readProvisioning(
         continue;
       }
       chosen = { adapter, answer };
-      providers.push({ id: adapter.id, files: [...adapter.files], active: true });
+      detected.push({ adapter, active: true });
       continue;
     }
     // Detected and not chosen: named, so the section can offer to switch to it,
     // and contributing no row unless the winner asked to build on it.
+    //
+    // This gate short-circuits at the first file it finds, which is what keeps
+    // it from opening a file the assembly has not read yet. The per-file list
+    // `present` needs is taken later, by `publish`.
     if (await anyFilePresent(deps, repoRoot, adapter)) {
-      providers.push({ id: adapter.id, files: [...adapter.files], active: false });
+      detected.push({ adapter, active: false });
     }
   }
 
@@ -351,10 +400,11 @@ export async function readProvisioning(
     // so the section that needed the relation most — one file declaring two
     // foldable spellings — was the one branch that never computed it
     // (round-1 F002).
-    return { ...chosen.answer.model, providers };
+    return { ...chosen.answer.model, providers: await publish(deps, repoRoot, detected) };
   }
 
   const { model, base } = await assemble(deps, repoRoot, budget, chosen.answer);
+  const providers = await publish(deps, repoRoot, detected);
   return {
     ...model,
     // `active: false` is what makes a row offer to switch, and offering to

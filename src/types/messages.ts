@@ -906,6 +906,25 @@ export interface ProvisionProvider {
    * D8). A row's `source` still names ONE file: that is a different question.
    */
   readonly files: readonly string[];
+  /**
+   * The subset of `files` that is actually there, in read order.
+   *
+   * `files` is what the adapter DECLARES it can read; this is what was found.
+   * The two differ wherever a provider is optional over several files — orca is
+   * one provider over two — and a consumer that must name one existing file
+   * cannot get it from `files`: writing `files[0]` as `extends` in a repository
+   * carrying only the other one names a file that is not there, which the read
+   * side then reports as `missingExtends`
+   * (worktree-provisioning.md § 6, design.md D11).
+   *
+   * Presence, not readability: a file that is there and denied still counts,
+   * because it is one `extends` can name without producing `missingExtends`.
+   *
+   * Can be EMPTY on a provider that was nonetheless detected — the file was
+   * there when it was read and gone when presence was taken. A consumer that
+   * needs a name has none, which is the truthful answer rather than a stale one.
+   */
+  readonly present: readonly string[];
   /** True for the provider whose model the native file extended or detection chose. */
   readonly active: boolean;
 }

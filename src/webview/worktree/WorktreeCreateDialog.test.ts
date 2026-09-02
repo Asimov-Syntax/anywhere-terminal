@@ -1288,7 +1288,7 @@ describe("a path the repository removed is shown as deliberate", () => {
 });
 
 describe("[D5] a source that did not win stays visible and selectable", () => {
-  const ORCA = { id: "orca" as const, files: ["orca.yaml", ".worktreeinclude"], active: false };
+  const ORCA = { id: "orca" as const, files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml", ".worktreeinclude"], active: false };
 
   function withProviders(providers: ProvisionModel["providers"], onProvisionSwitch?: (r: unknown) => void) {
     return open({
@@ -1298,7 +1298,7 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
   }
 
   it("draws one row per inactive source, naming every file it reads", () => {
-    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA]);
+    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }, ORCA]);
 
     const rows = host.querySelectorAll(".wt-bring-switch");
     expect(rows).toHaveLength(1);
@@ -1308,7 +1308,7 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
   });
 
   it("draws none for the source that supplied the offer", () => {
-    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }]);
+    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }]);
 
     expect(host.querySelectorAll(".wt-bring-switch")).toHaveLength(0);
   });
@@ -1317,9 +1317,9 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
     const taken: unknown[] = [];
     const { host } = withProviders(
       [
-        { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
         ORCA,
-        { id: "vscodeTasks", files: [".vscode/tasks.json"], active: false },
+        { id: "vscodeTasks", files: [".vscode/tasks.json"], present: [".vscode/tasks.json"], active: false },
       ],
       (r) => taken.push(r),
     );
@@ -1342,7 +1342,7 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
         createDefaults({
           provisioning: provisionOffer({
             model: provisionModel({
-              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }, ORCA],
             }),
           }),
         }),
@@ -1363,7 +1363,7 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
         createDefaults({
           provisioning: provisionOffer({
             model: provisionModel({
-              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }, ORCA],
             }),
           }),
         }),
@@ -1376,8 +1376,8 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
       offerId: "provision-2",
       model: provisionModel({
         providers: [
-          { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: true },
-          { id: "asimov", files: ["asimov/worktree.yaml"], active: false },
+          { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml", ".worktreeinclude"], active: true },
+          { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
         ],
       }),
     });
@@ -1397,7 +1397,7 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
               ports: [],
               setup: [],
               problems: [],
-              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }, ORCA],
             }),
           }),
         }),
@@ -1412,9 +1412,9 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
 
   it("gives the buttons accessible names that differ", () => {
     const { host } = withProviders([
-      { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
       ORCA,
-      { id: "vscodeTasks", files: [".vscode/tasks.json"], active: false },
+      { id: "vscodeTasks", files: [".vscode/tasks.json"], present: [".vscode/tasks.json"], active: false },
     ]);
     const buttons = [...host.querySelectorAll<HTMLButtonElement>(".wt-bring-switch-take")];
     const names = buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");

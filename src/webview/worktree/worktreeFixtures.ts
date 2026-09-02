@@ -343,7 +343,7 @@ export function provisionModel(over: Partial<ProvisionModel> = {}): ProvisionMod
     ],
     ports: [{ id: "i4", name: "APP", source: YAML }],
     setup: [{ id: "i5", kind: "shell", script: "pnpm install --frozen-lockfile", source: YAML }],
-    providers: [{ id: "asimov", files: [YAML], active: true }],
+    providers: [{ id: "asimov", files: [YAML], present: [YAML], active: true }],
     excluded: [],
     contenders: [],
     problems: [],
@@ -373,7 +373,7 @@ export function emptyProvisionModel(): ProvisionModel {
 export function malformedProvisionModel(over: Partial<ProvisionModel> = {}): ProvisionModel {
   return {
     ...emptyProvisionModel(),
-    providers: [{ id: "asimov", files: [YAML], active: true }],
+    providers: [{ id: "asimov", files: [YAML], present: [YAML], active: true }],
     problems: [{ file: YAML, reason: "malformed", detail: "Unexpected key `copyFiles` at line 12." }],
     ...over,
   };

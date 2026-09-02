@@ -1,6 +1,6 @@
 ## 1. What the model must say before anything can be written
 
-- [ ] 1_1 Publish which of a provider's files are actually present
+- [x] 1_1 Publish which of a provider's files are actually present — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#a-configuration-written-for-the-first-time-names-a-source-that-exists <!-- design.md D11 -->
   - **Acceptance**:
@@ -10,6 +10,7 @@
     1. Add `present: readonly string[]` to `ProvisionProvider` in `src/types/messages.ts`, documented as the subset of `files` that exists, in read order, non-empty.
     2. In `src/worktree/provisioning/readProvisioning.ts`, fill `present` for both the chosen and the detected-inactive provider by keeping the per-file result `anyFilePresent` already computes rather than reducing it to a boolean.
     3. Add a case to `src/worktree/provisioning/readProvisioning.test.ts` for a repository carrying only `.worktreeinclude`, asserting `present` holds that file alone while `files` still holds both.
+    4. Fill `present` where `src/worktree/provisioning/asimovProvider.ts` builds its own `providers` array, and in the fixture `src/webview/worktree/worktreeFixtures.ts`, so the new field has one meaning everywhere a provider is constructed.
 
 ## 2. The write
 

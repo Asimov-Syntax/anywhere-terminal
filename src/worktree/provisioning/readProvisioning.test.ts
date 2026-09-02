@@ -52,7 +52,7 @@ describe("one source answers", () => {
     const model = await readProvisioning(fs({ asimov: ASIMOV_YAML }), ROOT);
 
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
-    expect(model.providers).toEqual([{ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true }]);
+    expect(model.providers).toEqual([{ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true }]);
   });
 
   it("reads orca alone", async () => {
@@ -94,9 +94,9 @@ describe("exactly one detected source supplies the offer", () => {
     expect(model.entries.map((e) => e.source)).toEqual([ASIMOV_PROVIDER_FILE]);
     expect(model.setup).toEqual([]);
     expect(model.providers).toEqual([
-      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
-      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], active: false },
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
+      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], present: [VSCODE_TASKS_FILE], active: false },
     ]);
   });
 
@@ -106,6 +106,47 @@ describe("exactly one detected source supplies the offer", () => {
     // One provider over two files by orca's own design; with either present, no
     // single value truthfully answers which file it read.
     expect(model.providers.find((p) => p.id === "orca")?.files).toEqual([ORCA_YAML_FILE, ORCA_INCLUDE_FILE]);
+  });
+
+  it("[D11] names only the files that are actually there", async () => {
+    // `files` is the adapter's DECLARED list; `present` is a finding. Orca is
+    // one provider over two independently optional files, so a first `extends`
+    // written from `files[0]` would name `orca.yaml` in a repository that has
+    // only the include — and the read side then reports that as
+    // `missingExtends`, breaking the save it was supposed to record.
+    const model = await readProvisioning(fs({ asimov: ASIMOV_YAML, orcaInclude: "x\n" }), ROOT);
+    const orca = model.providers.find((p) => p.id === "orca");
+
+    expect(orca?.files).toEqual([ORCA_YAML_FILE, ORCA_INCLUDE_FILE]);
+    expect(orca?.present).toEqual([ORCA_INCLUDE_FILE]);
+  });
+
+  it("[D11] finds the active provider's own present files, not just a detected one's", async () => {
+    const model = await readProvisioning(fs({ orcaInclude: "x\n" }), ROOT);
+
+    expect(model.providers[0]?.active).toBe(true);
+    expect(model.providers[0]?.present).toEqual([ORCA_INCLUDE_FILE]);
+  });
+
+  it("[D11] counts a file that is there and unreadable as present", async () => {
+    // Presence is the same question `anyFilePresent` already answered: a denied
+    // or oversized file is one `extends` can name without producing
+    // `missingExtends`. Reducing it to "readable" would split the two answers.
+    const deps: ProviderDeps = {
+      ...fs({ asimov: ASIMOV_YAML }),
+      readFile: async (path: string) => {
+        if (path.endsWith(ORCA_YAML_FILE)) {
+          throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        }
+        if (path.endsWith(ASIMOV_PROVIDER_FILE)) {
+          return ASIMOV_YAML;
+        }
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+    };
+    const model = await readProvisioning(deps, ROOT);
+
+    expect(model.providers.find((p) => p.id === "orca")?.present).toEqual([ORCA_YAML_FILE]);
   });
 
   it("chooses without enumerating a single directory", async () => {
@@ -124,7 +165,7 @@ describe("exactly one detected source supplies the offer", () => {
     // directory to find its providers could answer differently on two machines;
     // this asserts none is listed at all, so none can.
     expect(listed).toEqual([]);
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true });
   });
 
   it("is the order the constant declares", () => {
@@ -144,8 +185,8 @@ describe("[D3] a present source answers even when its answer is nothing", () => 
     expect(model.setup).toEqual([]);
     expect(model.problems).toEqual([]);
     expect(model.providers).toEqual([
-      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: false },
     ]);
   });
 
@@ -165,7 +206,7 @@ describe("[D3] a present source answers even when its answer is nothing", () => 
 
     expect(model.problems.map((p) => p.file)).toEqual([ASIMOV_PROVIDER_FILE]);
     expect(model.entries).toEqual([]);
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true });
   });
 });
 
@@ -177,15 +218,15 @@ describe("a preference reorders one entry, it does not replace the order", () =>
 
     expect(model.entries.map((e) => e.path)).toEqual(["node_modules"]);
     expect(model.providers).toEqual([
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: true },
-      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: false },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: true },
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: false },
     ]);
   });
 
   it("falls back to the plain order for a preference that is not there", async () => {
     const model = await readProvisioning(fs(BOTH), ROOT, "vscodeTasks");
 
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true });
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
   });
 
@@ -282,9 +323,9 @@ describe("a repository can build on a source instead of replacing it", () => {
     );
 
     expect(model.providers).toEqual([
-      { id: "native", files: [NATIVE_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: true },
-      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], active: false },
+      { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: true },
+      { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], present: [VSCODE_TASKS_FILE], active: false },
     ]);
   });
 
@@ -311,8 +352,8 @@ describe("a repository can build on a source instead of replacing it", () => {
 
     expect(model.entries.map((e) => e.path)).toEqual([".env.local"]);
     expect(model.providers).toEqual([
-      { id: "native", files: [NATIVE_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
+      { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: true },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: false },
     ]);
   });
 
@@ -472,8 +513,8 @@ describe("[D5] a preference for a framework answers alone; a preference for nati
 
     expect(model.entries.map((e) => [e.path, e.source])).toEqual([["node_modules", ORCA_YAML_FILE]]);
     expect(model.providers).toEqual([
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: true },
-      { id: "native", files: [NATIVE_PROVIDER_FILE], active: false },
+      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE], active: true },
+      { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: false },
     ]);
   });
 
