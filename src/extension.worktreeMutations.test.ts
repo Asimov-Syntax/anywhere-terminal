@@ -18,6 +18,9 @@ const setupAssembly = vi.hoisted(() => ({
   runs: [] as unknown[],
   manifests: [] as unknown[],
   reveals: [] as unknown[],
+  disposals: [] as number[],
+  terminalSequence: 0,
+  authorized: true,
 }));
 
 vi.mock("./worktree/provisioning/setupRunner", () => ({
@@ -32,15 +35,24 @@ vi.mock("./worktree/provisioning/setupRunner", () => ({
 
 vi.mock("./worktree/provisioning/setupTerminal", () => ({
   SetupTerminal: class {
+    readonly sequence = ++setupAssembly.terminalSequence;
     outputId(origin: string): string {
-      return `output:${origin}`;
+      return `output-${this.sequence}:${origin}`;
     }
     reveal(outputId: string, origin: string): boolean {
       setupAssembly.reveals.push({ outputId, origin });
       return true;
     }
+    dispose(): void {
+      setupAssembly.disposals.push(this.sequence);
+    }
   },
 }));
+
+vi.mock("./utils/authorizedDirectory", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./utils/authorizedDirectory")>();
+  return { ...real, directoryStillAuthorized: async () => setupAssembly.authorized };
+});
 
 vi.mock("./worktree/provisioning/provisionManifest", () => ({
   writeProvisionManifest: async (...args: unknown[]) => {
@@ -113,6 +125,9 @@ beforeEach(() => {
   setupAssembly.runs = [];
   setupAssembly.manifests = [];
   setupAssembly.reveals = [];
+  setupAssembly.disposals = [];
+  setupAssembly.terminalSequence = 0;
+  setupAssembly.authorized = true;
   forceUndegraded = false;
   observations = [];
   vi.resetModules();
@@ -229,6 +244,65 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(setupAssembly.manifests).toHaveLength(1);
     expect(setupAssembly.reveals).toEqual([expect.objectContaining({ outputId: result?.outputId })]);
     expect(posted).toEqual([expect.objectContaining({ type: "worktreeProvisionResult", worktreeId: "/repo/wt" })]);
+
+    const replacement = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    expect(setupAssembly.disposals).toEqual([1]);
+    await received.actions?.viewSetupOutput?.(result?.outputId ?? "", origin);
+    expect(setupAssembly.reveals).toHaveLength(1);
+
+    received.deps?.retireSetupOutput?.("/repo/wt");
+    expect(setupAssembly.disposals).toEqual([1, 2]);
+
+    const stale = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    setupAssembly.authorized = false;
+    await received.actions?.viewSetupOutput?.(stale?.outputId ?? "", origin);
+    expect(setupAssembly.reveals).toHaveLength(1);
+    expect(setupAssembly.disposals).toEqual([1, 2, 3]);
+
+    setupAssembly.authorized = true;
+    await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    received.actions?.reconcileFingerprints?.([]);
+    expect(setupAssembly.disposals).toEqual([1, 2, 3, 4]);
+    expect(replacement?.outputId).not.toBe(result?.outputId);
   });
 });
 

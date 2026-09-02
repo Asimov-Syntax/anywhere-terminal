@@ -2340,7 +2340,7 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(outcome?.provision?.portWarnings).toEqual(["lockReleaseFailed"]);
   });
 
-  it("provisions nothing, and reports nothing, for a create that carried no selection", async () => {
+  it("applies nothing but reports the empty record for a create with no selection", async () => {
     const applied = vi.fn(async () => []);
     const appliedPorts = vi.fn(async () => ({ ports: [], warnings: [] }));
     const h = harness({ applyProvision: applied, applyPorts: appliedPorts });
@@ -2348,7 +2348,7 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(applied).not.toHaveBeenCalled();
     expect(appliedPorts).not.toHaveBeenCalled();
     expect(okOutcome(h)?.kind).toBe("ok");
-    expect(okOutcome(h)?.provision).toBeUndefined();
+    expect(okOutcome(h)?.provision).toMatchObject({ steps: [], ports: [] });
   });
 
   it("[F017] carries the id its provisioning message will arrive under", async () => {
@@ -2363,13 +2363,25 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(outcome?.worktreeId).toBe(outcome?.provision?.path);
   });
 
-  it("[F023] never reads the tree for a create that provisions nothing", async () => {
+  it("writes a truthful empty manifest for a create that selects no provisioning", async () => {
     const normalized = vi.fn(async () => "/normalized/feat");
-    const h = harness({ normalizeWorktreeId: normalized });
+    const authorize = vi.fn(async (candidate: string) => authorization(candidate));
+    const manifest = vi.fn<NonNullable<MutationServiceDeps["writeProvisionManifest"]>>(async () => ({}));
+    const h = harness({
+      normalizeWorktreeId: normalized,
+      authorizeDirectory: authorize,
+      writeProvisionManifest: manifest,
+    });
+
     await h.service.createWorktree(create());
 
-    expect(normalized).not.toHaveBeenCalled();
-    expect(okOutcome(h)?.worktreeId).toBeUndefined();
+    expect(authorize).toHaveBeenCalledWith("/repo/wt/new");
+    expect(normalized).toHaveBeenCalledWith("/repo/wt/new");
+    expect(manifest).toHaveBeenCalledWith("/repo/wt/new", [], [], []);
+    expect(okOutcome(h)).toMatchObject({
+      worktreeId: "/normalized/feat",
+      provision: { path: "/normalized/feat", steps: [], ports: [] },
+    });
   });
 
   it("[F023] keeps the create successful when normalizing REJECTS", async () => {
@@ -2576,6 +2588,7 @@ describe("provisioning rides the create without ever costing it", () => {
       outputId: `output-${runSetup.mock.calls.length}`,
     }));
     const manifest = vi.fn<NonNullable<MutationServiceDeps["writeProvisionManifest"]>>(async () => ({}));
+    const retireSetupOutput = vi.fn();
     const h = harness({
       normalizeWorktreeId: async () => "/normalized/feat",
       resolve: () => target({ worktreePath: "/repo/wt/new", incarnation: "created-1" }),
@@ -2583,6 +2596,7 @@ describe("provisioning rides the create without ever costing it", () => {
       applyPorts,
       runSetup,
       writeProvisionManifest: manifest,
+      retireSetupOutput,
     });
 
     await h.service.createWorktree(create({ provision: entries.slice(0, 1), ports: ports.slice(0, 1), setup }));
@@ -2591,6 +2605,9 @@ describe("provisioning rides the create without ever costing it", () => {
 
     expect(applyProvision).toHaveBeenCalledOnce();
     expect(applyPorts).toHaveBeenCalledOnce();
+    expect(retireSetupOutput).toHaveBeenCalledOnce();
+    expect(retireSetupOutput).toHaveBeenCalledWith("/normalized/feat");
+    expect(retireSetupOutput.mock.invocationCallOrder[0]).toBeLessThan(runSetup.mock.invocationCallOrder[1] ?? 0);
     expect(runSetup).toHaveBeenCalledTimes(2);
     expect(h.outcomes).toHaveLength(1);
     expect(h.provisioningOutcomes).toEqual([
@@ -2605,6 +2622,41 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(h.provisioningOutcomes[0]).not.toHaveProperty("steps");
     expect(h.provisioningOutcomes[0]).not.toHaveProperty("ports");
     expect(manifest).toHaveBeenCalledTimes(2);
+  });
+
+  it("retires a spent retry visibly when the coordinator rejects", async () => {
+    let rejectRebuild = false;
+    const retireSetupOutput = vi.fn();
+    const h = harness({
+      normalizeWorktreeId: async () => "/normalized/feat",
+      resolve: () => target({ worktreePath: "/repo/wt/new", incarnation: "created-1" }),
+      forceRebuild: async () => {
+        if (rejectRebuild) {
+          throw new Error("rebuild failed");
+        }
+      },
+      runSetup: async (input) => ({
+        succeeded: false,
+        steps: input.steps.map((step) => ({ ...step, outcome: { kind: "failed" as const, reason: "failed" } })),
+      }),
+      retireSetupOutput,
+    });
+    await h.service.createWorktree(create({ setup }));
+    rejectRebuild = true;
+
+    await h.service.retrySetup({ repoId: REPO, worktreeId: "/normalized/feat" }, "retry-1");
+
+    expect(retireSetupOutput).toHaveBeenCalledWith("/normalized/feat");
+    expect(h.provisioningOutcomes).toEqual([
+      expect.objectContaining({
+        type: "worktreeProvisionResult",
+        worktreeId: "/normalized/feat",
+        setup: expect.arrayContaining([
+          expect.objectContaining({ outcome: { kind: "failed", reason: "rebuild failed" } }),
+        ]),
+      }),
+    ]);
+    expect(h.provisioningOutcomes[0]).not.toHaveProperty("setupRetryId");
   });
 
   it("refuses retry after the row's worktree incarnation changes", async () => {
@@ -2624,7 +2676,17 @@ describe("provisioning rides the create without ever costing it", () => {
     await h.service.retrySetup({ repoId: REPO, worktreeId: "/normalized/feat" }, "retry-1");
 
     expect(runSetup).toHaveBeenCalledOnce();
-    expect(h.provisioningOutcomes).toEqual([]);
+    expect(h.provisioningOutcomes).toEqual([
+      expect.objectContaining({
+        worktreeId: "/normalized/feat",
+        setup: expect.arrayContaining([
+          expect.objectContaining({
+            outcome: { kind: "failed", reason: "the worktree identity changed before setup retry" },
+          }),
+        ]),
+      }),
+    ]);
+    expect(h.provisioningOutcomes[0]).not.toHaveProperty("setupRetryId");
   });
 
   it("evicts retry authority when reconciliation no longer sees the row", async () => {

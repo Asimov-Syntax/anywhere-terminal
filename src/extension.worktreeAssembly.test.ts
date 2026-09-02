@@ -52,11 +52,14 @@ const setupHarness = vi.hoisted(() => ({
   wait: null as Promise<void> | null,
   manifests: [] as unknown[][],
   reveals: [] as Array<{ outputId: string; origin: string }>,
+  disposals: 0,
+  events: [] as string[],
 }));
 
 vi.mock("./worktree/provisioning/setupRunner", () => ({
   runSetup: async (input: { steps: readonly { id: string; source: string; script: string }[] }) => {
     setupHarness.runs.push(input);
+    setupHarness.events.push("run");
     if (setupHarness.wait !== null) {
       await setupHarness.wait;
     }
@@ -84,6 +87,10 @@ vi.mock("./worktree/provisioning/setupTerminal", () => ({
     reveal(outputId: string, origin: string): boolean {
       setupHarness.reveals.push({ outputId, origin });
       return true;
+    }
+    dispose(): void {
+      setupHarness.disposals += 1;
+      setupHarness.events.push("dispose");
     }
   },
 }));
@@ -531,6 +538,8 @@ beforeEach(() => {
   setupHarness.wait = null;
   setupHarness.manifests = [];
   setupHarness.reveals = [];
+  setupHarness.disposals = 0;
+  setupHarness.events = [];
   registered = [LINKED];
   featHead = "2".repeat(40);
   fs.mkdirSync(LINKED, { recursive: true });
@@ -1739,6 +1748,8 @@ describe("the invariants that span the host and the webview", () => {
     );
 
     expect(setupHarness.manifests).toHaveLength(2);
+    expect(setupHarness.disposals).toBe(1);
+    expect(setupHarness.events).toEqual(["run", "dispose", "run"]);
     expect(document.body.textContent ?? "").toContain("1 of 1 setup steps completed");
     const setupMessages = outbound.filter(
       (message) => message.type === "worktreeSetupRetry" || message.type === "worktreeSetupViewOutput",

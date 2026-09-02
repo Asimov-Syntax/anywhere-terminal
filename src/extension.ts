@@ -49,7 +49,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
-import { authorizeDirectory, directoryStillAuthorized } from "./utils/authorizedDirectory";
+import { type AuthorizedDirectory, authorizeDirectory, directoryStillAuthorized } from "./utils/authorizedDirectory";
 import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
@@ -582,7 +582,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * creates.
    */
   const provisionContests = new Map<string, readonly ProvisionResultContest[]>();
-  const setupOutputs = new Map<string, { worktreeId: string; terminal: SetupTerminal }>();
+  const setupOutputs = new Map<
+    string,
+    { worktreeId: string; authorization: AuthorizedDirectory; terminal: SetupTerminal }
+  >();
   const setupOutputByWorktree = new Map<string, string>();
   const setupSurfaceIds = new WeakMap<WorktreeSurface, string>();
   const setupSurfaceId = (surface: WorktreeSurface): string => {
@@ -594,20 +597,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     setupSurfaceIds.set(surface, created);
     return created;
   };
-  const retainSetupOutput = (worktreeId: string, outputId: string, terminal: SetupTerminal): void => {
-    const previous = setupOutputByWorktree.get(worktreeId);
-    if (previous !== undefined) {
-      setupOutputs.delete(previous);
+  const retireSetupOutput = (worktreeId: string): void => {
+    const outputId = setupOutputByWorktree.get(worktreeId);
+    if (outputId === undefined) {
+      return;
     }
+    setupOutputByWorktree.delete(worktreeId);
+    const output = setupOutputs.get(outputId);
+    setupOutputs.delete(outputId);
+    output?.terminal.dispose();
+  };
+  const retainSetupOutput = (
+    worktreeId: string,
+    outputId: string,
+    authorization: AuthorizedDirectory,
+    terminal: SetupTerminal,
+  ): void => {
+    retireSetupOutput(worktreeId);
     setupOutputByWorktree.set(worktreeId, outputId);
-    setupOutputs.set(outputId, { worktreeId, terminal });
+    setupOutputs.set(outputId, { worktreeId, authorization, terminal });
   };
   const reconcileSetupOutputs = (presentWorktreeIds: readonly string[]): void => {
     const present = new Set(presentWorktreeIds);
-    for (const [worktreeId, outputId] of setupOutputByWorktree) {
+    for (const worktreeId of setupOutputByWorktree.keys()) {
       if (!present.has(worktreeId)) {
-        setupOutputByWorktree.delete(worktreeId);
-        setupOutputs.delete(outputId);
+        retireSetupOutput(worktreeId);
       }
     }
   };
@@ -698,7 +712,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             return result;
           }
           const outputId = terminal.outputId(setupSurfaceId(origin));
-          retainSetupOutput(input.worktreeId, outputId, terminal);
+          retainSetupOutput(input.worktreeId, outputId, input.authorization, terminal);
           return { ...result, outputId };
         },
         writeProvisionManifest: (worktreePath, steps, ports, setup) =>
@@ -707,6 +721,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             lstat: (target) => fsp.lstat(target),
           }),
         reportProvisioning: (outcome, origin) => worktreeHost.reportProvisioning?.(origin ?? null, outcome),
+        retireSetupOutput,
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
@@ -1183,7 +1198,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       createWorktree: (request) => mutations().createWorktree(request),
       retrySetup: (target, retryId) => mutations().retrySetup(target, retryId),
       viewSetupOutput: async (outputId, origin) => {
-        setupOutputs.get(outputId)?.terminal.reveal(outputId, setupSurfaceId(origin));
+        const output = setupOutputs.get(outputId);
+        if (output === undefined) {
+          return;
+        }
+        if (!(await directoryStillAuthorized(output.authorization))) {
+          retireSetupOutput(output.worktreeId);
+          return;
+        }
+        output.terminal.reveal(outputId, setupSurfaceId(origin));
       },
       // Resolution only — the surface that asked owns the pane it opens in.
       startAgent: (agent, cwd, opts) => vaultLauncher.startAgent(agent, cwd, opts),

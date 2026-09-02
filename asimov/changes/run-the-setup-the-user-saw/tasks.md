@@ -142,14 +142,15 @@
     2. Have `src/worktree/provisioning/setupRunner.ts` detach each settled child in `finally`.
     3. Cover incremental eviction, an oversized event, UTF-8 partial-chunk eviction, 8 ms and 64 KiB flush bounds, pending-flush disposal, final-child detach, both throwing-kill paths, and repeated disposal in `src/worktree/provisioning/setupTerminal.test.ts` and `src/worktree/provisioning/setupRunner.test.ts`.
 
-- [ ] 5_3 Retire output authority and complete create records
+- [x] 5_3 Retire output authority and complete create records — verified: pnpm exec vitest run src/worktree/worktreeMutationService.test.ts src/extension.worktreeMutations.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_2
   - **Refs**: design.md D3, D4, D5, D6 <!-- review round 1 F004, F005, F007, F008 -->
   - **Acceptance**:
     - Outcome: Output authority, retry retirement, and manifests remain truthful across replacement, rejection, and empty creates
-    - Verify: command pnpm exec vitest run src/worktree/worktreeMutationService.test.ts src/extension.worktreeMutations.test.ts src/webview/worktree/WorktreeController.test.ts
+    - Verify: command pnpm exec vitest run src/worktree/worktreeMutationService.test.ts src/extension.worktreeMutations.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts
   - **Plan**:
     1. Add retry-start output retirement and visible coordinator-rejection reporting to `src/worktree/worktreeMutationService.ts`; normalize every fresh create for a truthful empty manifest and cover all branches in `src/worktree/worktreeMutationService.test.ts`.
     2. In `src/extension.ts`, bind retained output to its original `AuthorizedDirectory`, recheck it before reveal, and dispose on retry start, replacement, mismatch, and reconciliation.
     3. Extend `src/extension.worktreeMutations.test.ts` for retry-start disposal, completed-run replacement disposal, same-id authority refusal, rebuild disappearance, and empty-manifest production wiring.
     4. Reassert in `src/webview/worktree/WorktreeController.test.ts` that a rejection update without a retry id removes the stale action.
+    5. Extend the production assembly mock and retry witness in `src/extension.worktreeAssembly.test.ts` to prove prior output is disposed before the retry run.

@@ -2450,16 +2450,21 @@ describe("what a mutation did comes back to the panel", () => {
     h.controller.handleProvisionResult({
       type: "worktreeProvisionResult",
       worktreeId,
-      setup: [{ id: "s1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "ok" } }],
-      setupOutputId: "output-2",
+      setup: [
+        {
+          id: "s1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "rebuild failed" },
+        },
+      ],
     });
 
     expect(results(h)[0]).toMatchObject({
       provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" }, contest: 0 }],
       ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5184 } }],
       provisionContests: [{ members: [{ id: "i1", path: ".env", source: "asimov/worktree.yaml" }] }],
-      setup: [{ id: "s1", outcome: { kind: "ok" } }],
-      setupOutputId: "output-2",
+      setup: [{ id: "s1", outcome: { kind: "failed", reason: "rebuild failed" } }],
     });
     expect(results(h)[0]?.setupRetryId).toBeUndefined();
   });

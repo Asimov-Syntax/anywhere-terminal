@@ -271,6 +271,8 @@ export interface MutationServiceDeps {
   ): Promise<{ readonly warning?: string }>;
   /** Setup-only retries report without emitting another create mutation notice. */
   reportProvisioning?(outcome: WorktreeProvisionResultMessage, origin?: WorktreeSurface): void;
+  /** Retire the prior output capability as soon as a valid retry spends its token. */
+  retireSetupOutput?(worktreeId: string): void;
   /** Injectable so retry capabilities are deterministic in tests. */
   newSetupRetryId?(): string;
 
@@ -612,6 +614,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       }
       // Spend before queueing, so a double click cannot enqueue the same authority twice.
       held.retryId = newSetupRetryId();
+      deps.retireSetupOutput?.(held.worktreeId);
       return coordinator
         .run<ResolvedTarget, WorktreeProvisionResultMessage | null>(target.repoId, {
           resolve: async () => deps.resolve(target),
@@ -660,12 +663,28 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           (outcome) => {
             if (outcome === null) {
               setupRetries.delete(key);
+              deps.reportProvisioning?.(
+                {
+                  type: "worktreeProvisionResult",
+                  worktreeId: held.worktreeId,
+                  setup: failedSetup(held.steps, "the worktree identity changed before setup retry"),
+                },
+                target.origin,
+              );
               return;
             }
             deps.reportProvisioning?.(outcome, target.origin);
           },
-          () => {
+          (error: unknown) => {
             setupRetries.delete(key);
+            deps.reportProvisioning?.(
+              {
+                type: "worktreeProvisionResult",
+                worktreeId: held.worktreeId,
+                setup: failedSetup(held.steps, messageOf(error)),
+              },
+              target.origin,
+            );
           },
         );
     },
@@ -1188,7 +1207,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 deps.authorizeDirectory(repoPath).catch(() => undefined),
                 deps.authorizeDirectory(check.path).catch(() => undefined),
               ]);
-            } else if (wantedPorts.length > 0 || wantedSetup.length > 0) {
+            } else {
               destinationAuthorization = await deps.authorizeDirectory(check.path).catch(() => undefined);
             }
             // D8: a root inside the main worktree must not dirty the parent's
@@ -1263,10 +1282,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               allocatedPorts = applied.ports;
               portWarnings = applied.warnings;
             }
-            if (provisioned !== undefined || allocatedPorts !== undefined || wantedSetup.length > 0) {
-              // The id the tree will key this worktree on, not the path git was handed.
-              provisionedAt = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
-            }
+            // Every fresh create owns a manifest, including a truthful empty one.
+            // Use the id the tree will key this worktree on, not the path git was handed.
+            provisionedAt = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
 
             const launch = async (): Promise<void> => {
               await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
