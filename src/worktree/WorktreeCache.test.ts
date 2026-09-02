@@ -23,8 +23,20 @@ function listing(worktrees: WorktreeInfo[], over: Partial<RepoListing> = {}): Re
   return { worktrees, reasons: [], skipped: 0, ...over };
 }
 
-function root(repoId: string): ResolvedRepo {
-  return { repoId, rootPath: repoId.replace(/\/\.git$/, "") };
+function root(repoId: string, ino?: number): ResolvedRepo {
+  return {
+    repoId,
+    rootPath: repoId.replace(/\/\.git$/, ""),
+    ...(ino === undefined
+      ? {}
+      : {
+          registration: {
+            path: repoId,
+            platform: "darwin",
+            components: [{ path: repoId, identity: { dev: 1, ino } }],
+          },
+        }),
+  };
 }
 
 /** A whole-tree build for `roots`, each with the listing given for its repoId. */
@@ -83,6 +95,37 @@ describe("WorktreeCache", () => {
     expect(tree.repos.map((r) => r.repoId)).toEqual(["/a/.git", "/b/.git"]);
     expect(tree.repos[0].worktrees).toHaveLength(2);
     expect(tree.gitAvailable).toBe(true);
+  });
+
+  it("resolves only the current authoritative generation to private registration evidence", () => {
+    const cache = createWorktreeCache();
+    const registered = root("/a/.git", 11);
+    cache.applyBuild(build([registered], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    const generation = cache.readRepo("/a/.git")?.generation;
+
+    expect(cache.registrationFor("/a/.git", generation as number)).toEqual(registered.registration);
+    expect(cache.registrationFor("/a/.git", (generation as number) + 1)).toBeUndefined();
+    expect(cache.read().repos[0]).not.toHaveProperty("registration");
+
+    cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" })]));
+    const relistedGeneration = cache.readRepo("/a/.git")?.generation as number;
+    expect(cache.registrationFor("/a/.git", generation as number)).toBeUndefined();
+    expect(cache.registrationFor("/a/.git", relistedGeneration)).toEqual(registered.registration);
+
+    const refreshed = root("/a/.git", 12);
+    cache.applyBuild(build([refreshed], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    const refreshedGeneration = cache.readRepo("/a/.git")?.generation as number;
+    expect(cache.registrationFor("/a/.git", refreshedGeneration)).toEqual(refreshed.registration);
+  });
+
+  it("withholds private registration when a repo-scoped listing is degraded", () => {
+    const cache = createWorktreeCache();
+    const registered = root("/a/.git", 11);
+    cache.applyBuild(build([registered], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    cache.applyRepo("/a/.git", listing([], { degraded: "registration changed" }));
+
+    expect(cache.readRepo("/a/.git")?.generation).toBeUndefined();
+    expect(cache.registrationFor("/a/.git", 1)).toBeUndefined();
   });
 
   it("keeps a repo's last good listing when its rebuild fails", () => {

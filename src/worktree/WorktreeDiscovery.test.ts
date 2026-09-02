@@ -51,6 +51,14 @@ function deps(runner: GitCommandRunner, over: Record<string, unknown> = {}) {
 const MAIN = ["worktree /repo", "HEAD abc", "branch refs/heads/main"];
 const FEAT = ["worktree /repo-wt/feat", "HEAD def", "branch refs/heads/feat"];
 
+function registration(ino: number) {
+  return {
+    path: "/repo/.git",
+    platform: "darwin" as const,
+    components: [{ path: "/repo/.git", identity: { dev: 1, ino } }],
+  };
+}
+
 describe("buildWorktreeTree — git availability", () => {
   it("returns an empty tree for a workspace with no folders, without shelling out", async () => {
     const { runner, run } = makeRunner({});
@@ -87,6 +95,25 @@ describe("buildWorktreeTree — grouping", () => {
     expect(tree.repos.map((r) => r.repoId)).toEqual(["/a/.git", "/b/.git"]);
     expect(tree.repos[0].label).toBe("a");
     expect(tree.repos[0].mainPath).toBe("/a");
+  });
+
+  it("degrades rows when the common-directory registration changes during listing", async () => {
+    const { runner } = makeRunner({
+      "/repo|common-dir": { stdout: Buffer.from("/repo/.git\n") },
+      "/repo|worktree-list": { stdout: nul(MAIN) },
+    });
+    const authorizations = [registration(1), registration(2)];
+
+    const tree = await buildWorktreeTree(
+      ["/repo"],
+      deps(runner, {
+        getGitApi: api(["/repo"]),
+        authorizeCommonDirectory: async () => authorizations.shift(),
+      }),
+    );
+
+    expect(tree.repos[0].worktrees).toEqual([]);
+    expect(tree.repos[0].degraded).toMatch(/registration changed/i);
   });
 
   it("orders worktrees with the main first", async () => {

@@ -71,7 +71,11 @@ import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRe
 import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
-import { buildWorktreeTreeDetailed, listRepoWorktrees, type WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
+import {
+  buildWorktreeTreeDetailed,
+  listRegisteredRepoWorktrees,
+  type WorktreeTreeDeps,
+} from "../worktree/WorktreeDiscovery";
 import {
   evaluateRemoval,
   type PaneFact,
@@ -3731,7 +3735,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     } else {
       const root = cache.rootFor(scope);
       if (root) {
-        cache.applyRepo(scope, await listRepoWorktrees(root.rootPath, discoveryDeps), discoveryDeps.rank);
+        cache.applyRepo(scope, await listRegisteredRepoWorktrees(root, discoveryDeps), discoveryDeps.rank);
         treeVersion += 1;
       }
     }

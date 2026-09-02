@@ -152,7 +152,7 @@
     1. `src/worktree/repoRoots.ts`, `src/worktree/repoRoots.test.ts`: capture authorized normalized common-directory evidence during repository resolution, while retaining an ordinary resolved repository without migration authority when filesystem identity is unavailable.
     2. `src/worktree/WorktreeDiscovery.ts`, `src/worktree/worktreeDeps.ts`, `src/worktree/worktreeDeps.test.ts`: expose and bind the existing authorized-directory mechanism to production repository discovery.
 
-- [ ] 4_2 Publish only a bracketed registration
+- [x] 4_2 Publish only a bracketed registration — verified: pnpm exec vitest run 'src/worktree/WorktreeDiscovery.test.ts' 'src/worktree/WorktreeCache.test.ts' 'src/providers/WorktreeHost.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 4_1
   - **Refs**: design.md D3, D5 <!-- review round 2 F006 -->
   - **Acceptance**:

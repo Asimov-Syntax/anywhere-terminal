@@ -3,7 +3,7 @@
 //      asimov/changes/enumerate-git-worktrees/design.md D6
 
 import * as path from "node:path";
-import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
+import { type AuthorizedDirectory, sameFileIdentity } from "../utils/authorizedDirectory";
 import { isPathInside } from "../utils/pathBoundary";
 import { describeGitFailure } from "./describeGitFailure";
 import { type GitCapabilities, isUnsupportedZResult } from "./gitCapabilities";
@@ -187,6 +187,33 @@ export async function listRepoWorktrees(
   return { worktrees, reasons: [...reasons], skipped };
 }
 
+function sameRegistration(left: AuthorizedDirectory, right: AuthorizedDirectory): boolean {
+  return (
+    left.path === right.path &&
+    left.platform === right.platform &&
+    left.components.length === right.components.length &&
+    left.components.every(
+      (component, index) =>
+        component.path === right.components[index]?.path &&
+        sameFileIdentity(component.identity, right.components[index]?.identity),
+    )
+  );
+}
+
+export async function listRegisteredRepoWorktrees(
+  root: ResolvedRepo,
+  deps: WorktreeTreeDeps,
+): Promise<RepoListing> {
+  const listing = await listRepoWorktrees(root.rootPath, deps);
+  if (listing.degraded !== undefined || root.registration === undefined) {
+    return listing;
+  }
+  const current = await deps.authorizeCommonDirectory?.(root.repoId).catch(() => undefined);
+  return current !== undefined && sameRegistration(root.registration, current)
+    ? listing
+    : { worktrees: [], reasons: [], skipped: 0, degraded: "The repository registration changed while listing worktrees." };
+}
+
 export interface WorktreeTreeDeps extends WorktreeListingDeps {
   authorizeCommonDirectory?(p: string): Promise<AuthorizedDirectory | undefined>;
   getGitApi?: GitApiAccessor;
@@ -310,7 +337,9 @@ export async function buildWorktreeTreeDetailed(
 
   // Concurrent, but assembled by index: one repo's 10 s timeout must not delay
   // its siblings, and the result order still follows workspace-folder order.
-  const results = await mapBounded(roots, REPO_LISTING_CONCURRENCY, (root) => listRepoWorktrees(root.rootPath, deps));
+  const results = await mapBounded(roots, REPO_LISTING_CONCURRENCY, (root) =>
+    listRegisteredRepoWorktrees(root, deps),
+  );
 
   for (const [index, root] of roots.entries()) {
     const listing = results[index];

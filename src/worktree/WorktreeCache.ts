@@ -76,6 +76,8 @@ export interface WorktreeCache {
   readRepo(repoId: string): WorktreeRepo | undefined;
   roots(): readonly ResolvedRepo[];
   rootFor(repoId: string): ResolvedRepo | undefined;
+  /** Resolve one public generation back to its host-private repository registration. */
+  registrationFor(repoId: string, generation: number): ResolvedRepo["registration"];
   normalizedFolders(): readonly string[];
 }
 
@@ -314,6 +316,13 @@ export function createWorktreeCache(): WorktreeCache {
     return { repos: out, unreadable: { count, reasons: [...reasons] }, gitAvailable: true };
   }
 
+  function registrationFor(repoId: string, generation: number): ResolvedRepo["registration"] {
+    if (repos.get(repoId)?.generation !== generation) {
+      return undefined;
+    }
+    return order.find((one) => one.repoId === repoId)?.registration;
+  }
+
   return {
     applyBuild,
     applyRepo,
@@ -323,6 +332,7 @@ export function createWorktreeCache(): WorktreeCache {
     readRepo,
     roots: () => order,
     rootFor: (repoId) => order.find((one) => one.repoId === repoId),
+    registrationFor,
     normalizedFolders: () => folders,
   };
 }
