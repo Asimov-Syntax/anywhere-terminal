@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-012.19`)_
@@ -54,6 +54,19 @@ Planned at: 5af4d3fd
   quiescent; `fs.openat`/`renameat`/`linkat` are all `undefined` on Node 24.7. | Consumer: plan |
   Action: any task asked to make a path-named operation safe against directory redirection uses this
   comparison and states the residual window, rather than reaching for `realpath` or a native addon.
+
+- Verify gate: type check pass; `pnpm run test:unit` 7045/7045 pass; `pnpm exec biome check src` reports
+  18 findings, ALL pre-existing — the identical 18 are present on a clean worktree at this change's
+  base, and the change's own eight files report `No fixes applied`. Nothing was auto-fixed to clear
+  the gate; one formatting defect in a file this change authored was formatted and committed.
+- The full suite has a load-sensitive flake in `src/extension.worktreeAssembly.test.ts`, a file this
+  change does not touch: measured 10 runs on a clean detached worktree at HEAD with zero diff → 8
+  pass, 2 fail, with the FAILING TEST VARYING between runs. The file's own `settle()` is a fixed
+  40-turn pump whose comment (`:615-621`) records that fixed pumping fails under full-suite load.
+  Task 1_1 was locked by the rule of three on that flake and acked after a second opinion, which
+  also corrected a claim of mine: the changed release path IS reachable from that suite via
+  `activate()` → `AgentHookController` uninstalling a disabled agent → `releaseLock`, but it adds no
+  filesystem operation and completes before any dialog is touched.
 
 ## Plan attack triage (round 1, `asm-oracle`)
 
