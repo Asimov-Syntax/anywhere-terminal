@@ -179,3 +179,10 @@ Planned at: a82ccc85
 - 2_2 seam left for 2_3: `divergenceOf` takes `tookSource` and the host passes a literal `false` until
   2_3 wires D18's baseline comparison. Until then a save records the offer's own item changes and never a
   bare source take.
+- 2_3, stated rather than claimed: routing the three provisioning offer posts through the guarded
+  `deliver` has NO behavioural witness of its own today, because nothing runs after the post at any of
+  those sites — a throw was already contained by each chain's `.catch`. What D19's invariant actually
+  rests on is the recovery: the offer store re-mints on every issue, so a dropped delivery leaves the
+  form holding an evicted id, and F007's refresh is what answers it. That composition is the test.
+- 2_3 step 6, already satisfied: `TerminalViewProvider.worktree.test.ts` has carried the
+  `worktreeProvisionSave` wire sample without `provider` since 1_5, so this task added no sample.

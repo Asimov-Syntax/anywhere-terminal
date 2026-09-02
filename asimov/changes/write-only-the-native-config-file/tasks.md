@@ -107,7 +107,7 @@ genuinely parallel, so nothing here pretends to be.
     8. In `src/worktree/provisioning/writeNativeConfig.test.ts`, rewrite the span witness to obtain spans independently of the implementation's key path over a fixture with comments on BOTH neighbours of a removed element (F005), and add a round-trip that reads a written document back through the real `nativeProvider` (F002).
     9. Record the D16 boundary in the module: the adversarial parent-swap race is NOT closed here and is owned by the change this one depends on.
 
-- [ ] 2_3 Give a refused save its own word, and derive the source change host-side
+- [x] 2_3 Give a refused save its own word, and derive the source change host-side — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#{a-refusal-to-save-says-a-save-was-refused, a-save-that-has-nothing-to-record-writes-nothing} <!-- design.md D13, D18, D19; .reviews/round-1.md F007, F012, F016 -->
   - **Acceptance**:

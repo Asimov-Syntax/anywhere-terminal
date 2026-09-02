@@ -931,7 +931,17 @@ export interface ProvisionProvider {
 
 export interface ProvisionProblem {
   readonly file: string;
-  readonly reason: "unreadable" | "malformed" | "unknownKey" | "missingExtends" | "unsubstituted";
+  /**
+   * The first five describe a READ going wrong. `unsaved` is the one that does
+   * not: a save was refused and nothing was written, about a file that may have
+   * read perfectly well a moment earlier (design.md D13).
+   *
+   * One value for every write refusal rather than one each, with the cause in
+   * `detail`: the writer's own enumeration cannot always tell a held lock from a
+   * directory it could not create, so putting it on the wire would offer
+   * distinctions that are not always real.
+   */
+  readonly reason: "unreadable" | "malformed" | "unknownKey" | "missingExtends" | "unsubstituted" | "unsaved";
   /** Bounded, already safe to render. Parser text is quoted, never interpreted. */
   readonly detail: string;
 }
