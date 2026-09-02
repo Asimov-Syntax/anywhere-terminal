@@ -1569,9 +1569,7 @@ describe("the invariants that span the host and the webview", () => {
       (n.textContent ?? "").includes("Create done."),
     );
     expect(created).toHaveLength(1);
-    const reason = [...(created[0]?.querySelectorAll(".wt-reason") ?? [])]
-      .map((n) => n.textContent ?? "")
-      .join("\n");
+    const reason = [...(created[0]?.querySelectorAll(".wt-reason") ?? [])].map((n) => n.textContent ?? "").join("\n");
 
     // Neither contender was materialized, and the count says so.
     expect(created[0]?.textContent).toContain("0 of 2 brought over.");
