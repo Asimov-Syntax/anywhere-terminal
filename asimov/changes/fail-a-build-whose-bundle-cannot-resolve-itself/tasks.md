@@ -259,6 +259,7 @@ the extension failed to activate. No suite could catch it, because every suite i
   - **Plan**:
     1. In `scripts/bundleRequires.mjs`, have the call-argument position test walk out through enclosing parentheses before asking which call the node sits in, the way `unwrap` already does for a callee.
     2. Witness the direct form, the parenthesized form and a parenthesized UMD-factory form all reported, and keep the round-6 negatives green so the narrowing is not undone.
+    3. Delete the orphaned doc comment above `RELATIVE_PREFIXES`, left behind when task 6_2 removed `NOT_SPECIFIERS`. It still describes an exemption list "paid for one reviewed entry at a time" that no longer exists, which is the opposite of what D6 now says.
 
 - [ ] 8_2 Count every unit of propagation work, on every path
   - **Deps**: 8_1
