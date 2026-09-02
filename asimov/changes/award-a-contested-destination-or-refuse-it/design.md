@@ -85,6 +85,51 @@ invent — but it is not evidence of absence: the gate reaches the filesystem it
 (`src/utils/resolvedPathBoundary.ts:117-121` calls `realpath` and `lstat`), so an `EACCES` on the
 destination and a naming rule are the same answer from here. Only `ENOENT` frees a destination.
 
+### D3a — A member's own refusal is not an observation of the destination
+
+Round 7 of the sibling change found `read()` collapsing every `admitEntry` failure into
+`inadmissible`, so an inherited link-mode entry refused by its own material rule proved the shared
+destination "not free" and the admissible native copy was refused at a destination that did not exist
+(`applyProvisioning.ts:171`, recorded in `.reviews/round-6.md` as OOB-F016).
+
+D3 argued the collapse, and the argument was half right. The gate does reach the filesystem, so an
+`EACCES` there and a naming rule are indistinguishable **in the verdict as it is currently shaped**.
+But they are not indistinguishable in `admitEntry`, which already separates them by construction
+(`entryGate.ts:205-243`):
+
+| Refusal | Touches the filesystem? | What it says about the destination |
+|---|---|---|
+| absolute spelling, backslash | no | nothing — it is a fact about the NAME |
+| `refusedMaterial` | no — resolution is lexical, as the function's own comment states | nothing — it is a fact about this MEMBER's mode |
+| `isResolvedPathInsideRoot` (either side) | yes — `realpath` and `lstat` | absence was NOT established |
+
+So the verdict carries which kind it is, and `read()` maps the first two to a member-scoped refusal
+and only the last to `inadmissible`. A member refused for what it is gets refused alone; the contest
+continues, and an admissible favoured member still claims a free destination.
+
+This is the distinction orca draws for an at-most-once RPC: `rpc-delivery-ambiguity.ts` keeps
+"the request reached the wire and the outcome is unknown" apart from "it failed before the frame ever
+left", because folding the second into the first surrenders a decision that is actually available.
+The rule here is the same one — a failure BEFORE the destination was observed is not evidence about
+the destination.
+
+### D3b — More than one native member is refused entire
+
+`contendersOf` sets `favoured` only when exactly one member comes from the native file
+(`providerKit.ts:404`). A group of two native spellings plus one inherited therefore carries no
+favoured member, and `contestsOf` drops it on the branch reading "nothing in it claims priority"
+(`applyProvisioning.ts:60-64`) — so the ordinary pass runs and the INHERITED declaration's material
+and `mode` land at the destination (OOB-F015).
+
+That branch's reasoning was written for a favoured member the user had UNTICKED, where nothing
+claiming priority is literally true. Two natives is the opposite state: priority is claimed twice.
+
+Nothing available can choose between them. Declaration order inside one file is not a precedence the
+spec gives, and inventing one would decide a user's config silently. So a group with more than one
+native member is **refused entire**, naming every member by path and declaring file per D4a. That is
+the same answer the spec already gives when nothing can establish which slot a destination is, and it
+cannot end with an inherited row quietly taking a destination two native rows asked for.
+
 ### D4 — The adjudication
 
 For a contested group `G` with favoured `f` and each other selected member `m`:

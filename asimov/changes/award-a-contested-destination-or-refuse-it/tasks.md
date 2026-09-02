@@ -154,3 +154,37 @@
     1. `src/extension.worktreeAssembly.test.ts` submits two contested declarations and deliberately does NOT create the destination, so `prepareEntryGate` answers `null` and the create takes the unreadable-root path — the same harness the neighbouring bring-over case uses in reverse.
     2. It asserts both failed rows resolve through ONE contest membership naming every member's path and declaring file, so the wiring is witnessed at the call site rather than only on the builder.
     3. Round 5's Plan step 5 claim that this file has no such harness is corrected in place — it was wrong, not merely optimistic.
+
+## 9. Out-of-band handback — a member's refusal is not a destination reading
+
+- [ ] 9_1 Say which kind of refusal the entry gate produced
+  - **Deps**: none
+  - **Refs**: design.md D3a
+  - **Acceptance**:
+    - Outcome: A refusal reports whether it observed the destination
+    - Verify: unit src/worktree/provisioning/entryGate.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/entryGate.ts`, have a refusal carry whether it was reached before or after the filesystem was touched, keeping every existing reason string unchanged.
+    2. Witness a name refusal and a material refusal reporting no observation, and a containment refusal reporting one.
+
+- [ ] 9_2 Refuse a member for what it is without refusing the contest
+  - **Deps**: 9_1
+  - **Refs**: design.md D3a, .reviews/round-6.md
+  - **Acceptance**:
+    - Outcome: An admissible favoured member still claims a destination no reading found present
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/applyProvisioning.ts`, map a refusal that observed nothing to a member-scoped refusal and only a refusal that observed the destination to `inadmissible`.
+    2. Witness the OOB-F016 shape: a native copy entry and an inherited link entry contesting one absent destination, where the inherited entry is refused by its own material rule and the native copy is still materialized.
+    3. Witness that a containment refusal still refuses the whole contest, so the narrowing did not reopen what D3 closed.
+
+- [ ] 9_3 Refuse a group that claims priority twice
+  - **Deps**: 9_2
+  - **Refs**: design.md D3b, .reviews/round-6.md
+  - **Acceptance**:
+    - Outcome: A group with two native members writes nothing and names every member
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/providerKit.ts`, let a group record that more than one member is the repository's own rather than silently carrying no favoured member.
+    2. In `src/worktree/provisioning/applyProvisioning.ts`, refuse such a group entire instead of letting it fall through to the ordinary pass.
+    3. Witness two native spellings plus one inherited: nothing is written, the inherited material is not at the destination, and the refusal names all three by path and declaring file.

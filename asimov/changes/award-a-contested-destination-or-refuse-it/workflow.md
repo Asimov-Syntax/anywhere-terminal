@@ -12,7 +12,7 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
+- [ ] All tasks done (`tasks.md`)
 - [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
