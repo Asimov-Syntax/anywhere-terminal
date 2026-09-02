@@ -107,7 +107,7 @@ The lock extraction and result skeleton can start together. Everything after the
   - **Deps**: 1_8
   - **Refs**: design.md D6, design.md D8; .reviews/round-4.md F006, F008
   - **Acceptance**:
-    - Outcome: A returned allocation warns whenever its lock or staged temporary may remain
+    - Outcome: Returned allocation reports unproven cleanup
     - Verify: command pnpm exec vitest run 'src/utils/lockedFile.test.ts' 'src/worktree/worktreePorts.test.ts' && pnpm run check-types
   - **Plan**:
     1. `src/utils/lockedFile.ts` and `src/utils/lockedFile.test.ts`: carry unproven asynchronous clean-timeout lock release in `LockedOutcome` and witness every clean-timeout release branch.
