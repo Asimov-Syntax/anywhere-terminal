@@ -140,4 +140,56 @@
     3. `src/extension.ts`: bind destination capture and both exclusion subjects to the shared runner, repository id, filesystem authorization, and migration adapter.
     4. `src/worktree/worktreeMutationService.test.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: cover destination evidence forwarding, linked-source nesting outside main with sibling movable work, narrow independent exclusions without duplicate writes, nonfatal main-hygiene failure, migration-exclusion failure, capture failure, indeterminate short-circuit, and production bindings.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2`
+## 4. Bind the normalized source to its repository
+
+- [ ] 4_1 Capture the repository registration
+  - **Deps**: 3_2
+  - **Refs**: design.md D3, D5 <!-- review round 2 F006 -->
+  - **Acceptance**:
+    - Outcome: Repository resolution retains private common-directory evidence when available
+    - Verify: command pnpm exec vitest run 'src/worktree/repoRoots.test.ts' 'src/worktree/worktreeDeps.test.ts'
+  - **Plan**:
+    1. `src/worktree/repoRoots.ts`, `src/worktree/repoRoots.test.ts`: capture authorized normalized common-directory evidence during repository resolution, while retaining an ordinary resolved repository without migration authority when filesystem identity is unavailable.
+    2. `src/worktree/worktreeDeps.ts`, `src/worktree/worktreeDeps.test.ts`: bind the existing authorized-directory mechanism to production repository discovery.
+
+- [ ] 4_2 Publish only a bracketed registration
+  - **Deps**: 4_1
+  - **Refs**: design.md D3, D5 <!-- review round 2 F006 -->
+  - **Acceptance**:
+    - Outcome: A published source row has the same private repository registration before and after its listing
+    - Verify: command pnpm exec vitest run 'src/worktree/WorktreeDiscovery.test.ts' 'src/worktree/WorktreeCache.test.ts' 'src/providers/WorktreeHost.test.ts'
+  - **Plan**:
+    1. `src/worktree/WorktreeDiscovery.ts`, `src/worktree/WorktreeDiscovery.test.ts`, `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.test.ts`: bracket full and repo-scoped worktree listings with the retained registration; identity drift degrades the listing and cannot publish authoritative rows.
+    2. `src/worktree/WorktreeCache.ts`, `src/worktree/WorktreeCache.test.ts`: retain registration evidence in internal resolved roots, update it only from a whole-tree resolution, and never copy it into `WorktreeRepo` or the broadcast tree.
+
+- [ ] 4_3 Reject source evidence from another repository
+  - **Deps**: 4_2
+  - **Refs**: design.md D2, D3, D5, D8 <!-- review round 2 F006 -->
+  - **Acceptance**:
+    - Outcome: Both worktree evidences match the pre-offer repository registration and expected source role
+    - Verify: command pnpm exec vitest run 'src/worktree/migrateChanges.test.ts'
+  - **Plan**:
+    1. `src/worktree/migrateChanges.ts`: require the retained repository registration when probing and executing; require source ownership by its main-or-linked role, compare a linked back-pointer by canonical path and `.git` file identity so symlink spellings remain valid but hard-link aliases fail, and require both common identities to match the pre-offer registration before API entry.
+    2. `src/worktree/migrateChanges.test.ts`: cover ordinary main, standalone main, linked, linked-to-standalone substitution, wrong repository, common-directory replacement before the first source probe, accepted symlink spelling, rejected hard-link alias, and pre-call registration mismatch at either worktree.
+
+- [ ] 4_4 Freeze the selected publication through the offer
+  - **Deps**: 4_3
+  - **Refs**: design.md D3, D5 <!-- review round 2 F006, F007 -->
+  - **Acceptance**:
+    - Outcome: An offer retains the selected normalized row and its pre-probe repository registration
+    - Verify: command pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/providers/WorktreeHost.actions.test.ts'
+  - **Plan**:
+    1. `src/types/messages.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`: freeze the selected row's normalized id and repository generation in the opening request; repository and toolbar doors retain neither.
+    2. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`: synchronously resolve that generation to the current private cached registration before probing; retain it through offer and redemption; cover raw display aliases, whole-tree registration refresh after selection, repo-scoped generation advance with the same registration, degraded retained rows, and stable cross-repository or role replacement.
+
+- [ ] 4_5 Carry repository ownership through execution
+  - **Deps**: 4_4
+  - **Refs**: design.md D2, D3, D5, D6, D8 <!-- review round 2 F006, F007 -->
+  - **Acceptance**:
+    - Outcome: Nested migration executes only for the selected source and pre-offer repository registration
+    - Verify: command pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: carry the expected repository registration beside normalized source evidence through destination capture and migration, stopping indeterminate on any mismatch after the queued rebuild.
+    2. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: bind the registration-aware source probe, destination capture, and migration adapter; prove a raw display versus normalized id nested create reaches the narrow exclusion and only the originally selected repository incarnation reaches the API.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5`

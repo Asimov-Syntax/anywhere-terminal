@@ -53,8 +53,9 @@ names even though the form counts the record once. Immediately before the API ca
 must still match and the destination must be clean.
 
 Each pre-call and post-call snapshot is bracketed by source and destination evidence reads; both evidence
-reads must equal the retained incarnations. After a resolved call, `moved` requires those stable observed
-identities, an empty source status, and a destination snapshot equal to the issued source snapshot's
+reads must equal the retained incarnations. Before the call, source and destination must also resolve to the
+same common-repository path and identity retained from the selected repository registration. After a resolved
+call, `moved` requires those stable observed identities, an empty source status, and a destination snapshot equal to the issued source snapshot's
 expected working-tree state, with no unmerged record. Thus a no-move API exit followed by unrelated
 path-name changes is not success; another actor reproducing the same bytes, modes, links and absences in
 the same observed checkouts has established the observable destination state the user asked for.
@@ -71,17 +72,42 @@ contract does not promise exactly one report.
 
 ## D3 — Bind a cryptographic offer to source incarnation and snapshot
 
-A repository id is not a source worktree id. `openCreateFor(info)` retains the clicked
-`WorktreeInfo.id`; repository-level and toolbar doors have no unique source and offer no migration row.
+A repository id is not a source worktree id. `openCreateFor(info)` retains the clicked normalized
+`WorktreeInfo.id`; that id is the host-held operational source path, while Git's raw `displayPath` remains
+presentation-only. Repository-level and toolbar doors have no unique source and offer no migration row.
 Switching the form to another repository also removes the row rather than substituting a checkout.
 
 A cache generation is not an incarnation: every forced observation advances it, including the rebuild
-a queued create must perform. Instead, the source probe captures the existing `AuthorizedDirectory`
-component identities plus the `.git` entry's no-follow identity. A remove-and-recreate or registration
-replacement changes one of those identities even when path, branch, commit and changed files repeat.
-The same evidence is rechecked at host redemption and after the mutation queue's forced rebuild.
+a queued create must perform. Repository resolution instead captures an `AuthorizedDirectory` for the
+normalized common directory before listing worktrees and revalidates it after the listing. The cache keeps
+that registration evidence only in its internal `ResolvedRepo`; `WorktreeRepo`, the tree broadcast, and the
+webview never receive filesystem identities. A whole-tree rebuild may establish a new registration, while a
+repo-scoped rebuild must retain and revalidate the existing one. Missing or changed evidence makes the
+listing degraded and migration-ineligible rather than minting authority over retained rows.
 
-The opening request carries `sourceWorktreeId` only where one exists. The offer retains
+`openCreateFor(info)` freezes both the normalized row id and its public repository generation. The opening
+request returns only those opaque identities to the host. In the same synchronous turn, before starting the
+source probe, the host requires that generation still names the current non-degraded public group and
+snapshots its private cached registration. A whole-tree rebuild that installed another registration therefore
+also installed another generation and cannot silently retarget an already selected row; a repo-scoped rebuild
+may advance the generation but retains and revalidates the same private registration. A group with no
+authoritative generation or registration receives no migration offer.
+
+The host requires the snapshotted registration still be current when the probe resolves, at redemption, and
+after the mutation queue's repo-scoped rebuild. The source probe captures the existing source
+`AuthorizedDirectory` component identities plus the `.git` entry's no-follow identity. A remove-and-recreate,
+common-directory replacement, or registration replacement changes one of those identities even when path,
+branch, commit and changed files repeat.
+
+The probe receives the selected registration, normalized source id, and row's `main | linked` role. A main
+source must be an ordinary `.git` directory or a standalone separate-git-dir file resolving directly to that
+common directory; a linked source must remain a linked gitfile, prove admin placement under its `worktrees/`
+directory, and have its `gitdir` back-pointer resolve to the same canonical path and file identity as the
+normalized source `.git`. Realpath equivalence reconciles Git's raw `/var/...` back-pointer with a normalized
+`/private/var/...` source, while the canonical path check rejects a same-inode hard link at another name.
+
+The opening request carries `{ sourceWorktreeId, sourceGeneration }` only where one selected publication
+exists. The offer retains its private repository registration beside
 `{ sourceWorktreeId, sourceEvidence, snapshot }` and sends only `{ offerId, count }` to the form. The
 row says "currently N" and that Git moves the uncommitted work present when it runs; it never presents
 N as an atomic write-set lock.
@@ -135,9 +161,12 @@ The form displays the record count; no Git-extension status array enters it.
 Production reuses the Git API already activated by `GitDecorationProvider`; the provider exposes the
 current API read-only instead of a second owner activating `vscode.git`.
 
-Offer calculation actively calls `API.openRepository(Uri.file(sourcePath))` under a concrete 10-second
-`afterDelay` deadline and requires the returned repository to expose `migrateChanges`. Thus the exact
-source is callable before the row appears; capability is never inferred from an unrelated repository.
+Offer calculation receives the host-retained common-directory registration plus
+`{ sourcePath, sourceKind }`, first proves the registration remains authorized and the source evidence belongs
+to it in the selected main-or-linked role, then actively calls `API.openRepository(Uri.file(sourcePath))`
+under a concrete 10-second `afterDelay` deadline and requires the returned repository to expose
+`migrateChanges`. Thus the exact normalized source is both owned and callable before the row appears;
+capability is never inferred from an unrelated repository or a later occupant of the same `repoId` path.
 
 After git creates the destination, open source and destination under one fresh 10-second deadline and
 use the returned objects directly. This opens ordinary siblings outside the workspace and avoids a
@@ -153,8 +182,8 @@ surviving directories and cannot carry a migration offer.
 A create root may sit inside the selected source checkout, including a linked source outside the main
 checkout. In that case `git worktree add` makes the new directory appear as untracked source work until
 that source's common-repository `info/exclude` receives a source-relative rule. This migration-specific
-rule is derived from `request.migration.sourcePath`; it is migration-critical and a failed write stops
-migration as indeterminate. The existing main-checkout hygiene rule remains separate, retains its
+rule is derived from `request.migration.sourcePath`, which is the normalized source id rather than its raw
+display spelling; it is migration-critical and a failed write stops migration as indeterminate. The existing main-checkout hygiene rule remains separate, retains its
 nonfatal reporting contract, and still applies to ordinary creates nested in the main checkout. When
 the two rules resolve to the same `(gitDir, pattern)`, one idempotent write satisfies both and is
 migration-critical. Therefore the sequence is:
@@ -200,9 +229,12 @@ and the common repository path. The capture must prove that the observed destina
 belongs to `request.repoId`; absence, ambiguity, or mismatch returns a successful create with
 `migrationIndeterminate` before the API call.
 
-The adapter receives that evidence beside the source evidence and issued snapshot. Exact-path
-`openRepository` remains necessary but is not identity: evidence brackets each pre-call and post-call
-snapshot, and every observed destination mismatch is indeterminate. The capture and comparisons share
+The adapter receives that evidence beside the source evidence, issued snapshot, and selected repository
+registration. Before API entry it revalidates the registration and requires both retained worktrees' common
+paths and identities to match it, re-enforcing source and destination ownership against the pre-offer
+registration rather than accepting whichever repository first occupies `repoId` during probing. Exact-path
+`openRepository` remains necessary but is not identity: evidence brackets each pre-call and post-call snapshot, and every
+observed destination mismatch is indeterminate. The capture and comparisons share
 the same bounded evidence machinery rather than introducing a second parser.
 
 VS Code and Node expose the migration and filesystem operands only by path. They cannot prove continuity
@@ -232,14 +264,14 @@ substitution incident is observed in practice.
 
 | Claim | Semantics | Defeater | Witness/check | Disposition |
 |---|---|---|---|---|
-| The row and final recheck name one source | Offer binds source id, authorized directory components, `.git` identity/content, and resolved admin target through the queued rebuild | Remove/recreate, in-place `.git` rewrite, or admin replacement before the call | Directory, `.git` content, target and admin-identity substitution witnesses at redemption and final recheck | supported |
+| The row and final recheck name one owned source | A bracketed worktree listing establishes private common-directory registration evidence before the row exists; row selection freezes its normalized id plus public generation, which the host synchronously resolves back to that private registration before any probe, then binds role, directory, `.git`, admin target, linked placement and back-pointer canonical path plus file identity through the queued rebuild | Whole-tree registration refresh after row selection but before the first offer probe, degraded retained row, linked-to-standalone substitution, same-inode back-pointer under another name, raw back-pointer alias, cross-repository `.git`, remove/recreate, in-place `.git` rewrite, or admin replacement before the call | Selected-generation refresh refusal, degraded-row no-offer, listing-bracket and pre-probe common-directory replacement, role substitution, hard-link alias rejection, symlink-spelling alias acceptance, wrong common repository/back-pointer, directory, `.git` content, target and admin-identity witnesses at offer, redemption and final recheck | supported |
 | The row appears only for callable source work | Exact source `openRepository` returns a repository with `migrateChanges`, and a bounded snapshot is positive and movable | Capability inferred from another repo; empty, failed, overflowed, unreadable, or unmerged source | Exact-source open plus every ineligible snapshot witness | supported |
 | The stated count is a truthful current snapshot | Displayed N is the issued record count; observed pre-call drift refuses before API entry | Same count with different path, rename origin, mode, link target, or bytes before the call | Replacement witnesses for every dimension plus wording that says "currently" and execution-time work | supported |
 | Untracked work is included | `untracked: true` reaches the API call | Omitting it leaves new files | Exact-options witness | supported |
 | The observed destination receives the call before expiry | The object returned by `openRepository(Uri.file(destination))` is called under 10 s only while its registration/evidence equals the immediate post-create capture | Passive discovery, path folding, null/rejected/late open, or persistent clean same-path replacement | Out-of-workspace, deadline, wrong-repository/back-pointer, and persistent before/after substitution witnesses; transient ABA is accepted risk | supported |
-| Proven movement is correlated at both observed worktrees | Evidence brackets each snapshot; both brackets match retained incarnations, source is empty, destination states equal the issued outcome, and no unmerged record exists | API refusal followed by cleanup, observable source `.git` change, destination replacement/conflict, or mixed persistent incarnation | Post-state matrix varying both evidence brackets, bytes, mode, links, absence, paths and unmerged state; transient mixed ABA is accepted risk | supported |
+| Proven movement is correlated at both observed worktrees | Evidence brackets each snapshot; source and destination retain one common-repository identity, source is empty, destination states equal the issued outcome, and no unmerged record exists | Cross-repository source baseline, API refusal followed by cleanup, observable source `.git` change, destination replacement/conflict, or mixed persistent incarnation | Wrong-repository source and source/destination common-identity witnesses plus the post-state matrix varying both evidence brackets, bytes, mode, links, absence, paths and unmerged state; transient mixed ABA is accepted risk | supported |
 | Migration applies only to new checkouts | Only fresh, fresh-detached and reuse redeem | Reattach/adopt entering a surviving directory | Form and host witnesses for every mode | supported |
-| Nested destination cannot enter the moved set | Source-relative migration exclusion and independent main-checkout hygiene are established before pre-call status and API call | Linked source outside main, broad parent suppression, recount before exclusion, or calling after failed exclusion | Main-source, linked-source with sibling work, outside-source, narrow-pattern, and failed-exclusion witnesses | supported |
+| Nested destination cannot enter the moved set | Normalized-source-relative migration exclusion and independent main-checkout hygiene are established before pre-call status and API call | Raw display alias, linked source outside main, broad parent suppression, recount before exclusion, or calling after failed exclusion | Display/id alias, main-source, linked-source with sibling work, outside-source, narrow-pattern, and failed-exclusion witnesses | supported |
 | Persistent intermediate redirection is refused | Parent realpaths/component identities are checked around a no-follow final-component read | Static or persisting intermediate symlink points outside the source | Static and persistent intermediate replacement plus final-symlink and regular-file substitution witnesses; transient ABA is accepted risk | supported |
 | `.git` evidence stays within the general byte bound without rejecting usable host paths | Opened-handle size above 1 MiB is refused before allocation; accepted content uses one exact buffer and bounded decode/re-encode | A `.git` file approaches the 512 MiB budget or a valid Windows extended path exceeds the cap | Over-cap refusal, near-cap peak allocation, and 132 KiB worst-case UTF-8 path witnesses | supported |
 | Uncertain migration runs no later step | Indeterminate returns before authorization, entries, ports and afterCreate | Catch and continue | Rejection, resolved mismatch, failed read and set-drift witnesses | supported |
