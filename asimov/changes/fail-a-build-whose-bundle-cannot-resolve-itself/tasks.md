@@ -248,48 +248,48 @@ the extension failed to activate. No suite could catch it, because every suite i
     2. Witness that the collectors agree with their wrapper forms on one bundle, so the shared parse is not a second implementation.
     3. Declare the parse counter in `scripts/bundleRequires.d.mts` so the witness reads it with a real type rather than a suppression.
 
-## 8. Round-7 handback — a cost bound the artifact evidences, and a position test that survives parentheses
+## 8. Round-7 handback — delete the propagation pass, keep the absolute warning
 
 - [ ] 8_1 Find a computed request through the parentheses around it
   - **Deps**: none
-  - **Refs**: design.md D7 § Through the parentheses, .reviews/round-7.md#f019
+  - **Refs**: design.md D7, .reviews/round-7.md#f019
   - **Acceptance**:
     - Outcome: A parenthesized relative-headed template in a call argument is reported
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
-    1. In `scripts/bundleRequires.mjs`, have the call-argument position test walk out through enclosing parentheses before asking which call the node sits in, the way `unwrap` already does for a callee.
+    1. In `scripts/bundleRequires.mjs`, have the call-argument position test walk out through enclosing parentheses before asking which call the node sits in, keeping the `arguments` membership test.
     2. Witness the direct form, the parenthesized form and a parenthesized UMD-factory form all reported, and keep the round-6 negatives green so the narrowing is not undone.
-    3. Delete the orphaned doc comment above `RELATIVE_PREFIXES`, left behind when task 6_2 removed `NOT_SPECIFIERS`. It still describes an exemption list "paid for one reviewed entry at a time" that no longer exists, which is the opposite of what D6 now says.
+    3. Witness that a relative-headed template in CALLEE position is still not reported, which is what the membership test is for.
+    4. Delete the orphaned doc comment above `RELATIVE_PREFIXES`, left behind when task 6_2 removed `NOT_SPECIFIERS`. It still describes an exemption list "paid for one reviewed entry at a time" that no longer exists.
 
-- [ ] 8_2 Count every unit of propagation work, on every path
+- [ ] 8_2 Warn on an absolute specifier without a type checker
   - **Deps**: 8_1
-  - **Refs**: design.md D2 § Cost, .reviews/round-7.md#f006
+  - **Refs**: design.md D2
   - **Acceptance**:
-    - Outcome: The reported work rises when any propagation path does more work
+    - Outcome: An absolute path present in the bundle is reported as a warning
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
-    1. In `scripts/bundleRequires.mjs`, report one work total over every counter design.md D2 § Cost names, the existing per-target applications included — the queue-push loops are bounded only by the work items that consume them.
-    2. Declare the counter in `scripts/bundleRequires.d.mts`.
-    3. Arm-check the counter against the path round 6 left invisible: make the argument-delivery path do extra work, observe the total rise, and restore it. A counter that cannot see a path cannot bound it.
-    4. Witness the shipped artifact's own work against the ceiling, so the recorded headroom is asserted rather than remembered.
+    1. In `scripts/bundleRequires.mjs`, collect absolute specifiers from the string literals the relative sweep already visits, so the warning needs no call analysis.
+    2. Witness an absolute literal warned on, the exit code still 0 for a bundle carrying only that, and a builtin and a declared external still unreported.
 
-- [ ] 8_3 Abandon the pass above the ceiling, and say so
+- [ ] 8_3 Prove the failing class survives the deletion
   - **Deps**: 8_2
-  - **Refs**: design.md D2 § Cost, .reviews/round-7.md#f006
+  - **Refs**: design.md D2 § Obligation ledger, design.md D6
   - **Acceptance**:
-    - Outcome: A bundle above the ceiling is reported as an abandoned pass rather than analysed
+    - Outcome: The failing verdicts are unchanged when call analysis is removed
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
-    1. In `scripts/bundleRequires.mjs`, stop propagation once the counted work passes the ceiling and carry that fact out with the verdicts.
-    2. In `scripts/check-bundle-requires.mjs`, report an abandoned pass in its own voice rather than folding it into the verdict list.
-    3. Witness a fixture above the ceiling abandoning rather than completing, a fixture below it completing, and the abandoned run still exiting 0 when no relative request failed.
+    1. In `src/test/invariants/bundleRequires.test.ts`, witness that the minified UMD fixture whose relative request arrived only through call analysis is still reported, and still fails.
+    2. In the same file, witness the parenthesized-argument, the no-substitution-template argument, and the concat-argument shape all still failing.
 
-- [ ] 8_4 Prove the abandoned pass cannot change a verdict
+- [ ] 8_4 Remove the propagation pass and the checker
   - **Deps**: 8_3
-  - **Refs**: design.md D2 § Cost, design.md D6
+  - **Refs**: design.md D2
   - **Acceptance**:
-    - Outcome: The failing verdicts are the same with the propagation pass run and abandoned
+    - Outcome: The gate builds no TypeScript program
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
-    1. In `src/test/invariants/bundleRequires.test.ts`, witness that a minified UMD fixture whose relative request arrives only through propagation is also found by the literal sweep, so the sweep is a superset for the failing class.
-    2. In the same file, witness that one bundle carrying a failing relative request, a bare specifier and an absolute path yields the same `severity: "fails"` verdicts whether the pass runs or is abandoned, and that only the warnings differ.
+    1. In `scripts/bundleRequires.mjs`, delete `requireBindings`, `propagationStats`, `requireLiteral`, `specifiersIn` and `checkerFor`, and stop feeding call-found specifiers into the candidate set.
+    2. In `scripts/bundleRequires.d.mts`, drop the declarations that go with them.
+    3. In `src/test/invariants/bundleRequires.test.ts`, remove the witnesses whose subject no longer exists, declaring the suite change with the reason; keep every witness whose subject survives, and keep `parseCount()` asserting the artifact is parsed once.
+    4. Run the gate against the real `dist/extension.js` and confirm it still exits 0, and still reports the relative request when the minified UMD shape is appended.

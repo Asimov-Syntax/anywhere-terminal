@@ -20,191 +20,80 @@ It runs after `esbuild.js --production` in the `package` script, beside the thre
 `scripts/check-*.mjs` gates already there. Reading sources would reproduce exactly the blindness that
 let this ship: the source is fine, the bundle is not.
 
-## D2 — Finding the calls, when the callee is not named `require`
+## D2 — The bare and absolute classes, after the round-7 scope cut
 
-Requires are found by walking a TypeScript AST — `typescript` is already a direct devDependency and
-already carries a gate here (`src/test/invariants/fsDeletionGate.ts`), so this is the repo's own
-idiom rather than a new one.
+Four rounds asked how a require CALL is spelled, and four found another spelling. Round 5 moved the
+relative class off call analysis entirely (D6), leaving this pass answering only the bare and
+absolute classes — which § Coverage already makes no completeness claim for, and which round 5 made
+WARNINGS that never fail a build.
 
-A text scan was tried first and was wrong in both directions (.reviews/round-1.md F002): it reported
-`require("./x")` written inside a comment or quoted in a diagnostic STRING, and it reported
-`loader.require("./x")` — a method that merely shares the name. It also missed a call whose `require`
-and `(` were separated. Parsing removes all four.
+Rounds 4, 5, 6 and 7 were then spent on the cost of that pass. Each produced a mechanism, and each
+was refuted: a timing budget that passed while fanout was quadratic; a callee-side fix whose witness
+could not fail on the mixed case; an argument-side fix whose witness could not see the path it
+changed; and a work ceiling whose measure a 52 KB fixture reads at 0.12% of its true cost. The
+propagation machinery is harder to keep correct than the output it protects is worth.
 
-Matching the **identifier `require`** was the next thing to be wrong, and this is the load-bearing
-correction (.reviews/round-2.md F002). The gate reads a bundle built `--production`, and minification
-renames parameters. A UMD dependency's CJS branch receives `require` as a factory ARGUMENT, so after
-minification the shipped defect reads:
+**So the pass is deleted.** `requireBindings`, `propagationStats`, `requireLiteral`, `specifiersIn`
+and `checkerFor` go, and with them `ts.createProgram` and the type checker — the gate becomes a
+single `createSourceFile` walk, which is the simplification D6 already earned for the class that
+actually fails a build.
 
-```js
-(function(e){ … var o=e(require,r); … })(function(e,o){ … var n=e("./impl/format"); … })
-```
+What the gate classifies afterwards:
 
-`require` still appears — passed as an argument — but it is never the callee. The callee is `e`.
-A detector keyed on the name `require` returns nothing here and the gate passes clean on the only
-artifact it ever inspects. Reproduced directly: `esbuild --bundle --platform=node --minify` over a
-jsonc-parser-shaped UMD fixture emits exactly the line above.
-
-So the callee is identified by **what it is bound to, not what it is called**.
-
-Round 3 then found three more spellings that ship and were still missed or misjudged, and they were
-one defect rather than three: the hand-rolled lexical resolver behind that idea was wrong about
-function declarations (F004), about taint through an assignment (F005), and about telling an ambient
-`require` from a local binding that merely shares the name (F007 — a FALSE REJECTION of a legitimate
-build, caused by the spelling seed this section previously argued for).
-
-Three rounds, three hand-rolled detectors, three misses: a text scan, then an identifier match, then
-a scope resolver. The lesson is not to write a fourth. **TypeScript's own binder already resolves
-lexical identity**, it is the same `typescript` devDependency the parse already uses, and its answers
-were verified against every disputed case before this paragraph was written:
-
-| Callee | `getSymbolAtLocation().declarations` | What it settles |
+| Specifier | Verdict | Found by |
 |---|---|---|
-| `r` in `var r = require; r("./x")` | `VariableDeclaration` | follow the initializer — F005 |
-| `req` in `function factory(req){…}` | `Parameter` | follow the call site |
-| `factory` | `FunctionDeclaration` | a callable target, invisible before — F004 |
-| `require` declared as a parameter | `Parameter` | DECLARED, so not ambient — F007 |
-| ambient `require` | `null` | the ambient test, exactly |
+| Relative (`./…`, `../…`, `.\…`, `..\…`) | **fail unless it resolves to a shipped file** | D6's literal sweep |
+| A relative-headed template in a call argument | **fail** | D7's template pass |
+| Absolute (`/…`) | **warn** | A `path.isAbsolute` test over the same literals D6 already visits |
+| A bare specifier | *not reported* | — |
 
-`declarations === null` is the precise ambient test the previous cut approximated with "nothing in
-this bundle declares it", and it is why the spelling seed can now be **dropped**: a binding named
-`require` that is genuinely ambient has no declaration, and one that is a local callback does. The
-round-1 fixture the seed existed to preserve is source-only — an uninvoked factory that never reaches
-a bundle — so the fixture is what changes, not the detector.
+The absolute warning survives because it costs a predicate over literals the sweep visits anyway: no
+checker, no fixed point, no ceiling. A machine path baked into a shipped bundle still names the build
+machine, and that is worth a line of output.
 
-The fixed point runs over SYMBOLS rather than node identity:
+**The bare class is the cost of this decision, and it is a real loss.** A package that should have
+been bundled and was not will no longer be reported at all. There is no cheap replacement: deciding
+that a string is a bare specifier rather than ordinary text is exactly the question that needed the
+checker. What makes it affordable is that PLAN WT-011.12's acceptance never asked for it — it
+requires a relative require that will not resolve to fail the build, and builtins and the editor host
+not to be reported. Bare coverage was scope added past the acceptance, and every blocker that
+survived seven rounds lived in it.
 
-1. Seed: an identifier resolving to a symbol with no declarations and spelled `require`.
-2. A symbol's declarations give its value — a variable initializer, a parameter bound at a call site,
-   or a function declaration — so a callee resolves to the functions it may hold.
-3. Bind parameters positionally to arguments, and propagate through identifier initializers and
-   assignments, both monotonically.
-4. Worklist with reverse indexes — symbol → the assignments and argument/parameter edges that depend
-   on it — so a new fact enqueues the edges that read it rather than triggering a whole re-scan. What
-   this pass is obliged to guarantee about its own cost is § Cost, below; three rounds were spent
-   trying to discharge a stronger claim that is not true of the artifact.
-
-D2's reach narrows accordingly: after D6 it answers for the bare and absolute classes, and the
-relative class — the one that actually shipped — no longer depends on it.
-
-A call is a require call when its callee is a tainted identifier and it has exactly one
-string-literal argument. This catches the direct `require("./x")` spelling — `require` is tainted by
-seed — and the minified UMD spelling, without matching `loader.require`, comments, or strings.
-
-Each surviving specifier is then classified:
-
-| Specifier | Verdict | Why |
-|---|---|---|
-| A node builtin (`node:fs`, `process`, `buffer`, …) | ok | Always present |
-| A declared `external` from `esbuild.js` (`vscode`, `node-pty`) | ok | Supplied by the host, deliberately unbundled |
-| Absolute (`/…`) | **warn** | A machine path baked into a shipped bundle names the BUILD machine — reported, but see § Coverage |
-| Relative (`./…`, `../…`) | **fail unless it resolves to a shipped file** | This is the shipped defect |
-| Any other bare specifier | **warn** | It should have been bundled; at runtime it resolves against a `node_modules` the VSIX does not carry — reported, but see § Coverage |
-
-The externals are READ FROM `esbuild.js` rather than copied here. A second hand-maintained list is a
-list that drifts, and the drift direction is silent: an external removed from the build but left in
-the gate's allowlist turns a real failure into a pass.
-
-They are read off the config object whose `outfile` is the extension bundle, and the gate throws
-unless exactly one such object exists. `esbuild.js` configures the extension AND the webview, so
-taking the first `external:` array in the file allowlists the wrong build's externals; and a
-commented-out entry is not a member of an array, though a text scan counted it as one — which
-allowlisted a package the build had STOPPED declaring external (.reviews/round-1.md F003).
+Externals are still READ FROM `esbuild.js` rather than copied here, by the config object whose
+`outfile` is the extension bundle (D5), because a second hand-maintained list drifts silently.
+Builtins come from `node:module`'s `builtinModules`. Both still matter: they are what keeps `vscode`
+and `node:fs` out of the relative and absolute verdicts.
 
 **Resolution is what the PACKAGED extension could load, not what exists on the build machine**
-(.reviews/round-1.md F001). Two things the builder's filesystem cannot answer directly: `scripts/`
-and `node_modules/` exist in the checkout and are not in the VSIX, so their presence proves nothing;
-and a directory that merely exists is not a module — Node throws `MODULE_NOT_FOUND` for one with no
-index and no `package.json`. So a relative specifier resolves only to a real FILE (`.js`, `.json`,
-`.node`, a directory `index.*`, or a directory carrying its own `package.json`) that lies INSIDE the
-artifact directory.
+(.reviews/round-1.md F001). `scripts/` and `node_modules/` exist in the checkout and not in the VSIX,
+so their presence proves nothing; and a directory that merely exists is not a module — Node throws
+`MODULE_NOT_FOUND` for one with no index and no `package.json`. A relative specifier resolves only to
+a real FILE (`.js`, `.json`, `.node`, a directory `index.*`, or a directory carrying its own
+`package.json`) INSIDE the artifact directory.
 
-Builtins come from `node:module`'s `builtinModules`, not a literal list, so a new builtin in a future
-Node does not become a false failure.
+### Coverage — what the gate claims, after round 7
 
-### Coverage — what D2 claims, after round 5
+The gate makes ONE completeness claim, for the relative class, and it is D6's: every relative string
+literal in the artifact is swept, wherever it sits. Everything else is reported without a claim.
 
-D2 makes **no completeness claim** for the bare and absolute classes, and its findings there **do not
-fail the build**; they are reported as warnings.
+Round 5 established why, and round 7 finished the argument. Conditional aliases
+(`typeof require === "function" ? require : f`) and `.call` factories escaped call detection, and
+modelling every value branch of a minified artifact is the unbounded question rounds 1-4 lost four
+times (.reviews/round-5.md F008, F009). Warning instead of failing kept the signal while removing the
+guarantee. Round 7 then showed the machinery producing those warnings could not bound its own cost
+across four attempts, and the user chose to delete it rather than fund a fifth.
 
-Five rounds established the reason. Conditional aliases (`typeof require === "function" ? require : f`)
-and `.call` factories still escape the taint, and modelling every value branch of a minified artifact
-is the same unbounded question rounds 1-4 already lost four times (.reviews/round-5.md F008, F009).
-The reviewer's own remedy offered exactly this alternative: model the branches, or remove the classes
-from the coverage claim.
-
-Removing them costs nothing that was promised. PLAN WT-011.12 Acceptance requires a relative require
-that will not resolve to fail the build, and node builtins and the editor host not to be reported. It
-never required a bare or absolute specifier to be reported at all — that coverage was scope added past
-the acceptance, and every blocker surviving five rounds lived in it.
-
-Warning rather than failing is the load-bearing half of this decision. An incomplete detector that
-fails builds can reject a legitimate build (.reviews/round-5.md F010: a context-insensitive union
-flags innocent bare strings) in exchange for a guarantee the gate no longer makes. As a warning the
-signal is kept, and the cost of its imprecision is a message instead of a blocked release.
-
-### Cost — a bound the artifact evidences, after round 7
-
-Rounds 4, 5 and 6 each tried to establish "each propagation edge is applied exactly once", and round 7
-measured that it is **false on the shipped artifact**: 3555 applications for 3489 distinct pairs. It
-was never true; rounds 5 and 6 asserted it on synthetic fixtures built to exhibit one topology each,
-and round 6's witness could not even see the path round 6 changed. An obligation that three rounds
-could not discharge, and that the artifact refutes, is the wrong obligation.
-
-What is actually at risk is unbounded package-time work, so that is what is bounded. Instrumented
-over `dist/extension.js` (1,908,308 bytes):
-
-| Counter | Real artifact | Synthetic mixed fanout, n=160 |
-|---|---:|---:|
-| `applications` — a call applied to one target | 3,555 | 160 |
-| `flows` — a fact offered to a symbol | 13,823 | 52,000 |
-| `factVisits` — a prior fact replayed | **22** | **4,121,600** |
-| `argScans` — a target scanned for an argument arrival | 52 | 25,600 |
-| total work | 17,452 | 4,199,360 |
-
-`applications` belongs in the total, and leaving it out was the first draft's own version of
-round 6's mistake. `drainFreshlyHeld` and `enqueue` push work items in loops that no counter
-observes directly; each push is bounded only by the `applyCall` or `deliverArgument` that consumes
-it, so the consumers are what has to be counted. With all four in, every unbounded path in
-`requireBindings` passes through a counter: assignment edges and both arrival paths funnel through
-`flow`, `targetsOf` is always followed by a per-target increment, and the reverse-index build is a
-one-off pass over the AST.
-
-The Θ(N²)/Θ(N³) growth round 7 measured is real, and it is **187,000x removed from what the shipped
-bundle does**. Its defeater is N identical reassignments of one binding, which no bundler emits.
-
-So D2 obliges a **ceiling**, not an asymptotic shape:
-
-- Propagation counts every unit of work it performs, on every path — the argument-delivery path
-  included. Counting only the `applyCall` path is what made round 6's assertions vacuous.
-- Work above `PROPAGATION_CEILING` abandons the pass. The gate says so, loudly, in the same voice D5
-  uses for a config it cannot read. A silent skip would be the one outcome worse than the cost.
-- The ceiling is 2,000,000 work units — 115x the shipped artifact's 17,452.
-
-Work is close to LINEAR in bundle size, so the ceiling is not a disguised size limit. Measured by
-concatenating the artifact with itself: 1.9 MB / 3.8 MB / 7.6 MB give 17,452 / 36,508 / 79,822 work
-units (2.09x and 4.57x for 2x and 4x the input). The ceiling is therefore roughly a 200 MB bundle —
-two orders of magnitude past anything this extension will ship — while still stopping the synthetic
-shape dead at n=160.
-
-**Abandoning the pass cannot change a build's verdict.** After D6, the only class that FAILS is the
-relative one, and it is answered by D6's literal sweep and D7's template pass, neither of which
-propagates. Every relative specifier a require call can carry is a string literal in the bundle, so
-the sweep is a superset of what propagation contributes to that class; propagation now feeds only the
-bare and absolute WARNINGS, which § Coverage already makes no completeness claim for. Abandoning it
-therefore costs warnings the gate never promised, and never a guarantee it did.
-
-This is a bound that can be checked rather than argued: the artifact's headroom is a number, a bundle
-that trips the ceiling is a fixture, and the subsumption is a witness.
+Nothing that was promised is lost. What is lost is bare-specifier reporting, recorded above as the
+price.
 
 ### Obligation ledger
 
 | Claim | Semantics | Defeater | Witness | Disposition |
 |---|---|---|---|---|
-| Propagation work is bounded | Every run either completes under `PROPAGATION_CEILING` or abandons the pass | A path whose work the counter does not observe — round 6's `deliverArgument` was exactly this, and this draft's own first cut omitted `applications`, leaving the queue-push loops unbounded | Counter arm-checked by making `deliverArgument` do extra work and observing the count rise; a fixture above the ceiling is abandoned rather than ground through | supported |
-| Abandoning the pass cannot change a verdict | For every bundle, the set of `severity: "fails"` verdicts is identical with the pass run and with it abandoned | A relative specifier reachable only through a require call and not present as a bundle string literal | Structural: `requireLiteral` accepts an argument only when `ts.isStringLiteralLike(unwrap(arg))`, and `relativeLiterals` keeps every `ts.isStringLiteralLike` node of the SAME shared root under the same `isRelativeRequest`, so the sweep is a superset. Probed: minified UMD arriving only via propagation, a parenthesized argument, a no-substitution template argument, and `require("".concat("./x"))` all lose nothing when the pass is dropped. Task 8_4 pins it. | supported |
-| A computed relative request in a call argument is reported | Every `TemplateExpression` with a relative head in call-argument position yields a failing verdict, through any number of enclosing parentheses | `r((`./${name}`))` — round 7 F019, which yields no verdict at all today | Direct, parenthesized and UMD-parenthesized fixtures all reported; path data and tagged templates still not | refuted at HEAD, closed by task 8_1 |
-| The ceiling never fires on a real build | `dist/extension.js` stays far below the ceiling | A future dependency whose bundled shape explodes the fanout | The artifact's own work counted against the ceiling in the suite, so the headroom is asserted rather than remembered | supported |
+| Deleting the pass cannot change a verdict | For every bundle, the set of `severity: "fails"` verdicts is identical before and after the deletion | A relative specifier reachable only through a require call and not present as a bundle string literal | Structural: `requireLiteral` accepted an argument only when `ts.isStringLiteralLike(unwrap(arg))`, and `relativeLiterals` keeps every `ts.isStringLiteralLike` node of the same root under the same `isRelativeRequest`, so the sweep is a superset. Probed: minified UMD arriving only via propagation, parenthesized argument, no-substitution template argument, and `require("".concat("./x"))` all lose nothing. Task 8_3 pins it. | supported |
+| The absolute warning survives the deletion | An absolute specifier present as a bundle string literal is reported as `warns` | An absolute path reaching the bundle only through a computed expression | A fixture carrying `/abs/path.js` as a literal is warned on; the computed case is a stated limit, unchanged from before — call analysis never saw it either | supported |
+| Gate cost is bounded by the artifact | One `createSourceFile` and one walk per collector-set, with no fixed point | A collector that re-parses | Task 7_5's `parseCount()` witness, which stays: two parses per run, one of them the esbuild config | supported |
+| A computed relative request in a call argument is reported | Every `TemplateExpression` with a relative head in call-argument position yields a failing verdict, through any number of enclosing parentheses | `` r((`./${name}`)) `` — round 7 F019, which yields no verdict at all today | Direct, parenthesized and UMD-parenthesized fixtures reported; path data and tagged templates still not; the `parent.arguments` membership test kept, because kind-only walking misreports `` `./${x}`() `` where the template is the CALLEE | refuted at HEAD, closed by task 8_1 |
 
 ## D6 — The relative class is swept, not analysed
 
@@ -318,6 +207,13 @@ Failing rather than warning is affordable because it is not noisy: the real `dis
 carries **zero** relative-headed templates. If one ever appears legitimately, the fix is to make the
 specifier static, which is what a bundler needs anyway.
 
+**A template that is an operand, not an argument, is a stated limit.** `` r(t + ".js") `` — where
+`t` is a relative-headed template — is a real relative request, and the position rule misses it: its
+parent is a `BinaryExpression`, not the call. Walking out through parentheses does not reach it, and
+walking out through value-forming parents would report every relative-headed template that is merely
+concatenated somewhere, which is the imprecision D7 exists to avoid. Recorded as a limit rather than
+closed, on the same footing as the computed-argument limit D6 already carries.
+
 A template with a NON-relative head is out of scope here, for the same reason a bare specifier is:
 every template in the bundle would be a candidate.
 
@@ -396,7 +292,7 @@ job and a different task.
 The gate is armed against the artifact, not the source: its non-vacuity witness feeds it
 production-minified UMD output, because that is the shape the defect actually shipped in.
 
-### Plan attack on § Cost — dispositions, 2026-09-02
+### Plan attack that ended the pass — dispositions, 2026-09-02
 
 | Row | Disposition | Evidence |
 |---|---|---|
@@ -410,5 +306,7 @@ code. That is the strongest available evidence about this mechanism: the ceiling
 needing a counter on every path, an abandonment message, an above-ceiling fixture, an arm-check and a
 headroom assertion — and its first two drafts were both wrong in the way its predecessor was wrong.
 
-Recorded, not resolved. What replaces § Cost is a scope decision, not a mechanism choice, and it
-overturns the Gate 1 answer that kept these warnings.
+Resolved by the user, because it overturned their own Gate 1 answer: the propagation pass is
+DELETED and the absolute warning is re-earned as a literal-sweep predicate. Bare-specifier reporting
+is given up. D2 above is written to that decision; the two refuted rows are gone with the mechanism
+they described, rather than fixed.

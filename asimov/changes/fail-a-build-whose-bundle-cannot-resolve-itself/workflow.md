@@ -8,7 +8,7 @@
 
 - [x] Gate 1: direction approved — user chose warn-not-fail for bare/absolute; the relative class keeps the guarantee
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-011.12
 Lane: light
-Planned at: c8b8ecc4
+Planned at: 0f7c91d9
 Lane: light — S, one new gate script plus wiring | flags: infra
 - Adoption is `clean-now` (automated-rule reference): `dist/extension.js` at planning time carries only node builtins and `vscode`, so the rule passes on landing. No baseline, no ratchet.
 - Specs are NO-DELTA: a build-time gate changes nothing the shipped extension does.
@@ -55,4 +55,5 @@ Verify gate after the round-4 handback: check-types clean, 6763 unit tests pass,
 - C3 left the retention of D2 unresolved: if nothing consumes a warning, the machinery is dead weight and option A (delete) would be right. Recorded rather than argued away — the consumer is the developer running `pnpm run package` for a release, who sees the gate's output in that terminal, and 6_4's cost work is still owed because the D2 pass runs regardless of the severity it emits. If a future round finds that output is never read, deleting D2 is the honest follow-up.
 - Round-6 handback. Three blockers, all mine, and two of them fallout from 6_1 widening detection without widening what consumes it: `classify` kept its own `startsWith(".")` class test (F016) and the new Win32 spellings flowed into a host-native resolver (F017). F006 persisted because my 6_4 fix made only callee-target arrivals incremental, and my witness varied only callee targets — it could not fail on the mixed case it was meant to bound. Gate 2 re-taken under the standing goal.
 - F017's mechanism is taken from a sibling rather than invented, per the standing instruction: orca dispatches path flavour on the SPELLING and never on `process.platform` (git-handler.ts:128-134, git-handler-worktree-ops.ts:133-136). Adjusted because resolving through `path.win32` yields win32-shaped paths a POSIX filesystem cannot stat — the Win32 spelling is normalized to its POSIX equivalent instead, so one resolver answers both.
-- No round 7 opened. The chair reported the review cap reached; the next review is a new cycle's discovery round after this replan.
+- Round 7 ran and returned BLOCK on 2 findings. The plan attack then REFUTED two ledger rows of the replacement cost obligation, and the user chose to delete the D2 propagation pass rather than fund a fifth attempt at bounding it. Bare-specifier warnings are given up; the absolute warning is re-earned as a literal-sweep predicate. Gate 2 taken on that answer.
+- No round 7 opened at the time of the round-6 replan. The chair reported the review cap reached; the next review is a new cycle's discovery round after this replan.
