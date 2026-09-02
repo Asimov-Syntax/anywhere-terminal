@@ -6,6 +6,7 @@
 // it; attaching costs no git command and no watcher, so a second panel showing
 // the same tree is free.
 
+import { randomUUID } from "node:crypto";
 import type * as vscode from "vscode";
 import type {
   BaseVerdict,
@@ -44,6 +45,7 @@ import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { classifyDestination, type GitEntryProbe } from "../worktree/debrisClassification";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
+import type { MigrationOfferEvidence } from "../worktree/migrateChanges";
 import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
@@ -187,6 +189,10 @@ export interface WorktreeHostOptions {
   clock?: RebuildGateClock;
   /** `anywhereTerminal.worktree.createRoot`, read through `SettingsReader`. */
   createRoot?(): { value: string | undefined; explicitlySet: boolean };
+  /** Prove that one exact source can currently be migrated. */
+  probeMigrationSource?(sourcePath: string): Promise<MigrationOfferEvidence | undefined>;
+  /** Cryptographically random in production; deterministic only in tests. */
+  migrationOfferId?(): string;
   /**
    * The two evidence sources a removal assessment needs and the tree does not
    * carry. Absent in the tests that only exercise routing; supplied in
@@ -701,6 +707,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * closes the guard has to be the pass in flight, not the pass that finished.
    */
   const provisionReading = new Map<string, number>();
+  const migrationReading = new Map<string, { sequence: number; sourceWorktreeId: string }>();
+  const migrationOffers = new Map<
+    string,
+    {
+      surface: string;
+      opening: number;
+      repoId: string;
+      sourceWorktreeId: string;
+      sourcePath: string;
+      evidence: MigrationOfferEvidence;
+    }
+  >();
+  let migrationSequence = 0;
   /**
    * The OPENING each surface's create form is currently on, as the PANEL named
    * it.
@@ -807,6 +826,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
     }
     offers.forgetSurface(key);
+    const migrationPrefix = `${key}::`;
+    for (const slot of [...migrationReading.keys()]) {
+      if (slot.startsWith(migrationPrefix)) {
+        migrationReading.delete(slot);
+      }
+    }
+    for (const [offerId, offer] of migrationOffers) {
+      if (offer.surface === key) {
+        migrationOffers.delete(offerId);
+      }
+    }
     // And the per-repository enumeration records, which are what
     // `worktreeCreateProbe` and `worktreeAuthorizeDebris` read to decide whether
     // a request belongs to a live form. Retiring only the provisioning half left
@@ -2637,6 +2667,70 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           openingHighWater.set(key, msg.opening);
         } else if (liveOpening.get(key) !== msg.opening) {
           return;
+        }
+        if (opening && msg.sourceWorktreeId !== undefined && options.probeMigrationSource !== undefined) {
+          const slot = `${key}::${msg.opening}`;
+          const reading = migrationReading.get(slot);
+          if (reading === undefined) {
+            const mine = { sequence: ++migrationSequence, sourceWorktreeId: msg.sourceWorktreeId };
+            migrationReading.set(slot, mine);
+            const source = repo.worktrees.find(
+              (row) => row.id === msg.sourceWorktreeId && !row.bare && !row.missing && !row.prunable,
+            );
+            if (source !== undefined) {
+              const sourcePath = source.displayPath;
+              void options
+                .probeMigrationSource(sourcePath)
+                .then((evidence) => {
+                  const currentReading = migrationReading.get(slot);
+                  const currentSource = cache
+                    .read()
+                    .repos.find((candidate) => candidate.repoId === msg.repoId)
+                    ?.worktrees.find(
+                      (row) =>
+                        row.id === source.id &&
+                        row.displayPath === sourcePath &&
+                        !row.bare &&
+                        !row.missing &&
+                        !row.prunable,
+                    );
+                  if (
+                    disposed ||
+                    !surfaces.has(surface) ||
+                    liveOpening.get(key) !== msg.opening ||
+                    currentReading?.sequence !== mine.sequence ||
+                    currentReading.sourceWorktreeId !== mine.sourceWorktreeId ||
+                    currentSource === undefined ||
+                    evidence === undefined ||
+                    !Number.isSafeInteger(evidence.snapshot.count) ||
+                    evidence.snapshot.count <= 0
+                  ) {
+                    return;
+                  }
+                  const offerId = (options.migrationOfferId ?? randomUUID)();
+                  if (migrationOffers.has(offerId)) {
+                    return;
+                  }
+                  migrationOffers.set(offerId, {
+                    surface: key,
+                    opening: msg.opening,
+                    repoId: msg.repoId,
+                    sourceWorktreeId: source.id,
+                    sourcePath,
+                    evidence,
+                  });
+                  deliver(surface, {
+                    type: "worktreeMigrationOffer",
+                    repoId: msg.repoId,
+                    opening: msg.opening,
+                    sourceWorktreeId: source.id,
+                    offerId,
+                    count: evidence.snapshot.count,
+                  });
+                })
+                .catch(() => {});
+            }
+          }
         }
         // A DIFFERENT opening supersedes: it starts its own read and retires the
         // previous one's right to publish. A repeat of the one already reading

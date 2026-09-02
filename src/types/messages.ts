@@ -2584,6 +2584,15 @@ export interface WorktreeCreateResolutionMessage {
  *
  * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
  */
+export interface WorktreeMigrationOfferMessage {
+  type: "worktreeMigrationOffer";
+  repoId: string;
+  opening: number;
+  sourceWorktreeId: string;
+  offerId: string;
+  count: number;
+}
+
 export interface WorktreeProvisionOfferMessage {
   type: "worktreeProvisionOffer";
   repoId: string;
@@ -2775,6 +2784,7 @@ export type ExtensionToWebViewMessage =
   | WorktreePullRequestsMessage
   | WorktreeCreateResolutionMessage
   | WorktreeDebrisAuthorizedMessage
+  | WorktreeMigrationOfferMessage
   | WorktreeProvisionOfferMessage
   | WorktreeProvisionResultMessage
   | InitMessage

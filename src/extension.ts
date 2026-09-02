@@ -68,6 +68,7 @@ import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
+import { probeMigrationSource } from "./worktree/migrateChanges";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
@@ -916,6 +917,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const ghRunner = createGitCommandRunner({ executable: "gh" });
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
+    probeMigrationSource: (sourcePath) =>
+      probeMigrationSource(gitDecorationProvider.getApi?.(), sourcePath, {
+        runner: worktreeTreeDeps.runner,
+        uri: vscode.Uri.file,
+      }),
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
