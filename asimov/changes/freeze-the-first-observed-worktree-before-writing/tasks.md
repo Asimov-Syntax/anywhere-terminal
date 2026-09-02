@@ -44,7 +44,7 @@ Build the shared authorizer, mint it at the mutation seam, apply it to file prov
   - **Plan**:
     1. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: remove target authority minting, consume the mutation-issued destination, budget every recheck before claim reading, staging, and commit, and use shared nonzero identity for final-entry source proof.
 
-- [ ] 1_5 Require listing-time authority for sibling claims
+- [x] 1_5 Require listing-time authority for sibling claims — verified: pnpm exec vitest run 'src/worktree/worktreePorts.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/freeze-sibling-recorded-2.log 2>&1 exit 0
   - **Deps**: 1_4
   - **Refs**: design.md D2, design.md D4; specs/worktree-panel/spec.md#sibling-claim-reads-sample-stable-listing-time-identity
   - **Acceptance**:

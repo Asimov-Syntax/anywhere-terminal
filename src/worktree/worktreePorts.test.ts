@@ -47,12 +47,17 @@ function port(name: string, id = `id-${name}`, preview?: number): ProvisionPort 
   return { id, name, source: "asimov/worktree.yaml", ...(preview === undefined ? {} : { port: preview }) };
 }
 
-function complete(paths: readonly string[]): PortWorktreeListing {
-  return {
-    worktrees: paths.map((worktreePath) => ({ id: worktreePath, path: worktreePath })),
-    reasons: [],
-    skipped: 0,
-  };
+async function complete(paths: readonly string[]): Promise<PortWorktreeListing> {
+  const worktrees = await Promise.all(
+    paths.map(async (worktreePath) => {
+      const authorization = await authorizeDirectory(worktreePath);
+      if (authorization === undefined) {
+        throw new Error(`the listed worktree could not be authorized: ${worktreePath}`);
+      }
+      return { id: worktreePath, path: worktreePath, authorization };
+    }),
+  );
+  return { worktrees, reasons: [], skipped: 0 };
 }
 
 async function allocate(
@@ -227,9 +232,9 @@ describe("allocateWorktreePorts", () => {
   });
 
   it.each([
-    { name: "degraded", listing: { ...complete([]), degraded: "git failed" } },
-    { name: "skipped", listing: { ...complete([]), skipped: 1 } },
-    { name: "reason", listing: { ...complete([]), reasons: ["one record was omitted"] } },
+    { name: "degraded", listing: { worktrees: [], reasons: [], skipped: 0, degraded: "git failed" } },
+    { name: "skipped", listing: { worktrees: [], reasons: [], skipped: 1 } },
+    { name: "reason", listing: { worktrees: [], reasons: ["one record was omitted"], skipped: 0 } },
   ])("fails fresh allocation for an incomplete $name listing", async ({ listing }) => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const result = await allocate(
@@ -274,6 +279,45 @@ describe("allocateWorktreePorts", () => {
 
     expect(result.ports[0]?.outcome.kind).toBe("failed");
     expect(await readFile(target, "utf8")).toBe(original);
+  });
+
+  it("fails fresh allocation when a listed sibling is recreated before its claim read", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    const listing = await complete(worktrees);
+    const sibling = worktrees[2] as string;
+    await rename(sibling, `${sibling}-original`);
+    await mkdir(sibling);
+    await writeFile(path.join(sibling, ".env.worktree"), "OTHER=5183\n");
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      { listWorktrees: async () => listing, probe: probes([5184]) },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    await expect(readFile(path.join(worktrees[1] as string, ".env.worktree"), "utf8")).rejects.toThrow();
+  });
+
+  it("excludes the normalized target listing row by authorized identity despite its display alias", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const worktreePath = worktrees[1] as string;
+    await writeFile(path.join(worktreePath, ".env.worktree"), "APP=5183\n");
+    const listing = await complete(worktrees);
+    const aliased = {
+      ...listing,
+      worktrees: listing.worktrees.map((worktree) =>
+        worktree.id === worktreePath
+          ? { ...worktree, path: path.join(path.dirname(worktreePath), "raw-alias") }
+          : worktree,
+      ),
+    };
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath, ports: [port("APP")] },
+      { listWorktrees: async () => aliased, probe: probes([]) },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({ kind: "reused", port: 5183 });
   });
 
   it("fails fresh allocation when a sibling claim file is malformed", async () => {
@@ -524,6 +568,7 @@ describe("allocateWorktreePorts", () => {
     if (authorization === undefined) {
       throw new Error("the target could not be authorized");
     }
+    const listing = await complete([repoPath, worktreePath]);
     const original = `${worktreePath}-original`;
     const redirected = path.join(path.dirname(worktreePath), "redirected");
     await mkdir(redirected);
@@ -532,7 +577,7 @@ describe("allocateWorktreePorts", () => {
 
     const result = await allocateWorktreePorts(
       { repoId, repoPath, worktreePath, ports: [port("APP")], authorization },
-      { listWorktrees: async () => complete([repoPath, worktreePath]), probe: probes([5183]) },
+      { listWorktrees: async () => listing, probe: probes([5183]) },
     );
 
     expect(result.ports[0]?.outcome).toMatchObject({
@@ -616,6 +661,25 @@ describe("allocateWorktreePorts", () => {
 
     expect(timeoutMs).toBeGreaterThan(0);
     expect(timeoutMs).toBeLessThanOrEqual(50);
+  });
+
+  it("fails within the transaction when listing-time sibling authorization expires", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new", "sibling"]);
+    const started = Date.now();
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        transactionMs: 10,
+        listWorktrees: async (_path, options) => {
+          await options.authorizationBudget.run(() => new Promise<void>(() => undefined));
+          return complete(worktrees);
+        },
+      },
+    );
+
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
   });
 
   it("stops waiting when a listing dependency ignores its timeout", async () => {

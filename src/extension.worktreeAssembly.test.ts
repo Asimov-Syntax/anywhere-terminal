@@ -369,12 +369,17 @@ const STORED_ENTRY: VaultSessionEntry = {
 
 /** One entry per call of the session registry reader, so a second scan is visible. */
 const registryReads: number[] = [];
+const authorizedPaths: string[] = [];
 let provisioningAuthorizationStable = true;
 
 vi.mock("./utils/authorizedDirectory", async (importOriginal) => {
   const real = await importOriginal<typeof import("./utils/authorizedDirectory")>();
   return {
     ...real,
+    authorizeDirectory: async (...args: Parameters<typeof real.authorizeDirectory>) => {
+      authorizedPaths.push(args[0]);
+      return real.authorizeDirectory(...args);
+    },
     directoryStillAuthorized: (...args: Parameters<typeof real.directoryStillAuthorized>) =>
       provisioningAuthorizationStable ? real.directoryStillAuthorized(...args) : Promise.resolve(false),
   };
@@ -450,6 +455,7 @@ beforeEach(() => {
   argv = [];
   launched = [];
   publishedRow = null;
+  authorizedPaths.length = 0;
   provisioningAuthorizationStable = true;
   noStartableAgents = false;
   lockedRow = false;
@@ -1556,6 +1562,9 @@ describe("the invariants that span the host and the webview", () => {
     expect(provisionResults[0]?.steps).toHaveLength(1);
     expect(provisionResults[0]?.ports).toHaveLength(1);
     expect(provisionResults[0]?.ports[0]?.outcome.kind).toBe("allocated");
+    expect(authorizedPaths).toContain(REPO);
+    expect(authorizedPaths).toContain(LINKED);
+    expect(authorizedPaths).toContain(destination);
     expect(fs.readFileSync(path.join(REPO, ".git", "info", "exclude"), "utf8")).toContain("/.env.worktree\n");
     // ONE notice. Two means the provisioning message found no create to land on
     // and made its own — which is what shipped.

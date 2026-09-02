@@ -604,8 +604,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           allocateWorktreePorts(input, {
             listWorktrees: async (repoPath, options) => {
               const listing = await listRepoWorktrees(repoPath, worktreeTreeDeps, options);
+              const worktrees = await Promise.all(
+                listing.worktrees.map(async (worktree) => {
+                  const authorization = await authorizeDirectory(worktree.id, {}, options.authorizationBudget);
+                  if (authorization === undefined) {
+                    throw new Error(`could not authorize listed worktree: ${worktree.id}`);
+                  }
+                  return { id: worktree.id, path: worktree.displayPath, authorization };
+                }),
+              );
               return {
-                worktrees: listing.worktrees.map((worktree) => ({ id: worktree.id, path: worktree.displayPath })),
+                worktrees,
                 reasons: listing.reasons,
                 skipped: listing.skipped,
                 ...(listing.degraded === undefined ? {} : { degraded: listing.degraded }),

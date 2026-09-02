@@ -51,7 +51,11 @@ interface PortLockedFile {
 }
 
 export interface PortWorktreeListing {
-  readonly worktrees: readonly { readonly id: string; readonly path: string }[];
+  readonly worktrees: readonly {
+    readonly id: string;
+    readonly path: string;
+    readonly authorization: AuthorizedDirectory;
+  }[];
   readonly reasons: readonly string[];
   readonly skipped: number;
   readonly degraded?: string;
@@ -61,6 +65,7 @@ export interface PortListingOptions {
   readonly timeoutMs: number;
   readonly maxBufferBytes: number;
   readonly maxWorktrees: number;
+  readonly authorizationBudget: AuthorizationBudget;
 }
 
 export interface PreviewPortsDeps {
@@ -410,6 +415,12 @@ function samePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
 }
 
+function sameAuthorizedLeaf(left: AuthorizedDirectory, right: AuthorizedDirectory): boolean {
+  const leftLeaf = left.components.at(-1)?.identity;
+  const rightLeaf = right.components.at(-1)?.identity;
+  return leftLeaf !== undefined && rightLeaf !== undefined && sameFileIdentity(leftLeaf, rightLeaf);
+}
+
 export async function previewWorktreePorts(
   ports: readonly ProvisionPort[],
   worktreePaths: readonly string[],
@@ -503,6 +514,7 @@ export async function allocateWorktreePorts(
             timeoutMs: remaining(budget),
             maxBufferBytes: MAX_LISTING_BYTES,
             maxWorktrees: MAX_SIBLINGS,
+            authorizationBudget: authorizationBudget(budget),
           }),
         );
       } catch {
@@ -514,15 +526,24 @@ export async function allocateWorktreePorts(
 
       const siblingClaims = new Set<number>();
       for (const worktree of listing.worktrees) {
-        if (samePath(worktree.path, input.worktreePath)) {
-          continue;
-        }
-        const authorized = await readClaimsUnderRoot(worktree.path, deps, budget);
-        if (authorized === undefined || authorized.source.kind === "invalid") {
+        if (!samePath(worktree.authorization.path, worktree.id)) {
           return failure("sibling port claims could not be proven");
         }
-        if (authorized.source.kind === "valid") {
-          for (const value of authorized.source.claims.values()) {
+        if (sameAuthorizedLeaf(worktree.authorization, input.authorization)) {
+          continue;
+        }
+        if (!(await authorizedDirectoryStillMatches(worktree.authorization, deps, budget))) {
+          return failure("sibling port claims could not be proven");
+        }
+        const source = await readClaims(path.join(worktree.id, CLAIM_FILE), deps, budget);
+        if (
+          source.kind === "invalid" ||
+          !(await authorizedDirectoryStillMatches(worktree.authorization, deps, budget))
+        ) {
+          return failure("sibling port claims could not be proven");
+        }
+        if (source.kind === "valid") {
+          for (const value of source.claims.values()) {
             siblingClaims.add(value);
           }
         }
