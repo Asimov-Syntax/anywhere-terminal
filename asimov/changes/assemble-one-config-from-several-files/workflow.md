@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved — no real fork: § 3.4, § 4.1 and § 4.2 fix the format, the order and the merge; the calls this change made are D2's three resolution rules and D5's native preference _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -33,7 +33,7 @@ Blueprint: none
 Blueprint: docs/PLAN.md task WT-012.4
 Lane: full (standard) — MEDIUM risk: two untrusted checked-in files combined into one model a
 later task hands to a shell | flags: new-api-contract, user-visible-ui
-Planned at: b0552e78 (re-earned for task 4_1; originally 49c4365e)
+Planned at: 19551b44 (re-earned for the round-7 handback: D12, D13, D14)
 - Admission screen: ONE new invariant owner — the merge (extends resolution, native-wins dedupe,
   exclude, provenance). The native file is a FOURTH instance of the shipped `ProviderAdapter`
   pattern, and the dialog's excluded rendering extends an owner WT-012.1 already has. One
@@ -174,3 +174,10 @@ platform reading and records the residual.
 - The identity question is now known to need a destination-slot owner on BOTH axes: F001 (two spellings, one slot, POSIX folding volume) and F013 (two distinct NTFS names, one `toLowerCase()` key). Six mechanisms have now been refuted for one invariant. It is not this change's owner to mint.
 - F012 (`__proto__` supplies hidden native keys, both JSONC providers) and F014 (unreadable `extends` diagnosed as missing) are fixable inside the accepted contract and are independent of the identity question. They are carried into the replan as tasks rather than built in a closed loop.
 - Gates unticked for the round-7 handback: Gate 2, All tasks done, and the Verify gate. WT-012.17 was added to docs/PLAN.md as the destination-slot owner on the user's approval, and this change now Depends On it. The replan scopes the integration seam plus F012 and F014.
+- Round-7 handback replanned. D12 (read a JSONC file's keys from the parse tree), D13 (a source found and unreadable is not a source that is absent) and D14 (the contest is computed over the entries the merge kept) added; D11's residual withdrawn now that WT-012.17 and WT-012.18 have shipped. Two spec requirements split out rather than fused. Tasks 8_1, 8_2, 8_3.
+- Plan attack ran on frozen artifacts and returned three dispositions plus five ranked findings; every one was accepted, none rejected. It REFUTED the mechanism D12 was first written with: the tree-to-record loop read `getNodeValue(member.children[1])` unguarded, and a member whose value failed to parse has no value node — so on the round-1 F003 regression fixture already checked in at `nativeProvider.test.ts:243` it threw out of `read()` where `parse()` recovers. That would have turned a recoverable file into an uncaught exception on the create path. Guarded, the two agree on every malformed shape tested.
+- It also narrowed D13 twice. Splitting on `opened.kind` would have moved a containment refusal off `missingExtends`, contradicting a `supported` ledger row and the assertion pinned at `readProvisioning.test.ts:451-460`; and it would have adopted the root-failure diagnostic that D8 deliberately defers, misattributed to the base file. The split is now on the problem's reason, and 8_2 witnesses the two cases that must NOT move.
+- D14 confirmed `supported` — the row cap is charged at append time, and merge → exclude → group runs in that order at `readProvisioning.ts:249-264`. Task 8_3 is a witness, not a change, and says so.
+- D11's amended paragraph was overclaiming and is now scoped: a group with ZERO repository declarations — two spellings inside the base file, or any framework-only view after a switch — is a stated contest with no stated outcome. That is the "nothing claims priority" arm the sibling change accepted, recorded here so the paragraph is not read as covering it.
+- Carried, NOT folded in: `vscodeTasksProvider` has no unknown-key report at all, so for `.vscode/tasks.json` D12 delivers only "nothing is consumed" and its witness asserts that rather than reporting. Giving that adapter a key report is its own scope with its own acceptance.
+

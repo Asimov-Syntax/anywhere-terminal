@@ -134,7 +134,8 @@ SHALL NOT be reported as one that is not there.
 
 Every key a configuration file declares SHALL be judged as a key of that file, whatever the key is
 named. A name the configuration format's host language gives a meaning of its own SHALL NOT thereby
-supply a value the system reads.
+supply a value the system reads. WHERE the configuration is one that reports keys the system does
+not read, such a key SHALL be reported among them.
 
 #### Scenario: A key named for a host-language member
 
@@ -142,3 +143,9 @@ supply a value the system reads.
   host language gives its own meaning to, and that key holds values the system would otherwise read
 - **THEN** the section reports it as a key the system does not read, and none of the values under it
   is used to name a source to build on, to remove a row, or to declare one
+
+#### Scenario: The same key in a configuration that reports no keys
+
+- **WHEN** a detected source that does not report unrecognized keys declares such a key, holding
+  values the system would otherwise read
+- **THEN** no row and no setup step is taken from it

@@ -177,12 +177,15 @@
   - **Deps**: none
   - **Refs**: design.md D12, specs/worktree-panel/spec.md#every-key-a-configuration-declares-is-judged-as-a-key-of-that-file, specs/worktree-panel/spec.md#one-unreadable-part-never-discards-the-rest-of-a-configuration
   - **Acceptance**:
-    - Outcome: A `__proto__` member supplies nothing the system reads and is reported as a key the system does not read
+    - Outcome: No JSONC provider reads a value from a `__proto__` member
     - Verify: unit src/worktree/provisioning/nativeProvider.test.ts
   - **Plan**:
-    1. In `src/worktree/provisioning/nativeProvider.ts` and `src/worktree/provisioning/vscodeTasksProvider.ts`, build the top-level record from `parseTree`'s member names onto a null-prototype object instead of using `parse()`'s value. Keep the existing error-tolerance: the parser's errors are still reported and the file is still read anyway.
-    2. Put the tree-to-record step in one place both providers call rather than spelling it twice — they are the only two JSONC readers, and a third would want the same guarantee.
-    3. Witness in `src/worktree/provisioning/nativeProvider.test.ts` and `src/worktree/provisioning/vscodeTasksProvider.test.ts` a file whose `__proto__` member carries `extends`, `exclude` and an inline key: nothing is inherited, nothing is removed, no row is added, and the key is reported. Arm the witness by putting `parse()` back and confirming it fails.
+    1. In `src/worktree/provisioning/nativeProvider.ts` and `src/worktree/provisioning/vscodeTasksProvider.ts`, build the top-level record from `parseTree`'s member names onto a null-prototype object instead of using `parse()`'s value. Guard the value node — a member whose value failed to parse has none, and reading it unguarded throws where `parse()` recovers.
+    2. Put the tree-to-record step in one place both providers call, in `src/worktree/provisioning/providerKit.ts` — they are the only two JSONC readers, and the guard is the kind of thing that gets written correctly once and copied wrongly.
+    3. Keep the existing error tolerance exactly: the parser's errors are still reported and the file is still read anyway. `src/worktree/provisioning/nativeProvider.test.ts:243`'s malformed-member fixture is the regression that proves it, and it must keep passing unchanged.
+    4. Witness in `src/worktree/provisioning/nativeProvider.test.ts` a file whose `__proto__` member carries `extends`, `exclude` and an inline key: nothing is inherited, nothing is removed, no row is added, and the key IS reported.
+    5. Witness in `src/worktree/provisioning/vscodeTasksProvider.test.ts` that `{"__proto__": {"tasks": [...]}}` yields no setup step. Assert consumption, not reporting: that adapter has no unknown-key report at all, and giving it one is a different scope.
+    6. Arm every witness by putting `parse()` back and confirming each fails.
 
 - [ ] 8_2 Say that a source was found and could not be read
   - **Deps**: none
@@ -192,7 +195,9 @@
     - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
   - **Plan**:
     1. In `src/worktree/provisioning/readProvisioning.ts`, give `baseFor` a result that distinguishes no-adapter-or-absent from present-and-unreadable, and carry `openProviderFile`'s own problem forward for the second rather than minting a new sentence.
-    2. Witness a present `extends` target whose read fails: the reported problem is the unreadable one, `missingExtends` is absent, and the native file's own material is still offered with Create available.
+    2. Split on the problem's REASON, not on `opened.kind`. Only `at: "file"` with reason `unreadable` moves; a containment refusal keeps `missingExtends` and a root failure keeps its current answer, per D13.
+    3. Witness a present `extends` target whose read fails: the reported problem is the unreadable one, `missingExtends` is absent, and the native file's own material is still offered with Create available.
+    4. Witness the two that must NOT move, so the narrowing has a failure mode: `readProvisioning.test.ts:451-460`'s out-of-tree symlink still reports `missingExtends`, and a root failure does too. Neither existing assertion changes — if one has to, stop, because the split has taken a case D13 says it must not.
 
 - [ ] 8_3 Compute the contest over the entries the merge kept
   - **Deps**: 8_1, 8_2
@@ -203,4 +208,5 @@
   - **Plan**:
     1. Verify against the shipped code first, in `src/worktree/provisioning/readProvisioning.ts`: the groups are already built after the merge, so this task may be a witness in `src/worktree/provisioning/readProvisioning.test.ts` rather than a change. If it is, say so in the commit and do not move code to make the task look like work.
     2. Witness over the ASSEMBLED model — not one adapter's — that a native spelling superseding an inherited one, and an `exclude` removing a second, leave every group naming only ids the model still carries, and that a group's repository-declared members are exactly the entries whose `source` is the native file.
+    3. Assert group SIZES survive an offer round trip, not only that every id resolves. `remint` drops an unknown id silently, so a broken invariant would shrink a group rather than leave a dangling id — asserting membership alone gives it no failure mode.
 

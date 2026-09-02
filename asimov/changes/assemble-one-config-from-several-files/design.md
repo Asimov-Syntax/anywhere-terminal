@@ -244,14 +244,26 @@ inherited `mixedcase` and a native `MixedCase` are offered as two rows for one f
 naming either matches only that spelling. That was round-3 F001, reopened deliberately here: it is
 the failure direction that does not silently discard something the repository declared.
 
-It is no longer a residual. WT-012.17 and WT-012.18 have both shipped, and between them they own
-the half this change refused to mint. The model now carries a **contender group** over the folding
+It is no longer a residual **for a group in which at least one member is the repository's own
+declaration** — which is the state this paragraph is about, an inherited spelling beside a native
+one. WT-012.17 and WT-012.18 have both shipped, and between them they own the half this change
+refused to mint. The model now carries a **contender group** over the folding
 key naming every spelling that may be one destination, and recording which of them the repository's
 own file declared; the dialog offers the inherited spelling unticked and says what refuses it, and
 the apply awards the destination to the repository's own declaration or refuses the group entire.
 So the two rows this decision leaves standing are no longer two unexplained rows — they are a
 contest with a stated outcome, which is exactly what "the user sees both rows and can act on them"
 was standing in for.
+
+**Not every foldable pair is such a group**, and the plan attack caught the sentence overreaching.
+Two case spellings inside the base file alone — and every framework-only view, since a switch
+returns a model whose groups carry no repository declarations at all — form a group with zero
+natives. There the dialog says "2 spellings may be one file" and lists each row's partner, but no
+row yields and the apply applies both: the destination is settled by whichever entry it reaches
+first and that entry's own collision reading, not by the contest. That is a stated contest without a
+stated outcome. It is the "nothing claims priority" arm the sibling change accepted deliberately —
+unticking either would pick a winner the apply does not — and it is recorded here so the sentence
+above is not read as covering it.
 
 What this change still owns at that seam is only that the assembled model FEEDS it: a group is
 computed once, after the merge, over the entries actually kept, so an inherited spelling that the
@@ -327,17 +339,42 @@ member names the tree actually carries:
 const record: Record<string, unknown> = Object.create(null);
 for (const member of tree.children ?? []) {
   const name = member.children?.[0]?.value;
-  if (typeof name === "string") {
-    record[name] = getNodeValue(member.children[1]);
+  const value = member.children?.[1];
+  // A member whose value failed to parse has NO value node. `parse()` recovers
+  // by dropping that member and keeping its siblings, and so does this — the
+  // guard is the whole reason the two agree on malformed input.
+  if (typeof name === "string" && value !== undefined) {
+    record[name] = getNodeValue(value);
   }
 }
 ```
+
+**The guard is load-bearing, and the plan attack is what put it there.** The first draft read
+`getNodeValue(member.children[1])` unguarded. On `{"copy": [".env.local"], "exclude": , "setup":
+["pnpm i"]}` — which is not hypothetical, it is the round-1 F003 regression fixture at
+`nativeProvider.test.ts:243` — the `exclude` member has one child, so `children[1]` is `undefined`
+and `getNodeValue` throws out of `read()`, uncaught anywhere on the path. That would have turned a
+file the accepted requirement says must be recovered into an exception on the create path: a worse
+failure than the one being fixed. Guarded, `parse()` and this loop return the same keys
+(`["copy", "setup"]`) on that input and on every other malformed shape checked.
 
 Two properties, and both are required — re-seating alone is not the fix. On a null-prototype record
 `record.extends` is `undefined`, so nothing hidden is consumed; AND `__proto__` is an own key, so it
 reaches the unknown-key report like any other name the system does not read. Copying the parsed
 VALUE onto a null-prototype object gets only the first: the member disappears entirely and the
 accepted requirement "that key SHALL be reported" is quietly broken instead of loudly.
+
+**Only the native file has an unknown-key report.** `vscodeTasksProvider` reads `parsed.tasks` and
+never iterates the file's keys, so for `.vscode/tasks.json` this decision delivers the first
+property alone — the exploit there is `{"__proto__": {"tasks": [...]}}`, and what closes it is that
+no task is read from it. Giving that adapter a key report is a different scope with its own
+acceptance, and is not folded in here. The two witnesses are therefore not the same assertion: the
+native file asserts the key IS reported, `tasks.json` asserts nothing is CONSUMED.
+
+The null-prototype record also closes the whole class rather than the one name that was found. Under
+`parse()` a literal `"constructor"` member does become an own key by shadowing, so it is reported
+today and supplies nothing; but no ordinary lookup in either provider names a member of
+`Object.prototype`, and a record with no prototype cannot resolve one whatever it is called.
 
 The YAML adapters do not share the defect — their loader materializes `__proto__` as an own key —
 and are not changed. This is not a general "sanitize untrusted input" pass: it is one parser's
@@ -362,10 +399,28 @@ type BaseResolution =
   | { ok: false; why: "unreadable"; problem: ProvisionProblem };
 ```
 
-`missing` covers both no-adapter-match and absence — D2 already merges those deliberately, and
-nothing observable distinguishes them. `unreadable` carries `openProviderFile`'s OWN problem
-forward rather than minting a second sentence about the same file, which is D4b's rule from the
-sibling change applied here: the reason a reader sees is the rule that actually fired.
+**The split is on the problem's REASON, not on the open's kind, and the plan attack is why.**
+Reading it off `opened.kind !== "text"` sweeps in two cases that must not move:
+
+- **A containment refusal.** A target resolving out of the checkout answers `{kind: "problem", at:
+  "file"}` whose reason is `malformed`. `missingExtends` — "not a file this can build on" — is the
+  ACCEPTED answer there, stated in prose at `readProvisioning.ts:109-111`, carried by the already
+  `supported` ledger row "`extends` reaches only a present file of a framework adapter, inside the
+  repository", and pinned by `readProvisioning.test.ts:451-460`. It is not a read that failed; it is
+  a name that was never eligible.
+- **A root failure.** `{kind: "problem", at: "root"}` is neither presence nor absence, which both
+  JSONC adapters already treat as its own answer. **D8** defers the root-failure diagnostic to a
+  change that can own it, so this one must not adopt it by omission — and reporting a root problem
+  against the base file's name would misattribute it besides.
+
+So `unreadable` is exactly `at: "file"` with reason `unreadable`: the target was named, matched an
+adapter, is inside the checkout, exists, and the READ failed — EACCES, ELOOP, a size refusal.
+Everything else stays `missing`, unchanged. The carried problem is `openProviderFile`'s own rather
+than a second sentence about the same file, which is D4b's rule from the sibling change applied
+here: the reason a reader sees is the rule that actually fired.
+
+Nothing downstream is gated on this: the assemble path is untouched, so the native file's entries,
+ports and setup still merge, and Create is not disabled by any provisioning problem.
 
 ### D14: the contest is computed after the merge, over the entries that survived it
 
@@ -374,6 +429,12 @@ groups are computed. They are built once, at the end of assembly, from the entri
 after dedupe, after `exclude`, and after the row cap. Building them earlier would let a spelling the
 native file superseded, or one `exclude` removed, go on contesting a destination that nothing will
 write, and the dialog would offer a refusal note for a row that is not in the offer.
+
+`remint` translates `members` and `natives` through the same map it builds from `model.entries`, so
+while members stay a subset of the entries its drop branch is unreachable. It drops SILENTLY,
+though, and a dropped member would shrink a group rather than leave a dangling id — so the witness
+asserts group SIZES after a remint, not only that every id is present. An invariant whose only
+failure mode is invisible has no witness.
 
 Which member is the repository's own is read from the entry's `source`, the field D-`source`-is-never-
 rewritten already guarantees is the file that declared it. So the two halves compose without a
@@ -395,9 +456,9 @@ Dispositions were written by the plan attack. Two rows were narrowed and one add
 | Setup steps are neither deduped nor reordered | The offered steps are the base's in file order, then the native's in file order, duplicates intact | A `Set` or a path-keyed map used for setup as it is for entries | Test: identical command in both files; assert two rows and their order | supported |
 | `exclude` never silently removes a row the native file itself declared | An excluded path matching an inline entry leaves the row and reports a problem | Applying `exclude` after dedupe, where the surviving native entry is indistinguishable from an inherited one | Test declaring and excluding the same path; assert the row survives, one problem names it, and `excluded` does not list the superseded inherited copy (D10) | supported |
 | A missing `extends` target does not discard the inline keys | The native model is offered in full alongside a `missingExtends` problem | An early return on the failed resolution, before the inline keys are parsed | Test: `extends` naming an absent file plus inline `copy`; assert the row, the problem, and that Create stays available | supported |
-| No value the system reads comes from a key that is not an own key of the file | For every JSONC provider file, every value consumed by `extendsOf`, `excludeOf` and `readInlineKeys` corresponds to a member the file's parse tree carries, and every member it carries is either read or reported | A `"__proto__"` member, which `parse()` applies to the prototype: consumed by ordinary lookup, invisible to `Object.keys`, and therefore never reported | Test on both JSONC providers: a file whose `__proto__` member holds `extends`, `exclude` and an inline key — assert no source is built on, no row is removed, no row is added, and the key IS reported as one the system does not read. Arm it by reverting to `parse()` | unresolved — closed by task 8_1 |
-| A diagnosis names the fact that was actually found | For every `extends` target, the reported problem distinguishes absent-or-unmatched from present-and-unreadable | `baseFor` collapsing every non-`text` open to `null`, which reports EACCES, ELOOP and a size refusal as a missing file while `anyFilePresent` counts the same file as present | Test: `extends` naming a present file whose read fails — assert the reported problem is the unreadable one `openProviderFile` produced, that it is NOT `missingExtends`, and that the native file's own material is still offered | unresolved — closed by task 8_2 |
-| A contest names only rows the offer actually carries | For every group in `contenders`, every member id is an id in `entries` | Computing the groups before dedupe, `exclude` or the row cap, which leaves a superseded or removed spelling contesting a destination nothing will write | Test: a native spelling superseding an inherited one, and an `exclude` removing a second — assert no group names an id absent from `entries`, over the ASSEMBLED model rather than a single adapter's | unresolved — closed by task 8_3 |
+| No value the system reads comes from a key that is not an own key of the file | For every JSONC provider file, every value consumed by `extendsOf`, `excludeOf` and `readInlineKeys` corresponds to a member the file's parse tree carries, and every member it carries is either read or reported | A `"__proto__"` member, which `parse()` applies to the prototype: consumed by ordinary lookup, invisible to `Object.keys`, and therefore never reported | Native file: a `__proto__` member holding `extends`, `exclude` and an inline key — assert no source is built on, no row removed, no row added, and the key IS reported. `tasks.json`: `{"__proto__": {"tasks": [...]}}` — assert no setup step is added (that adapter reports no keys at all, so "is reported" is not assertable there). Plus the malformed-member fixture `nativeProvider.test.ts:243`, which the unguarded mechanism threw on. Arm all three by reverting to `parse()` | supported — the first mechanism was REFUTED by the plan attack and replaced; see D12's guard paragraph. Closed by task 8_1 |
+| A diagnosis names the fact that was actually found | For every `extends` target, the reported problem distinguishes absent-or-unmatched from present-and-unreadable | `baseFor` collapsing every non-`text` open to `null`, which reports EACCES, ELOOP and a size refusal as a missing file while `anyFilePresent` counts the same file as present; and the OPPOSITE defeater the plan attack found — splitting on `opened.kind` instead of the problem's reason, which moves the containment refusal and the root failure off `missingExtends` too, contradicting a `supported` row above and D8 | Test: `extends` naming a present file whose read fails — assert the reported problem is the unreadable one, NOT `missingExtends`, and the native material still offered. Plus the two that must NOT move: `readProvisioning.test.ts:451-460`'s out-of-tree symlink still reports `missingExtends`, and a root failure does too | supported — narrowed to `at: "file"` with reason `unreadable`; closed by task 8_2 |
+| A contest names only rows the offer actually carries | For every group in `contenders`, every member id is an id in `entries` | Computing the groups before dedupe, `exclude` or the row cap, which leaves a superseded or removed spelling contesting a destination nothing will write | Test: a native spelling superseding an inherited one, and an `exclude` removing a second — assert no group names an id absent from `entries`, over the ASSEMBLED model rather than a single adapter's, and assert group SIZES survive a remint since a dropped member shrinks a group rather than dangling | supported — the plan attack traced the row cap to append time, and merge → exclude → group to `readProvisioning.ts:249-264`; task 8_3 is a witness, not a change |
 | Nothing on this path executes or writes | No read-path module imports anything that runs a command or mutates the filesystem | A new module added to the directory and left off `readOnly.test.ts`'s lists | `readOnly.test.ts`, whose completeness check fails on an unlisted module — the new native module must be added to `READ_PATH` | supported |
 
 ## Risk Map
