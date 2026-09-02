@@ -79,11 +79,16 @@ Switching the form to another repository also removes the row rather than substi
 
 A cache generation is not an incarnation: every forced observation advances it, including the rebuild
 a queued create must perform. Repository resolution instead captures an `AuthorizedDirectory` for the
-normalized common directory before listing worktrees and revalidates it after the listing. The cache keeps
-that registration evidence only in its internal `ResolvedRepo`; `WorktreeRepo`, the tree broadcast, and the
-webview never receive filesystem identities. A whole-tree rebuild may establish a new registration, while a
-repo-scoped rebuild must retain and revalidate the existing one. Missing or changed evidence makes the
-listing degraded and migration-ineligible rather than minting authority over retained rows.
+normalized common directory before listing worktrees and revalidates it after the listing. The cache stores
+the successful listing's generation and registration in the same internal repository record;
+`WorktreeRepo`, the tree broadcast, and the webview never receive filesystem identities. When any current folder successfully resolves a repository, that one current root is canonical for every
+folder association and order entry naming the same `repoId`; an earlier failed folder remembers that current
+root rather than preserving an older registration. This keeps the failed folder able to retain the group if
+its sibling closes without letting the older root initiate a repo-scoped rebuild. The cache also stores the
+successful listing's registration beside its generation, and `registrationFor` reads both from that same
+record rather than joining public state to the retained root order. A whole-tree rebuild may establish a new registration, while a repo-scoped rebuild must
+retain and revalidate the existing one. Missing or changed evidence makes the listing degraded and
+migration-ineligible rather than minting authority over retained rows.
 
 `openCreateFor(info)` freezes both the normalized row id and its public repository generation. The opening
 request returns only those opaque identities to the host. In the same synchronous turn, before starting the
@@ -264,7 +269,7 @@ substitution incident is observed in practice.
 
 | Claim | Semantics | Defeater | Witness/check | Disposition |
 |---|---|---|---|---|
-| The row and final recheck name one owned source | A bracketed worktree listing establishes private common-directory registration evidence before the row exists; row selection freezes its normalized id plus public generation, which the host synchronously resolves back to that private registration before any probe, then binds role, directory, `.git`, admin target, linked placement and back-pointer canonical path plus file identity through the queued rebuild | Whole-tree registration refresh after row selection but before the first offer probe, degraded retained row, linked-to-standalone substitution, same-inode back-pointer under another name, raw back-pointer alias, cross-repository `.git`, remove/recreate, in-place `.git` rewrite, or admin replacement before the call | Selected-generation refresh refusal, degraded-row no-offer, listing-bracket and pre-probe common-directory replacement, role substitution, hard-link alias rejection, symlink-spelling alias acceptance, wrong common repository/back-pointer, directory, `.git` content, target and admin-identity witnesses at offer, redemption and final recheck | supported |
+| The row and final recheck name one owned source | A bracketed worktree listing makes its current root canonical for every same-repository folder association and order entry, and stores its private common-directory registration in the same cached record as its public generation; row selection freezes its normalized id plus that generation, which the host synchronously resolves back to the paired registration before any probe, then binds role, directory, `.git`, admin target, linked placement and back-pointer canonical path plus file identity through the queued rebuild | Earlier failed workspace folder retains registration A while a later current folder publishes the same repo from registration B, or that retained A root later initiates a repo-scoped rebuild; whole-tree registration refresh after row selection but before the first offer probe; degraded retained row; linked-to-standalone substitution; same-inode back-pointer under another name; raw back-pointer alias; cross-repository `.git`; remove/recreate; in-place `.git` rewrite; or admin replacement before the call | Two-folder failed-A/current-B duplicate-repository witness proving generation lookup and `rootFor` both use B, a later repo-scoped observation cannot mint authority from A, and closing B's sibling retains a degraded generation-less group; selected-generation refresh refusal; degraded-row no-offer; listing-bracket and pre-probe common-directory replacement; role substitution; hard-link alias rejection; symlink-spelling alias acceptance; wrong common repository/back-pointer, directory, `.git` content, target and admin-identity witnesses at offer, redemption and final recheck | supported |
 | The row appears only for callable source work | Exact source `openRepository` returns a repository with `migrateChanges`, and a bounded snapshot is positive and movable | Capability inferred from another repo; empty, failed, overflowed, unreadable, or unmerged source | Exact-source open plus every ineligible snapshot witness | supported |
 | The stated count is a truthful current snapshot | Displayed N is the issued record count; observed pre-call drift refuses before API entry | Same count with different path, rename origin, mode, link target, or bytes before the call | Replacement witnesses for every dimension plus wording that says "currently" and execution-time work | supported |
 | Untracked work is included | `untracked: true` reaches the API call | Omitting it leaves new files | Exact-options witness | supported |
