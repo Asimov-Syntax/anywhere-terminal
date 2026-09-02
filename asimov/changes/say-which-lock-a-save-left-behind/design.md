@@ -56,7 +56,7 @@ reboundable name, which is WT-012.21's subject.
 Only `stuck` and `movedAway` mean the user may hit a lock; both produce the same message, because the
 difference between them is not something the user can act on differently.
 
-### D4: A written file is not an unsaved one, on the wire and in the summary
+### D4: A written file is not an unsaved one, and a no-op is not a written one
 
 `ProvisionProblem.reason` (`src/types/messages.ts:944`) has six values and its comment defines
 `unsaved` as "a save was refused and nothing was written". A written-but-locked save is a seventh
@@ -69,8 +69,64 @@ so reusing `unsaved` prints "Not saved" over a file that was saved, and reusing 
 own arm.
 
 That comparison is NOT exhaustive over the union, so the type checker will not enumerate consumers —
-the first plan claimed it would and was wrong. The inventory is taken by hand and lives in task 1_3.
+the first plan claimed it would and was wrong. The inventory is taken by hand and lives in tasks.md.
 `media/webview.js` contains the same string but is a BUILD ARTIFACT and untracked; it is not a site.
+
+**Revised after round-1 F002.** One `locked` value is not enough, because a lock is ORTHOGONAL to
+what the save did — `writeNativeConfig` makes that explicit at `:48-65` and all three combinations
+are reachable, each with a witness this change already built:
+
+| Writer's answer | Witness | What the user must be told |
+|---|---|---|
+| `{ ok: true, wrote: true, mayStillBeLocked }` | `writeNativeConfig.test.ts:998-1002` | the file WAS written |
+| `{ ok: true, wrote: false, mayStillBeLocked }` | `writeNativeConfig.test.ts:1005-1010` | nothing was written, and that is fine |
+| `{ ok: false, reason, mayStillBeLocked }` | `writeNativeConfig.test.ts:1013-1023` | the save was refused |
+
+The accepted spec forbids collapsing the middle row into the first — "A save that wrote NOTHING
+SHALL NOT be described as written" — so the distinction must reach the summary, and the summary is
+keyed on the wire. `WorktreeHost.ts:2531` currently passes `written.ok && written.wrote`, which
+collapses the last two rows into one `false`.
+
+So `locked` carries a REQUIRED `writeOutcome: "written" | "unchanged" | "refused"`, as a
+discriminated member rather than a loose field:
+
+```ts
+export type ProvisionProblem =
+  | (ProvisionProblemBase & { readonly reason: NonLockProvisionProblemReason })
+  | (ProvisionProblemBase & { readonly reason: "locked"; readonly writeOutcome: WriteOutcome });
+```
+
+Two shapes were rejected, and the reason is the same failure in both:
+
+- **An eighth `reason` value.** The comparison above is non-exhaustive, so a new value falls
+  straight through to "Could not be read" with the compiler silent — which is exactly how F002
+  shipped. The hand-inventory hazard is material here, not theoretical.
+- **An optional `wrote?: true`.** Omission stays legal, so a producer that forgets it on a written
+  save compiles and renders as a no-op. Requiring the field on the `locked` member is what forces
+  every producer to answer. The cost is real and it is the point: `messages.contract.test.ts:271-275`
+  constructs a locked problem with no outcome and `:327` asserts it has exactly three keys, so the
+  contract test must now prove that object does NOT compile.
+
+`messages.ts:939-941`'s comment claiming "the file WAS written" is false for the two rows below the
+first and is replaced by the orthogonality above.
+
+The one-value-per-write-refusal argument at `messages.ts:945-948` does NOT extend to this. It
+collapses refusal CAUSES because the writer cannot always tell a held lock from a directory it could
+not create. The write outcome is not a cause and the writer answers it exactly (`:463-465` for the
+no-op, `:531` and `:536` for a write). `writeOutcome` preserves known state rather than inventing a
+finer cause.
+
+Summaries, one per reachable state:
+
+| State | Summary |
+|---|---|
+| `writeOutcome: "written"` | `Saved, may still be locked` |
+| `writeOutcome: "unchanged"` | `Already up to date, may still be locked` |
+| `writeOutcome: "refused"` | `Not saved` — a co-present `unsaved` problem already outranks it |
+
+No single neutral string works: `Saved, may still be locked` is false for the no-op, and
+`May still be locked` fails the written case's SHALL. Reading `"was saved"` back out of `detail`
+would make free-form prose an untyped discriminator, which is not a no-carrier answer.
 
 ### D5: The report rides with the write, and one publication is out of reach
 
@@ -104,8 +160,9 @@ changes neither caller's error handling.
 
 | Claim | Semantics | Defeater | Witness / check | Disposition |
 |---|---|---|---|---|
-| No pathname for a lock reaches the user | Neither the panel nor the installer warning names one | The reverted attempt, and the installer's current `unresolved` join | A witness on the installer warning for a mismatch, and the absence of any path field on the panel's lock report (tasks 1_1, 1_2) | supported — D1, and D2 which fixes the shipping case |
-| A written file is never summarised as unsaved | Summary AND detail say written, on a model that actually carries problems | A witness on an empty model, which returns counts before inspecting problems | A renderer witness on a POPULATED written-but-locked model, asserting the summary string (task 1_3) | supported — the empty-model hole was named by the plan attack and the witness is specified against it |
+| No pathname for a lock reaches the user | Neither the panel nor the installer warning names one | The reverted attempt, and the installer's current `unresolved` join | A witness on the installer warning for a mismatch, and the absence of any path field on the panel's lock report (tasks 1_1, 1_2) | **refuted at round 1, re-specified** — the witness covered the mismatch arm only, and two arms still emit a path: `ClaudeHookInstaller.ts:107` names a lock never acquired, `:112` names one on `stuck`. Task 2_1 witnesses BOTH arms and the absence, not the mismatch alone |
+| A written file is never summarised as unsaved | Summary AND detail say written, on a model that actually carries problems | A witness on an empty model, which returns counts before inspecting problems | A renderer witness on a POPULATED written-but-locked model, asserting the summary string (task 2_2) | **refuted at round 1, re-specified** — the defeater named here is precisely the witness that got written, so the row was self-certifying. The re-specified witness asserts the summary on a model carrying contents, and is arm-checked by restoring the early return |
+| A save that wrote nothing is never called saved | The summary distinguishes `written`, `unchanged` and `refused`, which are orthogonal to the lock | Producing one `locked` problem for all three, or carrying the outcome in an OPTIONAL field a producer may omit | `writeOutcome` is required on the `locked` member, so a producer that omits it does not compile; one renderer witness per row of D4's summary table, plus a contract test asserting the outcome-less object is rejected (task 2_2) | supported — D4, and the three writer states already have real-filesystem witnesses at `writeNativeConfig.test.ts:998-1023` |
 | The disposition table is exhaustive | Every reachable exit of `releaseLock` maps to exactly one value | The `ENOENT` + `nlink > 0n` arm, which the first table omitted | D3's table, drawn against `:258-283`, with a witness per row (task 1_1) | supported as corrected — was `refuted`; `movedAway` is the added arm |
 | `released` and `stuck` are claims about a moment, not proofs | Neither is turned into an instruction to delete | Reading them as durable facts | D1's refusal to emit a pathname; D3 states both limits | supported |
 | A lock survives a failed reread | The report is carried on the write's outcome | Publishing it inside the reread's success path | A witness rejecting the reread and asserting the report still arrives (task 1_3) | supported — D5 |

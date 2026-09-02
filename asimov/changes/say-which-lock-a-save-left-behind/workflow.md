@@ -12,7 +12,7 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
+- [x] All tasks done (`tasks.md`)
 - [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.22
 Lane: full
-Planned at: c6a6f724
+Planned at: a8252482b8a6c50a3d4a5c5fcc5126b934f1d403
 
 ## Plan attack triage (round 1, `asm-oracle`)
 
@@ -57,3 +57,7 @@ in this line of work that happened, the previous two attempts having been caught
   returns counts before inspecting problems. Task 1_3 now requires a POPULATED model.
 - Corrected the attack on one point: `media/webview.js` is NOT checked in — `git ls-files media/`
   lists only images — so the compiled string is a build artifact, not a site to edit.
+- Verify gate lint: 17 findings remain repo-wide, all in files this change does not touch and all present at base `c6a6f724` (which carried 18 — one error fewer now). Nearest: `src/webview/worktree/worktreeFormat.ts:30` and `src/webview/worktree/worktreePanel.css:635`.
+- Task 1_3's declared Verify moved from `unit` to `command pnpm exec vitest run ...`: the suite runs under jsdom, so the default `bun test` runner fails it wholesale on `document is not defined` rather than on anything the task built.
+- Round-1 handback: F002's no-op half needed a wire discriminator `ProvisionProblem` did not have, which is a changed D4 rather than remediation — parked before any fix edit, D4 revised, Gate 2 re-earned. Fixes land as tasks 2_1/2_2, so round 1 stands as cycle 1's discovery rather than being superseded.
+- The oracle's attack found a third reachable state I had collapsed: `WorktreeHost.ts:2531` passed `written.ok && written.wrote`, merging a REFUSED save with a no-op. All three states already had real-filesystem witnesses at `writeNativeConfig.test.ts:998-1023`, built in task 1_2 and thrown away at the host in 1_3.

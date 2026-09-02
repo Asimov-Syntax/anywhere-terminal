@@ -43,3 +43,32 @@
     5. Witness the summary on a POPULATED model — an empty one returns counts before problems are inspected — plus a rejected reread at the host, and the wire shape in the contract test.
     6. Arm-check by folding `locked` back into the all-`unsaved` answer and by moving delivery inside the reread's success path.
   - **Boundary**: `media/webview.js` is a build artifact and untracked — do not edit it
+
+- [ ] 2_1 Stop naming a lock in the installer's warning, on every arm
+  - **Deps**: 1_3
+  - **Refs**: specs/worktree-panel/spec.md#no-lock-is-offered-to-the-user-as-a-file-to-delete; design.md D1, D2, D6; .reviews/round-1.md F001, F003
+  - **Acceptance**:
+    - Outcome: no warning names a lock pathname, on any release arm
+    - Verify: command pnpm exec vitest run src/agentHooks/install/ClaudeHookInstaller.test.ts src/agentHooks/AgentHookController.test.ts
+  - **Plan**:
+    1. `ClaudeHookInstaller.ts:107` — drop `locked.lockPath` from the `lock-unavailable` failure's `affected`, keeping the configuration path. This process never held that lock.
+    2. `:109-113` — the `stuck` arm stops pushing `lockPath` into `unresolved`. `unreleased` alone already drives the outcome, so `unresolved` gains nothing from this callback and the local array goes with it.
+    3. Adopt `sameIdentity` from `src/utils/fileIdentity.ts` at `:377-379` (F003). Do NOT convert the installer's existing stat captures to `{ bigint: true }` — that is separate ownership work and would widen this task.
+    4. Witness each arm: a `lock-unavailable` outcome, and a `stuck` release, neither carrying the lock path; and `AgentHookController.formatWarning` still firing on a mismatch while naming no path.
+    5. Arm-check by putting each path back and confirming the witness fails.
+  - **Boundary**: no `{ bigint: true }` conversion of the installer's pre-existing stat captures
+
+- [ ] 2_2 Say what the save actually did, on a panel that has contents
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-panel/spec.md#a-save-that-wrote-is-never-presented-as-unsaved; design.md D4, D5; .reviews/round-1.md F002
+  - **Acceptance**:
+    - Outcome: each of the three writer outcomes gets its own summary on a model that carries contents
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts
+  - **Plan**:
+    1. `src/types/messages.ts` — split `ProvisionProblem` into the discriminated union in design.md D4; the `locked` member REQUIRES `writeOutcome`. Replace the `locked` comment that claims the file was written.
+    2. `src/providers/WorktreeHost.ts:2531` — stop collapsing with `written.ok && written.wrote`; pass the writer's own three-way answer into `leftLocked`.
+    3. `src/webview/worktree/WorktreeCreateDialog.ts` — move the save-outcome check AHEAD of the content-count return at `:723-725`, which is what hid the summary. Use D4's exact strings.
+    4. `src/types/messages.contract.test.ts` — the outcome-less locked object must now FAIL to compile; assert that rather than its key count at `:327`.
+    5. Witness every row of D4's summary table on a POPULATED model, plus refusal precedence and the failed reread from 1_3.
+    6. Arm-check by restoring the early return and by collapsing the three outcomes back to a boolean.
+  - **Boundary**: `media/webview.js` is a build artifact and untracked — do not edit it
