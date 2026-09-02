@@ -445,6 +445,21 @@ What the write is allowed to hold rules about, and what it must ask:
   inode while every other operation names a string, so a rename-plus-symlink at that spelling
   redirects the lock, the temporary, the read and the commit together. WT-012.19 owns the
   descriptor-anchored write; the obligations that depend on it say so rather than claiming safety.
+- **A lock that outlives the save is reported, and never named.** `releaseLock` answers a typed
+  disposition rather than a boolean, because `false` covered four different situations and only one
+  of them is a leaked lock. What reaches the user is that a lock may still be in the way — no
+  pathname, in the panel or in any warning: the wire carries no identity, a person acts on the
+  message long afterwards, and a lock name can be rebound in between, so naming one is a deletion
+  instruction that goes stale and can destroy another writer's mutual exclusion.
+- **The lock is orthogonal to what the save did**, so the report carries the write outcome —
+  written, unchanged, or refused — as a required field rather than an inferred one. A save that
+  wrote nothing is never described as written.
+- **The panel's save report is the latest attempt's whole report.** A refresh that fails after a
+  save republishes the model already shown, which carries the previous attempt's report, so the
+  published problems are `(base \ prior) ++ posts` with the removal independent of whether the
+  current attempt produced anything. Prior reports are identified by object identity: a refusal is
+  posted under the same reason a READ produces, so a reason or filename key would delete a genuine
+  read problem.
 
 ## 7. Security
 
