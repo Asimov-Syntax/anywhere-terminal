@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -35,3 +35,4 @@ Mode: fastlane — direction, plan, build, review, approval, blueprint sync, and
 Oracle triage: accepted four blockers and five warnings into D2-D6/tasks; Windows now uses EncodedCommand, setup-only creates mint authority/id, retry is provisioning-only and preserves contests, PTY starts after open with a bounded transcript; rejected the asimov-provenance warning because native plus its named base are both active in the shipped model
 Plan drift check: HEAD advanced only by the approved plan commit; all named source seams remain byte-identical to 628c2ec9
 Planned at: 628c2ec9
+Verify gate lint exception: Biome 2.4.5 still exits 1 on clean `52f87065` only in unchanged `worktreeFormat.ts`, `VaultService.customName.test.ts`, three hook-installer tests, and existing CSS/suppression diagnostics; all 25 setup-delta source files pass check mode.
