@@ -14,14 +14,14 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -29,7 +29,6 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
 Blueprint: docs/PLAN.md task WT-012.4
 Lane: full (standard) — MEDIUM risk: two untrusted checked-in files combined into one model a
 later task hands to a shell | flags: new-api-contract, user-visible-ui
@@ -182,4 +181,13 @@ platform reading and records the residual.
 - Carried, NOT folded in: `vscodeTasksProvider` has no unknown-key report at all, so for `.vscode/tasks.json` D12 delivers only "nothing is consumed" and its witness asserts that rather than reporting. Giving that adapter a key report is its own scope with its own acceptance.
 - Round-7 handback built: 8_1 (28084468), 8_2, 8_3. Verify Gate re-run on the whole tree — check-types clean, biome check-mode at the 3/14/1 baseline with all three errors in `agentHooks`/`cursor` files this change never touches, I10 gate ok, shipped-bundle gate ok, `verify-status` exit 0.
 - 8_3 changed no production code, and that was the plan's own instruction rather than a discovery: D14's ordering was already right, so the task exists to give it a failure mode. `remint` drops an untranslatable id silently, so the witness counts group sizes — an assertion that only checks "every id resolves" passes on a group that has been silently shrunk.
-
+- Round 9 (cycle 6 verification) returned APPROVE with zero findings; the data-security specialist
+  ran a 50,017-input differential probe of `parse()` against `parseTree`+`getNodeValue` and found no
+  unintended difference in either recovered values or error arrays. Implementation approved under
+  fastlane.
+- Blueprint sync: `worktree-provisioning.md` § 3.4 (parse-tree reading and the missing-value-node
+  guard, D12), § 4.2 (assembled in the stated order but BUILT native-first, with the deliberate
+  problem-order consequence, D3), § 4.4 (the contest is filled after merge and exclude, D14), § 9
+  (two rows: unreadable `extends` per D13, and `__proto__` as a reported key), § 10 (a parse-tree
+  testing row). `worktree-create.md` § 4.3's click-to-expand bullet replaced by one row per item,
+  which is what shipped (D6). PLAN WT-012.4 Status set to done.

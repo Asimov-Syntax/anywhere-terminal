@@ -624,7 +624,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | new-api-contract, user-visible-ui |
 | **Notes** | The merge rule is the contract the UI's per-row badge depends on, so it is what breaks quietly if provenance is dropped anywhere in the pipeline. Four problem reasons are distinct on purpose — a missing `extends` target is not an unreadable file, and the difference decides whether the inline keys still apply |
 | **Acceptance** | A native file extending a provider produces one list whose entries each name their own origin; an inline entry sharing a path with an inherited one wins including its mode; an excluded path is shown as deliberate rather than missing and is not counted in the row total; setup steps from two sources are neither deduped nor reordered; a malformed file, an unknown key, and a missing `extends` target each report distinctly and none of them discards the rest of the file; a missing `extends` target still applies the native file's own inline keys; Create stays enabled through every one of these states |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.5] Configure Writes Our File and Only Ours
 

@@ -391,9 +391,11 @@ The section renders the provision model from
 - **Every row names its source file.** The badge slot answers *which file said so* and nothing
   else. Consequences of the mode — `writes to main` for a link, `copied on Windows` for a
   degraded one — are a separate warning affordance. A linked row carries both.
-- **Mixed provenance is click-to-expand.** Collapsed, a row whose entries come from two files
-  states the source count; expanded, each path names its own provider. Excluded paths appear in
-  the expanded list, marked as deliberate, and are **not** counted in the row total.
+- **One row per item, each naming its own source.** Superseded the earlier click-to-expand rule,
+  which described one row per KIND that collapsed a mixed-provenance section behind a source
+  count. The shipped list is one row per entry and every row already carries its own file, so
+  there is nothing left collapsed to expand. Excluded paths are listed in place, marked as
+  deliberate, and are **not** counted in the row total.
 - **Every row is a checkbox, and setup steps start unchecked.** A provider file is untrusted
   input, and a default-on box the user did not clear is not consent to run it.
 - **The form submits selections against a host-held offer, never command text.** What executes is
