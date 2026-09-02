@@ -226,7 +226,7 @@
   - **Plan**:
     1. In `src/worktree/provisioning/applyProvisioning.test.ts`, witness D4 row 3 reached through the pre-pass rather than through the ordered pass, using one fixture that also covers a contest in which every member is refused by its own rule.
 
-- [ ] 10_6 Walk the dialog through every selection of a group nothing can decide
+- [x] 10_6 Walk the dialog through every selection of a group nothing can decide — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 10_1
   - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding, design.md D3c
   - **Acceptance**:
@@ -235,3 +235,4 @@
   - **Plan**:
     1. In `src/webview/worktree/WorktreeCreateDialog.test.ts`, drive one group of two repository declarations and one inherited declaration through each selection the spec's scenarios name — as offered, one repository declaration unselected, selected again, and only the inherited one left — asserting the note on every row and the summary count at each step.
     2. The last of those is the state that falsified the first draft of this plan: the inherited declaration alone is applied, so nothing may still be claiming it will be refused.
+    3. In `src/webview/worktree/WorktreeCreateDialog.ts`, render a yielding note for every repository declaration the group could settle on rather than only the one the offered selection favours — with two of them, no note is favoured at render and the note the second scenario needs was never in the DOM to come back. `contestedBy` already renders against all natives for exactly this reason; the yielding note is the same requirement seen from the other side.

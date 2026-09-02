@@ -337,7 +337,7 @@ interface BringRow {
    * Offered unchecked rather than withheld: the user can still tick it, and
    * unticking the repository's own is what makes it arrive.
    */
-  yields?: { id: string; path: string };
+  yields?: readonly Claimant[];
   /**
    * More than one of the repository's own declarations names this destination.
    *
@@ -445,6 +445,37 @@ function contestedBy(model: WorktreeProvisionOffer["model"]): Map<string, readon
   return claimed;
 }
 
+/**
+ * For each member that is not the repository's own, every declaration of its
+ * group that could end up favoured.
+ *
+ * Rendered against ALL the group's repository declarations rather than the one
+ * the offered selection favours, for the same reason `contestedBy` is: with two
+ * of them nothing is favoured at the offered selection, and a note that was
+ * never rendered cannot appear when the user unselects one and makes the other
+ * the favoured declaration. Which of them the note is about is settled at
+ * selection time, not here.
+ */
+function yieldCandidates(model: WorktreeProvisionOffer["model"]): Map<string, readonly Claimant[]> {
+  const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
+  const candidates = new Map<string, readonly Claimant[]>();
+  for (const group of model.contenders) {
+    const natives = group.natives.flatMap((id) => {
+      const path = pathOf.get(id);
+      return path === undefined ? [] : [{ id, path }];
+    });
+    if (natives.length === 0) {
+      continue;
+    }
+    for (const member of group.members) {
+      if (!group.natives.includes(member)) {
+        candidates.set(member, natives);
+      }
+    }
+  }
+  return candidates;
+}
+
 /** The members no selection of theirs can bring over, for the selection held. */
 function refusedEntire(model: WorktreeProvisionOffer["model"], selected: ReadonlySet<string>): ReadonlySet<string> {
   const refused = new Set<string>();
@@ -475,10 +506,12 @@ function bringRows(model: WorktreeProvisionOffer["model"], selected?: ReadonlySe
   // succeeds (design.md D3c).
   const holding = selected ?? new Set(model.entries.map((e) => e.id));
   const yielding = yieldsTo(model, holding);
+  const couldYieldTo = yieldCandidates(model);
   const contested = contestedBy(model);
   for (const entry of model.entries) {
     const named = partners.get(entry.id);
     const loses = yielding.get(entry.id);
+    const candidates = couldYieldTo.get(entry.id);
     const claimed = contested.get(entry.id);
     rows.push({
       id: entry.id,
@@ -488,7 +521,7 @@ function bringRows(model: WorktreeProvisionOffer["model"], selected?: ReadonlySe
       checked: loses === undefined,
       ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
       ...(named === undefined ? {} : { contender: named }),
-      ...(loses === undefined ? {} : { yields: loses }),
+      ...(candidates === undefined ? {} : { yields: candidates }),
       ...(claimed === undefined ? {} : { contested: claimed }),
     });
   }
@@ -729,11 +762,17 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     // counterpart this row is no longer refused by anything, and a standing
     // refusal notice on the row they just chose describes a state that has
     // lapsed (round-1 F001). The id it depends on travels with it.
-    const note = document.createElement("span");
-    note.className = "wt-brow-note wt-brow-yield";
-    note.dataset.favoured = row.yields.id;
-    note.textContent = `refused while ${row.yields.path} is selected`;
-    meta.appendChild(note);
+    // One per declaration that could be favoured, and each says which. The
+    // group's whole membership rides along, because whether ANY of them is
+    // favoured is a count over the selection, not a fact about one id.
+    for (const candidate of row.yields) {
+      const note = document.createElement("span");
+      note.className = "wt-brow-note wt-brow-yield";
+      note.dataset.favoured = candidate.id;
+      note.dataset.claiming = row.yields.map((c) => c.id).join(" ");
+      note.textContent = `refused while ${candidate.path} is selected`;
+      meta.appendChild(note);
+    }
   }
   if (row.contested !== undefined) {
     // Live like the yielding note, and for the same reason: the user settles
@@ -1193,7 +1232,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   function syncYieldNotes(ticked: ReadonlySet<string>): void {
     for (const note of bringBox.querySelectorAll<HTMLElement>(".wt-brow-yield")) {
       const favoured = note.dataset.favoured;
-      note.hidden = favoured === undefined || !ticked.has(favoured);
+      // A COUNT again, for the same reason as below: this note is true only
+      // while its own declaration is the one the group settles on, which needs
+      // every other repository declaration of the group unselected.
+      const claiming = note.dataset.claiming;
+      const ids = claiming === undefined || claiming === "" ? [] : claiming.split(" ");
+      const settled = ids.filter((id) => ticked.has(id));
+      note.hidden = favoured === undefined || settled.length !== 1 || settled[0] !== favoured;
     }
     // The condition here is a COUNT, not one id: the group is refused while
     // more than one of the named declarations is selected, and leaving exactly

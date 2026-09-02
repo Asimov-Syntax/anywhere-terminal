@@ -3670,3 +3670,93 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     expect(submitted[0]?.provision?.itemIds).toEqual(["i1", "i2"]);
   });
 });
+
+describe("[round-7 F017] a group the repository declares more than once", () => {
+  const TRIO = [
+    { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i2", path: "mixedcase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i3", path: "MiXeDcAsE", mode: "link", source: "orca.yaml" },
+  ] as const;
+
+  function withTrio() {
+    return open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              entries: [...TRIO],
+              ports: [],
+              setup: [],
+              contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1", "i2"] }],
+            }),
+          }),
+        }),
+      ],
+    });
+  }
+
+  /** Every note the section is currently SHOWING, in row order. */
+  const shown = (host: HTMLElement): readonly string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>(".wt-brow-yield, .wt-brow-contested"))
+      .filter((n) => !n.hidden)
+      .map((n) => n.textContent ?? "");
+
+  const sum = (host: HTMLElement): string | null | undefined => host.querySelector(".wt-bring-sum")?.textContent;
+
+  const boxes = (q: ReturnType<typeof withTrio>["q"]) =>
+    Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+
+  const CONTESTED =
+    "refused while MixedCase and mixedcase are both selected — the repository declares this destination more than once";
+
+  it("offers all three SELECTED, each saying the create will refuse it", () => {
+    // Not unticked, which is what the first draft of D3c offered. An
+    // all-unticked group is not a fixed point of this dialog's own predicate:
+    // at zero selected repository declarations nothing claims priority, so
+    // ticking only the inherited row would COPY it while every row still said
+    // nothing would be brought over — F007 a fourth time.
+    const { host } = withTrio();
+    const cbs = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+
+    expect(cbs.map((b) => b.value)).toEqual(["i1", "i2", "i3"]);
+    expect(cbs.map((b) => b.checked)).toEqual([true, true, true]);
+    expect(shown(host)).toEqual([CONTESTED, CONTESTED, CONTESTED]);
+    expect(sum(host)).toBe("3 spellings may be one file");
+  });
+
+  it("counts the one that is left when the user unselects a second declaration", () => {
+    // Exactly one repository declaration selected is the state the apply can
+    // settle: it is favoured, and the inherited row yields to it.
+    const { host, q } = withTrio();
+    boxes(q)[1]?.click();
+
+    expect(shown(host)).toEqual(["refused while MixedCase is selected"]);
+    expect(sum(host)).toBe("1 copied · 3 spellings may be one file");
+  });
+
+  it("puts every refusal back when the second declaration is selected again", () => {
+    const { host, q } = withTrio();
+    boxes(q)[1]?.click();
+    boxes(q)[1]?.click();
+
+    expect(shown(host)).toEqual([CONTESTED, CONTESTED, CONTESTED]);
+    expect(sum(host)).toBe("3 spellings may be one file");
+  });
+
+  it("counts the inherited declaration once it is the only one left", () => {
+    // The state that falsified the first draft of this plan. Nothing claims
+    // priority, so the apply materializes the inherited row — and no note may
+    // still be saying it will be refused.
+    const { host, q, submitted } = withTrio();
+    boxes(q)[0]?.click();
+    boxes(q)[1]?.click();
+
+    expect(shown(host)).toEqual([]);
+    expect(sum(host)).toBe("1 linked · 3 spellings may be one file");
+
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision?.itemIds).toEqual(["i3"]);
+  });
+});
