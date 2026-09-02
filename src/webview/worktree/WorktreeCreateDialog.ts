@@ -293,12 +293,6 @@ export { sanitizeBranchForPath };
  * value anything reads yet — WT-012.2 is where a checkbox first decides
  * anything.
  */
-/** One of the repository's own declarations competing for a destination. */
-interface Claimant {
-  id: string;
-  path: string;
-}
-
 interface BringRow {
   id: string;
   verb: string;
@@ -337,7 +331,7 @@ interface BringRow {
    * Offered unchecked rather than withheld: the user can still tick it, and
    * unticking the repository's own is what makes it arrive.
    */
-  yields?: readonly Claimant[];
+  yields?: true;
   /**
    * More than one of the repository's own declarations names this destination.
    *
@@ -346,7 +340,16 @@ interface BringRow {
    * it, and the user has to be told which ones are competing to do that
    * (design.md D3c).
    */
-  contested?: readonly Claimant[];
+  contested?: true;
+  /**
+   * Index into `model.contenders`, for the notes above.
+   *
+   * A pointer, never a copy of the membership: a group is every entry sharing
+   * one fold key, so at `MAX_MODEL_ROWS` it can hold every row the cap allows,
+   * and copying its declarations into each note it explains is quadratic in a
+   * checked-in file's own rows (.reviews/round-8.md F019).
+   */
+  group?: number;
 }
 
 /**
@@ -411,79 +414,67 @@ function contenderPartners(model: WorktreeProvisionOffer["model"]): Map<string, 
 }
 
 /**
- * Rows the apply will refuse because more than one of the repository's own
- * declarations for their destination is selected.
+ * Which contender group each entry belongs to, and which of them are the
+ * repository's own declarations.
+ *
+ * The notes are rendered against the group rather than against the declaration
+ * the OFFERED selection favours, for the same reason both of them are shown by
+ * a count: with more than one repository declaration nothing is favoured at the
+ * offered selection, and a note that was never rendered cannot appear when the
+ * user unselects one and makes another the favoured declaration. WHICH
+ * declarations a note names is settled at selection time, not here.
+ */
+function groupIndex(model: WorktreeProvisionOffer["model"]): Map<string, { group: number; native: boolean }> {
+  const of = new Map<string, { group: number; native: boolean }>();
+  model.contenders.forEach((contest, group) => {
+    const natives = new Set(contest.natives);
+    for (const member of contest.members) {
+      of.set(member, { group, native: natives.has(member) });
+    }
+  });
+  return of;
+}
+
+/** `A and B are both selected` / `A, B and C are all selected`. */
+function bothOrAll(paths: readonly string[]): string {
+  return paths.length === 2
+    ? `${paths[0]} and ${paths[1]} are both selected`
+    : `${paths.slice(0, -1).join(", ")} and ${paths[paths.length - 1]} are all selected`;
+}
+
+/**
+ * The repository's own declarations of each group that the selection still holds.
  *
  * The other half of D3c's predicate, and the half with no counterpart to name:
  * nothing decides between two of the repository's own declarations, so no
  * single row can be unticked to rescue the group — the user has to leave one of
  * them selected, which is why every member says so rather than one of them.
  *
- * Selected is the ORDINARY default here, unlike a yielder. Unticking is what
- * makes a yielder's group succeed, so unticked is the state its note describes;
- * this group has no succeeding state to default to, and offering it unselected
- * would make every row's note false at the very selection it was offered at.
+ * Selected is the ORDINARY default for such a group, unlike a yielder. Unticking
+ * is what makes a yielder's group succeed, so unticked is the state its note
+ * describes; this group has no succeeding state to default to, and offering it
+ * unselected would make every row's note false at the very selection it was
+ * offered at — and would read as "nothing claims priority", which is the state
+ * the apply APPLIES.
  */
-function contestedBy(model: WorktreeProvisionOffer["model"]): Map<string, readonly Claimant[]> {
-  const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
-  const claimed = new Map<string, readonly Claimant[]>();
-  for (const group of model.contenders) {
-    // Every repository declaration in the group, not only the selected ones:
-    // the note has to be able to come BACK when the user selects a second one
-    // again, and a note that was never rendered cannot.
-    const claiming = group.natives.flatMap((id) => {
-      const path = pathOf.get(id);
-      return path === undefined ? [] : [{ id, path }];
-    });
-    if (claiming.length < 2) {
-      continue;
-    }
-    for (const member of group.members) {
-      claimed.set(member, claiming);
-    }
-  }
-  return claimed;
-}
-
-/**
- * For each member that is not the repository's own, every declaration of its
- * group that could end up favoured.
- *
- * Rendered against ALL the group's repository declarations rather than the one
- * the offered selection favours, for the same reason `contestedBy` is: with two
- * of them nothing is favoured at the offered selection, and a note that was
- * never rendered cannot appear when the user unselects one and makes the other
- * the favoured declaration. Which of them the note is about is settled at
- * selection time, not here.
- */
-function yieldCandidates(model: WorktreeProvisionOffer["model"]): Map<string, readonly Claimant[]> {
-  const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
-  const candidates = new Map<string, readonly Claimant[]>();
-  for (const group of model.contenders) {
-    const natives = group.natives.flatMap((id) => {
-      const path = pathOf.get(id);
-      return path === undefined ? [] : [{ id, path }];
-    });
-    if (natives.length === 0) {
-      continue;
-    }
-    for (const member of group.members) {
-      if (!group.natives.includes(member)) {
-        candidates.set(member, natives);
-      }
-    }
-  }
-  return candidates;
+function claimingPerGroup(
+  model: WorktreeProvisionOffer["model"],
+  selected: ReadonlySet<string>,
+): readonly (readonly string[])[] {
+  return model.contenders.map((contest) => contest.natives.filter((id) => selected.has(id)));
 }
 
 /** The members no selection of theirs can bring over, for the selection held. */
 function refusedEntire(model: WorktreeProvisionOffer["model"], selected: ReadonlySet<string>): ReadonlySet<string> {
   const refused = new Set<string>();
-  for (const [member, claiming] of contestedBy(model)) {
-    if (claiming.filter((c) => selected.has(c.id)).length > 1) {
-      refused.add(member);
+  const claiming = claimingPerGroup(model, selected);
+  model.contenders.forEach((contest, group) => {
+    if ((claiming[group]?.length ?? 0) > 1) {
+      for (const member of contest.members) {
+        refused.add(member);
+      }
     }
-  }
+  });
   return refused;
 }
 
@@ -496,7 +487,7 @@ function refusedEntire(model: WorktreeProvisionOffer["model"], selected: Readonl
  * spec says each row names the file that declared it, which a "Copy 2 files"
  * row cannot do once two files came from two providers.
  */
-function bringRows(model: WorktreeProvisionOffer["model"], selected?: ReadonlySet<string>): BringRow[] {
+function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
   const rows: BringRow[] = [];
   const partners = contenderPartners(model);
   // The initial render has no selection yet, so it asks the predicate what the
@@ -504,15 +495,15 @@ function bringRows(model: WorktreeProvisionOffer["model"], selected?: ReadonlySe
   // — a yielder is then refused and offered unticked, and an undecidable group
   // is refused and says so while staying ticked, because no tick state of it
   // succeeds (design.md D3c).
-  const holding = selected ?? new Set(model.entries.map((e) => e.id));
+  const holding = new Set(model.entries.map((e) => e.id));
   const yielding = yieldsTo(model, holding);
-  const couldYieldTo = yieldCandidates(model);
-  const contested = contestedBy(model);
+  const grouped = groupIndex(model);
+  const natives = model.contenders.map((c) => c.natives.length);
   for (const entry of model.entries) {
     const named = partners.get(entry.id);
     const loses = yielding.get(entry.id);
-    const candidates = couldYieldTo.get(entry.id);
-    const claimed = contested.get(entry.id);
+    const place = grouped.get(entry.id);
+    const claiming = place === undefined ? 0 : (natives[place.group] ?? 0);
     rows.push({
       id: entry.id,
       verb: entry.mode === "link" ? "Link" : "Copy",
@@ -521,8 +512,9 @@ function bringRows(model: WorktreeProvisionOffer["model"], selected?: ReadonlySe
       checked: loses === undefined,
       ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
       ...(named === undefined ? {} : { contender: named }),
-      ...(candidates === undefined ? {} : { yields: candidates }),
-      ...(claimed === undefined ? {} : { contested: claimed }),
+      ...(place === undefined ? {} : { group: place.group }),
+      ...(place !== undefined && !place.native && claiming > 0 ? { yields: true } : {}),
+      ...(claiming > 1 ? { contested: true } : {}),
     });
   }
   for (const port of model.ports) {
@@ -753,37 +745,29 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     note.textContent = `may be the same file as ${row.contender.join(", ")}`;
     meta.appendChild(note);
   }
-  if (row.yields !== undefined) {
+  if (row.yields === true && row.group !== undefined) {
     // Said, not merely unchecked: an unticked row with no reason reads as an
     // oversight, and the reason is the one thing that tells the user ticking it
     // will not work while its counterpart stays selected.
     //
-    // The condition is live, so the note is too. Once the user unticks the
-    // counterpart this row is no longer refused by anything, and a standing
-    // refusal notice on the row they just chose describes a state that has
-    // lapsed (round-1 F001). The id it depends on travels with it.
-    // One per declaration that could be favoured, and each says which. The
-    // group's whole membership rides along, because whether ANY of them is
-    // favoured is a count over the selection, not a fact about one id.
-    for (const candidate of row.yields) {
-      const note = document.createElement("span");
-      note.className = "wt-brow-note wt-brow-yield";
-      note.dataset.favoured = candidate.id;
-      note.dataset.claiming = row.yields.map((c) => c.id).join(" ");
-      note.textContent = `refused while ${candidate.path} is selected`;
-      meta.appendChild(note);
-    }
+    // Left empty here and filled by `syncYieldNotes` from the selection: WHICH
+    // declaration this row yields to is not a fact about the offer once the
+    // group holds more than one of the repository's own.
+    const note = document.createElement("span");
+    note.className = "wt-brow-note wt-brow-yield";
+    note.dataset.group = String(row.group);
+    meta.appendChild(note);
   }
-  if (row.contested !== undefined) {
+  if (row.contested === true && row.group !== undefined) {
     // Live like the yielding note, and for the same reason: the user settles
-    // this by leaving exactly one of the named declarations selected, and a
-    // standing notice would then describe a state that has lapsed. The ids it
-    // watches travel with it, because no single one of them is the one to
-    // untick (design.md D3c).
+    // this by leaving exactly one of the group's declarations selected, and a
+    // standing notice would then describe a state that has lapsed. Which
+    // declarations it NAMES follows the selection too — visibility needs only
+    // two of them, so naming a third the user unticked describes a selection
+    // nobody holds (.reviews/round-8.md F018).
     const note = document.createElement("span");
     note.className = "wt-brow-note wt-brow-contested";
-    note.dataset.claiming = row.contested.map((c) => c.id).join(" ");
-    note.textContent = `refused while ${row.contested.map((c) => c.path).join(" and ")} are both selected — the repository declares this destination more than once`;
+    note.dataset.group = String(row.group);
     meta.appendChild(note);
   }
   if (row.excluded === true) {
@@ -1230,23 +1214,37 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * happen (round-1 F001).
    */
   function syncYieldNotes(ticked: ReadonlySet<string>): void {
-    for (const note of bringBox.querySelectorAll<HTMLElement>(".wt-brow-yield")) {
-      const favoured = note.dataset.favoured;
-      // A COUNT again, for the same reason as below: this note is true only
-      // while its own declaration is the one the group settles on, which needs
-      // every other repository declaration of the group unselected.
-      const claiming = note.dataset.claiming;
-      const ids = claiming === undefined || claiming === "" ? [] : claiming.split(" ");
-      const settled = ids.filter((id) => ticked.has(id));
-      note.hidden = favoured === undefined || settled.length !== 1 || settled[0] !== favoured;
+    if (drawnModel === null) {
+      return;
     }
-    // The condition here is a COUNT, not one id: the group is refused while
-    // more than one of the named declarations is selected, and leaving exactly
-    // one is what settles it (design.md D3c).
+    const pathOf = new Map(drawnModel.entries.map((e) => [e.id, e.path] as const));
+    // Once per GROUP, not once per note. Every note pointing at a group asks the
+    // same question of the same list, and a group is every entry sharing one
+    // fold key, so it can hold every row the cap allows: reading it per note
+    // made one checked-in file quadratic in its own rows
+    // (.reviews/round-8.md F019).
+    const claiming = claimingPerGroup(drawnModel, ticked).map((ids) =>
+      ids.flatMap((id) => {
+        const path = pathOf.get(id);
+        return path === undefined ? [] : [path];
+      }),
+    );
+    for (const note of bringBox.querySelectorAll<HTMLElement>(".wt-brow-yield")) {
+      const held = claiming[Number(note.dataset.group)] ?? [];
+      // Exactly one, which is D3c's favoured case. None leaves nothing claiming
+      // priority and the apply applies the group, so there is no refusal to
+      // warn about; more than one refuses it entire, which the note below owns.
+      note.hidden = held.length !== 1;
+      if (held[0] !== undefined) {
+        note.textContent = `refused while ${held[0]} is selected`;
+      }
+    }
     for (const note of bringBox.querySelectorAll<HTMLElement>(".wt-brow-contested")) {
-      const claiming = note.dataset.claiming;
-      const ids = claiming === undefined || claiming === "" ? [] : claiming.split(" ");
-      note.hidden = ids.filter((id) => ticked.has(id)).length < 2;
+      const held = claiming[Number(note.dataset.group)] ?? [];
+      note.hidden = held.length < 2;
+      if (held.length >= 2) {
+        note.textContent = `refused while ${bothOrAll(held)} — the repository declares this destination more than once`;
+      }
     }
   }
 

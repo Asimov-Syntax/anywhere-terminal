@@ -236,3 +236,18 @@
     1. In `src/webview/worktree/WorktreeCreateDialog.test.ts`, drive one group of two repository declarations and one inherited declaration through each selection the spec's scenarios name — as offered, one repository declaration unselected, selected again, and only the inherited one left — asserting the note on every row and the summary count at each step.
     2. The last of those is the state that falsified the first draft of this plan: the inherited declaration alone is applied, so nothing may still be claiming it will be refused.
     3. In `src/webview/worktree/WorktreeCreateDialog.ts`, render a yielding note for every repository declaration the group could settle on rather than only the one the offered selection favours — with two of them, no note is favoured at render and the note the second scenario needs was never in the DOM to come back. `contestedBy` already renders against all natives for exactly this reason; the yielding note is the same requirement seen from the other side.
+
+## 11. Round-8 fixes — the note follows the selection, and there is one of it
+
+- [x] 11_1 Derive each contested row's note from the selection, once per group — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
+  - **Deps**: 10_6
+  - **Refs**: .reviews/round-8.md, design.md D3c
+  - **Acceptance**:
+    - Outcome: Every note names exactly the declarations currently keeping its row refused, and a group renders one note per row whatever its size
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeCreateDialog.ts`, render ONE yielding note and ONE contested note per row, each pointing at its group by index rather than carrying a copy of the group's ids (F019). Task 10_6 rendered one per candidate declaration, which is `(M-K)*K` spans each holding `K` ids — reachable from a checked-in file, because `MAX_MODEL_ROWS` is 200 and a group is every entry sharing one fold key.
+    2. Set both notes' text and visibility in `syncYieldNotes` from the selected repository declarations of their group, computed once per group per toggle. A three-native group is visible while two are selected, so text naming all three is false at that selection (F018); the wording follows the count.
+    3. Drop `bringRows`' unused `selected` parameter and the `!selected.has(favoured.id)` test that cannot be true, and move the fixed-point rationale onto the predicate that actually enforces it (F020).
+    4. Witness a three-native group with one unticked — the note names the two that are selected, not the three that exist — and that one inherited row carries one yielding note however many repository declarations its group holds.
+

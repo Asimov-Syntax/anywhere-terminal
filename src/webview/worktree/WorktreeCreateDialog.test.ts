@@ -3760,3 +3760,79 @@ describe("[round-7 F017] a group the repository declares more than once", () => 
     expect(submitted[0]?.provision?.itemIds).toEqual(["i3"]);
   });
 });
+
+describe("[round-8 F018/F019] a note names the declarations that are actually keeping the row refused", () => {
+  const QUARTET = [
+    { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i2", path: "mixedcase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i3", path: "MIXEDCASE", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i4", path: "MiXeDcAsE", mode: "link", source: "orca.yaml" },
+  ] as const;
+
+  function withQuartet() {
+    return open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              entries: [...QUARTET],
+              ports: [],
+              setup: [],
+              contenders: [{ members: ["i1", "i2", "i3", "i4"], natives: ["i1", "i2", "i3"] }],
+            }),
+          }),
+        }),
+      ],
+    });
+  }
+
+  const shownNotes = (host: HTMLElement): readonly string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>(".wt-brow-yield, .wt-brow-contested"))
+      .filter((n) => !n.hidden)
+      .map((n) => n.textContent ?? "");
+
+  it("names all three while all three are selected", () => {
+    const { host } = withQuartet();
+
+    expect(shownNotes(host)).toEqual(
+      Array(4).fill(
+        "refused while MixedCase, mixedcase and MIXEDCASE are all selected — the repository declares this destination more than once",
+      ),
+    );
+  });
+
+  it("names only the two still selected once the third is unticked", () => {
+    // Visibility needs two, so the note survives the third being unticked —
+    // and a note that goes on naming MIXEDCASE describes a selection that has
+    // lapsed. The refusal is still right; the explanation was not.
+    const { host, q } = withQuartet();
+    Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"))[2]?.click();
+
+    expect(shownNotes(host)).toEqual(
+      Array(4).fill(
+        "refused while MixedCase and mixedcase are both selected — the repository declares this destination more than once",
+      ),
+    );
+  });
+
+  it("gives the inherited row ONE yielding note, not one per repository declaration", () => {
+    // `MAX_MODEL_ROWS` is 200 and a group is every entry sharing one fold key,
+    // so one note per candidate is quadratic in a checked-in file's own rows.
+    const { host } = withQuartet();
+    const rows = Array.from(host.querySelectorAll<HTMLElement>(".wt-brow"));
+    const inherited = rows[3];
+
+    expect(inherited?.querySelectorAll(".wt-brow-yield")).toHaveLength(1);
+    expect(host.querySelectorAll(".wt-brow-yield")).toHaveLength(1);
+  });
+
+  it("still yields to whichever declaration is left alone", () => {
+    const { host, q } = withQuartet();
+    const boxes = Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+    boxes[0]?.click();
+    boxes[1]?.click();
+
+    expect(shownNotes(host)).toEqual(["refused while MIXEDCASE is selected"]);
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 4 spellings may be one file");
+  });
+});
