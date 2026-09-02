@@ -8,12 +8,12 @@
 
 - [x] Gate 1: direction approved — ship an indeterminate failure contract
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -42,3 +42,4 @@ Gate 2 fastlane: approved after the plan attack found every changed ledger claim
 Review handback: round 3 closed F006–F007 but accepted F010; replan the whole-tree cache merge so each fresh public generation resolves only to the registration from the same successful repository observation.
 Gate 2 fastlane: approved after Oracle supported canonical current-root selection, same-record generation/registration lookup, repo-scoped follow-up refusal, and degraded sibling retention for F010.
 Review extension: the user explicitly authorized adding review rounds for this FASTLANE cycle; round 4 may use the one-time extension after F010 is fixed.
+Review handback: round 4 fixed F010 but accepted F012–F014; replan duplicate-folder retention, unpublished-generation refusal, and offer lifecycle checks against current cache authority rather than retained roots.
