@@ -99,3 +99,12 @@
     1. In `src/extension.ts`, construct the setup terminal and output owner, manifest writer, setup and retry callbacks, and provisioning reporter beside the existing entry and port bindings; use the shared directory authority and git runner.
     2. Include setup fields in initial results, use the provisioning-only reporter for retry, route output reveal through the scoped terminal owner, and reconcile retry and output state from authoritative rebuild membership without changing native-config writer seams.
     3. Extend `src/extension.worktreeMutations.test.ts` for the production dependency path and `src/extension.worktreeAssembly.test.ts` for offer-to-create ordering, setup failure and retry, manifest warning, and both agent-gate branches.
+
+- [x] 4_3 Conform the setup delta to the current Biome gate — verified: pnpm exec biome check src/extension.ts src/extension.worktreeAssembly.test.ts src/providers/WorktreeHost.ts src/worktree/worktreeMutationService.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_2
+  - **Refs**: design.md D1, D2, D3, D4, D5, D6
+  - **Acceptance**:
+    - Outcome: every source file changed for setup passes the repository's current check-mode formatter and linter without changing behavior
+    - Verify: command pnpm exec biome check src/extension.ts src/extension.worktreeAssembly.test.ts src/providers/WorktreeHost.ts src/worktree/worktreeMutationService.ts
+  - **Plan**:
+    1. Apply only the block, import-order, and line-layout changes reported by check mode in `src/extension.ts`, `src/extension.worktreeAssembly.test.ts`, `src/providers/WorktreeHost.ts`, and `src/worktree/worktreeMutationService.ts`.

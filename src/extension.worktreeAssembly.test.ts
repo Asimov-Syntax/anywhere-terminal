@@ -57,7 +57,9 @@ const setupHarness = vi.hoisted(() => ({
 vi.mock("./worktree/provisioning/setupRunner", () => ({
   runSetup: async (input: { steps: readonly { id: string; source: string; script: string }[] }) => {
     setupHarness.runs.push(input);
-    if (setupHarness.wait !== null) await setupHarness.wait;
+    if (setupHarness.wait !== null) {
+      await setupHarness.wait;
+    }
     const outcome = setupHarness.outcomes.shift() ?? "ok";
     return {
       succeeded: outcome === "ok",
@@ -233,7 +235,9 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
         }
         if (registerCreates && args[0] === "worktree" && args[1] === "add") {
           const created = args.find((arg) => path.isAbsolute(arg) && arg !== cwd);
-          if (created !== undefined) registered.push(created);
+          if (created !== undefined) {
+            registered.push(created);
+          }
         }
         if (args[0] === "worktree" && args[1] === "remove") {
           // Real git drops the registration AND the directory; the host reads
@@ -1675,7 +1679,9 @@ describe("the invariants that span the host and the webview", () => {
       "the setup offer",
     );
     const branch = document.querySelector<HTMLInputElement>("#wt-branch");
-    if (branch === null) throw new Error("the create form has no branch field");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
     branch.value = "feat/setup";
     branch.dispatchEvent(new Event("input", { bubbles: true }));
     branch.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1685,26 +1691,36 @@ describe("the invariants that span the host and the webview", () => {
       (row.textContent ?? "").includes("Run setup"),
     );
     const setupBox = setupRow?.querySelector<HTMLInputElement>(".wt-brow-cb");
-    if (setupBox === null || setupBox === undefined) throw new Error("the setup offer has no checkbox");
+    if (setupBox === null || setupBox === undefined) {
+      throw new Error("the setup offer has no checkbox");
+    }
     setupBox.checked = true;
     setupBox.dispatchEvent(new Event("change", { bubbles: true }));
     const after = document.querySelector<HTMLSelectElement>("#wt-after");
-    if (after === null) throw new Error("the create form has no after-create field");
+    if (after === null) {
+      throw new Error("the create form has no after-create field");
+    }
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
     const wait = document.querySelector<HTMLInputElement>("#wt-wait-setup");
-    if (wait === null || wait.disabled) throw new Error("the selected setup did not enable the wait control");
+    if (wait === null || wait.disabled) {
+      throw new Error("the selected setup did not enable the wait control");
+    }
     wait.checked = true;
     wait.dispatchEvent(new Event("change", { bubbles: true }));
     const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
-    if (destination === undefined || destination === "") throw new Error("the host resolved no destination");
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
     fs.mkdirSync(destination, { recursive: true });
 
     [...document.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => /create worktree/i.test(button.textContent ?? ""))
       ?.click();
     await settleUntil(
-      () => setupHarness.runs.length === 1 && [...document.querySelectorAll("button")].some((b) => b.textContent === "Retry setup"),
+      () =>
+        setupHarness.runs.length === 1 &&
+        [...document.querySelectorAll("button")].some((b) => b.textContent === "Retry setup"),
       "the failed setup result",
     );
 
@@ -1716,7 +1732,9 @@ describe("the invariants that span the host and the webview", () => {
 
     [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Retry setup")?.click();
     await settleUntil(
-      () => setupHarness.runs.length === 2 && ![...document.querySelectorAll("button")].some((b) => b.textContent === "Retry setup"),
+      () =>
+        setupHarness.runs.length === 2 &&
+        ![...document.querySelectorAll("button")].some((b) => b.textContent === "Retry setup"),
       "the successful setup retry",
     );
 
@@ -1750,7 +1768,9 @@ describe("the invariants that span the host and the webview", () => {
     );
     const branch = document.querySelector<HTMLInputElement>("#wt-branch");
     const after = document.querySelector<HTMLSelectElement>("#wt-after");
-    if (branch === null || after === null) throw new Error("the create form is missing its setup launch fields");
+    if (branch === null || after === null) {
+      throw new Error("the create form is missing its setup launch fields");
+    }
     branch.value = "feat/ungated-setup";
     branch.dispatchEvent(new Event("input", { bubbles: true }));
     branch.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1758,13 +1778,17 @@ describe("the invariants that span the host and the webview", () => {
     const setupBox = [...document.querySelectorAll<HTMLElement>(".wt-brow")]
       .find((row) => (row.textContent ?? "").includes("Run setup"))
       ?.querySelector<HTMLInputElement>(".wt-brow-cb");
-    if (setupBox === null || setupBox === undefined) throw new Error("the setup offer has no checkbox");
+    if (setupBox === null || setupBox === undefined) {
+      throw new Error("the setup offer has no checkbox");
+    }
     setupBox.checked = true;
     setupBox.dispatchEvent(new Event("change", { bubbles: true }));
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
     const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
-    if (destination === undefined || destination === "") throw new Error("the host resolved no destination");
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
     fs.mkdirSync(destination, { recursive: true });
 
     [...document.querySelectorAll<HTMLButtonElement>("button")]
@@ -1779,7 +1803,10 @@ describe("the invariants that span the host and the webview", () => {
 
     release();
     setupHarness.wait = null;
-    await settleUntil(() => (document.body.textContent ?? "").includes("1 of 1 setup steps completed"), "setup completion");
+    await settleUntil(
+      () => (document.body.textContent ?? "").includes("1 of 1 setup steps completed"),
+      "setup completion",
+    );
   });
 
   it("[8_1] refuses both contenders through one contest when the destination cannot be read", async () => {
@@ -1828,7 +1855,10 @@ describe("the invariants that span the host and the webview", () => {
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
     await settleUntil(
-      () => [...document.querySelectorAll(".wt-notice")].some((notice) => (notice.textContent ?? "").includes("Create done.")),
+      () =>
+        [...document.querySelectorAll(".wt-notice")].some((notice) =>
+          (notice.textContent ?? "").includes("Create done."),
+        ),
       "the create result",
     );
 
@@ -2582,7 +2612,8 @@ describe("the invariants that span the host and the webview", () => {
     // Blocked on the dirty file only — an agent that is idle blocks nothing.
     clickItem(openMenu("feature"), /remove/i);
     await settleUntil(
-      () => [...document.querySelectorAll<HTMLElement>("button")].some((b) => /force remove/i.test(b.textContent ?? "")),
+      () =>
+        [...document.querySelectorAll<HTMLElement>("button")].some((b) => /force remove/i.test(b.textContent ?? "")),
       "the blocked removal to offer Force remove",
     );
     const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>

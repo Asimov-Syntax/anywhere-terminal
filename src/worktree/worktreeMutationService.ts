@@ -490,10 +490,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
     return environment;
   };
 
-  const executeSetup = async (
-    input: SetupExecutionInput,
-    origin?: WorktreeSurface,
-  ): Promise<SetupExecutionOutcome> => {
+  const executeSetup = async (input: SetupExecutionInput, origin?: WorktreeSurface): Promise<SetupExecutionOutcome> => {
     if (deps.runSetup === undefined) {
       return { steps: failedSetup(input.steps, "this window cannot run setup"), succeeded: false };
     }
@@ -509,7 +506,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
     ports: readonly ProvisionPortResult[],
     setup: readonly ProvisionSetupResult[],
   ): Promise<string | undefined> => {
-    if (deps.writeProvisionManifest === undefined) return undefined;
+    if (deps.writeProvisionManifest === undefined) {
+      return undefined;
+    }
     try {
       return (await deps.writeProvisionManifest(worktreePath, steps, ports, setup)).warning;
     } catch (error) {
@@ -1299,7 +1298,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                     });
               if (request.afterCreate.kind === "agent" && request.afterCreate.waitForSetup) {
                 setupOutcome = await run;
-                if (setupOutcome.succeeded) await launch();
+                if (setupOutcome.succeeded) {
+                  await launch();
+                }
               } else {
                 const launchPromise = launch();
                 setupOutcome = await run;
@@ -1311,12 +1312,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
 
             const setupResults = setupOutcome?.steps ?? [];
             if (provisionedAt !== undefined) {
-              manifestWarning = await writeManifest(
-                check.path,
-                provisioned ?? [],
-                allocatedPorts ?? [],
-                setupResults,
-              );
+              manifestWarning = await writeManifest(check.path, provisioned ?? [], allocatedPorts ?? [], setupResults);
               if (!setupOutcome?.succeeded && destinationAuthorization !== undefined && wantedSetup.length > 0) {
                 pendingSetupRetry = {
                   repoId: request.repoId,
@@ -1375,7 +1371,8 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 const current = deps.resolve({ repoId: request.repoId, worktreeId: outcome.worktreeId });
                 if (
                   current !== null &&
-                  normalizePathForCompare(current.worktreePath) === normalizePathForCompare(pendingSetupRetry.worktreePath)
+                  normalizePathForCompare(current.worktreePath) ===
+                    normalizePathForCompare(pendingSetupRetry.worktreePath)
                 ) {
                   const retryId = newSetupRetryId();
                   setupRetries.set(key, { ...pendingSetupRetry, incarnation: current.incarnation, retryId });

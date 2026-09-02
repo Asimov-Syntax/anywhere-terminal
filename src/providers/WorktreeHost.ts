@@ -18,8 +18,8 @@ import type {
   ProvisionModel,
   ProvisionPort,
   ProvisionProvider,
-  ProvisionSetupStep,
   ProvisionSelection,
+  ProvisionSetupStep,
   ResolvedDisposition,
   ResolvedMode,
   WebViewToExtensionMessage,
@@ -1591,10 +1591,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return false;
     }
     const m = msg as { worktreeId?: unknown; retryId?: unknown };
-    return typeof m.worktreeId === "string" && m.worktreeId.length > 0 && typeof m.retryId === "string" && m.retryId.length > 0;
+    return (
+      typeof m.worktreeId === "string" &&
+      m.worktreeId.length > 0 &&
+      typeof m.retryId === "string" &&
+      m.retryId.length > 0
+    );
   }
 
-  function isKnownSetupOutput(msg: unknown): msg is Extract<WorktreeActionMessage, { type: "worktreeSetupViewOutput" }> {
+  function isKnownSetupOutput(
+    msg: unknown,
+  ): msg is Extract<WorktreeActionMessage, { type: "worktreeSetupViewOutput" }> {
     if (typeof msg !== "object" || msg === null || !onlyKeys(msg, ["type", "outputId"])) {
       return false;
     }

@@ -76,8 +76,8 @@ import type { DelegationRoster } from "./worktree/presenceTypes";
 import { nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
 import { applyProvisioning, failEveryEntry } from "./worktree/provisioning/applyProvisioning";
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
-import { writeProvisionManifest } from "./worktree/provisioning/provisionManifest";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
+import { writeProvisionManifest } from "./worktree/provisioning/provisionManifest";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
 import { runSetup } from "./worktree/provisioning/setupRunner";
 import { SetupTerminal } from "./worktree/provisioning/setupTerminal";
@@ -587,14 +587,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const setupSurfaceIds = new WeakMap<WorktreeSurface, string>();
   const setupSurfaceId = (surface: WorktreeSurface): string => {
     const existing = setupSurfaceIds.get(surface);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      return existing;
+    }
     const created = crypto.randomUUID();
     setupSurfaceIds.set(surface, created);
     return created;
   };
   const retainSetupOutput = (worktreeId: string, outputId: string, terminal: SetupTerminal): void => {
     const previous = setupOutputByWorktree.get(worktreeId);
-    if (previous !== undefined) setupOutputs.delete(previous);
+    if (previous !== undefined) {
+      setupOutputs.delete(previous);
+    }
     setupOutputByWorktree.set(worktreeId, outputId);
     setupOutputs.set(outputId, { worktreeId, terminal });
   };
@@ -690,7 +694,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         runSetup: async (input, origin) => {
           const terminal = new SetupTerminal();
           const result = await runSetup(input, { terminal });
-          if (origin === undefined) return result;
+          if (origin === undefined) {
+            return result;
+          }
           const outputId = terminal.outputId(setupSurfaceId(origin));
           retainSetupOutput(input.worktreeId, outputId, terminal);
           return { ...result, outputId };
