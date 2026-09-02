@@ -780,6 +780,20 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Acceptance** | A destination holding a populated checkout whose administrative entry is gone is offered as adopt rather than as debris or a suffixed fresh path; the entry is reconstructed and the checkout then lists, holds the branch at the tip the user was shown, survives a prune, and commits back into the repository; the index is rebuilt so a freshly adopted checkout reports only its genuine working-tree state, and no file inside the worktree is modified by the adoption; a branch any live worktree holds is refused before a single file is written, with no confirmation path offered; the branch tip is re-checked immediately before the write and a move refuses rather than attaching to a different commit; what adoption cannot restore is stated to the user before they authorize it, and is stated rather than probed; a directory holding a valid administrative entry is reattach and never reaches this path; base ref cannot be expressed |
 | **Status** | todo |
 
+### [WT-012.19] A Write Anchored to the Directory It Checked
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Give every locked write a destination that cannot be redirected after it was authorized, by anchoring the operations to an open directory rather than to a path string |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 7 |
+| **Depends On** | None |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | security-privacy |
+| **Notes** | Split out of WT-012.5, whose design records the refutation that forced it: `LockedFile` serializes an **inode** while every other operation names a **string**, and `realpath` returns a canonical spelling rather than a directory identity — so a rename-plus-symlink at that spelling redirects the lock, the temporary, the read and the commit at once, and `withLock` creates the lock before its callback, so no re-assertion inside the callback helps. Three obligation-ledger rows in that change are `supported for a non-adversarial filesystem, delegated otherwise` and name this task as their owner. A new invariant owner, not a detail of any one writer: the facility every `LockedFile` caller inherits. Two things to establish before building — `/dev/fd/<dirfd>/child` was probed and is NOT a usable descriptor-relative path on macOS, so the mechanism has to come from somewhere else; and `src/agentHooks/install/lockedJsonFile.ts` is concurrently changed by the `never-release-a-lock-a-pending-write-still-owns` change, whose retained-dirty-lock semantics the seam has to be checked against rather than assumed |
+| **Acceptance** | A write authorized against a directory lands in that directory or does not land: swapping the checked directory for a symlink to another location, at any point after the check and before the commit, leaves nothing written outside it and reports a refusal rather than succeeding elsewhere; the lock, the temporary, the read and the commit all name the same anchored directory, so two writers that resolve one spelling cannot hold two live locks; a failure part-way leaves no temporary behind even when the directory was renamed under it; the platforms the anchoring mechanism cannot serve are named with the behaviour offered there instead of failing silently |
+| **Status** | todo |
+
 ---
 
 ## Phase 13 — Removal as a Report

@@ -8,12 +8,12 @@
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [ ] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -220,3 +220,14 @@ Planned at: a82ccc85
 - `NativeConfigDeps` gained an injectable `umask()` because a vitest worker refuses
   `process.umask(mask)` and the ambient `0o022` makes `0o644 & ~umask` equal `0o644` — the existing
   mode assertion could not tell a masked write from an unmasked one.
+- Round-3 handback: D7's mechanism withdrawn and its obligation restated. The plan attack refuted
+  the first attempt at that restatement — I argued the current double resolution already satisfied
+  the checked-value property because a differing second answer would be refused. It is not refused
+  when it differs but stays INSIDE the root, and the value the predicate authorizes is its own
+  second resolution rather than the spelling the caller passed. It also refuted my reason for not
+  fixing the code: the walk factors into an additive form returning the authorized path, leaving the
+  boolean predicate and all 13 call sites untouched, so no invariant owner is minted and the fix
+  stays on this side of the remediation boundary. Recorded because the rationalisation is the
+  instructive part — "the two answers coincide" was true of every state I had tested.
+- Auto-decision (fastlane): the descriptor-anchored writer stays D16's separate change rather than
+  being folded in. `docs/PLAN.md` task WT-012.19 now owns it and D16 names that id.

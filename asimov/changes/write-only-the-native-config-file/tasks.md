@@ -173,3 +173,21 @@ genuinely parallel, so nothing here pretends to be.
     5. Cover each in `src/worktree/provisioning/writeNativeConfig.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`.
 
 **Waves**: `4_1`
+
+## Wave 5 — round 3 handback
+
+- [ ] 5_1 Build the destination from the value the containment check authorized
+  - **Deps**: 4_1
+  - **Refs**: design.md#{d7-the-parent-is-resolved-once-and-written-through-and-a-symlinked-target-is-refused, obligation-ledger} <!-- .reviews/round-3.md F019; D16 -->
+  - **Acceptance**:
+    - Outcome: the file lands at the path the check authorized, not at the caller's spelling
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: `isResolvedPathInsideRoot` keeps its name, signature, contract and all 13 call sites — the new form is additive and only this writer consumes it; nothing caches an authorization
+  - **Plan**:
+    1. In `src/utils/resolvedPathBoundary.ts`, factor the existing walk into a form returning the authorized resolved path or `null`, and make `isResolvedPathInsideRoot` a wrapper over it.
+    2. In `src/worktree/provisioning/writeNativeConfig.ts`, drop the writer's own `realpath` of the directory and build `target` from the value the new form returns.
+    3. Replace the `asked === 1` assertion in `src/worktree/provisioning/writeNativeConfig.test.ts` with the discriminating state: an injected `realpath` whose second answer is a DIFFERENT path inside the root; assert the file lands there and not at the caller's spelling. Arm it by building from the caller's spelling.
+    4. Cover the absent-directory branch too — the walk reconstructs an unresolved tail beneath a resolved ancestor, and that reconstructed value is what `LockedFile` then creates.
+    5. Run `src/utils/resolvedPathBoundary.test.ts` to confirm the wrapper changed no existing answer.
+
+**Waves**: `5_1`

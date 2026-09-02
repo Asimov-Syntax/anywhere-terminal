@@ -139,15 +139,39 @@ The earlier check — resolved containment on the parent — was bypassed by pro
 swap `.vscode` for a symlink pointing outside the repository, and the write lands outside. Two
 changes close it:
 
-1. The parent directory is resolved once, checked against the resolved repository root with
-   `isResolvedPathInside` from `src/utils/resolvedPathBoundary.ts`, and **every subsequent operation
-   names the resolved path** — the one resolution that was checked, never a second one taken
-   afterwards. Round 1 F001: the shipped code resolved twice and built the target from the second,
-   unchecked result, and in the directory-absent branch never resolved at all, leaving
-   `LockedFile`'s recursive `mkdir` to walk a planted symlink. Recursive `mkdir` over an existing
-   symlink-to-directory SUCCEEDS, so the directory is created non-recursively tolerating EEXIST,
-   `lstat`ed and refused when it is a link, and only then resolved and checked. A later swap of the logical `.vscode` name cannot redirect a write
-   that is no longer spelled through it.
+1. The parent directory is resolved, checked against the resolved repository root with
+   `isResolvedPathInsideRoot` from `src/utils/resolvedPathBoundary.ts`, and **the target is built
+   from the resolution that was checked** — never from one taken afterwards. Round 1 F001: the
+   shipped code resolved twice and built the target from the second, unchecked result, and in the
+   directory-absent branch never resolved at all.
+
+   The obligation is on the VALUE, not on a syscall count, and satisfying it means taking the
+   checked value BACK from the check. `isResolvedPathInsideRoot` re-resolves its candidate by
+   contract — it refuses to cache an authorization a path could since have lost — so **the value it
+   authorizes is its own second resolution, not the spelling the caller passed in**. A caller that
+   passes `here` and then builds from `here` has built from the unchecked answer, which is round 1
+   F001's defect wearing a different hat: the two answers coincide on a quiescent filesystem and
+   diverge silently when they do not.
+
+   Plan attack (round 3) refuted the weaker reading this decision briefly carried — that a differing
+   second answer is refused anyway. It is not: the check compares the second answer against the
+   root, so one that differs but stays INSIDE the root returns `true`, and only the caller's own
+   stale spelling then names the destination.
+
+   `src/utils/resolvedPathBoundary.ts` therefore gains an **additive** sibling that runs the same
+   walk and returns the authorized resolved path or `null`; `isResolvedPathInsideRoot` becomes a
+   wrapper over it and keeps its signature, its contract and all 13 call sites. Only this writer
+   consumes the returned value. No authorization is cached and no invariant owner is minted, which
+   is what keeps the fix on this side of the remediation boundary rather than in WT-012.19.
+
+   Round 3 F019 refuted the stronger reading this decision used to carry. It prescribed creating the
+   directory non-recursively tolerating EEXIST, `lstat`ing it and refusing a link, and concluded that
+   "a later swap of the logical `.vscode` name cannot redirect a write that is no longer spelled
+   through it". D16 establishes that it can: every operation after the check still names a string,
+   and no sequence of `mkdir`/`lstat`/`realpath` anchors an identity. That mechanism bought nothing
+   the recursive `mkdir` does not already give against a non-adversarial filesystem, and against an
+   adversarial one it is a partial defence of a race D16 scopes out. It is withdrawn, and the
+   identity property it claimed belongs to D16's change.
 2. The target itself is `lstat`ed and refused when it is a symlink. The final component was outside
    the parent check entirely, and a configuration that is a symlink is not a configuration this
    control edits.
@@ -289,7 +313,8 @@ path on this host.
 Closing it needs `openat`/`mkdirat`/`renameat` semantics anchored to an open directory descriptor.
 That is a new invariant owner — a facility every caller of `LockedFile` inherits, not a detail of
 this writer — so it is **its own change**, planned and reviewed to APPROVE independently, and this
-change depends on it. Folding it in here would put a repo-wide filesystem primitive inside a task
+change depends on it. It is `docs/PLAN.md` task **WT-012.19**, written when round 3's handback
+settled D7 against this decision. Folding it in here would put a repo-wide filesystem primitive inside a task
 about a configuration button.
 
 Until it lands, `writeNativeConfig` is correct against a non-adversarial filesystem and says so:
@@ -381,7 +406,7 @@ refuted the first answer.
 
 | Claim | Semantics | Defeater | Witness | Disposition |
 |---|---|---|---|---|
-| Only the native file is written | For every operation, the set of paths opened for writing is a SUBSET of `{target, target.lock, target.<rand>.tmp}` — empty for a refusal or a no-op | A path taken from the model or the message; `repoId` used as a destination; **a `.vscode` swapped between the containment check and the operations that name it** | A fake fs recording every path opened for write, across both file states and the refusal and no-op paths, PLUS a real-fs case that swaps the directory for a symlink after the check and asserts nothing lands outside. Arm by restoring the second `realpath` | supported for a non-adversarial filesystem, and the adversarial case is delegated — was `refuted` by plan attack 2, which showed `realpath` pins a spelling and not an identity, and that `withLock` creates the lock before its callback. D16 makes the descriptor-anchored write its own change that this one depends on, rather than claiming a close this module cannot implement |
+| Only the native file is written | For every operation, the set of paths opened for writing is a SUBSET of `{target, target.lock, target.<rand>.tmp}` — empty for a refusal or a no-op | A path taken from the model or the message; `repoId` used as a destination; **a `.vscode` swapped between the containment check and the operations that name it** | A fake fs recording every path opened for write, across both file states and the refusal and no-op paths, PLUS a case whose injected `realpath` answers a DIFFERENT path INSIDE the root the second time, asserting the file lands at that second — authorized — value and not at the caller's spelling. That state is the only one that discriminates: identical answers make the two implementations indistinguishable, and a second answer outside the root returns before the destination is built. Arm by building the target from the caller's spelling (round 3 F019 plus its plan attack: `asked === 1` measures a syscall count the shared predicate's contract forbids reducing and passed only because `/var` canonicalises to `/private/var`; "nothing lands outside" is satisfied by both implementations and kills nothing) | supported for a non-adversarial filesystem, and the adversarial case is delegated — was `refuted` by plan attack 2, which showed `realpath` pins a spelling and not an identity, and that `withLock` creates the lock before its callback. D16 makes the descriptor-anchored write its own change that this one depends on, rather than claiming a close this module cannot implement |
 | A provider file is byte-identical after any save | For every detected provisioning file other than the target, bytes before = bytes after | The target is a symlink or hard link to a provider file, and an in-place write follows it | Rename rebinds the name (D3); probed against both a symlinked and a hard-linked target, and against a provider hard link appearing mid-create, which makes `commit("create")` return false | supported |
 | Comments and formatting survive an edit | Every byte outside the spans `modify` returns is unchanged, AND the spans are one array element wide | Nominating a span wide enough to make the property vacuous — a whole file, or a whole array | A fixture carrying a comment INSIDE an array and arrays of more than one element; compare against spans obtained independently of the key path the implementation passes. Arm by widening the span back to the whole key | supported as narrowed — was `refuted` by plan attack 2: insertion preserves interior comments, but deleting index 1 of `/* A */ "a", /* B */ "b", /* C */ "c"` yields `/* B */ "c"`, taking a KEPT element's comment. The claim narrows to: every byte outside the removed element AND its immediate neighbour survives. Witness asserts exactly that, over a fixture with comments on both neighbours |
 | A malformed configuration is never rewritten | A document with parse errors, or a wrong-shaped `exclude`/`extends`, leaves the file byte-identical | `modify` mutating a broken document and leaving it broken — probed, it does exactly that; a non-array `exclude` throws | Fixtures for both; assert byte-identity and a reported reason | supported — new row; the defeater is why D4 gained its refusals |
