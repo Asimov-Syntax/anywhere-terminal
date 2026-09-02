@@ -794,6 +794,20 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Acceptance** | A write authorized against a directory lands in that directory or does not land: swapping the checked directory for a symlink to another location, at any point after the check and before the commit, leaves nothing written outside it and reports a refusal rather than succeeding elsewhere; the lock, the temporary, the read and the commit all name the same anchored directory, so two writers that resolve one spelling cannot hold two live locks; a failure part-way leaves no temporary behind even when the directory was renamed under it; the platforms the anchoring mechanism cannot serve are named with the behaviour offered there instead of failing silently |
 | **Status** | todo |
 
+### [WT-012.20] A Configuration Read That Always Answers
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Make every read of a repository-named configuration terminate, so a path holding something other than an ordinary file is refused and reported rather than waited on |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4 |
+| **Depends On** | WT-012.3 |
+| **Stage** | 9 |
+| **Size** | S |
+| **Labels** | security-privacy |
+| **Notes** | Split out of WT-012.5 at its round-6 review. The shared provider read enforces its byte cap on the READ and never on the OPEN, so `open(path, "r")` on a named pipe with no writer waits forever — reproduced on darwin against both `asimov/worktree.yaml` and `.vscode/worktree.json`. Since WT-012.5 moved base validation under the native-config lock, the same wait strands that lock and turns every later save into `unavailable`, leaving the lock file on disk. Two halves are needed and neither suffices alone: nonblocking alone opens the pipe and reads zero bytes, which silently substitutes an empty configuration for a refusal, and a regular-file test alone still waits on the open. The file-type test must read the OPEN HANDLE, not the path, for the same reason the byte cap is enforced on the read. `O_NONBLOCK` is undefined on win32, where a named pipe is not reachable by a repository-relative path at all, so the regular-file half is the operative bound there |
+| **Acceptance** | A repository whose configuration, or whose named source to build on, holds a named pipe with nothing writing to it is reported as unreadable rather than as absent, as empty, or as declaring nothing, and the section answers instead of waiting; a save refused for that reason leaves the next save of the same file able to run and leaves no lock behind; ordinary files, hard links, and symlinks to ordinary files read exactly as before |
+| **Status** | in_progress |
+
 ---
 
 ## Phase 13 — Removal as a Report
