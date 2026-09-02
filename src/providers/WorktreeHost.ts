@@ -155,7 +155,7 @@ export interface WorktreeSurface {
  * saved is not a reason to refuse to make a worktree
  * (worktree-provisioning.md § 9).
  */
-function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal, lockPath?: string): ProvisionModel {
+function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): ProvisionModel {
   const detail: Record<NativeConfigRefusal, string> = {
     unavailable: "Another process is holding it, or the folder could not be created.",
     outside: "It does not resolve inside this repository.",
@@ -170,40 +170,7 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal, lockPat
       {
         file: NATIVE_PROVIDER_FILE,
         reason: reason === "malformed" ? "malformed" : "unsaved",
-        // A refusal keeps its OWN reason; the lock is appended to it rather
-        // than replacing it, so neither fact hides the other (round-1 F001).
-        detail:
-          `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}` +
-          (lockPath === undefined
-            ? ""
-            : ` It is also still locked — remove \`${lockPath}\` if no other window is writing it.`),
-      },
-    ],
-  };
-}
-
-/**
- * The write landed, but the lock it took is still there.
- *
- * Said in the vocabulary of writing like the refusals above, because the user's
- * next action is the same — try again — but the cause is the opposite: nothing
- * is wrong with the file, and a live lock is never reclaimed by age, so this is
- * the only place the user learns why the next save will hang (design.md D4 of
- * `anchor-a-locked-write-to-the-directory-it-checked`).
- */
-function leakedLock(model: ProvisionModel, lockPath: string, wrote: boolean): ProvisionModel {
-  // What happened to the FILE and what happened to the LOCK are two facts, and
-  // the first one stays true whatever the second says: a save that wrote nothing
-  // is never described as saved (review round-1 F001).
-  const what = wrote ? "was saved, but it is still locked" : "was not changed, and it is still locked";
-  return {
-    ...model,
-    problems: [
-      ...model.problems,
-      {
-        file: NATIVE_PROVIDER_FILE,
-        reason: "unsaved",
-        detail: `\`${NATIVE_PROVIDER_FILE}\` ${what}. Remove \`${lockPath}\` if no other window is writing it.`,
+        detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
       },
     ],
   };
@@ -2526,13 +2493,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             if (model === undefined || disposed || !surfaces.has(surface)) {
               return;
             }
-            publish(
-              written.ok
-                ? written.lockLeaked === undefined
-                  ? model
-                  : leakedLock(model, written.lockLeaked, written.wrote)
-                : refusedSave(model, written.reason, written.lockLeaked),
-            );
+            publish(written.ok ? model : refusedSave(model, written.reason));
           })
           // A save that throws leaves the form exactly as it was, and the
           // ceiling is NOT released — for the reason the switch records above.

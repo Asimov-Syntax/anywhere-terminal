@@ -44,24 +44,9 @@ export interface NativeConfigDivergence {
   readonly tookSource: boolean;
 }
 
-/**
- * The lock this save took and could not remove, by exact path.
- *
- * ORTHOGONAL to the outcome, on purpose. `withLock` can fail to release after
- * ANY outcome that acquired the lock, so hanging this off the success variant
- * discarded it exactly on the refusal paths — where the user is already stuck —
- * and let a save that wrote NOTHING be described as saved (design.md D4, review
- * round-1 F001). Absent when the lock was released, and absent when another
- * actor had already unlinked it: that pathname is free, and naming it would
- * send the user after a file that is not there (F002).
- */
-interface LeakedLock {
-  readonly lockLeaked?: string;
-}
-
 export type NativeConfigWrite =
-  | ({ readonly ok: true; readonly wrote: boolean } & LeakedLock)
-  | ({ readonly ok: false; readonly reason: NativeConfigRefusal } & LeakedLock);
+  | { readonly ok: true; readonly wrote: boolean }
+  | { readonly ok: false; readonly reason: NativeConfigRefusal };
 
 /**
  * Why a save did not happen.
@@ -417,11 +402,7 @@ export async function writeNativeConfig(
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
 
   const file = new LockedFile(target, deps.locked);
-  // Collected during the operation and folded into the outcome afterwards —
-  // `withLock` returns the work's own result unchanged, so the report has
-  // nowhere else to go. Same shape `ClaudeHookInstaller` uses.
-  let leaked: string | undefined;
-  const written = await file.withLock<NativeConfigWrite>(
+  return file.withLock<NativeConfigWrite>(
     async () => {
       // Inside the lock, not before it — the whole read-modify-write, and that
       // includes deciding WHAT is being written to. A symlink verdict or a mode
@@ -539,9 +520,5 @@ export async function writeNativeConfig(
     },
     { ok: false, reason: "unavailable" },
     { ok: false, reason: "unwritable" },
-    (lockPath) => {
-      leaked = lockPath;
-    },
   );
-  return leaked === undefined ? written : { ...written, lockLeaked: leaked };
 }

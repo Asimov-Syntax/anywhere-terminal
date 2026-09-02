@@ -22,7 +22,6 @@ import {
   divergenceOf,
   type NativeConfigDeps,
   type NativeConfigDivergence,
-  type NativeConfigWrite,
   writeNativeConfig,
 } from "./writeNativeConfig";
 
@@ -964,94 +963,5 @@ describe("a target that is not an ordinary file", () => {
     expect(wrote).not.toBe("waited");
     expect(wrote).toEqual({ ok: false, reason: "unwritable" });
     await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
-  });
-});
-
-/** Refuses to remove the lock, and nothing else. */
-const lockStuck = {
-  fs: {
-    unlink: async (p: unknown) => {
-      if (String(p).endsWith(".lock")) {
-        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
-      }
-    },
-  },
-};
-
-/** Compared by basename: the writer resolves the root, and macOS turns `/var` into `/private/var`. */
-function leakedName(wrote: NativeConfigWrite): string {
-  return path.basename((wrote as { lockLeaked?: string }).lockLeaked ?? "");
-}
-
-const THE_LOCK = `${NATIVE_PROVIDER_FILE.split("/").pop()}.anywhere-terminal.lock`;
-
-describe("a save that left its lock behind", () => {
-  // Three outcomes, one obligation: name the lock. And a separate obligation the
-  // first attempt broke — keep telling the truth about the WRITE, because a
-  // no-op described as saved is worse than saying nothing (round-1 F001).
-  it("names the lock when the write landed", async () => {
-    await put(`{ "copy": [".env"] }\n`);
-
-    const wrote = await writeNativeConfig({ ...realDeps, locked: lockStuck }, root, div({ exclude: ["node_modules"] }));
-
-    expect(wrote).toMatchObject({ ok: true, wrote: true });
-    expect(leakedName(wrote)).toBe(THE_LOCK);
-  });
-
-  it("names the lock without claiming a write, when there was nothing to write", async () => {
-    await put(`{ "exclude": ["node_modules"] }\n`);
-
-    const wrote = await writeNativeConfig({ ...realDeps, locked: lockStuck }, root, div({ exclude: ["node_modules"] }));
-
-    expect(wrote).toMatchObject({ ok: true, wrote: false });
-    expect(leakedName(wrote)).toBe(THE_LOCK);
-  });
-
-  it("names the lock while keeping the refusal's own reason", async () => {
-    await put(`{ "copy": [".env"] }\n`);
-
-    const wrote = await writeNativeConfig(
-      { ...realDeps, locked: { ...lockStuck, rename: async () => Promise.reject(new Error("EXDEV")) } },
-      root,
-      div({ exclude: ["node_modules"] }),
-    );
-
-    expect(wrote).toMatchObject({ ok: false, reason: "unwritable" });
-    expect(leakedName(wrote)).toBe(THE_LOCK);
-  });
-
-  it("reports an ordinary save unchanged, so none of the above is vacuous", async () => {
-    await put(`{ "copy": [".env"] }\n`);
-
-    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"] }));
-
-    expect(wrote).toEqual({ ok: true, wrote: true });
-  });
-
-  // Already unlinked by someone else is a RELEASED lock, not a leaked one: the
-  // pathname is free, and naming it would send the user after a file that is not
-  // there (round-1 F002).
-  it("says nothing about a lock another actor had already removed", async () => {
-    await put(`{ "copy": [".env"] }\n`);
-
-    const wrote = await writeNativeConfig(
-      {
-        ...realDeps,
-        locked: {
-          fs: {
-            unlink: async (p: unknown) => {
-              if (String(p).endsWith(".lock")) {
-                await fs.rm(String(p), { force: true });
-                throw Object.assign(new Error("no such file"), { code: "ENOENT" });
-              }
-            },
-          },
-        },
-      },
-      root,
-      div({ exclude: ["node_modules"] }),
-    );
-
-    expect(wrote).toEqual({ ok: true, wrote: true });
   });
 });

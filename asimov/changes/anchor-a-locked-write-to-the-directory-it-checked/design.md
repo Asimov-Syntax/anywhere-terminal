@@ -54,31 +54,21 @@ Note what is NOT a defect, contrary to the first two drafts of this design: `rel
 compares the held handle's identity against the lock the path names now and refuses to unlink on a
 mismatch (`:253-272`). Release-by-identity does not need to be built.
 
-### D4: The release report reaches the user, or it is not a report
+### D4: Lock-release reporting is NOT in this change — it is its own
 
-`withLock` calls `onLockReleaseFailed?.(this.lockPath)` and then returns the work's result UNCHANGED
-(`:79-88`). `writeNativeConfig` passes no callback at all, and its result vocabulary
-(`writeNativeConfig.ts:47-63`) can express success or a refusal but not "the write landed and the
-lock leaked"; `WorktreeHost.ts:158-175` has no message for it either.
+The first two attempts at it are recorded in `.reviews/round-1.md` and `.reviews/round-3.md`, and the
+second attempt was worse than nothing. `releaseLock` answers a BOOLEAN, and `false` covers four
+different situations (`lockedJsonFile.ts:258-275`): an indeterminate inspection failure; `ENOENT`
+with `nlink > 0n`, meaning this holder's lock was renamed away and the canonical name is empty; an
+identity MISMATCH, meaning a different writer's LIVE lock now holds that name; and a genuine
+non-ENOENT unlink failure. Only the last is a leaked lock.
 
-So the callback that exists today reports to nobody on the path that matters. This change SHALL
-carry the leaked lock as a field ORTHOGONAL to the outcome, not as a variant of the success — review
-round 1 F001 showed why the first shape was wrong on both sides. `withLock` can report a release
-failure after ANY acquired-lock outcome, so attaching the report to `ok: true` discarded it exactly
-on the refusal paths, where the user is already stuck; and attaching it to the success without
-looking at `wrote` let a NO-OP be described as saved.
-
-The field therefore lives on both arms of `NativeConfigWrite`, and the host chooses its wording from
-what actually happened: bytes landed, nothing to write, or a refusal keeping its own reason. Paths
-are still collected during the operation and folded in afterwards, the pattern `ClaudeHookInstaller`
-uses at `:91-117`.
-
-What is NOT reported, and this is the correction F002 forced: `releaseLock` answers success when the
-lock it held has already been unlinked by someone else (`ENOENT` with `nlink === 0n`). The pathname
-is free and there is nothing for the user to remove — reporting it would send them after a file that
-does not exist. Only a lock that is genuinely still there is named.
-
-Without this, D3's precision fix is invisible: the case it makes detectable has nowhere to surface.
+Reporting the pathname for all four told the user to delete another writer's live lock — destroying
+the mutual exclusion the lock exists to provide (round 3 F003). The truthful version needs
+`releaseLock` to return a typed disposition rather than a boolean, which is a new invariant on the
+primitive both config writers depend on, plus a user-facing problem classification this change's spec
+does not own (F005). That is a new invariant owner, so it is a separate change by the remediation
+boundary, and this one reverts its attempt rather than shipping a harmful half.
 
 ### D5: The leaf read refuses a link, for the ordinary case only
 
@@ -99,6 +89,9 @@ ReFS. The claim is therefore made for a non-adversarial filesystem and delegated
 this repository's existing vocabulary for exactly this situation.
 
 ### D6: What remains unowned, stated rather than assigned to a task that cannot close it
+
+Lock-release reporting is owned by the change D4 splits out, and carries round 3's F003, F004, F005
+and F006 (the duplicated identity helper) as its inputs.
 
 WT-012.21 owns directory anchoring. It does NOT close the LEAF substitution window — even
 `renameat(dirfd, tempName, dirfd, targetName)` resolves `tempName` at syscall time, so replacing the
@@ -123,9 +116,8 @@ mechanism cannot reach it. It is recorded in workflow.md as needing a blueprint 
 |---|---|---|---|---|
 | Ownership cannot be satisfied by a different file through rounding | Temporary and lock ownership compare `dev`/`ino` at full precision | An `ino` above 2^53, which `Number` cannot distinguish | A witness with injected identities differing ONLY above 2^53, asserting ownership is refused; arm-checked by narrowing back to `Number` (task 1_1) | supported — the comparison already exists and already accepts bigint; only the capture changes |
 | Ownership precision is all this claims | A same-precision but adversarially reused identity is NOT covered | Reading the row as protection against substitution | D5's stated bound; the spec says "cannot round", never "cannot be substituted" | supported |
-| A leaked lock reaches the user on every outcome that took a lock | The lock is named whether the save wrote, wrote nothing, or refused; and what the outcome says about the WRITE stays true | Attaching the report to the success variant — which discards it on refusals and lets a no-op be described as saved | Three witnesses forcing release failure across landed / no-op / refused, each asserting BOTH the lock path and the unchanged write verdict, plus one asserting an ordinary save is untouched (task 1_2) | supported as restated — was refuted by review round 1 F001, which probed `{ok:true,wrote:false,lockLeaked:…}` on a real filesystem; D4 now makes the field orthogonal |
-| An already-removed lock is NOT reported | `ENOENT` with `nlink === 0n` is a released lock, not a leaked one | Implementing the round-1 spec scenario literally, which would name a pathname that is already free | D4's closing paragraph, and the witness asserting no report on that path (task 1_2) | supported — was the defect review round 1 F002 found in the SPEC, not in the code |
 | The leaf read reaches the object it inspected, on a non-adversarial filesystem | `lstat` refuses a link; otherwise the opened handle's identity equals the `lstat`'s | Inode reuse; and Windows ReFS, where the exposed 64-bit ID is not guaranteed unique | A witness swapping the target through an injected `lstat` so the swap lands after the observation, asserting refusal with the flag forced absent so the identity check alone carries it (task 1_1) | supported for a non-adversarial filesystem, delegated otherwise — D5 states both defeaters |
 | The provider read still follows links | `openRegularFile` without the option behaves exactly as today | Making no-follow the default, or taking position two | `readBounded` passes nothing (`provisioningDeps.ts:41`); `regularFileRead.test.ts:128-155` stays green unchanged (task 1_1) | supported |
+| Lock-release reporting is not addressed by this change | No claim in the spec depends on what a save says about its lock | Shipping the reverted attempt, which named another writer's live lock | D4's revert, round 3 F003's probe, and the blueprint task that now owns it | supported — was `refuted` twice, by round 1 F001 and round 3 F003/F004/F005 |
 | Directory substitution is not addressed by this change | No claim in the spec depends on the directory the name reaches | Reading the blueprint row's title as delivered | D2's cut, and workflow.md recording the reduction against WT-012.19 rather than ticking it | supported |
 | The leaf substitution window has no owner | Neither this change nor WT-012.21's mechanism closes it | Filing it under WT-012.21 to make the ledger look complete | D6, and the workflow.md note asking for a blueprint owner | supported |

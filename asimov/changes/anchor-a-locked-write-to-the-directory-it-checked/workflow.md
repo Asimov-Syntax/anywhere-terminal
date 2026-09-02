@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-012.19`)_
 
@@ -189,3 +189,23 @@ nothing here, and blueprint sync must reflect that rather than tick the row done
 
 - Residual with NO owner: leaf substitution between `ownsTemporaryPath` and the `link`/`rename`/
   `unlink` that follows. WT-012.21 cannot close it (design.md D6). Needs a blueprint owner.
+
+## Review outcome
+
+Cycle 1 round 1 BLOCK (2 findings, both accepted, both landed on Gate-2 artifacts → handback).
+Cycle 1 round 2 SUPERSEDED, correctly: the handback changed D4, the spec and task 1_2, so a
+verification round could not stay in that cycle.
+Cycle 2 round 3 REJECT (3 blockers, all accepted, none rebutted).
+
+Round 3 triggered the thrash stop: the invariant "a leaked lock reaches the user, truthfully"
+survived TWO fix attempts. Option 1 was taken — the designed fix becomes its own change — under the
+standing goal's `tách change / replan` grant. Options 2 and 3 belong to the user and were NOT taken:
+no risk was accepted and no extension round was requested.
+
+The lock-reporting code is REVERTED, not descoped-in-place. Round 3 F003 showed the shipped shape
+would tell the user to delete another writer's LIVE lock, so leaving it in would have been worse than
+never starting it. `src/worktree/provisioning/writeNativeConfig.ts`, its test,
+`src/providers/WorktreeHost.ts` and its test are byte-identical to the base.
+
+What ships is task 1_1 alone, which both cycles' reviewers confirmed safe: bigint ownership
+identities, and a no-follow leaf read bounded to a non-adversarial filesystem.
