@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -43,3 +43,4 @@ Planned at: eed90688
 - HANDBACK after round 2. F002's fix moves the no-parent-creation policy from a precheck in Cursor into `LockedFile` itself, which changes D2's mechanism and adds an option to a module `ClaudeHookInstaller` and `writeNativeConfig` also use — so it re-earns Gate 2 rather than landing as a fix commit. Second attempt on this invariant; a third failure trips the thrash stop.
 - F003 was confirmed by my own probe before the chair reported it: `{...proxy}` copies own enumerable properties into a plain object, so the trap never fires on the path `lockedJsonFile.ts:80` fills from the real `node:fs/promises`. My round-1 fix relocated the defect instead of closing it.
 - `src/extension.worktreeAssembly.test.ts` flaked three times during 1_8's gate, a DIFFERENT test each run. Proved pre-existing rather than acked on suspicion: a clean worktree at `21a436f1` — before this change's first commit — flaked the same file 1 run in 3, on a fourth distinct test. The file passes 5/5 in isolation. Its own `settle()` comment (`:608-621`) says the fixed 40-turn pump fails intermittently under full-suite load. Second opinion obtained before `--ack`, as the rule of three requires.
+- Blueprint sync narrowed WT-012.21's Goal BEFORE marking it done. The Goal had no "or" branch — it asked to make the four operations act on the authorized directory, which D4 shows no pure-Node mechanism reaches — so ticking done against it would have recorded a promise nobody kept. The Acceptance was left intact: its fourth branch anticipates exactly this outcome and was met.

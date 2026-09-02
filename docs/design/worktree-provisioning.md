@@ -526,6 +526,13 @@ What the write is allowed to hold rules about, and what it must ask:
   R2 and R3 PRE-DATE this and were ownerless; R4 is the price of the release refusing to delete a
   lock it cannot prove is its own, which is strictly better than the alternative it replaced.
 
+- **A locked write does not create a directory its caller did not have.** `LockedFile` takes
+  `createParent`, default `true` for provisioning, which owns the directory it writes into. A caller
+  whose contract is that an absent parent REFUSES passes `false`, and both the acquisition and the
+  staging then skip their `mkdir`, so the exclusive open answers `ENOENT` on its own. The policy is
+  the absence of an act rather than a check before one: a caller-side `stat` can only report what was
+  true a moment ago, and the directory can go between that answer and the `mkdir` it was guarding.
+
 - **`0o600` on a lock is hygiene, not a security claim.** Mutual exclusion comes from `O_EXCL` on the
   NAME; write permission on an empty lock file grants neither rename nor unlink, which need write
   permission on the parent directory. It is also POSIX-only — Node's `mode` argument does not produce
