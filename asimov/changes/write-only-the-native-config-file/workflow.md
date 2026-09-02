@@ -258,3 +258,16 @@ Planned at: e0c17b04
   `writeNativeConfig.ts` base handling. | Consumer: plan | Action: when a change validates a subject
   an existing module already authorizes, plan makes reuse of that module's whole operation the
   decision, and never lets the new module carry a clause of it.
+- Knowledge candidate: `readBounded`'s `open(filePath, "r")` waits indefinitely on a FIFO with no
+  writer, so the byte cap never gets a chance to apply — a bounded READ is not a bounded OPEN. |
+  Surprise: the module's whole contract is "bounded", and every existing witness (oversize,
+  directory, EACCES) returns promptly, so the bound read as total. | Evidence:
+  src/worktree/provisioning/provisioningDeps.ts:35 `readBounded`; probe: `readProvisioning` over a
+  repo whose `asimov/worktree.yaml` is a FIFO never resolves (4s cutoff). | Consumer: plan | Action:
+  any decision that moves a provider read under a lock, a deadline, or an interactive path budgets
+  a liveness bound for the open itself.
+- Round 6 (cycle 3) F026 accepted. The cycle cap makes handback mandatory rather than optional, and
+  the obligation test agrees independently: the fix adds a liveness rule to `provisioningDeps.ts`,
+  which this change does not own and which every provider read shares. Both remediation-boundary
+  signals fire, so it is its own change and this one depends on it. The writer stays as it is —
+  a writer-side `lstat` is exactly the reconstruction F025 spent four rounds refuting.
