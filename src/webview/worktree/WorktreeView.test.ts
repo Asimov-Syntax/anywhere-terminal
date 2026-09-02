@@ -2551,7 +2551,9 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.className ?? "").toContain("wt-notice--warn");
     expect(text).toContain("1 of 1 ports ready");
     expect(text).toContain("could not be released");
-    expect(text).toContain("was retained because a timed-out write may still finish");
+    expect(text).toContain("A repository lock was retained because a timed-out write may still finish");
+    expect(text).toContain("related worktree setup may remain blocked");
+    expect(text).not.toContain("later port allocations remain blocked");
     expect(text).toContain("temporary-file cleanup did not finish");
     expect(text).toContain(".env.worktree may appear in Git status");
   });

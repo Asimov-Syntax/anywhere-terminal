@@ -6,6 +6,7 @@ import type { ProvisionPort, ProvisionPortResult, ProvisionPortWarning } from ".
 import {
   type AuthorizationBudget,
   type AuthorizedDirectory,
+  authorizeDirectory,
   directoryStillAuthorized,
   fileIdentityOf,
   sameFileIdentity,
@@ -119,7 +120,6 @@ type ClaimRead =
     }
   | { readonly kind: "invalid" };
 
-type DirectoryAuthorization = { readonly dev: number | bigint; readonly ino: number | bigint };
 type Budget = { readonly deadline: Deadline; readonly at: number; readonly now: () => number };
 
 class BudgetExpired extends Error {}
@@ -163,33 +163,6 @@ async function authorizedDirectoryStillMatches(
   budget: Budget,
 ): Promise<boolean> {
   return directoryStillAuthorized(authorization, { lstat: deps.lstat }, authorizationBudget(budget));
-}
-
-async function authorizeDirectory(
-  target: string,
-  deps: Required<Pick<PreviewPortsDeps, "lstat">>,
-  budget: Budget,
-): Promise<DirectoryAuthorization | undefined> {
-  try {
-    const entry = await withinBudget(budget, () => deps.lstat(target));
-    return entry.isSymbolicLink() || !entry.isDirectory() ? undefined : { dev: entry.dev, ino: entry.ino };
-  } catch {
-    return undefined;
-  }
-}
-
-async function directoryStillMatches(
-  target: string,
-  authorization: DirectoryAuthorization,
-  deps: Required<Pick<PreviewPortsDeps, "lstat">>,
-  budget: Budget,
-): Promise<boolean> {
-  try {
-    const entry = await withinBudget(budget, () => deps.lstat(target));
-    return !entry.isSymbolicLink() && entry.isDirectory() && sameIdentity(authorization, entry);
-  } catch {
-    return false;
-  }
 }
 
 async function openWithinBudget(
@@ -350,13 +323,13 @@ async function readClaimsUnderRoot(
   root: string,
   deps: Required<Pick<PreviewPortsDeps, "lstat" | "open">>,
   budget: Budget,
-): Promise<{ authorization: DirectoryAuthorization; source: ClaimRead } | undefined> {
-  const authorization = await authorizeDirectory(root, deps, budget);
+): Promise<{ authorization: AuthorizedDirectory; source: ClaimRead } | undefined> {
+  const authorization = await authorizeDirectory(root, { lstat: deps.lstat }, authorizationBudget(budget));
   if (authorization === undefined) {
     return undefined;
   }
   const source = await readClaims(path.join(root, CLAIM_FILE), deps, budget);
-  return (await directoryStillMatches(root, authorization, deps, budget)) ? { authorization, source } : undefined;
+  return (await authorizedDirectoryStillMatches(authorization, deps, budget)) ? { authorization, source } : undefined;
 }
 
 function groupPorts(ports: readonly ProvisionPort[]): ReadonlyMap<string, readonly ProvisionPort[]> {

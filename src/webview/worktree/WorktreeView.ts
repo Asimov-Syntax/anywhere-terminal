@@ -1852,7 +1852,7 @@ function portSummary(
       : []),
     ...(warnings?.includes("lockRetained")
       ? [
-          "The allocation lock was retained because a timed-out write may still finish; later port allocations remain blocked until the lock is cleaned up.",
+          "A repository lock was retained because a timed-out write may still finish; related worktree setup may remain blocked until cleanup.",
         ]
       : []),
     ...(warnings?.includes("temporaryCleanupFailed")

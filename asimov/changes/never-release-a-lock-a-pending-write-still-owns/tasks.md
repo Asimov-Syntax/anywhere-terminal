@@ -33,3 +33,14 @@ The shared acquisition/write gate precedes both consumers. Repository-local excl
     1. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: replace the private numeric clock with one worktree `Deadline` spanning port-lock acquisition through exclude update, gate publication and prepublication cleanup, bound inode-owned post-commit cleanup, map retained states and cleanup failures truthfully, preserve committed success, and cancel only after settlement.
     2. `src/types/messages.ts` and `src/types/messages.contract.test.ts`: add `lockRetained` and `temporaryCleanupFailed` as distinct `ProvisionPortWarning` values without changing path or command authority.
     3. `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeView.test.ts`: render retained-lock and staged-temporary cleanup guidance separately from release failure, keeping authoritative successes unchanged.
+
+- [x] 1_4 Close round-1 deadline and reporting findings — verified: pnpm exec vitest run 'src/utils/lockedFile.test.ts' 'src/worktree/worktreePorts.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 exit 0
+  - **Deps**: 1_3
+  - **Refs**: design.md D1, design.md D2, design.md D3, design.md D4, design.md D5, design.md D6, design.md D7; .reviews/round-1.md F001, F002, F003, F004, F005
+  - **Acceptance**:
+    - Outcome: Deadline classification follows mutation capability and committed state while preview and retained-lock guidance remain truthful
+    - Verify: command pnpm exec vitest run 'src/utils/lockedFile.test.ts' 'src/worktree/worktreePorts.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types
+  - **Plan**:
+    1. `src/utils/lockedFile.ts` and `src/utils/lockedFile.test.ts`: latch wall-clock-first expiry at protected-operation settlement, distinguish bounded observations from dirty mutations, and make rename the replace commit point before handle cleanup; add acquisition, publication, read-only observation, and stalled-close witnesses.
+    2. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: route preview through the shared ancestor-aware nonzero directory authorization under its existing budget and remove the competing leaf-only helper.
+    3. `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeView.test.ts`: make retained-lock guidance source-neutral and accurate for both port-claim and repository-local exclude locks.

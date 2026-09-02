@@ -27,6 +27,9 @@ function manualDeadline() {
       expired = true;
       elapsed.resolve();
     },
+    expireWallClock: () => {
+      expired = true;
+    },
     moveClockBack: () => {
       expired = false;
     },
@@ -169,6 +172,79 @@ describe("LockedFile deadline gate", () => {
     lateOpen.resolve({ stat: async () => fileStat(31), close } as never);
     await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
     expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it("retains an exclusive open that crosses wall-clock expiry before the timer fires", async () => {
+    const { deadline, expireWallClock } = manualDeadline();
+    const lateOpen = deferred<unknown>();
+    const { locked, close, open, unlink } = lockHarness(() => lateOpen.promise);
+    const result = locked.withLock(deadline, async () => "done", "failed");
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+
+    expireWallClock();
+    lateOpen.resolve({ stat: async () => fileStat(31), close } as never);
+
+    await expect(result).resolves.toEqual({ kind: "timedOut", retainedLockPath: locked.lockPath });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it("retains a protected mutation that crosses wall-clock expiry before the timer fires", async () => {
+    const { deadline, expireWallClock } = manualDeadline();
+    const { locked, unlink } = lockHarness();
+    const mutation = deferred<void>();
+    const started = deferred<void>();
+    const result = locked.withLock(
+      deadline,
+      async (gate) => {
+        await gate.guard(async () => {
+          started.resolve();
+          return mutation.promise;
+        });
+        return "published";
+      },
+      "failed",
+    );
+    await started.promise;
+
+    expireWallClock();
+    mutation.resolve();
+
+    await expect(result).resolves.toEqual({ kind: "timedOut", retainedLockPath: locked.lockPath });
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it("never reopens after wall-clock expiry is observed even if the clock moves backward", async () => {
+    const { deadline, expireWallClock, moveClockBack } = manualDeadline();
+    const { locked } = lockHarness();
+    const started = deferred<void>();
+    const inspectExpiry = deferred<void>();
+    const expiryObserved = deferred<void>();
+    const inspectRewind = deferred<void>();
+    const protectedStep = vi.fn(async () => undefined);
+    const result = locked.withLock(
+      deadline,
+      async (gate) => {
+        started.resolve();
+        await inspectExpiry.promise;
+        expect(gate.open).toBe(false);
+        expiryObserved.resolve();
+        await inspectRewind.promise;
+        await expect(gate.guard(protectedStep)).rejects.toThrow();
+        return "done";
+      },
+      "failed",
+    );
+    await started.promise;
+
+    expireWallClock();
+    inspectExpiry.resolve();
+    await expiryObserved.promise;
+    moveClockBack();
+    inspectRewind.resolve();
+
+    await expect(result).resolves.toEqual({ kind: "timedOut" });
+    expect(protectedStep).not.toHaveBeenCalled();
   });
 
   it("never reopens after the timer latches even if the wall clock moves backward", async () => {
@@ -375,6 +451,100 @@ describe("LockedFile deadline gate", () => {
     await expect(result).resolves.toEqual({ kind: "done", value: "committed" });
     expect(releaseFailed).toHaveBeenCalledWith(locked.lockPath);
     releaseStat.resolve(fileStat(61));
+  });
+
+  it("keeps replace committed when staged-handle close stalls", async () => {
+    const { deadline } = manualDeadline();
+    const temporaryClose = deferred<void>();
+    const temporaryCloseStarted = deferred<void>();
+    const temporaryHandle = {
+      writeFile: vi.fn(async () => undefined),
+      chmod: vi.fn(async () => undefined),
+      stat: vi.fn(async () => fileStat(91)),
+      close: vi.fn(() => {
+        temporaryCloseStarted.resolve();
+        return temporaryClose.promise;
+      }),
+    };
+    const lockHandle = { stat: vi.fn(async () => fileStat(92)), close: vi.fn(async () => undefined) };
+    const rename = vi.fn(async () => undefined);
+    const locked = new LockedFile("/repo/.env.worktree", {
+      fs: {
+        mkdir: vi.fn(async () => undefined),
+        open: vi.fn(async (candidate: string) =>
+          candidate.endsWith(".anywhere-terminal.lock") ? (lockHandle as never) : (temporaryHandle as never),
+        ) as never,
+        lstat: vi.fn(
+          async (candidate: string) =>
+            (candidate.endsWith(".anywhere-terminal.lock") ? fileStat(92) : fileStat(91)) as never,
+        ) as never,
+        unlink: vi.fn(async () => undefined),
+      },
+      rename,
+      randomBytes: () => new Uint8Array(16),
+    });
+    const staged = await locked.stageReplacement("APP=5183\n", 0o600);
+    if (staged === undefined) {
+      throw new Error("the test could not stage its replacement");
+    }
+
+    const result = locked.withLock(
+      deadline,
+      async (gate) => ((await staged.commit("replace", gate)) ? "committed" : "failed"),
+      "failed",
+    );
+    await temporaryCloseStarted.promise;
+
+    await expect(result).resolves.toEqual({ kind: "done", value: "committed" });
+    expect(rename).toHaveBeenCalledOnce();
+    temporaryClose.resolve();
+  });
+
+  it("releases cleanly when a staged identity observation crosses the deadline", async () => {
+    const { deadline, expire } = manualDeadline();
+    const observation = deferred<ReturnType<typeof fileStat>>();
+    const observationStarted = deferred<void>();
+    const temporaryHandle = {
+      writeFile: vi.fn(async () => undefined),
+      chmod: vi.fn(async () => undefined),
+      stat: vi.fn(async () => fileStat(101)),
+      close: vi.fn(async () => undefined),
+    };
+    const lockHandle = { stat: vi.fn(async () => fileStat(102)), close: vi.fn(async () => undefined) };
+    const unlink = vi.fn(async () => undefined);
+    const locked = new LockedFile("/repo/.env.worktree", {
+      fs: {
+        mkdir: vi.fn(async () => undefined),
+        open: vi.fn(async (candidate: string) =>
+          candidate.endsWith(".anywhere-terminal.lock") ? (lockHandle as never) : (temporaryHandle as never),
+        ) as never,
+        lstat: vi.fn(async (candidate: string) => {
+          if (candidate.endsWith(".anywhere-terminal.lock")) {
+            return fileStat(102) as never;
+          }
+          observationStarted.resolve();
+          return observation.promise as never;
+        }) as never,
+        unlink,
+      },
+      randomBytes: () => new Uint8Array(16),
+    });
+    const staged = await locked.stageReplacement("APP=5183\n", 0o600);
+    if (staged === undefined) {
+      throw new Error("the test could not stage its replacement");
+    }
+    const result = locked.withLock(
+      deadline,
+      async (gate) => ((await staged.commit("create", gate)) ? "committed" : "failed"),
+      "failed",
+    );
+    await observationStarted.promise;
+
+    expire();
+
+    await expect(result).resolves.toEqual({ kind: "timedOut" });
+    await vi.waitFor(() => expect(unlink).toHaveBeenCalledWith(locked.lockPath));
+    observation.resolve(fileStat(101));
   });
 
   it("leaves a create temporary until separately discarded", async () => {

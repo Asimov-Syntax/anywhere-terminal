@@ -48,6 +48,19 @@ function port(name: string, id = `id-${name}`, preview?: number): ProvisionPort 
   return { id, name, source: "asimov/worktree.yaml", ...(preview === undefined ? {} : { port: preview }) };
 }
 
+async function observedStat(target: string, ino?: number) {
+  const entry = await lstat(target);
+  return {
+    dev: entry.dev,
+    ino: ino ?? entry.ino,
+    mode: entry.mode,
+    size: entry.size,
+    isDirectory: () => entry.isDirectory(),
+    isFile: () => entry.isFile(),
+    isSymbolicLink: () => entry.isSymbolicLink(),
+  };
+}
+
 async function complete(paths: readonly string[]): Promise<PortWorktreeListing> {
   const worktrees = await Promise.all(
     paths.map(async (worktreePath) => {
@@ -133,6 +146,42 @@ describe("previewWorktreePorts", () => {
     });
 
     expect(previewed[0]?.port).toBeUndefined();
+  });
+
+  it("refuses preview authority whose leaf identity is unavailable", async () => {
+    const { worktrees } = await fixture(["main"]);
+    const worktree = worktrees[0] as string;
+    const probe = vi.fn(async () => 5183);
+
+    const previewed = await previewWorktreePorts([port("APP", "app", 5000)], [worktree], {
+      probe,
+      lstat: (candidate) => observedStat(candidate, candidate === worktree ? 0 : undefined),
+    });
+
+    expect(previewed[0]?.port).toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("refuses preview authority when an ancestor changes after authorization", async () => {
+    const { worktrees } = await fixture(["main"]);
+    const worktree = worktrees[0] as string;
+    const ancestor = path.dirname(worktree);
+    let ancestorReads = 0;
+    const probe = vi.fn(async () => 5183);
+
+    const previewed = await previewWorktreePorts([port("APP", "app", 5000)], [worktree], {
+      probe,
+      lstat: async (candidate) => {
+        const entry = await observedStat(candidate);
+        if (candidate === ancestor && ++ancestorReads >= 3) {
+          return { ...entry, ino: Number(entry.ino) + 1 };
+        }
+        return entry;
+      },
+    });
+
+    expect(previewed[0]?.port).toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it("stops waiting when the preview budget expires", async () => {

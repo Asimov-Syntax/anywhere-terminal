@@ -59,64 +59,103 @@ class GateClosed extends Error {}
 
 class MutationGate implements WriteGate {
   private latchedOpen = true;
-  private inFlight = 0;
+  private mutating = 0;
   private dirty_ = false;
 
   public constructor(private readonly deadline: LockDeadline) {
-    void deadline.elapsed.then(() => {
-      this.latchedOpen = false;
-      if (this.inFlight > 0) {
-        this.dirty_ = true;
-      }
-    });
+    void deadline.elapsed.then(() => this.close(this.mutating > 0));
   }
 
   public get open(): boolean {
-    return this.latchedOpen && !this.deadline.expired;
+    if (this.deadline.expired) {
+      this.close(this.mutating > 0);
+    }
+    return this.latchedOpen;
   }
 
   public get dirty(): boolean {
     return this.dirty_;
   }
 
+  public get closed(): boolean {
+    return !this.latchedOpen;
+  }
+
   public async guard<T>(step: () => Promise<T>): Promise<T> {
     return this.run(step);
   }
 
-  public async run<T>(step: () => Promise<T>, onLate?: (value: T) => Promise<void> | void): Promise<T> {
+  public async observe<T>(step: () => Promise<T>): Promise<T> {
     if (!this.open) {
-      this.latchedOpen = false;
       throw new GateClosed();
     }
-    this.inFlight += 1;
-    let timedOut = false;
+    const running = Promise.resolve().then(step);
+    return Promise.race([
+      running.then(
+        (value) => {
+          if (!this.open) {
+            throw new GateClosed();
+          }
+          return value;
+        },
+        (error) => {
+          if (!this.open) {
+            throw new GateClosed();
+          }
+          throw error;
+        },
+      ),
+      this.deadline.elapsed.then<never>(() => {
+        this.close(false);
+        throw new GateClosed();
+      }),
+    ]);
+  }
+
+  public async run<T>(step: () => Promise<T>, onLate?: (value: T) => Promise<void> | void): Promise<T> {
+    if (!this.open) {
+      throw new GateClosed();
+    }
+    this.mutating += 1;
     let settled = false;
     const running = Promise.resolve().then(step);
-    void running.then(
+    const completed = running.then(
       async (value) => {
+        const late = !this.open;
+        this.mutating -= 1;
         settled = true;
-        this.inFlight -= 1;
-        if (timedOut) {
+        if (late) {
+          this.dirty_ = true;
           await Promise.resolve(onLate?.(value)).catch(() => undefined);
+          throw new GateClosed();
         }
+        return value;
       },
-      () => {
+      (error) => {
+        const late = !this.open;
+        this.mutating -= 1;
         settled = true;
-        this.inFlight -= 1;
+        if (late) {
+          this.dirty_ = true;
+          throw new GateClosed();
+        }
+        throw error;
       },
     );
-    const expired = new Promise<never>((_, reject) => {
-      void this.deadline.elapsed.then(() => {
-        if (settled) {
-          return;
-        }
-        timedOut = true;
-        this.latchedOpen = false;
-        this.dirty_ = true;
-        reject(new GateClosed());
-      });
+    const expired = this.deadline.elapsed.then<never>(() => {
+      if (!settled) {
+        this.close(true);
+      }
+      throw new GateClosed();
     });
-    return Promise.race([running, expired]);
+    return Promise.race([completed, expired]);
+  }
+
+  private close(dirty: boolean): void {
+    this.latchedOpen = false;
+    if (dirty) {
+      this.dirty_ = true;
+    }
   }
 }
 
@@ -126,6 +165,11 @@ function mutationGate(gate: WriteGate | undefined): MutationGate | undefined {
 
 async function guarded<T>(gate: WriteGate | undefined, step: () => Promise<T>): Promise<T> {
   return gate === undefined ? step() : gate.guard(step);
+}
+
+async function observed<T>(gate: WriteGate | undefined, step: () => Promise<T>): Promise<T> {
+  const internal = mutationGate(gate);
+  return internal === undefined ? guarded(gate, step) : internal.observe(step);
 }
 
 export class LockedFile {
@@ -226,6 +270,19 @@ export class LockedFile {
       return { kind: "timedOut" };
     }
 
+    if (gate.closed) {
+      if (gate.dirty) {
+        void lock.close().catch(() => undefined);
+        return { kind: "timedOut", retainedLockPath: this.lockPath };
+      }
+      void this.releaseLock(this.lockPath, lock).then((released) => {
+        if (!released) {
+          onLockReleaseFailed?.(this.lockPath);
+        }
+      });
+      return { kind: "timedOut" };
+    }
+
     const release = this.releaseLock(this.lockPath, lock);
     const released = await Promise.race([release, deadline.elapsed.then(() => undefined)]);
     if (released !== true) {
@@ -254,7 +311,7 @@ export class LockedFile {
         return false;
       }
       try {
-        const current = await guarded(checkGate, () => this.fs.lstat(temporaryPath));
+        const current = await observed(checkGate, () => this.fs.lstat(temporaryPath));
         return !current.isSymbolicLink() && current.isFile() && sameFileIdentity(ownedIdentity, current);
       } catch {
         return false;
@@ -262,8 +319,9 @@ export class LockedFile {
     };
 
     const closeHandle = async () => {
-      await handle?.close().catch(() => undefined);
+      const current = handle;
       handle = undefined;
+      await current?.close().catch(() => undefined);
     };
 
     const abandon = async () => {
@@ -297,7 +355,7 @@ export class LockedFile {
     };
 
     try {
-      await guarded(gate, () => this.fs.mkdir(path.dirname(this.path), { recursive: true }));
+      await observed(gate, () => this.fs.mkdir(path.dirname(this.path), { recursive: true }));
       const internal = mutationGate(gate);
       handle = internal
         ? await internal.run(
@@ -310,7 +368,7 @@ export class LockedFile {
       if (mode !== undefined) {
         await guarded(gate, () => handle!.chmod(mode));
       }
-      const opened = await guarded(gate, () => handle!.stat());
+      const opened = await observed(gate, () => handle!.stat());
       ownedIdentity = fileIdentityOf(opened);
       if (!opened.isFile() || ownedIdentity === undefined) {
         await discard(gate);
@@ -348,7 +406,7 @@ export class LockedFile {
           }
           await guarded(commitGate, () => this.replace(temporaryPath, this.path));
           live = false;
-          await closeHandle();
+          void closeHandle();
           return true;
         } catch {
           return false;
