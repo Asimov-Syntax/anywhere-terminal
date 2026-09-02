@@ -32,7 +32,7 @@
         }
       ],
       "firstAt": 1788335769624,
-      "lastAt": 1788361296050,
+      "lastAt": 1788361913518,
       "buckets": [
         {
           "runtime": "claude",
@@ -325,12 +325,12 @@
           "phase": "plan",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 427,
-          "inputTokens": 1032035,
-          "outputTokens": 140970,
+          "messages": 441,
+          "inputTokens": 1062395,
+          "outputTokens": 145008,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 102444800,
+          "cacheReadTokens": 104442240,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -406,6 +406,24 @@
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 66831,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "Explore",
+          "model": "gpt-5.6-luna",
+          "messages": 22,
+          "inputTokens": 107300,
+          "outputTokens": 3340,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 2001408,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

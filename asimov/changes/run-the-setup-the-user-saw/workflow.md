@@ -41,3 +41,5 @@ Replan Oracle: F001-F010 supported; narrowed F006 ownership to tasks 5_1/5_2 and
 Validation warning accepted: completed task 4_4 is one behavior-free formatting pass despite spanning 11 already-changed files; splitting it retroactively adds no verification value.
 Round 4 grant: the user's prior instruction `cho phép replan, them round review` authorizes one bounded extra review; fix hypothesis is null-prototype environments, settle-before-kill, copied retained slices, and replay recreation.
 Round 6 grant: the user's explicit instruction `cho phép round 6` authorizes remediation and one verification review for Round 5 F015-F017.
+Round 6 state caveat: the corrected APPROVE artifact conflicts with the earlier superseded entry because the CLI has no amend path and the ledger gate forbids hand-editing.
+Round 7 grant: the user's explicit instruction `cho phép round 7` authorizes one fresh discovery round solely to restore an authoritative supported-CLI review ledger entry.
