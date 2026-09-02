@@ -156,10 +156,19 @@ over `dist/extension.js` (1,908,308 bytes):
 
 | Counter | Real artifact | Synthetic mixed fanout, n=160 |
 |---|---:|---:|
+| `applications` — a call applied to one target | 3,555 | 160 |
 | `flows` — a fact offered to a symbol | 13,823 | 52,000 |
 | `factVisits` — a prior fact replayed | **22** | **4,121,600** |
 | `argScans` — a target scanned for an argument arrival | 52 | 25,600 |
-| total work | 13,897 | 4,199,200 |
+| total work | 17,452 | 4,199,360 |
+
+`applications` belongs in the total, and leaving it out was the first draft's own version of
+round 6's mistake. `drainFreshlyHeld` and `enqueue` push work items in loops that no counter
+observes directly; each push is bounded only by the `applyCall` or `deliverArgument` that consumes
+it, so the consumers are what has to be counted. With all four in, every unbounded path in
+`requireBindings` passes through a counter: assignment edges and both arrival paths funnel through
+`flow`, `targetsOf` is always followed by a per-target increment, and the reverse-index build is a
+one-off pass over the AST.
 
 The Θ(N²)/Θ(N³) growth round 7 measured is real, and it is **187,000x removed from what the shipped
 bundle does**. Its defeater is N identical reassignments of one binding, which no bundler emits.
@@ -170,7 +179,13 @@ So D2 obliges a **ceiling**, not an asymptotic shape:
   included. Counting only the `applyCall` path is what made round 6's assertions vacuous.
 - Work above `PROPAGATION_CEILING` abandons the pass. The gate says so, loudly, in the same voice D5
   uses for a config it cannot read. A silent skip would be the one outcome worse than the cost.
-- The ceiling is 2,000,000 work units — 144x the shipped artifact's 13,897, and about 60 ms.
+- The ceiling is 2,000,000 work units — 115x the shipped artifact's 17,452.
+
+Work is close to LINEAR in bundle size, so the ceiling is not a disguised size limit. Measured by
+concatenating the artifact with itself: 1.9 MB / 3.8 MB / 7.6 MB give 17,452 / 36,508 / 79,822 work
+units (2.09x and 4.57x for 2x and 4x the input). The ceiling is therefore roughly a 200 MB bundle —
+two orders of magnitude past anything this extension will ship — while still stopping the synthetic
+shape dead at n=160.
 
 **Abandoning the pass cannot change a build's verdict.** After D6, the only class that FAILS is the
 relative one, and it is answered by D6's literal sweep and D7's template pass, neither of which
@@ -186,7 +201,7 @@ that trips the ceiling is a fixture, and the subsumption is a witness.
 
 | Claim | Semantics | Defeater | Witness | Disposition |
 |---|---|---|---|---|
-| Propagation work is bounded | Every run either completes under `PROPAGATION_CEILING` or abandons the pass | A path whose work the counter does not observe — round 6's `deliverArgument` was exactly this | Counter arm-checked by making `deliverArgument` do extra work and observing the count rise; a fixture above the ceiling is abandoned rather than ground through | supported |
+| Propagation work is bounded | Every run either completes under `PROPAGATION_CEILING` or abandons the pass | A path whose work the counter does not observe — round 6's `deliverArgument` was exactly this, and this draft's own first cut omitted `applications`, leaving the queue-push loops unbounded | Counter arm-checked by making `deliverArgument` do extra work and observing the count rise; a fixture above the ceiling is abandoned rather than ground through | supported |
 | Abandoning the pass cannot change a verdict | For every bundle, the set of `severity: "fails"` verdicts is identical with the pass run and with it abandoned | A relative specifier reachable only through a require call and not present as a bundle string literal | Structural: `requireLiteral` accepts an argument only when `ts.isStringLiteralLike(unwrap(arg))`, and `relativeLiterals` keeps every `ts.isStringLiteralLike` node of the SAME shared root under the same `isRelativeRequest`, so the sweep is a superset. Probed: minified UMD arriving only via propagation, a parenthesized argument, a no-substitution template argument, and `require("".concat("./x"))` all lose nothing when the pass is dropped. Task 8_4 pins it. | supported |
 | A computed relative request in a call argument is reported | Every `TemplateExpression` with a relative head in call-argument position yields a failing verdict, through any number of enclosing parentheses | `r((`./${name}`))` — round 7 F019, which yields no verdict at all today | Direct, parenthesized and UMD-parenthesized fixtures all reported; path data and tagged templates still not | refuted at HEAD, closed by task 8_1 |
 | The ceiling never fires on a real build | `dist/extension.js` stays far below the ceiling | A future dependency whose bundled shape explodes the fanout | The artifact's own work counted against the ceiling in the suite, so the headroom is asserted rather than remembered | supported |

@@ -268,7 +268,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     - Outcome: The reported work rises when any propagation path does more work
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
-    1. In `scripts/bundleRequires.mjs`, count each fact offered to a symbol, each prior fact replayed, and each target scanned for an argument arrival, and report the total alongside the existing pair counts.
+    1. In `scripts/bundleRequires.mjs`, report one work total over every counter design.md D2 § Cost names, the existing per-target applications included — the queue-push loops are bounded only by the work items that consume them.
     2. Declare the counter in `scripts/bundleRequires.d.mts`.
     3. Arm-check the counter against the path round 6 left invisible: make the argument-delivery path do extra work, observe the total rise, and restore it. A counter that cannot see a path cannot bound it.
     4. Witness the shipped artifact's own work against the ceiling, so the recorded headroom is asserted rather than remembered.
