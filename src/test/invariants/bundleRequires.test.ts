@@ -593,3 +593,25 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
     expect(verdicts("var msg = `./plain`;", files("/repo/dist/plain"))).toEqual([]);
   });
 });
+
+// [round-6 F016] Detection used the four-prefix predicate while `classify` kept
+// its own `startsWith(".")` test. They disagree on a bare package whose NAME
+// begins with a dot — `.pkg` resolves from `node_modules/.pkg/` at runtime — so
+// the gate failed a build over a request D2 says may only warn.
+describe("[round-6 F016] one predicate decides the class", () => {
+  it("warns on a dot-prefixed bare specifier rather than failing", () => {
+    expect(one(`require(".pkg")`)).toMatchObject({ ok: false, severity: "warns" });
+  });
+
+  it("exits 0 on it", () => {
+    expect(exitCodeFor(verdicts(`require(".pkg")`))).toBe(0);
+  });
+
+  it("still fails each of the four relative spellings", () => {
+    for (const specifier of ["./a", "../b", ".\\c", "..\\d"]) {
+      expect(verdicts(`var r = require; r(${JSON.stringify(specifier)});`)[0]).toMatchObject({
+        severity: "fails",
+      });
+    }
+  });
+});

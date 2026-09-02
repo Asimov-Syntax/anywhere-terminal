@@ -628,7 +628,8 @@ export function classify(specifier, {
       why: "absolute path baked into the bundle — it names the build machine",
     };
   }
-  if (specifier.startsWith(".")) {
+  // One predicate decides the class for detection and severity alike (.reviews/round-6.md F016).
+  if (isRelativeRequest(specifier)) {
     const shipped = resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile });
     return { specifier, severity: shipped.ok ? "none" : "fails", ...shipped };
   }

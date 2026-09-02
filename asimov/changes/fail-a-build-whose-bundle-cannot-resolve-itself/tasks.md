@@ -197,7 +197,7 @@ the extension failed to activate. No suite could catch it, because every suite i
 
 ## 7. Round-6 handback — one class predicate, a spelling-dispatched resolver, and a bounded template rule
 
-- [ ] 7_1 Decide the request class once, for detection and severity alike
+- [x] 7_1 Decide the request class once, for detection and severity alike — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D6, D2, .reviews/round-6.md#f016
   - **Acceptance**:
