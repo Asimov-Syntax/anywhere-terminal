@@ -15,8 +15,8 @@
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [x] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-012.19`)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-012.19`)_
 
 ## Archive
 
@@ -29,7 +29,7 @@
 
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
-Blueprint: none
+Blueprint: docs/PLAN.md task WT-012.19
 Lane: full (small) — MEDIUM risk: precision and reporting inside the primitive both config writers depend on | flags: security-privacy
 Planned at: 5af4d3fd
 - Fastlane auto-decisions, each recorded because it narrows or redirects what the blueprint row said:

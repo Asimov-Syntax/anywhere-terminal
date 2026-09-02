@@ -471,6 +471,26 @@ What the write is allowed to hold rules about, and what it must ask:
   Taking the type from the handle rather than the path is also what makes the rule safe for a
   caller that already observed the path — there is no window between the two answers.
 
+- **Reading a file we EDIT is not reading a file the user NAMES.** A provider file the repository
+  merely names as a source may legitimately be a symlink, and `openRegularFile` follows one by
+  default. The configuration file the panel edits IN PLACE may not: `LockedFile.readText` passes
+  `noFollow`, which refuses a link at that name — by `O_NOFOLLOW` where the platform defines it, and
+  otherwise by comparing the pre-open `lstat` identity against the opened handle's, since win32
+  defines no such flag. Bounded deliberately: inode REUSE defeats the comparison, and Windows exposes
+  a 64-bit file id that is not guaranteed unique on ReFS, so this holds for a non-adversarial
+  filesystem and is delegated otherwise.
+
+- **Ownership is decided at full precision.** Every identity a locked write compares to decide it
+  owns a temporary or a lock is read `{ bigint: true }`. Read as a double, `ino` values at and above
+  2^53 collide — 2^53 and 2^53+1 are the same number — so a DIFFERENT file could be unlinked as an
+  owned temporary or as this holder's lock.
+
+- **What a save says about a lock it could not release is NOT settled here** (WT-012.22). The
+  primitive answers a boolean, and `false` covers four situations of which only one is a leaked lock:
+  the others are an indeterminate inspection, a lock renamed away leaving the name empty, and a
+  DIFFERENT writer's live lock now holding that name. Naming the pathname in all four tells the user
+  to delete someone else's live lock, so the report waits for a typed release disposition.
+
 ## 8. What this does not do
 
 - **It does not validate another tool's semantics** beyond what it needs to render and apply.

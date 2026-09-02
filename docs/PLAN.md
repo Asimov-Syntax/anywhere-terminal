@@ -780,19 +780,53 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Acceptance** | A destination holding a populated checkout whose administrative entry is gone is offered as adopt rather than as debris or a suffixed fresh path; the entry is reconstructed and the checkout then lists, holds the branch at the tip the user was shown, survives a prune, and commits back into the repository; the index is rebuilt so a freshly adopted checkout reports only its genuine working-tree state, and no file inside the worktree is modified by the adoption; a branch any live worktree holds is refused before a single file is written, with no confirmation path offered; the branch tip is re-checked immediately before the write and a move refuses rather than attaching to a different commit; what adoption cannot restore is stated to the user before they authorize it, and is stated rather than probed; a directory holding a valid administrative entry is reattach and never reaches this path; base ref cannot be expressed |
 | **Status** | todo |
 
-### [WT-012.19] A Write Anchored to the Directory It Checked
+### [WT-012.19] A Locked Write Refuses a Destination That Moved
 
 | Field | Value |
 |-------|-------|
-| **Goal** | Give every locked write a destination that cannot be redirected after it was authorized, by anchoring the operations to an open directory rather than to a path string |
+| **Goal** | Close the two leaf redirections a locked write can observe on its own: a followed symlink at the file it edits in place, and a leaf identity that collides because it was read at a double's precision |
 | **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 7 |
-| **Depends On** | None |
+| **Depends On** | WT-012.20 |
 | **Stage** | 9 |
+| **Size** | M |
+| **Labels** | security-privacy |
+| **Notes** | Narrowed TWICE. First after a plan attack refuted five of six obligations; then again after three plan attacks and two review cycles, which is what took the directory work and the lock-release reporting out. **Shipped**: bigint ownership identities, and a no-follow leaf read bounded to a non-adversarial filesystem — inode reuse defeats the identity comparison, and Windows exposes a 64-bit id not guaranteed unique on ReFS. **Not shipped, and not this row's any more**: everything directory-shaped is WT-012.21, and lock-release reporting is WT-012.22. The directory-checkpoint machinery was cut because it cannot state its own guarantee — the comparison and the syscall it guards are two calls, so a temporary can land in the decoy between them and cleanup's own guard must then refuse to remove it, manufacturing the condition the requirement forbade. What was cut is now WT-012.21, and the reason is not effort: Node exposes NO `*at` syscall — `fs.openat`, `fs.renameat` and `fs.linkat` are all `undefined` on v24.7, and `FileHandle` carries no descriptor-relative operation, so "anchor the operations to an open directory rather than a path string" is unreachable in this runtime. The reference implementations agree: orca guards leaf opens with `O_NOFOLLOW`, and cmux — Swift, with the whole POSIX surface available — still opens its lock `O_CREAT \| O_RDWR \| O_NOFOLLOW` rather than anchoring. What IS deliverable and separately valuable: `readText` follows symlinks through `openRegularFile` by contract, so the file a locked write reads can be an external one; temporary and lock ownership capture `dev`/`ino` as ordinary numbers, so the 2^53 collision WT-012.17 records can make a different leaf read as owned; and a two-decoy schedule leaves a LIVE lock in a directory that was renamed away, which — since locks are deliberately never reclaimed by age — wedges the file permanently once that directory is restored. A held directory descriptor is not an anchor but IS an identity oracle: `handle.stat({ bigint: true })` answers for the directory the descriptor holds while `stat(path)` answers for whatever the name reaches now, and the two diverge under a rename-plus-symlink that `realpath` cannot see |
+| **Acceptance** | A locked write reads the file at the name it edits rather than one a link points to, and refuses when that name is a link; leaf ownership is decided on identities that cannot collide by rounding; reading a file the user merely NAMES as a source still follows links |
+| **Status** | done |
+
+---
+
+### [WT-012.21] A Locked Write That Names Its Directory, Not a String
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Make the lock, the temporary, the read and the commit operate on the directory that was authorized rather than on a pathname that can be redirected between them |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 7 |
+| **Depends On** | WT-012.19 |
+| **Stage** | 10 |
 | **Size** | L |
 | **Labels** | security-privacy |
-| **Notes** | Split out of WT-012.5, whose design records the refutation that forced it: `LockedFile` serializes an **inode** while every other operation names a **string**, and `realpath` returns a canonical spelling rather than a directory identity — so a rename-plus-symlink at that spelling redirects the lock, the temporary, the read and the commit at once, and `withLock` creates the lock before its callback, so no re-assertion inside the callback helps. Three obligation-ledger rows in that change are `supported for a non-adversarial filesystem, delegated otherwise` and name this task as their owner. A new invariant owner, not a detail of any one writer: the facility every `LockedFile` caller inherits. Two things to establish before building — `/dev/fd/<dirfd>/child` was probed and is NOT a usable descriptor-relative path on macOS, so the mechanism has to come from somewhere else; and `src/agentHooks/install/lockedJsonFile.ts` is concurrently changed by the `never-release-a-lock-a-pending-write-still-owns` change, whose retained-dirty-lock semantics the seam has to be checked against rather than assumed |
-| **Acceptance** | A write authorized against a directory lands in that directory or does not land: swapping the checked directory for a symlink to another location, at any point after the check and before the commit, leaves nothing written outside it and reports a refusal rather than succeeding elsewhere; the lock, the temporary, the read and the commit all name the same anchored directory, so two writers that resolve one spelling cannot hold two live locks; a failure part-way leaves no temporary behind even when the directory was renamed under it; the platforms the anchoring mechanism cannot serve are named with the behaviour offered there instead of failing silently |
+| **Notes** | The part of the original WT-012.19 that a plan attack showed no pure-Node mechanism can deliver, kept visible rather than closed by silence. Two acceptance clauses were abandoned there and are restated here: the four operations still NAME STRINGS, so a held descriptor is only an identity oracle and two writers resolving one spelling can hold two live locks; and cleanup reaches the temporary through the current spelling, so a directory renamed under a part-way failure keeps it. Detection has an irreducible ABA hole this task exists to close: redirect after a checkpoint, let an unguarded operation land on the decoy, restore before the next checkpoint, and every comparison compares equal. BLOCKED on a decision this task must not assume: the only mechanisms that close it are a native addon binding `openat`/`renameat` — which means prebuilt binaries per platform, architecture and Electron ABI for an extension whose three dependencies are all pure JS — or accepting the residual as a stated risk. Establish which before designing; do not open this task by writing code |
+| **Acceptance** | The lock, the temporary, the read and the commit all reach the same directory object, so a rename-plus-symlink at its name between any two of them cannot make one of them act elsewhere; two writers that resolve one spelling cannot hold two live locks; a failure part-way leaves no temporary behind even when the directory was renamed under it; or, where no mechanism achieves that, the residual is recorded as an accepted risk with its owner, its trigger and what a user can do about it |
 | **Status** | todo |
+
+---
+
+### [WT-012.22] A Save Says Which Lock It Left Behind
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Tell the user, truthfully and only when it is true, that a save left a live lock behind — naming a lock that is genuinely still theirs and still there, and never naming one that is free or belongs to another writer |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 7 |
+| **Depends On** | WT-012.19 |
+| **Stage** | 9 |
+| **Size** | M |
+| **Labels** | security-privacy |
+| **Notes** | Split out of WT-012.19 after the same invariant survived two fix attempts. The root is that `releaseLock` answers a BOOLEAN while `false` covers four different situations: an indeterminate inspection failure; `ENOENT` with `nlink > 0n`, meaning the holder's lock was renamed away and the canonical name is empty; an identity MISMATCH, meaning a DIFFERENT writer's live lock now holds that name; and a genuine non-ENOENT unlink failure. Only the last is a leaked lock, and the first attempt reported the pathname for all four — which told the user to delete another writer's live lock and destroy the mutual exclusion the lock exists to provide. So this task starts by giving the primitive a TYPED release disposition, and only then decides what reaches the user. Two further traps are already known and must be covered rather than rediscovered: the report must survive a failed model reread (it was published only on the success path), and a landed-but-locked save must not render as "Not saved" — the renderer summarises an all-`unsaved` problem set that way, so a new user-facing classification is needed and not just new detail text. The duplicated bigint identity helper between `regularFileRead` and the locked-file implementation belongs here too |
+| **Acceptance** | A save names a lock only when that lock is still present and still the one this save held; a lock already removed by anyone is never named; a lock held by another writer is never named; the report survives a failed reread of the model; and what the outcome says about the WRITE stays true — a save that wrote nothing is never summarised or detailed as saved |
+| **Status** | todo |
+
+---
 
 ### [WT-012.20] A Configuration Read That Always Answers
 
