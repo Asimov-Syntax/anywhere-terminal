@@ -194,3 +194,55 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, report a `TemplateExpression` whose head starts with one of the four relative prefixes as an unverifiable relative request, carrying the head text.
     2. Witness the UMD shape `r(`./${name}`)` reported, and witness that a non-relative-headed template is not.
     3. Witness that the real `dist/extension.js` carries none, so the rule fails no current build.
+
+## 7. Round-6 handback — one class predicate, a spelling-dispatched resolver, and a bounded template rule
+
+- [ ] 7_1 Decide the request class once, for detection and severity alike
+  - **Deps**: none
+  - **Refs**: design.md D6, D2, .reviews/round-6.md#f016
+  - **Acceptance**:
+    - Outcome: A dot-prefixed bare specifier warns instead of failing
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, have `classify` decide relative-versus-bare through the same predicate discovery uses, rather than its own `startsWith(".")` test.
+    2. Witness a dot-prefixed bare name reported with warning severity and a zero exit, and witness that the four relative spellings still fail.
+
+- [ ] 7_2 Resolve a Win32 spelling by its spelling, not by the build host
+  - **Deps**: 7_1
+  - **Refs**: design.md D6, .reviews/round-6.md#f017
+  - **Acceptance**:
+    - Outcome: A Win32-spelled relative specifier gets the same verdict on either host
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, normalize a Win32-spelled relative specifier to its POSIX equivalent before resolution, so one resolver answers both and no branch reads `process.platform`.
+    2. Witness a Win32-spelled specifier RESOLVING against a file that exists beside the bundle, which the host-native path could not do, and witness one that does not resolve still failing.
+
+- [ ] 7_3 Report a template only where a module request can occur
+  - **Deps**: 7_2
+  - **Refs**: design.md D7, .reviews/round-6.md#f018
+  - **Acceptance**:
+    - Outcome: A relative-headed template outside a call argument is not reported
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, report a relative-headed template only in a call-argument position, excluding tagged templates.
+    2. Witness relative-headed path data and a tagged template both unreported, and witness the UMD call shape still reported.
+
+- [ ] 7_4 Bound argument-side fact arrivals too
+  - **Deps**: 7_3
+  - **Refs**: design.md D2, .reviews/round-6.md#f006
+  - **Acceptance**:
+    - Outcome: Mixed fanout applies each edge once
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, deduplicate argument-side arrivals by edge and fact identity, the way callee-target arrivals already are, so a generic re-enqueue cannot reapply every target.
+    2. Witness the MIXED topology the round-6 probe used — callee targets and argument callables both growing — asserting applications equal distinct pairs. The committed witness varied only callee targets and therefore could not fail on this.
+
+- [ ] 7_5 Parse the artifact once
+  - **Deps**: 7_4
+  - **Refs**: design.md D1, .reviews/round-6.md#f015
+  - **Acceptance**:
+    - Outcome: One parse of the bundle serves every collector
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, build the source file and checker once in `unresolvableRequires` and pass them to the three collectors, keeping the string-taking exports as thin wrappers so the existing witnesses still drive them.
+    2. Witness that the collectors agree with their wrapper forms on one bundle, so the shared parse is not a second implementation.

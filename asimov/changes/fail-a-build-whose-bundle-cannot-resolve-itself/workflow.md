@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-011.12`)_
@@ -51,3 +51,6 @@ Verify gate after the round-4 handback: check-types clean, 6763 unit tests pass,
 - C1 refuted D6's scope against the PLAN wording — "a relative `require`" is not "a relative literal", and a `TemplateExpression` with a relative head escapes both mechanisms. That is the UMD-factory shape this change exists to catch, so it gained an owner as D7 rather than being recorded as a limit. Zero relative-headed templates in the real artifact, so it can fail rather than warn.
 - C4 caught two witnesses that could not establish their own acceptance: 6_3 asserted a CLI exit code from a unit test against a module that does not decide it (the exit rule is now extracted and witnessed directly), and 6_4 proposed wall-clock timings for an asymptotic claim — the existing timing assertion passed while the fanout was still quadratic, which is the proof that timing cannot witness it. Now a deterministic edge-application count.
 - C3 left the retention of D2 unresolved: if nothing consumes a warning, the machinery is dead weight and option A (delete) would be right. Recorded rather than argued away — the consumer is the developer running `pnpm run package` for a release, who sees the gate's output in that terminal, and 6_4's cost work is still owed because the D2 pass runs regardless of the severity it emits. If a future round finds that output is never read, deleting D2 is the honest follow-up.
+- Round-6 handback. Three blockers, all mine, and two of them fallout from 6_1 widening detection without widening what consumes it: `classify` kept its own `startsWith(".")` class test (F016) and the new Win32 spellings flowed into a host-native resolver (F017). F006 persisted because my 6_4 fix made only callee-target arrivals incremental, and my witness varied only callee targets — it could not fail on the mixed case it was meant to bound. Gate 2 re-taken under the standing goal.
+- F017's mechanism is taken from a sibling rather than invented, per the standing instruction: orca dispatches path flavour on the SPELLING and never on `process.platform` (git-handler.ts:128-134, git-handler-worktree-ops.ts:133-136). Adjusted because resolving through `path.win32` yields win32-shaped paths a POSIX filesystem cannot stat — the Win32 spelling is normalized to its POSIX equivalent instead, so one resolver answers both.
+- No round 7 opened. The chair reported the review cap reached; the next review is a new cycle's discovery round after this replan.

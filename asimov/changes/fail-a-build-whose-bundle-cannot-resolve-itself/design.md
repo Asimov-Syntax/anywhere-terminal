@@ -194,6 +194,35 @@ string in the bundle would be a candidate — so no sound mechanism for that cla
 retained, but as a reporter without a coverage claim; see D2 § Coverage. Only the relative class
 fails a build.
 
+### One predicate decides the class, for detection AND for severity
+
+`isRelativeRequest` covers four prefixes; `classify` asked `startsWith(".")`. Those disagree on a bare
+package whose NAME begins with a dot — `require(".pkg")` resolves from `node_modules/.pkg/` at
+runtime, and the gate called it a failing relative request (.reviews/round-6.md F016), which defeats
+the warning-only scope cut D2 § Coverage records.
+
+The class is decided ONCE, by the same predicate, and both discovery and severity read it. A
+dot-prefixed name that is not one of the four relative spellings is a BARE specifier and takes the
+bare path — reported, warned, never a build failure.
+
+### A Win32 spelling is resolved as a spelling, never as the build host
+
+`.\x` and `..\x` were detected by D6 and then handed to `resolveShipped`, which uses host-native
+`node:path`. POSIX reads `.\foo` as a filename containing a backslash; Windows reads it as `foo`, so
+the verdict depended on the release machine (.reviews/round-6.md F017) — the gate committing the
+exact class of defect it exists to catch.
+
+**Taken from a shipped sibling.** `orca/src/relay/git-handler.ts:128-134` and
+`git-handler-worktree-ops.ts:133-136` both dispatch on the SPELLING and never on `process.platform`:
+`path.win32.isAbsolute(value) ? path.win32.resolve(...) : path.posix.resolve(...)`. The property that
+matters is the same one here — a verdict must be a fact about the specifier, not about the machine.
+
+Applied with one adjustment. Resolving THROUGH `path.win32` would produce win32-shaped paths a POSIX
+filesystem cannot stat. A Win32-spelled relative specifier names the same target as its POSIX
+spelling — the separator is the only difference — so the specifier is normalized to its POSIX
+equivalent and then resolved once, by the one resolver. Host-independent verdict, no target-platform
+flag, and no second resolution path to keep in step with the first.
+
 ## D7 — A relative request that is computed is reported, not resolved
 
 PLAN acceptance says "a relative `require`", not "a relative literal". An oracle attack on D6 found
@@ -210,6 +239,12 @@ exists to catch.
 A template whose HEAD starts with a relative prefix is provably a relative request whatever its
 substitutions evaluate to. What it resolves to is not knowable without running the program, so the
 gate does not try: it reports the request as unverifiable and fails the build, naming the head.
+
+**Only where a module request can occur.** The first draft reported every relative-headed template
+anywhere in the artifact, so ordinary path DATA and tagged templates failed the build as module
+requests (.reviews/round-6.md F018). "Zero occurrences in today's artifact" is a measurement, not a
+structural bound. A template is reported only in a CALL ARGUMENT position — the only place a require
+can take one — and a tagged template is never a call argument in that sense.
 
 Failing rather than warning is affordable because it is not noisy: the real `dist/extension.js`
 carries **zero** relative-headed templates. If one ever appears legitimately, the fix is to make the
