@@ -5,7 +5,8 @@
 // one place that supplies the real ones, and the one place the byte budget is
 // enforced — an adapter classifies failures, it does not perform them.
 
-import { lstat, open, opendir, realpath } from "node:fs/promises";
+import { lstat, opendir, realpath } from "node:fs/promises";
+import { openRegularFile } from "../../utils/regularFileRead";
 import type { ProviderDeps } from "./providerKit";
 
 /**
@@ -33,7 +34,11 @@ export const MAX_PROVIDER_BYTES = 256 * 1024;
  * to read rather than a failure to find.
  */
 async function readBounded(filePath: string, maxBytes: number): Promise<string> {
-  const handle = await open(filePath, "r");
+  // Not `open(filePath, "r")`: that call never returns for a writerless pipe,
+  // so the cap below would never get to apply and a caller holding a lock across
+  // this read would never release it (design.md D1 of
+  // `open-a-provider-file-without-waiting-on-it`).
+  const handle = await openRegularFile(filePath);
   try {
     const buf = Buffer.alloc(maxBytes + 1);
     let total = 0;

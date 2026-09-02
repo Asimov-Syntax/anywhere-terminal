@@ -1,8 +1,15 @@
+import { execFile } from "node:child_process";
+import fsp from "node:fs/promises";
+import nodeOs from "node:os";
+import nodePath from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import type { ProvisionModel } from "../../types/messages";
 import { ASIMOV_PROVIDER_FILE } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
 import { foldSegment, MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
+import { createProvisioningDeps } from "./provisioningDeps";
 import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
@@ -1294,5 +1301,45 @@ describe("[F013] the native adapter leads detection", () => {
     expect(ids[0]).toBe("native");
     expect(ids).toContain("asimov");
     expect(ids).toContain("orca");
+  });
+});
+
+// Against a REAL filesystem, and the only block here that is: a named pipe is
+// exactly the object a fake `readFile` models away, and modelling it away is how
+// this defect survived seven rounds of a suite that never opened a real one.
+describe("a source to build on that nothing is writing to", () => {
+  const posixOnly = process.platform === "win32" ? it.skip : it;
+
+  posixOnly("is reported unreadable, and answers rather than waiting", async () => {
+    const root = await fsp.mkdtemp(nodePath.join(nodeOs.tmpdir(), "rp-fifo-"));
+    try {
+      await fsp.mkdir(nodePath.join(root, ".vscode"), { recursive: true });
+      await fsp.mkdir(nodePath.join(root, nodePath.dirname(ASIMOV_PROVIDER_FILE)), { recursive: true });
+      await fsp.writeFile(
+        nodePath.join(root, NATIVE_PROVIDER_FILE),
+        `{ "extends": "${ASIMOV_PROVIDER_FILE}", "copy": [".env"] }\n`,
+        "utf8",
+      );
+      await promisify(execFile)("mkfifo", [nodePath.join(root, ASIMOV_PROVIDER_FILE)]);
+
+      let timer: NodeJS.Timeout | undefined;
+      const model = await Promise.race([
+        readProvisioning(createProvisioningDeps(), root),
+        new Promise<"waited">((resolve) => {
+          timer = setTimeout(() => resolve("waited"), 3000);
+        }),
+      ]);
+      clearTimeout(timer);
+
+      // Three claims, and the second is the one `O_NONBLOCK` alone would break:
+      // that open succeeds and reads zero bytes, so the base would come back as
+      // a configuration declaring NOTHING instead of one that could not be read.
+      expect(model).not.toBe("waited");
+      expect((model as ProvisionModel).problems.map((p) => p.reason)).toContain("unreadable");
+      expect((model as ProvisionModel).entries.filter((e) => e.source === "asimov")).toEqual([]);
+      expect((model as ProvisionModel).entries.map((e) => e.path)).toContain(".env");
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 });

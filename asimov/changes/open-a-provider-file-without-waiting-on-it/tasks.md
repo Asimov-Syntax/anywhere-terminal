@@ -14,7 +14,7 @@
     3. Create `src/utils/regularFileRead.test.ts` with witnesses against a real temporary directory: a `mkfifo` path throws `ENOTSUP`, a directory throws, a hard link to an ordinary file and a symlink to an ordinary file both open and read, and `readFlags` returns `O_RDONLY` alone when the record carries no `O_NONBLOCK`.
     4. Race the pipe witness against a timer so a regression fails the test instead of hanging the suite, skip it when `process.platform === "win32"`, and arm-check by dropping the flag and then the stat.
 
-- [ ] 1_2 Read every provider file through the helper
+- [x] 1_2 Read every provider file through the helper — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-configuration-path-that-is-not-an-ordinary-file-is-refused; design.md D2
   - **Acceptance**:
