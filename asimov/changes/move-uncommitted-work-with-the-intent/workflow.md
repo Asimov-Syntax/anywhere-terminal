@@ -8,12 +8,12 @@
 
 - [x] Gate 1: direction approved — ship an indeterminate failure contract
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -39,3 +39,4 @@ Review handback: round 1 is superseded by the accepted best-effort ABA replan; D
 Verify test: the first exact full-unit run exited 1 amid the known assembly lane instability; an immediate exact rerun passed 288 files / 7250 tests.
 Review handback: round 2 is superseded by the source-ownership replan; tasks 4_1–4_5 bind row selection to the pre-offer repository registration and normalized source for F006–F007, while non-gating performance warnings F008–F009 remain for approval-time disclosure.
 Gate 2 fastlane: approved after the plan attack found every changed ledger claim supported.
+Review handback: round 3 closed F006–F007 but accepted F010; replan the whole-tree cache merge so each fresh public generation resolves only to the registration from the same successful repository observation.
