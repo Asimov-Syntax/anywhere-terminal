@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -35,3 +35,4 @@ Planned at: 702555af
 - Blueprint: none is deliberate: this remediation-boundary child belongs to `allocate-and-name-ports-before-they-collide` (docs/PLAN.md WT-012.6), which remains PARKED and owns blueprint sync.
 - Reference check: cmux supplies descriptor-pinned `openat(O_NOFOLLOW)` traversal and ancestor-substitution witnesses; Node exposes no equivalent dirfd API, so this change reuses the attack schedules and fail-closed boundary rather than claiming the stronger mechanism.
 - Plan attack: Oracle Opus challenged the artifacts through three correction passes; all 8 obligation rows finish `supported` or `n/a`, with no refuted or unresolved row.
+- Verify baseline: Biome remains at the clean-tree 3 errors / 14 warnings / 1 info; the errors are unchanged formatting in `AgentHookController.test.ts`, `ClaudeHookInstaller.test.ts`, and `CursorHookInstaller.test.ts`, outside this change.
