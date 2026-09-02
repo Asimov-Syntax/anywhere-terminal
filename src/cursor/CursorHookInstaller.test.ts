@@ -55,6 +55,7 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
   // reads as a release failure and is NOT what these Windows tests are about.
   // Anything this double leaves out is filled from the real `node:fs/promises`
   // (lockedJsonFile.ts:80), so an omission would reach the actual filesystem.
+  const directories = new Set<string>([win32.dirname(configPath), storagePath]);
   let nextInode = 1n;
   const inodes = new Map<string, bigint>();
   const identify = (path: string) => {
@@ -107,10 +108,13 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
       files.delete(oldPath);
     }),
     stat: vi.fn(async (path: string) => {
+      if (directories.has(path)) {
+        return { mode: 0o700, mtimeMs: 0, isDirectory: () => true };
+      }
       if (!files.has(path)) {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       }
-      return { mode: 0o640, mtimeMs: 0 };
+      return { mode: 0o640, mtimeMs: 0, isDirectory: () => false };
     }),
     unlink: vi.fn(async (path: string) => {
       if (!files.delete(path)) {
@@ -1175,5 +1179,32 @@ describe("what a failed staging discards", () => {
 
     expect(result.installed).toBe(false);
     expect(await readFile(paths.configPath, "utf8")).toBe(original);
+  });
+});
+
+// Round 1 F002. `LockedFile.acquireLock` mkdirs the config parent recursively and
+// Cursor's own acquisition never did, so delegating silently began writing Cursor
+// configuration for a user who may not have Cursor at all.
+describe("a configuration directory that is not there", () => {
+  it("refuses an install rather than creating it", async () => {
+    const paths = await fixture();
+    const absent = join(paths.configPath, "..", "absent");
+    const options = { ...paths, configPath: join(absent, "hooks.json") };
+
+    const result = await new CursorHookInstaller(options).install();
+
+    expect(result).toMatchObject({ installed: false, reason: "lock-unavailable" });
+    await expect(stat(absent)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses an uninstall rather than creating it", async () => {
+    const paths = await fixture();
+    const absent = join(paths.configPath, "..", "absent");
+    const options = { ...paths, configPath: join(absent, "hooks.json") };
+
+    const result = await new CursorHookInstaller(options).uninstall();
+
+    expect(result).toMatchObject({ removed: false, reason: "lock-unavailable" });
+    await expect(stat(absent)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

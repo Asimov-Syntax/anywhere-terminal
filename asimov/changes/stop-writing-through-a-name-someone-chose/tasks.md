@@ -58,7 +58,7 @@
     5. In the same test file, add the F001 witness: after the exclusive create, substitute a different object at the staging name, force the replace to fail, and assert the substitute SURVIVES. Arm-check by restoring an unconditional unlink and confirming it is deleted.
     6. In the same test file, keep the existing symlink and unpredictable-name witnesses passing unchanged — they are the contract, not the mechanism.
 
-- [ ] 1_5 Stop delegation from creating a configuration directory Cursor never made
+- [x] 1_5 Stop delegation from creating a configuration directory Cursor never made — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4
   - **Refs**: design.md D2
   - **Acceptance**:
