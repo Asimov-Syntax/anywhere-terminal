@@ -468,12 +468,12 @@ describe("the merge proof records what it proved against", () => {
     expect(proofs.mergeEvidence).toBeUndefined();
   });
 
-  it("is unproven rather than passed when a commit cannot be read", async () => {
+  it.each(["feat", "main"])("is unproven rather than passed when %s's commit cannot be read", async (ref) => {
     // Evidence is never PARTIALLY present: a guard built from half a pair would
     // verify one ref and wave the other through.
     const proofs = await readOrphanProofs(
       subject,
-      deps({ git: gitTable({ ...table, "rev-parse --verify --quiet refs/heads/feat": { code: 128 } }) }),
+      deps({ git: gitTable({ ...table, [`rev-parse --verify --quiet refs/heads/${ref}`]: { code: 128 } }) }),
     );
 
     expect(proofs.branchMerged).toBe("unproven");
