@@ -1224,6 +1224,38 @@ export interface WorktreeProvisionSwitchMessage {
  * as the user types, and shipping it per keystroke answers a question nobody
  * asked again (offer-every-ref-in-one-box/design.md D1).
  */
+/**
+ * WebView → Extension: record what the user has chosen in the repository's own
+ * provisioning configuration (worktree-provisioning.md § 6).
+ *
+ * Ids and ordering, and nothing else. No path, no key and no file text: the
+ * host resolves `offerId` against the model it issued and computes every value
+ * it writes. A webview that could supply the path to exclude would be the
+ * authority on what the repository's configuration says, which is § 4.0's rule
+ * for what EXECUTES applied one hop later (design.md D1).
+ *
+ * `repoId` selects a record in the host's own cache; it never becomes a
+ * destination, even though it is spelled like a path.
+ *
+ * `switch` comes from the SAME sequence `worktreeProvisionSwitch` mints, so a
+ * save and a source change order against each other. Without one shared
+ * sequence, a save begun against the offer on screen can finish after a later
+ * switch has published and overwrite the choice the user actually made
+ * (design.md D8).
+ */
+export interface WorktreeProvisionSaveMessage {
+  type: "worktreeProvisionSave";
+  repoId: string;
+  opening: number;
+  switch: number;
+  /** From `worktreeProvisionOffer`. Names the model the user was looking at. */
+  offerId: string;
+  /** Which of the host's own offered items the user left checked. */
+  kept: readonly string[];
+  /** The source the user took, when they took one. */
+  provider?: ProvisionProvider["id"];
+}
+
 export interface WorktreeRefsRequestMessage {
   type: "requestWorktreeRefs";
   repoId: string;
@@ -1603,6 +1635,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeCreateClosedMessage
   | WorktreeProvisionSwitchMessage
+  | WorktreeProvisionSaveMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
@@ -1642,6 +1675,7 @@ export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
   "worktreeCreateClosed",
   "worktreeProvisionSwitch",
+  "worktreeProvisionSave",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
   "worktreeAuthorizeDebris",

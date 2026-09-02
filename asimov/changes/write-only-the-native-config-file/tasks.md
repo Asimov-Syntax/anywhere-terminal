@@ -43,7 +43,7 @@
 
 ## 3. Carrying the choice
 
-- [ ] 1_4 Carry a save request from the host wire to the write
+- [x] 1_4 Carry a save request from the host wire to the write — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: specs/worktree-panel/spec.md#{a-choice-the-repository-s-own-configuration-can-express-is-recorded-there, a-save-answers-for-the-form-that-is-still-open} <!-- design.md D1, D8, D9 -->
   - **Acceptance**:
@@ -56,6 +56,7 @@
     4. Enter the same latest-wins gate `worktreeProvisionSwitch` uses before the write starts, and re-check both it and the live opening before publishing.
     5. On success re-read with `readProvisioning` and publish a fresh offer; on a failure reason from design.md D9, publish it as a problem and leave Create enabled.
     6. Extend `src/providers/WorktreeHost.actions.test.ts` with the stale-offer case and both save-versus-switch interleavings.
+    7. Add the new type to the exhaustive sample map in `src/providers/TerminalViewProvider.worktree.test.ts`, which pins every entry of `WORKTREE_MESSAGE_TYPES`.
 
 - [ ] 1_5 Offer the save in the create dialog and post it
   - **Deps**: 1_4
