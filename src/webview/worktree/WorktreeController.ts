@@ -696,7 +696,7 @@ export class WorktreeController {
             draft.openAfter === "agent" && draft.agentId !== undefined
               ? {
                   kind: "agent",
-                  waitForSetup: false,
+                  waitForSetup: draft.waitForSetup ?? false,
                   agent: draft.agentId,
                   ...(draft.permissionChoiceId === undefined ? {} : { permissionChoiceId: draft.permissionChoiceId }),
                   ...(draft.prompt === undefined ? {} : { prompt: draft.prompt }),

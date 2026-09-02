@@ -1127,6 +1127,40 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       },
     ]);
   });
+
+  it("carries the draft's own wait-for-setup choice onto the agent's afterCreate", () => {
+    // WT-012.11 (3_2): the dialog carries the visible, off-by-default wait
+    // choice on its draft; this is where it becomes the wire value the setup
+    // sequencing (WT-012.11 3_3) reads, rather than a fixed `false` no create
+    // could ever turn on.
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "existing",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "agent",
+      agentId: "claude",
+      waitForSetup: true,
+    });
+
+    expect(h.posts).toEqual([
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        opening: 1,
+        path: "/wt",
+        mode: { kind: "reuse", branch: "feat" },
+        disposition: { kind: "free" },
+        afterCreate: { kind: "agent", waitForSetup: true, agent: "claude" },
+      },
+    ]);
+  });
 });
 
 describe("the launch entry paths WT-005.3 supplies", () => {

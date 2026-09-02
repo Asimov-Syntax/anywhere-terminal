@@ -333,6 +333,15 @@ export interface WorktreeCreateDraft {
    * never told what the repository needs asks for nothing.
    */
   provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
+  /**
+   * Off by default: wait for every selected setup step to succeed before
+   * starting the agent, rather than starting it alongside setup.
+   *
+   * Set only while the form is offering an agent launch — the control that
+   * writes this is rendered beside the agent controls and disabled whenever
+   * the current selection has no setup step ticked (design.md D6, D3).
+   */
+  waitForSetup?: boolean;
 }
 
 /** Re-exported so the view reads one module for the shapes it renders. */

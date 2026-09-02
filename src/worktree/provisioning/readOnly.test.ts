@@ -50,7 +50,10 @@ const NOT_READ_PATH = [
   "applyProvisioning.ts",
   "entryGate.ts",
   "offerStore.ts",
+  "provisionManifest.ts",
   "provisioningDeps.ts",
+  "setupRunner.ts",
+  "setupTerminal.ts",
   "writeNativeConfig.ts",
 ];
 

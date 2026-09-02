@@ -18,6 +18,7 @@ import type {
   ProvisionModel,
   ProvisionPort,
   ProvisionProvider,
+  ProvisionSetupStep,
   ProvisionSelection,
   ResolvedDisposition,
   ResolvedMode,
@@ -403,8 +404,16 @@ export interface WorktreeActions {
     provision?: readonly ProvisionEntry[];
     /** Ports resolved from the same host-held offer, kept separate from path-bearing entries. */
     ports?: readonly ProvisionPort[];
+    /** Setup scripts resolved from the same host-held offer, never webview text. */
+    setup?: readonly ProvisionSetupStep[];
+    /** Whether an active asimov provider supplied the redeemed model. */
+    asimovEnvironment?: boolean;
     origin?: WorktreeSurface;
   }): Promise<void>;
+  /** Retry setup only for the current worktree identity and its rotating capability. */
+  retrySetup?(target: WorktreeMutationTarget, retryId: string): Promise<void>;
+  /** Reveal retained setup output only on the surface that originated the request. */
+  viewSetupOutput?(outputId: string, origin: WorktreeSurface): Promise<void>;
   removeWorktree?(
     target: WorktreeMutationTarget,
     fingerprint: string | undefined,
@@ -575,6 +584,8 @@ export interface WorktreeHost extends vscode.Disposable {
    * view id and a webview, which only a surface holds (D17, D2).
    */
   reportMutation(outcome: WorktreeMutationReport): void;
+  /** Deliver a setup-only retry update without replaying a mutation outcome. */
+  reportProvisioning?(origin: WorktreeSurface | null, outcome: WorktreeProvisionResultMessage): void;
   /** Register one surface. Disposing detaches only that surface. */
   attach(surface: WorktreeSurface): WorktreeAttachment;
   /** Route an inbound worktree message from `surface`. Unknown types ignored. */
@@ -1574,6 +1585,23 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     );
   }
 
+  /** Setup capabilities carry exactly the opaque values the host can redeem. */
+  function isKnownSetupRetry(msg: unknown): msg is Extract<WorktreeActionMessage, { type: "worktreeSetupRetry" }> {
+    if (typeof msg !== "object" || msg === null || !onlyKeys(msg, ["type", "worktreeId", "retryId"])) {
+      return false;
+    }
+    const m = msg as { worktreeId?: unknown; retryId?: unknown };
+    return typeof m.worktreeId === "string" && m.worktreeId.length > 0 && typeof m.retryId === "string" && m.retryId.length > 0;
+  }
+
+  function isKnownSetupOutput(msg: unknown): msg is Extract<WorktreeActionMessage, { type: "worktreeSetupViewOutput" }> {
+    if (typeof msg !== "object" || msg === null || !onlyKeys(msg, ["type", "outputId"])) {
+      return false;
+    }
+    const m = msg as { outputId?: unknown };
+    return typeof m.outputId === "string" && m.outputId.length > 0;
+  }
+
   /**
    * A branch-delete opt-in: five non-empty strings echoed back from a report
    * the host itself issued, and nothing else. Shape only — the guard replaces
@@ -2156,6 +2184,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // dialog.
         let selected: readonly ProvisionEntry[] | undefined;
         let selectedPorts: readonly ProvisionPort[] | undefined;
+        let selectedSetup: readonly ProvisionSetupStep[] | undefined;
+        let asimovEnvironment: boolean | undefined;
         if (msg.provision !== undefined) {
           // Checked at RUNTIME like its three neighbours above. It was the one
           // field that got only a `!== undefined` before `.offerId` and
@@ -2187,6 +2217,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           const wanted = new Set(msg.provision.itemIds);
           selected = offered.entries.filter((entry) => wanted.has(entry.id));
           selectedPorts = offered.ports.filter((port) => wanted.has(port.id));
+          selectedSetup = offered.setup.filter((step) => wanted.has(step.id));
+          asimovEnvironment = offered.providers.some((provider) => provider.id === "asimov" && provider.active);
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
           const request = {
@@ -2197,6 +2229,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             afterCreate: msg.afterCreate,
             ...(selected === undefined ? {} : { provision: selected }),
             ...(selectedPorts === undefined ? {} : { ports: selectedPorts }),
+            ...(selectedSetup === undefined ? {} : { setup: selectedSetup }),
+            ...(asimovEnvironment === undefined ? {} : { asimovEnvironment }),
             origin: surface,
           };
           if (msg.afterCreate.kind !== "agent") {
@@ -2211,6 +2245,24 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             perform(() => create(request));
           }
         }
+        return;
+      }
+      case "worktreeSetupRetry": {
+        if (!isKnownSetupRetry(msg)) {
+          return;
+        }
+        const repoId = repoIdOf(msg.worktreeId);
+        const retry = actions.retrySetup;
+        if (retry !== undefined && repoId !== undefined && actionPath(msg.worktreeId, false) !== undefined) {
+          perform(() => retry({ repoId, worktreeId: msg.worktreeId, origin: surface }, msg.retryId));
+        }
+        return;
+      }
+      case "worktreeSetupViewOutput": {
+        if (!isKnownSetupOutput(msg) || actions.viewSetupOutput === undefined) {
+          return;
+        }
+        perform(() => actions.viewSetupOutput?.(msg.outputId, surface) ?? Promise.resolve());
         return;
       }
       case "worktreeRemoveAssess": {
@@ -3706,6 +3758,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeCreateClosed":
       case "worktreeProvisionSwitch":
       case "worktreeProvisionSave":
+      case "worktreeSetupRetry":
+      case "worktreeSetupViewOutput":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
       case "worktreeAuthorizeDebris":
@@ -3764,6 +3818,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
       if (report.openTerminalAt !== undefined) {
         void report.origin?.openTerminal?.(report.openTerminalAt);
+      }
+    },
+
+    reportProvisioning: (origin, outcome) => {
+      if (!disposed) {
+        origin?.post(outcome);
       }
     },
 

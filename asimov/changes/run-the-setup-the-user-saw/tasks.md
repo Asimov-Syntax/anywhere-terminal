@@ -13,7 +13,7 @@
 
 ## 2. Execute and record setup
 
-- [ ] 2_1 Run selected scripts serially through one setup terminal
+- [x] 2_1 Run selected scripts serially through one setup terminal — verified: pnpm exec vitest run src/worktree/provisioning/setupRunner.test.ts src/worktree/provisioning/setupTerminal.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{setup-runs-in-the-created-worktree-through-one-shell-argument, task-file-setup-does-not-use-the-task-system, setup-receives-the-worktree-paths-and-branch, setup-receives-authoritative-named-ports, asimov-setup-receives-its-compatibility-environment, setup-failure-leaves-the-successful-create-standing} <!-- design.md D2 -->
   - **Acceptance**:
@@ -24,8 +24,9 @@
     2. Reuse POSIX `detectShell()` with login args plus one exact `-c` script value; encode Windows scripts as one UTF-16LE PowerShell `EncodedCommand` payload and never use `shell: true` or command-line interpolation.
     3. Add `src/worktree/provisioning/setupTerminal.ts` implementing one VS Code pseudoterminal per run: start only after `open`, forward PTY data and input, retain a 1 MiB tail, cancel on close, and recreate disposed output from the tail under an origin-scoped id.
     4. Cover executable POSIX and PowerShell payloads with quotes, operators, CRLF, and newlines; environment and port values; open ordering; transcript bounds; sequencing; failures; timeouts; close; later skips; and authority substitution in both test files.
+    5. Classify the new execution and manifest modules outside the read-only provider path in `src/worktree/provisioning/readOnly.test.ts`.
 
-- [ ] 2_2 Write the administrative provisioning manifest atomically
+- [x] 2_2 Write the administrative provisioning manifest atomically — verified: bun test 'src/worktree/provisioning/provisionManifest.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#setup-failure-leaves-the-successful-create-standing <!-- design.md D5 -->
   - **Acceptance**:
@@ -38,7 +39,7 @@
 
 ## 3. Redeem and orchestrate the retained model
 
-- [ ] 3_1 Redeem setup selections and route setup capabilities in the host
+- [x] 3_1 Redeem setup selections and route setup capabilities in the host — verified: bun test 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{only-setup-the-user-selected-runs, setup-failure-leaves-the-successful-create-standing} <!-- design.md D1, D4 -->
   - **Acceptance**:
@@ -49,14 +50,14 @@
     2. Add retry and output capabilities to `WorktreeActions` plus a provisioning-only host reporter; validate exact opaque-token messages, resolve retry identity from the current tree, and bind output reveal to the originating surface.
     3. Extend `src/providers/WorktreeHost.actions.test.ts` for selected and unselected setup, stale offers, active asimov inheritance, forged tokens, missing rows, and surface-scoped output.
 
-- [ ] 3_2 Add the agent wait control without changing setup consent
+- [x] 3_2 Add the agent wait control without changing setup consent — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{only-setup-the-user-selected-runs, agent-startup-honours-the-setup-wait-choice} <!-- design.md D6 -->
   - **Acceptance**:
     - Outcome: agent creates carry the visible off-by-default wait choice, disabled when no setup is selected
-    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
-    1. Add `waitForSetup` to the create draft in `src/webview/worktree/worktreeViewTypes.ts` and preserve it through dialog submit and controller wire assembly.
+    1. Add `waitForSetup` to the create draft in `src/webview/worktree/worktreeViewTypes.ts`, preserve it through dialog submit, and carry it into wire assembly in `src/webview/worktree/WorktreeController.ts`.
     2. Render one unchecked wait control in `src/webview/worktree/WorktreeCreateDialog.ts` beside agent controls; keep it visible only for agent launch and disabled whenever the current offer selection contains no setup id.
     3. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` for default-off, selected-step enablement, deselection, offer replacement, non-agent visibility, and submit; extend `src/webview/worktree/WorktreeController.test.ts` for the carried boolean.
 
