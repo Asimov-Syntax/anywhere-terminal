@@ -14,7 +14,7 @@ The shared acquisition/write gate precedes both consumers. Repository-local excl
     1. `src/utils/lockedFile.ts` and `src/utils/lockedFile.test.ts`: add the structural deadline overload before acquisition, permanent wall-clock and timer latch, guarded exclusive open and staged mutations, clean and dirty outcomes, late-promise observation, and bounded successor-safe release.
     2. `src/utils/lockedFile.ts` and `src/utils/lockedFile.test.ts`: split create publication from safe post-commit cleanup, route internal stage-failure cleanup through the gate, add close-only abandonment for late staged resources, and witness every stalled boundary, timer and clock disagreement, clean expiry, successor substitution, handle closure, and second-process exclusion.
 
-- [ ] 1_2 Adopt the mutation gate for repository-local excludes
+- [x] 1_2 Adopt the mutation gate for repository-local excludes — verified: bun test 'src/worktree/gitExclude.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/retained-lock-exclude-recorded.log 2>&1 exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D2, design.md D7, design.md D8
   - **Acceptance**:

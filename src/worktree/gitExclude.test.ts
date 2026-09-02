@@ -1,11 +1,33 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { LockedFile } from "../utils/lockedFile";
-import { addToGitExclude, excludePatternFor, type GitExcludeDeps } from "./gitExclude";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { type LockDeadline, LockedFile, type LockedOutcome, type WriteGate } from "../utils/lockedFile";
+import { addToGitExclude, excludePatternFor, type GitExcludeDeps, type GitExcludeLockedFile } from "./gitExclude";
 
 const tempDirectories: string[] = [];
+
+function pendingDeadline(): LockDeadline {
+  return { elapsed: new Promise<void>(() => undefined), expired: false, cancel: vi.fn() };
+}
+
+async function withImmediateLock<T>(work: () => Promise<T>, lockUnavailable: T, failed: T): Promise<T>;
+async function withImmediateLock<T>(
+  deadline: LockDeadline,
+  work: (gate: WriteGate) => Promise<T>,
+  failed: T,
+): Promise<LockedOutcome<T>>;
+async function withImmediateLock<T>(
+  deadlineOrWork: LockDeadline | (() => Promise<T>),
+  workOrUnavailable: T | ((gate: WriteGate) => Promise<T>),
+): Promise<T | LockedOutcome<T>> {
+  if (typeof deadlineOrWork === "function") {
+    return deadlineOrWork();
+  }
+  const work = workOrUnavailable as (gate: WriteGate) => Promise<T>;
+  const value = await work({ open: true, guard: (step) => step() });
+  return { kind: "done", value };
+}
 
 async function fixture(initial?: string): Promise<{ gitDir: string; excludePath: string }> {
   const directory = await mkdtemp(path.join(tmpdir(), "git-exclude-"));
@@ -78,7 +100,7 @@ describe("addToGitExclude", () => {
     const deps: GitExcludeDeps = {
       mode: async () => undefined,
       lockedFile: () => ({
-        withLock: async (work) => work(),
+        withLock: withImmediateLock,
         readText: async () => {
           throw Object.assign(new Error("permission denied"), { code: "EACCES" });
         },
@@ -98,7 +120,7 @@ describe("addToGitExclude", () => {
     const deps: GitExcludeDeps = {
       mode: async () => undefined,
       lockedFile: () => ({
-        withLock: async (work) => work(),
+        withLock: withImmediateLock,
         readText: async () => "*.log\n",
         atomicReplace: async () => false,
       }),
@@ -107,6 +129,61 @@ describe("addToGitExclude", () => {
     expect(await addToGitExclude("/repo/.git", "/.env.worktree", deps)).toEqual({
       failed: "the repository-local exclude file could not be updated",
     });
+  });
+
+  it("passes a caller-owned deadline and its mutation gate through publication", async () => {
+    const deadline = pendingDeadline();
+    const gate: WriteGate = { open: true, guard: (step) => step() };
+    const atomicReplace = vi.fn(async () => true);
+    const withLock = vi.fn(async (...args: unknown[]) => {
+      expect(args[0]).toBe(deadline);
+      const work = args[1] as (given: WriteGate) => Promise<unknown>;
+      return { kind: "done" as const, value: await work(gate) };
+    }) as unknown as GitExcludeLockedFile["withLock"];
+    const deps: GitExcludeDeps = {
+      mode: async () => undefined,
+      lockedFile: () => ({ withLock, readText: async () => "", atomicReplace }),
+    };
+
+    await expect(addToGitExclude("/repo/.git", "/.env.worktree", deps, deadline)).resolves.toEqual({ added: true });
+    expect(atomicReplace).toHaveBeenCalledWith("/.env.worktree\n", undefined, gate);
+    expect(deadline.cancel).not.toHaveBeenCalled();
+  });
+
+  it("reports a clean timeout without claiming lock retention", async () => {
+    const deadline = pendingDeadline();
+    const withLock = vi.fn(async () => ({ kind: "timedOut" as const })) as unknown as GitExcludeLockedFile["withLock"];
+    const deps: GitExcludeDeps = {
+      mode: async () => undefined,
+      lockedFile: () => ({ withLock, readText: async () => "", atomicReplace: async () => true }),
+    };
+
+    await expect(addToGitExclude("/repo/.git", "/.env.worktree", deps, deadline)).resolves.toEqual({
+      failed: "the repository-local exclude update timed out before publication",
+      timedOut: true,
+    });
+  });
+
+  it("reports and logs the exact lock retained by a dirty timeout", async () => {
+    const deadline = pendingDeadline();
+    const retainedLockPath = "/repo/.git/info/exclude.anywhere-terminal.lock";
+    const warn = vi.fn();
+    const withLock = vi.fn(async () => ({
+      kind: "timedOut" as const,
+      retainedLockPath,
+    })) as unknown as GitExcludeLockedFile["withLock"];
+    const deps: GitExcludeDeps = {
+      mode: async () => undefined,
+      warn,
+      lockedFile: () => ({ withLock, readText: async () => "", atomicReplace: async () => true }),
+    };
+
+    await expect(addToGitExclude("/repo/.git", "/.env.worktree", deps, deadline)).resolves.toEqual({
+      failed: "the repository-local exclude update timed out while a write was still pending",
+      timedOut: true,
+      retainedLockPath,
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(retainedLockPath));
   });
 });
 
