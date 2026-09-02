@@ -34,6 +34,16 @@ export interface LockedFileDependencies {
   rename?: (oldPath: string, newPath: string) => Promise<void>;
   randomBytes?: (size: number) => Uint8Array;
   platform?: Platform;
+  /**
+   * Create the target's parent directory when it is missing. Default `true`.
+   *
+   * `false` for a caller whose contract is that an absent parent REFUSES: with
+   * no `mkdir`, the exclusive open answers `ENOENT` by itself, so there is no
+   * window between deciding the directory is there and acting on it. A precheck
+   * at the caller cannot do this — the directory can go between the two, and the
+   * `mkdir` here would put it back (review round 2 F002).
+   */
+  createParent?: boolean;
 }
 
 export type StagedCommit = "create" | "replace";
@@ -79,6 +89,7 @@ export class LockedFile {
   private readonly replace: (oldPath: string, newPath: string) => Promise<void>;
   private readonly createRandomBytes: (size: number) => Uint8Array;
   private readonly platform: Platform;
+  private readonly createParent: boolean;
 
   public constructor(
     public readonly path: string,
@@ -89,6 +100,7 @@ export class LockedFile {
     this.replace = dependencies.rename ?? this.fs.rename;
     this.createRandomBytes = dependencies.randomBytes ?? randomBytes;
     this.platform = dependencies.platform ?? (process.platform === "win32" ? "win32" : "linux");
+    this.createParent = dependencies.createParent ?? true;
   }
 
   public get lockPath(): string {
@@ -163,7 +175,9 @@ export class LockedFile {
     };
 
     try {
-      await this.fs.mkdir(path.dirname(this.path), { recursive: true });
+      if (this.createParent) {
+        await this.fs.mkdir(path.dirname(this.path), { recursive: true });
+      }
       handle = await this.fs.open(temporaryPath, "wx", mode ?? 0o600);
       live = true;
       await handle.writeFile(contents, { encoding: "utf8" });
@@ -271,10 +285,12 @@ export class LockedFile {
   }
 
   private async acquireLock(lockPath: string): Promise<FileHandle | undefined> {
-    try {
-      await this.fs.mkdir((this.platform === "win32" ? win32 : posix).dirname(this.path), { recursive: true });
-    } catch {
-      return undefined;
+    if (this.createParent) {
+      try {
+        await this.fs.mkdir((this.platform === "win32" ? win32 : posix).dirname(this.path), { recursive: true });
+      } catch {
+        return undefined;
+      }
     }
     const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
     for (let attempt = 0; attempt <= attempts; attempt += 1) {

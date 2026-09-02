@@ -80,7 +80,7 @@
 
 ## 3. What round 2 sent back
 
-- [ ] 1_7 Decline to create the parent, rather than checking for it
+- [x] 1_7 Decline to create the parent, rather than checking for it — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts src/agentHooks/install/lockedJsonFile.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_6
   - **Refs**: design.md D2
   - **Acceptance**:

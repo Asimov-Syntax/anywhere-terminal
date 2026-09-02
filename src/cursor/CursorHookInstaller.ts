@@ -287,19 +287,9 @@ export class CursorHookInstaller {
     writeFailed: T,
     lockReleaseFailed: (result: T) => T,
   ): Promise<T> {
-    // `LockedFile.acquireLock` creates the parent recursively; Cursor's own
-    // acquisition never did, and returned `lock-unavailable` when it was absent.
-    // Writing Cursor configuration for a user who may not have Cursor is a
-    // different action from failing to write it, so the policy is restored here
-    // rather than inherited from the shared lock (review round 1 F002).
-    const path = this.platform === "win32" ? win32 : posix;
-    try {
-      if (!(await this.fs.stat(path.dirname(this.options.configPath))).isDirectory()) {
-        return lockUnavailable;
-      }
-    } catch {
-      return lockUnavailable;
-    }
+    // The no-parent-creation policy lives in `LockedFile` as `createParent: false`,
+    // not as a precheck here: a stat can only report what was true a moment ago,
+    // and the `mkdir` it was guarding belongs to the acquisition (round 2 F002).
 
     let releaseFailed = false;
     const result = await this.locked().withLock(work, lockUnavailable, writeFailed, () => {
@@ -393,6 +383,7 @@ export class CursorHookInstaller {
       platform: this.platform,
       rename: this.replace,
       randomBytes: this.createRandomBytes,
+      createParent: false,
     });
   }
 

@@ -404,3 +404,46 @@ describe("LockedFile", () => {
     expect(await new LockedFile(target).readText()).toBe("present");
   });
 });
+
+// Round 2 F002. The policy is the absence of an ACT, so the witness is that the
+// act does not happen — a caller-side check could not state this, because the
+// directory can go between the check and the `mkdir` it was guarding.
+describe("whether acquisition creates the parent it needs", () => {
+  async function absentParent() {
+    const directory = await mkdtemp(join(tmpdir(), "locked-parent-"));
+    tempDirectories.push(directory);
+    const parent = join(directory, "nested");
+    return { parent, path: join(parent, "hooks.json") };
+  }
+
+  it("does not create it, and refuses, when the caller declines creation", async () => {
+    const { parent, path } = await absentParent();
+
+    const outcome = await new LockedFile(path, { createParent: false }).withLock(
+      async () => "ran",
+      "unavailable",
+      "failed",
+    );
+
+    expect(outcome).toBe("unavailable");
+    await expect(stat(parent)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("still creates it by default, so the other two consumers are unchanged", async () => {
+    const { parent, path } = await absentParent();
+
+    const outcome = await new LockedFile(path).withLock(async () => "ran", "unavailable", "failed");
+
+    expect(outcome).toBe("ran");
+    expect((await stat(parent)).isDirectory()).toBe(true);
+  });
+
+  it("does not create it when staging either, so both acts follow one policy", async () => {
+    const { parent, path } = await absentParent();
+
+    const staged = await new LockedFile(path, { createParent: false }).stageReplacement("{}\n", 0o600);
+
+    expect(staged).toBeUndefined();
+    await expect(stat(parent)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
