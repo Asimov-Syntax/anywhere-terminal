@@ -251,7 +251,19 @@ export async function applyProvisioning(
       continue;
     }
     const members = membersOf(contest);
-    if (contended(await Promise.all(members.map(read)))) {
+    const readings = await Promise.all(members.map(read));
+    // A member refused for what it IS is refused ALONE, keeping the rule that
+    // actually fired (D4b) decorated with its contest (D4a). Answered BEFORE
+    // the group is settled, because a refusal that observed nothing is not the
+    // group's to overwrite — reporting a destination collision for a link that
+    // is never followed is round-3 F006 again (.reviews/round-7.md F014).
+    for (const member of members) {
+      const reason = refusedItself.get(member);
+      if (reason !== undefined) {
+        answered.set(member, step(member, reason, contest));
+      }
+    }
+    if (contended(readings)) {
       // The whole group, not only the loser: leaving the favoured member to run
       // would merge it into a destination it did not create — `makeDirectory`
       // answers `written` for an existing directory — installing neither its
@@ -262,16 +274,8 @@ export async function applyProvisioning(
       );
       continue;
     }
-    // A member refused for what it IS is refused ALONE, keeping the rule that
-    // actually fired (D4b) decorated with its contest (D4a). The contest goes
-    // on without it, so an admissible favoured member still claims a
-    // destination no reading found present (design.md D3a).
-    for (const member of members) {
-      const reason = refusedItself.get(member);
-      if (reason !== undefined) {
-        answered.set(member, step(member, reason, contest));
-      }
-    }
+    // The contest goes on without the members above, so an admissible favoured
+    // member still claims a destination no reading found present (D3a).
     for (const member of contest.held) {
       if (!answered.has(member)) {
         held.set(member, contest);

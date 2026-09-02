@@ -207,7 +207,7 @@
     6. Update the witnesses in `src/worktree/provisioning/offerStore.test.ts`, `src/worktree/provisioning/readProvisioning.test.ts`, `src/worktree/provisioning/asimovProvider.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` that name the replaced field, declaring the suite change.
     7. Witness in `src/worktree/provisioning/providerKit.test.ts` a group with one repository declaration, one with two, and one with none; and in `src/worktree/provisioning/offerStore.test.ts` that a two-declaration group survives an offer round trip naming the ids the offer issued, with no pre-remint id surviving — carrying the list through untranslated passes every members-only assertion and then reads as no repository declarations at all.
 
-- [ ] 10_4 Record a member's own rule before the contest is settled
+- [x] 10_4 Record a member's own rule before the contest is settled — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 10_1
   - **Refs**: design.md D4b, .reviews/round-7.md
   - **Acceptance**:

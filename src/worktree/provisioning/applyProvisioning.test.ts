@@ -582,6 +582,31 @@ describe("[OOB-F016] a member's own refusal is not an observation of the destina
     ]);
   });
 
+  it("[round-7 F014] keeps its own rule when a SIBLING's reading refuses the contest", async () => {
+    // The destination is already there, so the favoured member's reading is
+    // `present` and the group is refused. The member the gate refused for what
+    // it IS observed nothing, and its reason is not the group's to overwrite:
+    // reporting "could not be shown to be free" for a link that is never
+    // followed invents a collision the same way round 3's F006 did.
+    const { steps, fs } = await applyTo({ ...DEPS, [`${WT}/node_modules`]: { kind: "dir" } }, [
+      entry("node_modules", "copy", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    expect(fs.created).toEqual([]);
+    // Answered before the contest is settled, so the order says which refusal
+    // observed nothing — the webview compares provisioning state by this key.
+    expect(steps.map((s) => s.id)).toEqual(["i2", "i1"]);
+    expect(steps[0]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("node_modules is never linked"),
+    });
+    expect(steps[1]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("could not be shown to be free"),
+    });
+  });
+
   it("still refuses the whole contest when the refusal DID observe the destination", async () => {
     // A containment refusal reaches realpath and lstat, so it cannot be told
     // apart from an unreadable destination — the narrowing must not reopen
