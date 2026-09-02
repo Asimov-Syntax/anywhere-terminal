@@ -1,6 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -17,6 +18,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { API, Repository } from "../providers/git";
+import { authorizeDirectory } from "../utils/authorizedDirectory";
 import { afterDelay, type Deadline } from "./deadline";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
 import {
@@ -105,10 +107,13 @@ async function linkedWorktree(name: string): Promise<{ root: string; admin: stri
   return { root, admin };
 }
 
-async function registeredLinkedWorktree(name: string): Promise<{ root: string; admin: string; common: string }> {
-  const common = await realpath(await mkdtemp(join(tmpdir(), `migration-common-${name}-`)));
+async function registeredLinkedWorktree(
+  name: string,
+  existingCommon?: string,
+): Promise<{ root: string; admin: string; common: string }> {
+  const common = existingCommon ?? (await realpath(await mkdtemp(join(tmpdir(), `migration-common-${name}-`))));
   const root = await realpath(await mkdtemp(join(tmpdir(), `migration-linked-${name}-`)));
-  roots.push(common, root);
+  roots.push(...(existingCommon === undefined ? [common] : []), root);
   const admin = join(common, "worktrees", name);
   await mkdir(admin, { recursive: true });
   await writeFile(join(admin, "HEAD"), "ref: refs/heads/main\n");
@@ -116,6 +121,14 @@ async function registeredLinkedWorktree(name: string): Promise<{ root: string; a
   await writeFile(join(admin, "commondir"), "../..\n");
   await writeFile(join(root, ".git"), `gitdir: ${admin}\n`);
   return { root, admin, common };
+}
+
+async function registrationAt(commonPath: string) {
+  const registration = await authorizeDirectory(commonPath);
+  if (registration === undefined) {
+    throw new Error("repository fixture was not authorized");
+  }
+  return registration;
 }
 
 async function migrationInput(
@@ -818,6 +831,130 @@ describe("migration source evidence", () => {
     ).toMatchObject({ source: { git: { commonPath: admin } } });
   });
 
+  it("binds ordinary, standalone, and linked sources to the expected repository role", async () => {
+    const main = await worktree("owned-main");
+    await writeFile(join(main, "a.txt"), "a");
+    const mainRegistration = await registrationAt(join(main, ".git"));
+    expect(
+      await probeMigrationSource(
+        api(async () => repository(main)),
+        main,
+        { runner: runner(() => result(ordinary("a.txt"))), uri },
+        { registration: mainRegistration, sourceKind: "main" },
+      ),
+    ).toBeDefined();
+
+    const standaloneRoot = await realpath(await mkdtemp(join(tmpdir(), "migration-owned-standalone-source-")));
+    const standaloneAdmin = await realpath(await mkdtemp(join(tmpdir(), "migration-owned-standalone-admin-")));
+    roots.push(standaloneRoot, standaloneAdmin);
+    await writeFile(join(standaloneRoot, ".git"), `gitdir: ${standaloneAdmin}\n`);
+    await writeFile(join(standaloneAdmin, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(standaloneRoot, "a.txt"), "a");
+    expect(
+      await probeMigrationSource(
+        api(async () => repository(standaloneRoot)),
+        standaloneRoot,
+        { runner: runner(() => result(ordinary("a.txt"))), uri },
+        { registration: await registrationAt(standaloneAdmin), sourceKind: "main" },
+      ),
+    ).toBeDefined();
+
+    const linked = await registeredLinkedWorktree("owned-linked");
+    await writeFile(join(linked.root, "a.txt"), "a");
+    const linkedRegistration = await registrationAt(linked.common);
+    const opened = api(async () => repository(linked.root));
+    expect(
+      await probeMigrationSource(
+        opened,
+        linked.root,
+        { runner: runner(() => result(ordinary("a.txt"))), uri },
+        { registration: linkedRegistration, sourceKind: "linked" },
+      ),
+    ).toBeDefined();
+    expect(
+      await probeMigrationSource(
+        opened,
+        linked.root,
+        { runner: runner(() => result(ordinary("a.txt"))), uri },
+        { registration: linkedRegistration, sourceKind: "main" },
+      ),
+    ).toBeUndefined();
+
+    await writeFile(join(linked.common, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(linked.root, ".git"), `gitdir: ${linked.common}\n`);
+    expect(
+      await probeMigrationSource(
+        opened,
+        linked.root,
+        { runner: runner(() => result(ordinary("a.txt"))), uri },
+        { registration: linkedRegistration, sourceKind: "linked" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("accepts a canonical symlink spelling but rejects a same-inode hard-link back-pointer alias", async () => {
+    const linked = await registeredLinkedWorktree("back-pointer-alias");
+    await writeFile(join(linked.root, "a.txt"), "a");
+    const registration = await registrationAt(linked.common);
+    const binding = { registration, sourceKind: "linked" as const };
+    const opened = api(async () => repository(linked.root));
+    const git = runner(() => result(ordinary("a.txt")));
+    const rootAlias = join(tmpdir(), `migration-root-alias-${Date.now()}`);
+    await symlink(linked.root, rootAlias);
+    roots.push(rootAlias);
+    await writeFile(join(linked.admin, "gitdir"), `${join(rootAlias, ".git")}\n`);
+
+    expect(await probeMigrationSource(opened, linked.root, { runner: git, uri }, binding)).toBeDefined();
+
+    const hardLink = join(linked.root, ".git-hard-link");
+    await link(join(linked.root, ".git"), hardLink);
+    await writeFile(join(linked.admin, "gitdir"), `${hardLink}\n`);
+    expect(await probeMigrationSource(opened, linked.root, { runner: git, uri }, binding)).toBeUndefined();
+  });
+
+  it("rejects a different repository and a persistent replacement before the first source probe", async () => {
+    const linked = await registeredLinkedWorktree("pre-probe-replacement");
+    await writeFile(join(linked.root, "a.txt"), "a");
+    const selectedRegistration = await registrationAt(linked.common);
+    const otherCommon = await realpath(await mkdtemp(join(tmpdir(), "migration-other-common-")));
+    roots.push(otherCommon);
+    const otherRegistration = await registrationAt(otherCommon);
+    const opened = api(async () => repository(linked.root));
+    const git = runner(() => result(ordinary("a.txt")));
+
+    expect(
+      await probeMigrationSource(
+        opened,
+        linked.root,
+        { runner: git, uri },
+        {
+          registration: otherRegistration,
+          sourceKind: "linked",
+        },
+      ),
+    ).toBeUndefined();
+
+    const oldCommon = `${linked.common}-old`;
+    await rename(linked.common, oldCommon);
+    roots.push(oldCommon);
+    await mkdir(linked.admin, { recursive: true });
+    await writeFile(join(linked.admin, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(linked.admin, "gitdir"), `${join(linked.root, ".git")}\n`);
+    await writeFile(join(linked.admin, "commondir"), "../..\n");
+
+    expect(
+      await probeMigrationSource(
+        opened,
+        linked.root,
+        { runner: git, uri },
+        {
+          registration: selectedRegistration,
+          sourceKind: "linked",
+        },
+      ),
+    ).toBeUndefined();
+  });
+
   it("withholds an offer when source evidence changes across its status snapshot", async () => {
     const root = await worktree("offer-bracket");
     await writeFile(join(root, "a.txt"), "a");
@@ -839,12 +976,13 @@ describe("migration source evidence", () => {
 
   it("captures only a destination registered under the expected common repository and back-pointer", async () => {
     const linked = await registeredLinkedWorktree("destination-evidence");
+    const registration = await registrationAt(linked.common);
 
-    expect(await captureMigrationDestination(linked.common, linked.root)).toMatchObject({
+    expect(await captureMigrationDestination(linked.common, linked.root, {}, registration)).toMatchObject({
       path: linked.root,
       git: { commonPath: linked.common, backPointerPath: join(linked.root, ".git") },
     });
-    expect(await captureMigrationDestination(`${linked.common}-other`, linked.root)).toBeUndefined();
+    expect(await captureMigrationDestination(`${linked.common}-other`, linked.root, {}, registration)).toBeUndefined();
 
     await writeFile(join(linked.admin, "gitdir"), "/different/worktree/.git\n");
     expect(await captureMigrationDestination(linked.common, linked.root)).toBeUndefined();
@@ -977,6 +1115,71 @@ describe("migrateChanges", () => {
       ),
     ).toBeUndefined();
     finishOpen?.(repository(root));
+  });
+
+  it("executes only when both worktrees match the pre-offer repository registration", async () => {
+    const source = await worktree("bound-source");
+    const common = join(source, ".git");
+    const destination = await registeredLinkedWorktree("bound-destination", common);
+    await writeFile(join(source, "a.txt"), "wanted");
+    const registration = await registrationAt(common);
+    const binding = { registration, sourceKind: "main" as const };
+    let moved = false;
+    const git = runner((cwd) =>
+      result(!moved ? (cwd === source ? ordinary("a.txt") : "") : cwd === source ? "" : ordinary("a.txt")),
+    );
+    const migrate = vi.fn(async () => {
+      await writeFile(join(destination.root, "a.txt"), "wanted");
+      moved = true;
+    });
+    const opened = api(async (value) =>
+      repository(value.fsPath, value.fsPath === destination.root ? migrate : vi.fn()),
+    );
+    const offered = await probeMigrationSource(opened, source, { runner: git, uri }, binding);
+    const destinationEvidence = await captureMigrationDestination(common, destination.root, {}, registration);
+
+    expect(
+      await migrateChanges(
+        {
+          sourcePath: source,
+          destinationPath: destination.root,
+          source: offered!.source,
+          destination: destinationEvidence,
+          snapshot: offered!.snapshot,
+          binding,
+        },
+        { api: opened, runner: git, uri },
+      ),
+    ).toEqual({ kind: "moved" });
+    expect(migrate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects destination evidence from outside the pre-offer registration", async () => {
+    const source = await worktree("bound-wrong-destination-source");
+    const destination = await worktree("bound-wrong-destination");
+    await writeFile(join(source, "a.txt"), "wanted");
+    const registration = await registrationAt(join(source, ".git"));
+    const binding = { registration, sourceKind: "main" as const };
+    const git = runner((cwd) => result(cwd === source ? ordinary("a.txt") : ""));
+    const migrate = vi.fn(async () => {});
+    const opened = api(async (value) => repository(value.fsPath, value.fsPath === destination ? migrate : vi.fn()));
+    const offered = await probeMigrationSource(opened, source, { runner: git, uri }, binding);
+    const destinationEvidence = await captureMigrationDestination(join(destination, ".git"), destination);
+
+    expect(
+      await migrateChanges(
+        {
+          sourcePath: source,
+          destinationPath: destination,
+          source: offered!.source,
+          destination: destinationEvidence,
+          snapshot: offered!.snapshot,
+          binding,
+        },
+        { api: opened, runner: git, uri },
+      ),
+    ).toEqual({ kind: "indeterminate", reason: "the source or destination changed before migration" });
+    expect(migrate).not.toHaveBeenCalled();
   });
 
   it("reports moved only for empty source and the exact destination snapshot", async () => {

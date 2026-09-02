@@ -162,7 +162,7 @@
     1. `src/worktree/WorktreeDiscovery.ts`, `src/worktree/WorktreeDiscovery.test.ts`, `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.test.ts`: bracket full and repo-scoped worktree listings with the retained registration; identity drift degrades the listing and cannot publish authoritative rows.
     2. `src/worktree/WorktreeCache.ts`, `src/worktree/WorktreeCache.test.ts`: retain registration evidence in internal resolved roots, update it only from a whole-tree resolution, and never copy it into `WorktreeRepo` or the broadcast tree.
 
-- [ ] 4_3 Reject source evidence from another repository
+- [x] 4_3 Reject source evidence from another repository — verified: pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 4_2
   - **Refs**: design.md D2, D3, D5, D8 <!-- review round 2 F006 -->
   - **Acceptance**:
@@ -187,9 +187,10 @@
   - **Refs**: design.md D2, D3, D5, D6, D8 <!-- review round 2 F006, F007 -->
   - **Acceptance**:
     - Outcome: Nested migration executes only for the selected source and pre-offer repository registration
-    - Verify: command pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
+    - Verify: command pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
   - **Plan**:
-    1. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: carry the expected repository registration beside normalized source evidence through destination capture and migration, stopping indeterminate on any mismatch after the queued rebuild.
-    2. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: bind the registration-aware source probe, destination capture, and migration adapter; prove a raw display versus normalized id nested create reaches the narrow exclusion and only the originally selected repository incarnation reaches the API.
+    1. `src/worktree/migrateChanges.ts`, `src/worktree/migrateChanges.test.ts`: remove the transitional unregistered adapter path once every production caller supplies repository registration and source role.
+    2. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: carry the expected repository registration beside normalized source evidence through destination capture and migration, stopping indeterminate on any mismatch after the queued rebuild.
+    3. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: bind the registration-aware source probe, destination capture, and migration adapter; prove a raw display versus normalized id nested create reaches the narrow exclusion and only the originally selected repository incarnation reaches the API.
 
 **Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5`

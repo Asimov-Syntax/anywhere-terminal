@@ -71,6 +71,11 @@ export interface MigrationOfferEvidence {
   readonly snapshot: MigrationSnapshot;
 }
 
+export interface MigrationRepositoryBinding {
+  readonly registration: AuthorizedDirectory;
+  readonly sourceKind: "main" | "linked";
+}
+
 export type MigrateChangesOutcome =
   | { readonly kind: "moved" }
   | { readonly kind: "indeterminate"; readonly reason: string };
@@ -78,6 +83,7 @@ export type MigrateChangesOutcome =
 interface MigrationFs {
   lstat(path: string): Promise<Stats>;
   readlink(path: string): Promise<string>;
+  realpath?(path: string): Promise<string>;
   open: OpenLike;
 }
 
@@ -132,6 +138,7 @@ class SnapshotBudget {
 const nodeFs: MigrationFs = {
   lstat: (target) => fs.lstat(target),
   readlink: (target) => fs.readlink(target),
+  realpath: (target) => fs.realpath(target),
   open: (target, flags) => fs.open(target, flags),
 };
 
@@ -771,6 +778,7 @@ export async function captureMigrationDestination(
   repoId: string,
   destinationPath: string,
   deps: Pick<MigrationDeps, "fs" | "makeDeadline" | "maxBytes"> = {},
+  registration?: AuthorizedDirectory,
 ): Promise<MigrationSourceEvidence | undefined> {
   const evidence = await captureSourceEvidence(destinationPath, deps);
   if (
@@ -779,6 +787,18 @@ export async function captureMigrationDestination(
     normalizePathForCompare(evidence.git.commonPath) !== normalizePathForCompare(repoId)
   ) {
     return undefined;
+  }
+  if (registration !== undefined) {
+    const context = snapshotContext(deps);
+    try {
+      if (!(await evidenceMatchesBinding(evidence, { registration, sourceKind: "linked" }, context))) {
+        return undefined;
+      }
+    } catch {
+      return undefined;
+    } finally {
+      context.deadline.cancel();
+    }
   }
   if (evidence.git.kind === "file") {
     if (
@@ -797,13 +817,23 @@ async function captureMigrationOfferEvidence(
   runner: GitCommandRunner,
   root: string,
   deps: Pick<MigrationDeps, "fs" | "makeDeadline" | "maxBytes"> = {},
+  binding?: MigrationRepositoryBinding,
 ): Promise<MigrationOfferEvidence | undefined> {
   const context = snapshotContext(deps);
   try {
     const before = await captureSourceEvidenceWithin(root, context);
-    const snapshot = before === undefined ? undefined : await readMigrationSnapshotWithin(runner, root, context);
+    const beforeOwned =
+      before !== undefined && (binding === undefined || (await evidenceMatchesBinding(before, binding, context)));
+    const snapshot = beforeOwned ? await readMigrationSnapshotWithin(runner, root, context) : undefined;
     const after = snapshot === undefined ? undefined : await captureSourceEvidenceWithin(root, context);
-    return before === undefined || snapshot === undefined || after === undefined || !sameSourceEvidence(before, after)
+    const afterOwned =
+      after !== undefined && (binding === undefined || (await evidenceMatchesBinding(after, binding, context)));
+    return before === undefined ||
+      snapshot === undefined ||
+      after === undefined ||
+      !beforeOwned ||
+      !afterOwned ||
+      !sameSourceEvidence(before, after)
       ? undefined
       : { source: after, snapshot };
   } catch {
@@ -842,6 +872,61 @@ function sameDirectory(left: AuthorizedDirectory, right: AuthorizedDirectory): b
       const other = right.components[index];
       return other !== undefined && component.path === other.path && sameIdentity(component.identity, other.identity);
     })
+  );
+}
+
+async function evidenceMatchesBinding(
+  evidence: MigrationSourceEvidence,
+  binding: MigrationRepositoryBinding,
+  context: SnapshotContext,
+): Promise<boolean> {
+  const currentRegistration = await context.budget.run(
+    authorizeDirectory(binding.registration.path, { lstat: context.io.lstat }),
+  );
+  const commonIdentity = binding.registration.components.at(-1)?.identity;
+  if (
+    currentRegistration === undefined ||
+    !sameDirectory(currentRegistration, binding.registration) ||
+    evidence.git.commonPath === undefined ||
+    normalizePathForCompare(evidence.git.commonPath) !== normalizePathForCompare(binding.registration.path) ||
+    !sameIdentity(evidence.git.commonIdentity, commonIdentity)
+  ) {
+    return false;
+  }
+
+  if (binding.sourceKind === "main") {
+    if (evidence.git.kind === "directory") {
+      return (
+        normalizePathForCompare(evidence.git.path) === normalizePathForCompare(binding.registration.path) &&
+        normalizePathForCompare(evidence.git.adminPath) === normalizePathForCompare(binding.registration.path)
+      );
+    }
+    return (
+      evidence.git.backPointerPath === undefined &&
+      normalizePathForCompare(evidence.git.adminPath) === normalizePathForCompare(binding.registration.path) &&
+      evidence.git.adminFiles.every(
+        (file) => (file.name !== "gitdir" && file.name !== "commondir") || file.kind === "absent",
+      )
+    );
+  }
+
+  if (
+    evidence.git.kind !== "file" ||
+    evidence.git.backPointerPath === undefined ||
+    normalizePathForCompare(path.dirname(evidence.git.adminPath)) !==
+      normalizePathForCompare(path.join(binding.registration.path, "worktrees"))
+  ) {
+    return false;
+  }
+  const resolve = context.io.realpath ?? fs.realpath;
+  const [backPointer, gitEntry, backPointerStat] = await Promise.all([
+    context.budget.run(resolve(evidence.git.backPointerPath)),
+    context.budget.run(resolve(evidence.git.path)),
+    context.budget.run(context.io.lstat(evidence.git.backPointerPath)),
+  ]);
+  return (
+    normalizePathForCompare(backPointer) === normalizePathForCompare(gitEntry) &&
+    sameIdentity(evidence.git.identity, fileIdentityOf(backPointerStat))
   );
 }
 
@@ -923,6 +1008,7 @@ export async function probeMigrationSource(
   api: API | undefined,
   sourcePath: string,
   deps: Omit<MigrationDeps, "api">,
+  binding?: MigrationRepositoryBinding,
 ): Promise<MigrationOfferEvidence | undefined> {
   if (api === undefined) {
     return undefined;
@@ -937,7 +1023,7 @@ export async function probeMigrationSource(
   } finally {
     openDeadline.cancel();
   }
-  const offered = await captureMigrationOfferEvidence(deps.runner, sourcePath, deps);
+  const offered = await captureMigrationOfferEvidence(deps.runner, sourcePath, deps, binding);
   return offered === undefined || offered.snapshot.count === 0 ? undefined : offered;
 }
 
@@ -953,6 +1039,7 @@ export async function migrateChanges(
     readonly source: MigrationSourceEvidence;
     readonly destination?: MigrationSourceEvidence;
     readonly snapshot: MigrationSnapshot;
+    readonly binding?: MigrationRepositoryBinding;
   },
   deps: MigrationDeps,
 ): Promise<MigrateChangesOutcome> {
@@ -967,6 +1054,10 @@ export async function migrateChanges(
     return { kind: "indeterminate", reason: "the migration destination does not match its authorization" };
   }
 
+  const destinationBinding =
+    input.binding === undefined
+      ? undefined
+      : { registration: input.binding.registration, sourceKind: "linked" as const };
   const openDeadline = deadlineFrom(deps);
   try {
     const opened = await openRepositories(api, [input.sourcePath, input.destinationPath], deps.uri, openDeadline);
@@ -985,8 +1076,8 @@ export async function migrateChanges(
     const migrate = openedDestination.migrateChanges.bind(openedDestination);
 
     const [beforeSource, beforeDestination] = await Promise.all([
-      captureMigrationOfferEvidence(deps.runner, input.sourcePath, deps),
-      captureMigrationOfferEvidence(deps.runner, input.destinationPath, deps),
+      captureMigrationOfferEvidence(deps.runner, input.sourcePath, deps, input.binding),
+      captureMigrationOfferEvidence(deps.runner, input.destinationPath, deps, destinationBinding),
     ]);
     if (
       beforeSource === undefined ||
@@ -1021,8 +1112,8 @@ export async function migrateChanges(
   }
 
   const [afterSource, afterDestination] = await Promise.all([
-    captureMigrationOfferEvidence(deps.runner, input.sourcePath, deps),
-    captureMigrationOfferEvidence(deps.runner, input.destinationPath, deps),
+    captureMigrationOfferEvidence(deps.runner, input.sourcePath, deps, input.binding),
+    captureMigrationOfferEvidence(deps.runner, input.destinationPath, deps, destinationBinding),
   ]);
   return afterSource !== undefined &&
     afterDestination !== undefined &&
