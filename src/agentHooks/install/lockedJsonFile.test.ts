@@ -153,7 +153,10 @@ describe("LockedFile", () => {
     const reported: string[] = [];
     const file = new LockedFile(target, {
       fs: {
-        open: (async () => ({ stat: (o?: { bigint?: boolean }) => statOf(undefined, o), close: async () => undefined })) as never,
+        open: (async () => ({
+          stat: (o?: { bigint?: boolean }) => statOf(undefined, o),
+          close: async () => undefined,
+        })) as never,
         lstat: identity(1n, 2n ** 53n),
         unlink: (async (path: string) => {
           unlinked.push(path);
@@ -161,8 +164,11 @@ describe("LockedFile", () => {
       },
     });
 
-    const outcome = await file.withLock<string>(async () => "committed", "unavailable", "failed", (path) =>
-      reported.push(path),
+    const outcome = await file.withLock<string>(
+      async () => "committed",
+      "unavailable",
+      "failed",
+      (path) => reported.push(path),
     );
 
     expect(outcome).toBe("committed");
