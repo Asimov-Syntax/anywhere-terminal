@@ -10,12 +10,14 @@ import {
   type FileIdentity,
   fileIdentityOf,
 } from "../utils/authorizedDirectory";
+import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type OpenLike, openRegularFile } from "../utils/regularFileRead";
 import { afterDelay, type Deadline } from "./deadline";
 import type { GitCommandRunner } from "./gitCommandRunner";
 
 export const MIGRATION_DEADLINE_MS = 10_000;
 export const MIGRATION_MAX_BYTES = 512 * 1024 * 1024;
+export const MIGRATION_MAX_GITFILE_BYTES = 1024 * 1024;
 
 export type MigrationRecord =
   | { readonly kind: "ordinary" | "untracked"; readonly path: string; readonly signature: string }
@@ -53,6 +55,9 @@ interface GitEntryEvidence {
   readonly adminPath: string;
   readonly adminIdentity: FileIdentity;
   readonly adminFiles: readonly AdminFileEvidence[];
+  readonly commonPath?: string;
+  readonly commonIdentity?: FileIdentity;
+  readonly backPointerPath?: string;
 }
 
 export interface MigrationSourceEvidence {
@@ -404,10 +409,89 @@ async function readBoundedFile(
   expected: Stats,
   budget: SnapshotBudget,
   io: MigrationFs,
+  maxBytes = MIGRATION_MAX_GITFILE_BYTES,
 ): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  await readRegularFile(target, expected, budget, io, (chunk) => chunks.push(Buffer.from(chunk)));
-  return Buffer.concat(chunks);
+  const { handle, stat } = await openBoundedRegularFile(target, expected, budget, io);
+  let failed = false;
+  let failure: unknown;
+  let content = Buffer.alloc(0);
+  try {
+    if (!Number.isSafeInteger(stat.size) || stat.size < 0 || stat.size > maxBytes || stat.size > budget.remaining) {
+      throw new SnapshotFailure();
+    }
+    budget.take(stat.size);
+    content = Buffer.allocUnsafe(stat.size);
+    let offset = 0;
+    while (offset < stat.size) {
+      const read = await budget.run(handle.read(content, offset, stat.size - offset, offset));
+      if (read.bytesRead <= 0) {
+        throw new SnapshotFailure();
+      }
+      offset += read.bytesRead;
+    }
+    const after = await budget.run(handle.stat());
+    const pathAfter = await budget.run(io.lstat(target));
+    if (
+      after.size !== stat.size ||
+      after.mode !== stat.mode ||
+      after.mtimeMs !== stat.mtimeMs ||
+      after.ctimeMs !== stat.ctimeMs ||
+      !sameIdentity(fileIdentityOf(stat), fileIdentityOf(after)) ||
+      pathAfter.isSymbolicLink() ||
+      !pathAfter.isFile() ||
+      !sameIdentity(fileIdentityOf(stat), fileIdentityOf(pathAfter))
+    ) {
+      throw new SnapshotFailure();
+    }
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  const closed = await closeBounded(handle, budget);
+  if (!closed) {
+    throw new SnapshotFailure();
+  }
+  if (failed) {
+    throw failure;
+  }
+  return content;
+}
+
+async function authorizeExistingParent(
+  root: string,
+  parent: string,
+  budget: SnapshotBudget,
+  io: MigrationFs,
+): Promise<{ directory: AuthorizedDirectory; complete: boolean } | undefined> {
+  const relative = path.relative(root, parent);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return undefined;
+  }
+  let current = root;
+  let complete = true;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    const candidate = path.join(current, segment);
+    let stat: Stats;
+    try {
+      stat = await budget.run(io.lstat(candidate));
+    } catch (error) {
+      if (!isNotFound(error)) {
+        throw error;
+      }
+      complete = false;
+      break;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory() || fileIdentityOf(stat) === undefined) {
+      return undefined;
+    }
+    current = candidate;
+  }
+  const directory = await authorizeDirectory(
+    current,
+    { lstat: io.lstat },
+    { run: <T>(work: () => Promise<T>) => budget.run(work()) },
+  );
+  return directory === undefined ? undefined : { directory, complete };
 }
 
 async function pathState(
@@ -421,26 +505,45 @@ async function pathState(
   if (inside === "" || inside === ".." || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) {
     throw new SnapshotFailure();
   }
+  const parent = path.dirname(target);
+  const parentBefore = await authorizeExistingParent(root, parent, budget, io);
+  if (parentBefore === undefined) {
+    throw new SnapshotFailure();
+  }
+  const finish = async <T extends MigrationPathState>(state: T): Promise<T> => {
+    const parentAfter = await authorizeExistingParent(root, parent, budget, io);
+    if (
+      parentAfter === undefined ||
+      parentAfter.complete !== parentBefore.complete ||
+      !sameDirectory(parentBefore.directory, parentAfter.directory)
+    ) {
+      throw new SnapshotFailure();
+    }
+    return state;
+  };
   let stat: Stats;
   try {
     stat = await budget.run(io.lstat(target));
   } catch (error) {
     if (isNotFound(error)) {
-      return { path: relativePath, kind: "absent" };
+      return finish({ path: relativePath, kind: "absent" });
     }
     throw error;
+  }
+  if (!parentBefore.complete) {
+    throw new SnapshotFailure();
   }
   const mode = stat.mode & 0o7777;
   if (stat.isSymbolicLink()) {
     const link = await budget.run(io.readlink(target));
     budget.take(Buffer.byteLength(link));
-    return { path: relativePath, kind: "symlink", mode, target: link };
+    return finish({ path: relativePath, kind: "symlink", mode, target: link });
   }
   if (stat.isFile()) {
     const opened = await hashFile(target, stat, budget, io);
-    return { path: relativePath, kind: "file", mode: opened.mode, hash: opened.hash };
+    return finish({ path: relativePath, kind: "file", mode: opened.mode, hash: opened.hash });
   }
-  return { path: relativePath, kind: stat.isDirectory() ? "directory" : "other", mode };
+  return finish({ path: relativePath, kind: stat.isDirectory() ? "directory" : "other", mode });
 }
 
 function deadlineFrom(deps: Pick<MigrationDeps, "makeDeadline">): Deadline {
@@ -506,19 +609,25 @@ export async function readMigrationSnapshot(
   }
 }
 
+interface CapturedAdminFile {
+  readonly evidence: AdminFileEvidence;
+  readonly text?: string;
+}
+
 async function evidenceFile(
   adminPath: string,
   name: string,
   budget: SnapshotBudget,
   io: MigrationFs,
-): Promise<AdminFileEvidence> {
+  retainText = false,
+): Promise<CapturedAdminFile> {
   const target = path.join(adminPath, name);
   let stat: Stats;
   try {
     stat = await budget.run(io.lstat(target));
   } catch (error) {
     if (isNotFound(error)) {
-      return { name, kind: "absent" };
+      return { evidence: { name, kind: "absent" } };
     }
     throw error;
   }
@@ -526,7 +635,29 @@ async function evidenceFile(
   if (!stat.isFile() || stat.isSymbolicLink() || identity === undefined) {
     throw new SnapshotFailure();
   }
-  return { name, kind: "file", identity, hash: (await hashFile(target, stat, budget, io)).hash };
+  if (retainText) {
+    const content = await readBoundedFile(target, stat, budget, io);
+    const text = decode(content);
+    if (text === undefined) {
+      throw new SnapshotFailure();
+    }
+    return {
+      evidence: { name, kind: "file", identity, hash: createHash("sha256").update(content).digest("hex") },
+      text,
+    };
+  }
+  return { evidence: { name, kind: "file", identity, hash: (await hashFile(target, stat, budget, io)).hash } };
+}
+
+function metadataPath(text: string | undefined): string | undefined {
+  const value = text?.trim();
+  return value === undefined ||
+    value.length === 0 ||
+    value.includes("\0") ||
+    value.includes("\n") ||
+    value.includes("\r")
+    ? undefined
+    : value;
 }
 
 async function captureSourceEvidenceWithin(
@@ -564,8 +695,45 @@ async function captureSourceEvidenceWithin(
     return undefined;
   }
   const adminFiles: AdminFileEvidence[] = [];
+  let gitdirEvidence: AdminFileEvidence | undefined;
+  let commondirEvidence: AdminFileEvidence | undefined;
+  let gitdirText: string | undefined;
+  let commondirText: string | undefined;
   for (const name of ["HEAD", "gitdir", "commondir"]) {
-    adminFiles.push(await evidenceFile(adminPath, name, budget, io));
+    const captured = await evidenceFile(adminPath, name, budget, io, name !== "HEAD");
+    adminFiles.push(captured.evidence);
+    if (name === "gitdir") {
+      gitdirEvidence = captured.evidence;
+      gitdirText = captured.text;
+    } else if (name === "commondir") {
+      commondirEvidence = captured.evidence;
+      commondirText = captured.text;
+    }
+  }
+
+  let commonPath = adminPath;
+  let backPointerPath: string | undefined;
+  if (entry.isFile()) {
+    const standalone = gitdirEvidence?.kind === "absent" && commondirEvidence?.kind === "absent";
+    if (!standalone) {
+      const gitdir = metadataPath(gitdirText);
+      const commondir = metadataPath(commondirText);
+      if (
+        gitdirEvidence?.kind !== "file" ||
+        commondirEvidence?.kind !== "file" ||
+        gitdir === undefined ||
+        commondir === undefined
+      ) {
+        return undefined;
+      }
+      backPointerPath = path.resolve(adminPath, gitdir);
+      commonPath = path.resolve(adminPath, commondir);
+    }
+  }
+  const common = await budget.run(io.lstat(commonPath));
+  const commonIdentity = fileIdentityOf(common);
+  if (!common.isDirectory() || common.isSymbolicLink() || commonIdentity === undefined) {
+    return undefined;
   }
   return {
     path: root,
@@ -578,6 +746,9 @@ async function captureSourceEvidenceWithin(
       adminPath,
       adminIdentity,
       adminFiles,
+      commonPath,
+      commonIdentity,
+      ...(backPointerPath === undefined ? {} : { backPointerPath }),
     },
   };
 }
@@ -596,6 +767,32 @@ async function captureSourceEvidence(
   }
 }
 
+export async function captureMigrationDestination(
+  repoId: string,
+  destinationPath: string,
+  deps: Pick<MigrationDeps, "fs" | "makeDeadline" | "maxBytes"> = {},
+): Promise<MigrationSourceEvidence | undefined> {
+  const evidence = await captureSourceEvidence(destinationPath, deps);
+  if (
+    evidence === undefined ||
+    evidence.git.commonPath === undefined ||
+    normalizePathForCompare(evidence.git.commonPath) !== normalizePathForCompare(repoId)
+  ) {
+    return undefined;
+  }
+  if (evidence.git.kind === "file") {
+    if (
+      evidence.git.backPointerPath === undefined ||
+      normalizePathForCompare(evidence.git.backPointerPath) !== normalizePathForCompare(evidence.git.path) ||
+      normalizePathForCompare(path.dirname(evidence.git.adminPath)) !==
+        normalizePathForCompare(path.join(evidence.git.commonPath, "worktrees"))
+    ) {
+      return undefined;
+    }
+  }
+  return evidence;
+}
+
 async function captureMigrationOfferEvidence(
   runner: GitCommandRunner,
   root: string,
@@ -603,9 +800,12 @@ async function captureMigrationOfferEvidence(
 ): Promise<MigrationOfferEvidence | undefined> {
   const context = snapshotContext(deps);
   try {
-    const snapshot = await readMigrationSnapshotWithin(runner, root, context);
-    const source = snapshot === undefined ? undefined : await captureSourceEvidenceWithin(root, context);
-    return snapshot === undefined || source === undefined ? undefined : { source, snapshot };
+    const before = await captureSourceEvidenceWithin(root, context);
+    const snapshot = before === undefined ? undefined : await readMigrationSnapshotWithin(runner, root, context);
+    const after = snapshot === undefined ? undefined : await captureSourceEvidenceWithin(root, context);
+    return before === undefined || snapshot === undefined || after === undefined || !sameSourceEvidence(before, after)
+      ? undefined
+      : { source: after, snapshot };
   } catch {
     return undefined;
   } finally {
@@ -653,8 +853,11 @@ function sameSourceEvidence(left: MigrationSourceEvidence, right: MigrationSourc
     left.git.kind === right.git.kind &&
     left.git.contentHash === right.git.contentHash &&
     left.git.adminPath === right.git.adminPath &&
+    left.git.commonPath === right.git.commonPath &&
+    left.git.backPointerPath === right.git.backPointerPath &&
     sameIdentity(left.git.identity, right.git.identity) &&
     sameIdentity(left.git.adminIdentity, right.git.adminIdentity) &&
+    sameIdentity(left.git.commonIdentity, right.git.commonIdentity) &&
     sameAdminFiles(left.git.adminFiles, right.git.adminFiles)
   );
 }
@@ -673,6 +876,18 @@ function sameSnapshot(left: MigrationSnapshot, right: MigrationSnapshot): boolea
 
 function sameStates(left: readonly MigrationPathState[], right: readonly MigrationPathState[]): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameRecordTopology(left: readonly MigrationRecord[], right: readonly MigrationRecord[]): boolean {
+  const topology = (records: readonly MigrationRecord[]) =>
+    records
+      .map((record) =>
+        record.kind === "rename" || record.kind === "copy"
+          ? [record.kind, record.path, record.originalPath]
+          : [record.kind, record.path],
+      )
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return JSON.stringify(topology(left)) === JSON.stringify(topology(right));
 }
 
 async function openRepositories(
@@ -736,6 +951,7 @@ export async function migrateChanges(
     readonly sourcePath: string;
     readonly destinationPath: string;
     readonly source: MigrationSourceEvidence;
+    readonly destination?: MigrationSourceEvidence;
     readonly snapshot: MigrationSnapshot;
   },
   deps: MigrationDeps,
@@ -746,6 +962,9 @@ export async function migrateChanges(
   }
   if (input.sourcePath !== input.source.path) {
     return { kind: "indeterminate", reason: "the migration source does not match its authorization" };
+  }
+  if (input.destination === undefined || input.destinationPath !== input.destination.path) {
+    return { kind: "indeterminate", reason: "the migration destination does not match its authorization" };
   }
 
   const openDeadline = deadlineFrom(deps);
@@ -767,14 +986,15 @@ export async function migrateChanges(
 
     const [beforeSource, beforeDestination] = await Promise.all([
       captureMigrationOfferEvidence(deps.runner, input.sourcePath, deps),
-      readMigrationSnapshot(deps.runner, input.destinationPath, deps),
+      captureMigrationOfferEvidence(deps.runner, input.destinationPath, deps),
     ]);
     if (
       beforeSource === undefined ||
       beforeDestination === undefined ||
-      beforeDestination.count !== 0 ||
+      beforeDestination.snapshot.count !== 0 ||
       !sameSnapshot(beforeSource.snapshot, input.snapshot) ||
       !sameSourceEvidence(beforeSource.source, input.source) ||
+      !sameSourceEvidence(beforeDestination.source, input.destination) ||
       openDeadline.expired
     ) {
       return { kind: "indeterminate", reason: "the source or destination changed before migration" };
@@ -801,13 +1021,16 @@ export async function migrateChanges(
   }
 
   const [afterSource, afterDestination] = await Promise.all([
-    readMigrationSnapshot(deps.runner, input.sourcePath, deps),
-    readMigrationSnapshot(deps.runner, input.destinationPath, deps),
+    captureMigrationOfferEvidence(deps.runner, input.sourcePath, deps),
+    captureMigrationOfferEvidence(deps.runner, input.destinationPath, deps),
   ]);
   return afterSource !== undefined &&
     afterDestination !== undefined &&
-    afterSource.count === 0 &&
-    sameStates(afterDestination.states, input.snapshot.states)
+    afterSource.snapshot.count === 0 &&
+    sameSourceEvidence(afterSource.source, input.source) &&
+    sameSourceEvidence(afterDestination.source, input.destination) &&
+    sameRecordTopology(afterDestination.snapshot.records, input.snapshot.records) &&
+    sameStates(afterDestination.snapshot.states, input.snapshot.states)
     ? { kind: "moved" }
     : { kind: "indeterminate", reason: "the migration result could not be verified" };
 }

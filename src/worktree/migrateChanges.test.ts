@@ -20,8 +20,10 @@ import type { API, Repository } from "../providers/git";
 import { afterDelay, type Deadline } from "./deadline";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
 import {
+  captureMigrationDestination,
   MIGRATION_DEADLINE_MS,
   MIGRATION_MAX_BYTES,
+  MIGRATION_MAX_GITFILE_BYTES,
   migrateChanges,
   migrationSourceStillAuthorized,
   probeMigrationSource,
@@ -103,6 +105,37 @@ async function linkedWorktree(name: string): Promise<{ root: string; admin: stri
   return { root, admin };
 }
 
+async function registeredLinkedWorktree(name: string): Promise<{ root: string; admin: string; common: string }> {
+  const common = await realpath(await mkdtemp(join(tmpdir(), `migration-common-${name}-`)));
+  const root = await realpath(await mkdtemp(join(tmpdir(), `migration-linked-${name}-`)));
+  roots.push(common, root);
+  const admin = join(common, "worktrees", name);
+  await mkdir(admin, { recursive: true });
+  await writeFile(join(admin, "HEAD"), "ref: refs/heads/main\n");
+  await writeFile(join(admin, "gitdir"), `${join(root, ".git")}\n`);
+  await writeFile(join(admin, "commondir"), "../..\n");
+  await writeFile(join(root, ".git"), `gitdir: ${admin}\n`);
+  return { root, admin, common };
+}
+
+async function migrationInput(
+  sourcePath: string,
+  destinationPath: string,
+  offered: NonNullable<Awaited<ReturnType<typeof probeMigrationSource>>>,
+) {
+  const destination = await captureMigrationDestination(join(destinationPath, ".git"), destinationPath);
+  if (destination === undefined) {
+    throw new Error("destination fixture was not authorized");
+  }
+  return {
+    sourcePath,
+    destinationPath,
+    source: offered.source,
+    destination,
+    snapshot: offered.snapshot,
+  };
+}
+
 describe("readMigrationSnapshot", () => {
   it("counts ordinary and untracked paths and snapshots their bytes", async () => {
     const root = await worktree("snapshot");
@@ -146,6 +179,17 @@ describe("readMigrationSnapshot", () => {
       ["new.txt", "file"],
       ["old.txt", "absent"],
     ]);
+  });
+
+  it("records a deleted path as absent when its former parent is also gone", async () => {
+    const root = await worktree("nested-deletion");
+
+    expect(
+      await readMigrationSnapshot(
+        runner(() => result(ordinary("removed/file.txt"))),
+        root,
+      ),
+    ).toMatchObject({ states: [{ path: "removed/file.txt", kind: "absent" }] });
   });
 
   it("retains a copy origin while snapshotting only the copied path", async () => {
@@ -573,6 +617,91 @@ describe("readMigrationSnapshot", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("refuses a static intermediate symlink that redirects a changed file outside the source", async () => {
+    const root = await worktree("intermediate-static");
+    const outside = await worktree("intermediate-static-outside");
+    await writeFile(join(outside, "file.txt"), "outside");
+    await symlink(outside, join(root, "dir"));
+
+    expect(
+      await readMigrationSnapshot(
+        runner(() => result(ordinary("dir/file.txt"))),
+        root,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses an absent changed path behind a static intermediate symlink", async () => {
+    const root = await worktree("intermediate-absent");
+    const outside = await worktree("intermediate-absent-outside");
+    await symlink(outside, join(root, "dir"));
+
+    expect(
+      await readMigrationSnapshot(
+        runner(() => result(ordinary("dir/missing.txt"))),
+        root,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a missing intermediate directory that becomes an outside symlink during the read", async () => {
+    const root = await worktree("intermediate-created");
+    const outside = await worktree("intermediate-created-outside");
+    const target = join(root, "dir", "missing.txt");
+    let replaced = false;
+
+    expect(
+      await readMigrationSnapshot(
+        runner(() => result(ordinary("dir/missing.txt"))),
+        root,
+        {
+          fs: {
+            lstat: async (candidate) => {
+              if (candidate === target && !replaced) {
+                replaced = true;
+                await symlink(outside, join(root, "dir"));
+              }
+              return lstat(candidate);
+            },
+            readlink,
+            open,
+          },
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses an intermediate directory that persistently becomes an outside symlink during the read", async () => {
+    const root = await worktree("intermediate-race");
+    const outside = await worktree("intermediate-race-outside");
+    await mkdir(join(root, "dir"));
+    await writeFile(join(root, "dir", "file.txt"), "inside");
+    await writeFile(join(outside, "file.txt"), "outside");
+    const target = join(root, "dir", "file.txt");
+    let replaced = false;
+
+    expect(
+      await readMigrationSnapshot(
+        runner(() => result(ordinary("dir/file.txt"))),
+        root,
+        {
+          fs: {
+            lstat: async (candidate) => {
+              if (candidate === target && !replaced) {
+                replaced = true;
+                await rename(join(root, "dir"), join(root, "dir-old"));
+                await symlink(outside, join(root, "dir"));
+              }
+              return lstat(candidate);
+            },
+            readlink,
+            open,
+          },
+        },
+      ),
+    ).toBeUndefined();
+  });
 });
 
 describe("migration source evidence", () => {
@@ -668,6 +797,113 @@ describe("migration source evidence", () => {
     await writeFile(join(adminReplacement.admin, "commondir"), "../..\n");
     expect(await migrationSourceStillAuthorized(adminOffer!.source)).toBe(false);
   });
+
+  it("accepts a standalone separate-git-dir source without linked-worktree metadata", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "migration-separate-source-")));
+    const admin = await realpath(await mkdtemp(join(tmpdir(), "migration-separate-admin-")));
+    roots.push(root, admin);
+    await writeFile(join(root, ".git"), `gitdir: ${admin}\n`);
+    await writeFile(join(admin, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(root, "a.txt"), "a");
+
+    expect(
+      await probeMigrationSource(
+        api(async () => repository(root)),
+        root,
+        {
+          runner: runner(() => result(ordinary("a.txt"))),
+          uri,
+        },
+      ),
+    ).toMatchObject({ source: { git: { commonPath: admin } } });
+  });
+
+  it("withholds an offer when source evidence changes across its status snapshot", async () => {
+    const root = await worktree("offer-bracket");
+    await writeFile(join(root, "a.txt"), "a");
+    const git: GitCommandRunner = {
+      run: vi.fn(async () => {
+        await writeFile(join(root, ".git", "HEAD"), "ref: refs/heads/replaced\n");
+        return result(ordinary("a.txt"));
+      }),
+    };
+
+    expect(
+      await probeMigrationSource(
+        api(async () => repository(root)),
+        root,
+        { runner: git, uri },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("captures only a destination registered under the expected common repository and back-pointer", async () => {
+    const linked = await registeredLinkedWorktree("destination-evidence");
+
+    expect(await captureMigrationDestination(linked.common, linked.root)).toMatchObject({
+      path: linked.root,
+      git: { commonPath: linked.common, backPointerPath: join(linked.root, ".git") },
+    });
+    expect(await captureMigrationDestination(`${linked.common}-other`, linked.root)).toBeUndefined();
+
+    await writeFile(join(linked.admin, "gitdir"), "/different/worktree/.git\n");
+    expect(await captureMigrationDestination(linked.common, linked.root)).toBeUndefined();
+  });
+
+  it("refuses an oversized linked-worktree gitfile before it can consume the general snapshot budget", async () => {
+    const linked = await linkedWorktree("oversized-gitfile");
+    await writeFile(join(linked.root, ".git"), Buffer.alloc(MIGRATION_MAX_GITFILE_BYTES + 1, 1));
+
+    expect(
+      await probeMigrationSource(
+        api(async () => repository(linked.root)),
+        linked.root,
+        {
+          runner: runner(() => result(ordinary("a.txt"))),
+          uri,
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("accepts a worst-case Windows-sized UTF-8 gitdir path below the host-safe cap", async () => {
+    const linked = await registeredLinkedWorktree("long-gitdir");
+    const longAdmin = `/${"界".repeat(45_100)}`;
+    const content = `gitdir: ${longAdmin}\n`;
+    expect(Buffer.byteLength(content)).toBeGreaterThan(132 * 1024);
+    expect(Buffer.byteLength(content)).toBeLessThan(MIGRATION_MAX_GITFILE_BYTES);
+    await writeFile(join(linked.root, ".git"), content);
+    await writeFile(join(linked.admin, "commondir"), `${linked.common}\n`);
+    const mapped = (candidate: string): string =>
+      candidate === longAdmin || candidate.startsWith(`${longAdmin}/`)
+        ? join(linked.admin, candidate.slice(longAdmin.length + 1))
+        : candidate;
+    const allocations: number[] = [];
+    const allocate = Buffer.allocUnsafe;
+    vi.spyOn(Buffer, "allocUnsafe").mockImplementation((size) => {
+      allocations.push(size);
+      return allocate(size);
+    });
+
+    expect(
+      await probeMigrationSource(
+        api(async () => repository(linked.root)),
+        linked.root,
+        {
+          runner: runner(() => result(ordinary("a.txt"))),
+          uri,
+          fs: {
+            lstat: (candidate) => lstat(mapped(candidate)),
+            readlink: (candidate) => readlink(mapped(candidate)),
+            open: (candidate, flags) => open(mapped(candidate), flags),
+          },
+        },
+      ),
+    ).toBeDefined();
+    const gitfileBytes = Buffer.byteLength(content);
+    expect(allocations.filter((size) => size === gitfileBytes)).toHaveLength(2);
+    expect(Math.max(...allocations)).toBe(gitfileBytes);
+  });
 });
 
 describe("migrateChanges", () => {
@@ -761,10 +997,11 @@ describe("migrateChanges", () => {
     const opened = api(async (value) => repository(value.fsPath, value.fsPath === destination ? migrate : vi.fn()));
     const offered = await probeMigrationSource(opened, source, { runner: git, uri });
 
-    const outcome = await migrateChanges(
-      { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-      { api: opened, runner: git, uri },
-    );
+    const outcome = await migrateChanges(await migrationInput(source, destination, offered!), {
+      api: opened,
+      runner: git,
+      uri,
+    });
 
     expect(outcome).toEqual({ kind: "moved" });
     expect(migrate).toHaveBeenCalledWith(source, {
@@ -772,6 +1009,66 @@ describe("migrateChanges", () => {
       deleteFromSource: true,
       untracked: true,
     });
+  });
+
+  it("refuses persistent destination identity drift before and after the Git call", async () => {
+    for (const phase of ["before", "after"] as const) {
+      const source = await worktree(`destination-drift-${phase}-source`);
+      const destination = await worktree(`destination-drift-${phase}-destination`);
+      await writeFile(join(source, "a.txt"), "wanted");
+      let moved = false;
+      const git = runner((cwd) =>
+        result(!moved ? (cwd === source ? ordinary("a.txt") : "") : cwd === source ? "" : ordinary("a.txt")),
+      );
+      const migrate = vi.fn(async () => {
+        await writeFile(join(destination, "a.txt"), "wanted");
+        await writeFile(join(destination, ".git", "HEAD"), "ref: refs/heads/replaced\n");
+        moved = true;
+      });
+      const opened = api(async (value) => repository(value.fsPath, value.fsPath === destination ? migrate : vi.fn()));
+      const offered = await probeMigrationSource(opened, source, { runner: git, uri });
+      const input = await migrationInput(source, destination, offered!);
+      if (phase === "before") {
+        await writeFile(join(destination, ".git", "HEAD"), "ref: refs/heads/replaced\n");
+      }
+
+      expect(await migrateChanges(input, { api: opened, runner: git, uri })).toEqual({
+        kind: "indeterminate",
+        reason:
+          phase === "before"
+            ? "the source or destination changed before migration"
+            : "the migration result could not be verified",
+      });
+      expect(migrate).toHaveBeenCalledTimes(phase === "before" ? 0 : 1);
+    }
+  });
+
+  it("rejects a source .git substitution bracketed around the post-call snapshot", async () => {
+    const source = await worktree("post-bracket-source");
+    const destination = await worktree("post-bracket-destination");
+    await writeFile(join(source, "a.txt"), "wanted");
+    let moved = false;
+    let rewroteSource = false;
+    const git: GitCommandRunner = {
+      run: vi.fn(async (_args, cwd) => {
+        if (moved && cwd === source && !rewroteSource) {
+          rewroteSource = true;
+          await writeFile(join(source, ".git", "HEAD"), "ref: refs/heads/replaced\n");
+        }
+        return result(!moved ? (cwd === source ? ordinary("a.txt") : "") : cwd === source ? "" : ordinary("a.txt"));
+      }),
+    };
+    const migrate = vi.fn(async () => {
+      await writeFile(join(destination, "a.txt"), "wanted");
+      moved = true;
+    });
+    const opened = api(async (value) => repository(value.fsPath, value.fsPath === destination ? migrate : vi.fn()));
+    const offered = await probeMigrationSource(opened, source, { runner: git, uri });
+
+    expect(
+      await migrateChanges(await migrationInput(source, destination, offered!), { api: opened, runner: git, uri }),
+    ).toEqual({ kind: "indeterminate", reason: "the migration result could not be verified" });
+    expect(rewroteSource).toBe(true);
   });
 
   it("reports indeterminate when destination bytes do not match", async () => {
@@ -796,10 +1093,27 @@ describe("migrateChanges", () => {
     const offered = await probeMigrationSource(opened, source, { runner: git, uri });
 
     expect(
-      await migrateChanges(
-        { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-        { api: opened, runner: git, uri },
-      ),
+      await migrateChanges(await migrationInput(source, destination, offered!), { api: opened, runner: git, uri }),
+    ).toEqual({ kind: "indeterminate", reason: "the migration result could not be verified" });
+  });
+
+  it("rejects matching destination bytes under different record topology", async () => {
+    const source = await worktree("topology-source");
+    const destination = await worktree("topology-destination");
+    await writeFile(join(source, "a.txt"), "wanted");
+    let moved = false;
+    const git = runner((cwd) =>
+      result(!moved ? (cwd === source ? ordinary("a.txt") : "") : cwd === source ? "" : copied("a.txt", "b.txt")),
+    );
+    const migrate = vi.fn(async () => {
+      await writeFile(join(destination, "a.txt"), "wanted");
+      moved = true;
+    });
+    const opened = api(async (value) => repository(value.fsPath, value.fsPath === destination ? migrate : vi.fn()));
+    const offered = await probeMigrationSource(opened, source, { runner: git, uri });
+
+    expect(
+      await migrateChanges(await migrationInput(source, destination, offered!), { api: opened, runner: git, uri }),
     ).toEqual({ kind: "indeterminate", reason: "the migration result could not be verified" });
   });
 
@@ -848,10 +1162,7 @@ describe("migrateChanges", () => {
       const opened = api(async (value) => repository(value.fsPath, value.fsPath === destination ? migrate : vi.fn()));
 
       expect(
-        await migrateChanges(
-          { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-          { api: opened, runner: git, uri },
-        ),
+        await migrateChanges(await migrationInput(source, destination, offered!), { api: opened, runner: git, uri }),
       ).toEqual({ kind: "indeterminate", reason: "the migration result could not be verified" });
       expect(migrate).toHaveBeenCalledOnce();
     }
@@ -873,10 +1184,7 @@ describe("migrateChanges", () => {
     const offered = await probeMigrationSource(opened, source, { runner: git, uri });
 
     expect(
-      await migrateChanges(
-        { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-        { api: opened, runner: git, uri },
-      ),
+      await migrateChanges(await migrationInput(source, destination, offered!), { api: opened, runner: git, uri }),
     ).toEqual({ kind: "indeterminate", reason: "the migration result could not be verified" });
   });
 
@@ -899,10 +1207,7 @@ describe("migrateChanges", () => {
     const offered = await probeMigrationSource(opened, source, { runner: git, uri });
 
     expect(
-      await migrateChanges(
-        { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-        { api: opened, runner: git, uri },
-      ),
+      await migrateChanges(await migrationInput(source, destination, offered!), { api: opened, runner: git, uri }),
     ).toEqual({ kind: "moved" });
   });
 
@@ -949,10 +1254,11 @@ describe("migrateChanges", () => {
     const evidence = await probeMigrationSource(opened, source, { runner: git, uri });
     offered = false;
 
-    const outcome = await migrateChanges(
-      { sourcePath: source, destinationPath: destination, source: evidence!.source, snapshot: evidence!.snapshot },
-      { api: opened, runner: git, uri },
-    );
+    const outcome = await migrateChanges(await migrationInput(source, destination, evidence!), {
+      api: opened,
+      runner: git,
+      uri,
+    });
 
     expect(outcome).toEqual({ kind: "indeterminate", reason: "the source or destination changed before migration" });
     expect(migrate).not.toHaveBeenCalled();
@@ -980,10 +1286,11 @@ describe("migrateChanges", () => {
 
     for (const integration of integrations) {
       expect(
-        await migrateChanges(
-          { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-          { api: integration, runner: git, uri },
-        ),
+        await migrateChanges(await migrationInput(source, destination, offered!), {
+          api: integration,
+          runner: git,
+          uri,
+        }),
       ).toEqual({
         kind: "indeterminate",
         reason:
@@ -1009,10 +1316,7 @@ describe("migrateChanges", () => {
     const evidence = await probeMigrationSource(opened, source, { runner: git, uri });
 
     expect(
-      await migrateChanges(
-        { sourcePath: source, destinationPath: destination, source: evidence!.source, snapshot: evidence!.snapshot },
-        { api: opened, runner: git, uri },
-      ),
+      await migrateChanges(await migrationInput(source, destination, evidence!), { api: opened, runner: git, uri }),
     ).toEqual({ kind: "indeterminate", reason: "stash failed" });
   });
 
@@ -1055,10 +1359,12 @@ describe("migrateChanges", () => {
     const migrate = vi.fn(async () => {});
 
     expect(
-      await migrateChanges(
-        { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-        { api: api(async (value) => repository(value.fsPath, migrate)), runner: git, uri, makeDeadline },
-      ),
+      await migrateChanges(await migrationInput(source, destination, offered!), {
+        api: api(async (value) => repository(value.fsPath, migrate)),
+        runner: git,
+        uri,
+        makeDeadline,
+      }),
     ).toEqual({ kind: "indeterminate", reason: "the source or destination changed before migration" });
     expect(migrate).not.toHaveBeenCalled();
   });
@@ -1080,15 +1386,12 @@ describe("migrateChanges", () => {
     );
     const expired: Deadline = { elapsed: Promise.resolve(), expired: true, cancel: vi.fn() };
 
-    const outcome = await migrateChanges(
-      { sourcePath: source, destinationPath: destination, source: offered!.source, snapshot: offered!.snapshot },
-      {
-        api: opening,
-        runner: git,
-        uri,
-        makeDeadline: () => expired,
-      },
-    );
+    const outcome = await migrateChanges(await migrationInput(source, destination, offered!), {
+      api: opening,
+      runner: git,
+      uri,
+      makeDeadline: () => expired,
+    });
     for (const release of releases) {
       release();
     }

@@ -117,12 +117,12 @@
 
 ## 3. Close review-discovered identity boundaries
 
-- [ ] 3_1 Bracket identity and bound evidence reads
+- [x] 3_1 Bracket identity and bound evidence reads — verified: pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 2_4
   - **Refs**: design.md D2, D4, D8 <!-- review round 1 F001, F002, F004, F005 -->
   - **Acceptance**:
     - Outcome: Persistent identity drift is rejected within the snapshot memory bound
-    - Verify: unit src/worktree/migrateChanges.test.ts
+    - Verify: command pnpm exec vitest run 'src/worktree/migrateChanges.test.ts'
   - **Plan**:
     1. `src/worktree/migrateChanges.ts`: extend worktree evidence with its resolved common repository and admin back-pointer, export bounded destination capture, bracket snapshots with both observed identities, and recapture source evidence after the API resolves.
     2. `src/worktree/migrateChanges.ts`: reject static or persisting intermediate-component redirection around final-component reads; refuse linked-worktree `.git` content above 1 MiB before allocation and read accepted content into one exact-size buffer.
