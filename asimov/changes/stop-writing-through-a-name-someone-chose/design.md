@@ -2,10 +2,19 @@
 
 ## Decisions
 
-### D1: The Cursor replacement is staged exclusively, under a name nothing can be waiting at
+### D1: The Cursor replacement is staged by `LockedFile.stageReplacement`, not by a copy of it
 
-`CursorHookInstaller.atomicReplace` stages through `open(temporaryPath, "wx", mode ?? 0o600)` and
-names the temporary from `randomBytes(16)`, matching `lockedJsonFile.ts:120-124`.
+`CursorHookInstaller.atomicReplace` is deleted. Staging goes through `LockedFile.stageReplacement`,
+which already names the temporary from `randomBytes(16)`, creates it `wx`, applies the mode through
+the handle, commits with `replace`, and — the part a copy kept missing — discards ONLY a temporary
+whose identity it still owns.
+
+Revised after review round 1. The first version copied the mechanism into `atomicReplace`
+("matching `lockedJsonFile.ts:120-124`") and copied it incompletely: the failure path unlinked the
+staging pathname with no ownership check, so an observer who moved the owned file and substituted
+another object had that substitute deleted (round 1 F001). That is the same class of defect D2 was
+written to remove from the lock, arriving through the half that was still duplicated — which is the
+argument for reuse rather than a third ownership check.
 
 This is the defect the change exists for. Today the temporary is named
 `.<basename>.${this.now()}.tmp` — a millisecond timestamp, fully predictable — and created with
@@ -14,9 +23,9 @@ name. Demonstrated on this host: with a symlink pre-placed at the predicted name
 attacker-chosen JSON through it into the link's target, while `open(..., "wx")` on the same name
 refused `EEXIST`. That is a write primitive aimed at any file the extension host's user can write.
 
-`open(..., "wx")` closes the pre-placement arm completely, and the handle-based `chmod` that follows
-does not reopen it. It does NOT close the arm where an observer discovers the created name and
-substitutes it before the `rename` — see D3.
+`wx` closes the pre-placement arm completely. It does NOT close the arm where an observer discovers
+the created name and substitutes it before the `rename`, nor before the discard — both are R3, which
+Cursor now inherits at the same site rather than at a second one.
 
 ### D2: `CursorHookInstaller` stops deleting a lock it cannot prove it holds, by using `LockedFile`
 
@@ -43,6 +52,14 @@ that may be a live holder's, and this repository already settled that question f
 Signatures differ — Cursor's callback TRANSFORMS the result (`(result: T) => T`), `LockedFile`'s
 observes it. The adapter is a captured flag in the caller, not a change to `LockedFile`'s contract,
 which WT-012.22 settled and this change does not reopen.
+
+**Cursor does not create the configuration directory, and delegation must not make it.**
+`LockedFile.acquireLock` calls `mkdir(dirname, { recursive: true })`; Cursor's own acquisition never
+did, and returned `lock-unavailable` with unresolved paths when the parent was absent. Probed at
+`21a436f1` vs `d9a0d94b`: `{installed:false, reason:"lock-unavailable"}` and nothing created, versus
+`{installed:true}` and `.cursor/hooks.json` created (round 1 F002). Writing Cursor configuration for
+a user who may not have Cursor is a different action from failing to write it, so the absent parent
+is checked before the lock is taken and the prior result is returned unchanged.
 
 `LockedFile` fills unsupplied filesystem operations from the real `node:fs/promises`
 (`lockedJsonFile.ts:80`), and Cursor's test double supplies handles carrying only `close`
@@ -124,6 +141,8 @@ an owner-only ACL on Windows — so no requirement is written against it.
 |---|---|---|---|---|
 | A staged write never lands on an object ALREADY at the staging name | At the `open`, for both staging sites | `fs.writeFile`, which follows a symlink there | Witness pre-placing a symlink at the injected staging name and asserting the target is unmodified; arm-checked by restoring `writeFile` (task 1_1) | supported |
 | A staged write cannot be redirected AFTER creation | Not claimed | Reading the row above as covering the whole staging | R3 in D3's table; the spec says "already at that name", never "for the duration" | supported — the narrower claim is the one written |
+| A failed staging discards only a temporary it still owns | Between the ownership check and the `unlink`, at the one staging site that now exists | A cleanup that unlinks the pathname unconditionally — which the copied `atomicReplace` did | `stageReplacement`'s `ownsTemporaryPath` guard, plus witnesses failing the handle write, the chmod and the replace and asserting a substituted object survives (task 1_4) | supported to R3's boundary — the check-then-act window is R3's, now inherited rather than added |
+| Delegating the lock does not create configuration a user did not have | An absent config parent yields the prior refusal, and nothing is written | `LockedFile.acquireLock`'s recursive `mkdir` | Before/after probe recorded in D2; witness asserting `lock-unavailable` and an untouched parent (task 1_5) | supported |
 | The staging name cannot be derived from the clock or the target's name | 16 bytes of `randomBytes` per staging | Keeping `this.now()` as the only entropy | Witness asserting the name contains neither the injected clock value nor a second staging's name (task 1_1) | supported |
 | A release removes only the object this operation still identifies at the name | Between the `lstat` and the `unlink` | A substitution scheduled BETWEEN those two calls, which the comparison cannot see | Witness scheduling the substitution inside the injected `lstat`'s return, asserting the substitute is unlinked — a RED that stays red (task 1_2) | **refuted as a continuous claim; supported as written.** R2 owns the gap; the spec says "still identifies", and the witness pins the boundary rather than a fix |
 | Cursor no longer deletes a stable foreign lock | The name identifies a different object at release, and it survives | Cursor's unconditional `unlink`, which tests nothing | Witness substituting a stable different file before release, asserting it survives and the result carries `lock-release-failed` (task 1_2) | supported |

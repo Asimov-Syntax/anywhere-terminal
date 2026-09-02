@@ -41,3 +41,39 @@
     3. In the same bullet, record that `0o600` on a lock is POSIX hygiene rather than a security claim, and does not produce an owner-only ACL on Windows, citing the existing note at `src/vault/VaultCacheStore.ts:191-196`.
     4. In `src/agentHooks/install/lockedJsonFile.ts`, extend the file header comment with one sentence pointing at that bullet for R2 and R3, which live at lines 291 and 190 of this file.
     5. In `src/cursor/CursorHookInstaller.ts`, add one comment line at the `LockedFile` delegation pointing at the same bullet for R4, rather than restating it.
+
+## 2. What round 1 sent back
+
+- [ ] 1_4 Stage through the shared replacement instead of a copy of it
+  - **Deps**: 1_3
+  - **Refs**: specs/agent-hook-installation/spec.md#a-replacement-is-staged-where-nothing-can-be-waiting-for-it; design.md D1
+  - **Acceptance**:
+    - Outcome: A failed staging discards only a temporary it still owns
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts src/cursor/CursorHookInstaller.runtime.test.ts
+  - **Plan**:
+    1. In `src/cursor/CursorHookInstaller.ts`, add a private helper returning a `LockedFile` on `this.options.configPath` built with the installer's injected `fs`, `sleep`, `platform` and `rename`, and use it from both the lock delegation and the staging, following `ClaudeHookInstaller.ts:359`.
+    2. In the same file, delete `atomicReplace` entirely and call `stageReplacement(contents, mode)` then `commit("replace")` in its place, discarding on a failed commit.
+    3. In the same file, delete the now-unused `randomBytes` dependency plumbing if nothing else reads it, and keep `now` only if another caller still does.
+    4. In `src/cursor/CursorHookInstaller.test.ts`, add witnesses that fail the handle write, the chmod, and the replace after a successful exclusive create, each asserting the call reports failure and the user configuration is unchanged.
+    5. In the same test file, add the F001 witness: after the exclusive create, substitute a different object at the staging name, force the replace to fail, and assert the substitute SURVIVES. Arm-check by restoring an unconditional unlink and confirming it is deleted.
+    6. In the same test file, keep the existing symlink and unpredictable-name witnesses passing unchanged — they are the contract, not the mechanism.
+
+- [ ] 1_5 Stop delegation from creating a configuration directory Cursor never made
+  - **Deps**: 1_4
+  - **Refs**: design.md D2
+  - **Acceptance**:
+    - Outcome: An absent config parent still refuses, and nothing is written
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. In `src/cursor/CursorHookInstaller.ts`, check the configuration file's parent directory before taking the lock and return the `lockUnavailable` value unchanged when it is absent, restoring the policy `LockedFile.acquireLock`'s recursive `mkdir` overrode.
+    2. In `src/cursor/CursorHookInstaller.test.ts`, add a witness that `install()` against an absent parent returns `lock-unavailable` with the unresolved paths, and that the parent is still absent afterwards. Add the matching `uninstall()` case.
+
+- [ ] 1_6 Make the hybrid-filesystem guard able to fail
+  - **Deps**: 1_4, 1_5
+  - **Refs**: design.md D2
+  - **Acceptance**:
+    - Outcome: An operation the Windows double omits raises instead of reaching the real filesystem
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. In `src/cursor/CursorHookInstaller.test.ts`, replace the temp-directory guard with a fail-fast double: wrap the memory filesystem so any property the fixture does not implement throws naming the operation, rather than being filled from the real `node:fs/promises` at `lockedJsonFile.ts:80`.
+    2. In the same test file, add a witness that the wrapper throws for a deliberately omitted operation, so the guard itself is shown to fail when it should.
