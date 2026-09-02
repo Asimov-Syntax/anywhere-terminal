@@ -89,7 +89,7 @@
     3. In `src/webview/worktree/WorktreeView.ts`, render it in the removal notice so "Remove done." is never the whole story when a branch delete was asked for and did not happen.
     4. Witness each refusal reason reaching the rendered notice.
 
-- [ ] 4_2 Assemble the evidence where the payload is actually built
+- [x] 4_2 Assemble the evidence where the payload is actually built — verified: pnpm exec vitest run 'src/extension.worktreeMutations.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D1, D10
   - **Acceptance**:

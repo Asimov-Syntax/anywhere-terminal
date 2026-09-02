@@ -10,6 +10,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorktreeActions, WorktreeSurface } from "./providers/WorktreeHost";
+import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import type { MutationOutcome, MutationServiceDeps } from "./worktree/worktreeMutationService";
 
 const received: {
@@ -139,6 +140,87 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     // lazily, so something has to ask for it first.
     received.actions?.reconcileFingerprints?.([]);
     expect(typeof received.deps?.observation).toBe("function");
+  });
+});
+
+describe("the shipped removal assessment payload", () => {
+  const mergeEvidence = {
+    branch: "feature",
+    branchOid: "1".repeat(40),
+    base: "main",
+    baseOid: "2".repeat(40),
+  };
+
+  function assessment(
+    branchMerged: "passed" | "unproven",
+  ): Exclude<RemovalAssessment, { kind: "unavailable" }> {
+    return {
+      kind: "confirmable",
+      evidence: {
+        dirtyPaths: [],
+        untrackedPaths: [],
+        paneIds: [],
+        externalSessionIds: [],
+        locked: false,
+        lockReason: null,
+        notApplicable: [],
+        ignored: { kind: "measured", entries: 0, bytes: 0 },
+        proofs: {
+          lockAged: "unproven",
+          ownerGone: "unproven",
+          branchMerged,
+          ...(branchMerged === "passed" ? { mergeEvidence } : {}),
+        },
+      },
+    };
+  }
+
+  it("emits the recorded merge evidence only when the proof passed", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    const posted: unknown[] = [];
+    const origin: WorktreeSurface = { isReady: () => true, post: (message) => posted.push(message) };
+    const report = received.deps?.report;
+    expect(report).toBeInstanceOf(Function);
+
+    report?.(
+      {
+        kind: "blocked",
+        verb: "remove",
+        repoId: "/repo/.git",
+        worktreeId: "/repo-feature",
+        assessment: assessment("passed"),
+        fingerprint: "fp-1",
+      },
+      origin,
+    );
+    report?.(
+      {
+        kind: "blocked",
+        verb: "remove",
+        repoId: "/repo/.git",
+        worktreeId: "/repo-other",
+        assessment: assessment("unproven"),
+        fingerprint: "fp-2",
+      },
+      origin,
+    );
+
+    expect(posted[0]).toMatchObject({
+      type: "worktreeMutationResult",
+      result: {
+        kind: "blocked",
+        assessment: {
+          branchDelete: {
+            branch: "feature",
+            branchOid: mergeEvidence.branchOid,
+            defaultBranch: "main",
+            defaultOid: mergeEvidence.baseOid,
+          },
+        },
+      },
+    });
+    expect(posted[1]).not.toHaveProperty("result.assessment.branchDelete");
   });
 });
 

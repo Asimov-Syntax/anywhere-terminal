@@ -237,6 +237,69 @@
           }
         }
       ]
+    },
+    {
+      "sessionId": "a1291900-3b03-4f9b-a3d3-d85b0a2cd9f6",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788306331878,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788306331878,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788306331878
+        },
+        {
+          "phase": "build",
+          "from": 1788308034967
+        }
+      ],
+      "firstAt": 1788306331878,
+      "lastAt": 1788307858246,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 14,
+          "inputTokens": 90837,
+          "outputTokens": 12013,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 527872,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "gpt-5.6-sol",
+          "messages": 36,
+          "inputTokens": 57328,
+          "outputTokens": 13075,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 11916288,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
     }
   ]
 }

@@ -77,7 +77,7 @@ import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
-import { checksFor } from "./worktree/removalChecks";
+import { branchDeleteOfferFor, checksFor } from "./worktree/removalChecks";
 import { readPullRequests } from "./worktree/repoPullRequests";
 import { readRepoRefs } from "./worktree/repoRefs";
 import { createSessionPreviewService } from "./worktree/sessionPreviewService";
@@ -214,9 +214,11 @@ export function createDelegationReader(
 function toAssessmentPayload(
   assessment: Exclude<RemovalAssessment, { kind: "unavailable" }>,
 ): WorktreeRemoveAssessmentPayload {
+  const branchDelete = branchDeleteOfferFor(assessment);
   return {
     checks: checksFor(assessment),
     contained: assessment.kind === "refused" ? assessment.containsWorktrees : [],
+    ...(branchDelete === undefined ? {} : { branchDelete }),
   };
 }
 
