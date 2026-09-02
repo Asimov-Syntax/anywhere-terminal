@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-013.3`)_
@@ -36,3 +36,4 @@ Escalation flags: security-privacy (from the PLAN row) — review is always reco
 Must-not: no force delete anywhere in this change; `git worktree remove` never touches the branch.
 - FASTLANE handback: corrected D7/task 4_4 from `sequencer/todo` to Git v2.50.1's actual `rebase-merge/update-refs` three-line records; completed tasks 1_1, 1_2 and 2_1 remain closed. Task 2_2 and host wiring 3_2 now wait for corrected 4_4 so the weak porcelain-only guard is never user-reachable.
 - FASTLANE oracle triage: accepted the admin-entry reconciliation and causal-test gaps, narrowed exact holder equivalence to Git's real rebase/bisect conditions, and made 3_2 depend on D10 task 4_3 as well as 4_4. No product scope changed.
+- Verify lint exception: clean detached HEAD reproduces only pre-existing format failures in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, and `src/cursor/CursorHookInstaller.test.ts`; this change touches none of them.
