@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -190,3 +190,21 @@ Planned at: a82ccc85
   D14's `took` was refuted at plan time and never implemented — so `WorktreeController.ts` needed no
   change and its test no addition. The take-then-configure interleaving is witnessed in
   `WorktreeCreateDialog.test.ts`, where the control lives.
+- Round-2 F018's suggested MECHANISM was wrong and the finding still stood. It proposed carrying the
+  previous selection forward "intersected with the new model's ids"; `offerStore.issue` remints every
+  selectable id from an `itemSequence` that never restarts, so that intersection is always empty. The
+  rows are matched by what they ARE instead — kind, subject, mode, `source` and occurrence index.
+  `source` and occurrence are load-bearing: two providers may declare the same script and
+  `providerKit` appends setup rows without deduplicating.
+- Plan attack (`asm-oracle`, HIGH) classified the F018 fix as remediation rather than a handback: the
+  correlation is local to the dialog, no path or script joins the wire, D1's outbound authority
+  boundary is untouched, and the state stays dialog-lifetime UI state beside `checkedByOffer`.
+- Knowledge candidate: `src/extension.worktreeAssembly.test.ts` fails a DIFFERENT test on each
+  full-suite run under machine load and passes 55/55 alone. | Surprise: it reproduced identically on
+  a clean detached worktree at HEAD with no diff, so three `verify-task` runs locked a task the diff
+  could not have broken. | Evidence: `extension.worktreeAssembly.test.ts:575` fires
+  `void host.handleMessage(...)`, `:608-613` pumps a fixed 40 zero-delay timers, `:1498-1510` waits
+  for ANY `.wt-notice` while admitting an unrelated one already exists, and `:38-43` vs `:435-458`
+  share one module-global `REPO` that `beforeEach` never resets. | Consumer: debug | Action: an
+  assembly-test failure naming a test the diff cannot reach is checked against a clean-HEAD full-suite
+  run before it is treated as a regression.

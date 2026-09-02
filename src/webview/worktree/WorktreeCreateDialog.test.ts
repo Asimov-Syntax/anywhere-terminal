@@ -1588,6 +1588,66 @@ describe("Bring over — recording the choice in the repository's own configurat
     expect(form.host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
   });
 
+  it("keeps the save out across a trip through the repository picker", () => {
+    // The controller caches the last offer per repository, so moving away and
+    // back re-supplies the SAME offer. A form-wide flag cleared by any redraw
+    // restored the control with the switch still in flight — D15's own failure
+    // mode, two clicks away (.reviews/round-2.md F020).
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const posted: unknown[] = [];
+    const other = createDefaults({ repoId: "/other/.git", repoLabel: "other", mainPath: "/other" });
+    openWorktreeCreateDialog(host, {
+      repos: [createDefaults(), other],
+      onSubmit: () => {},
+      onProvisionSwitch: (request) => posted.push(request),
+      onProvisionSave: (request) => posted.push(request),
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    const offer = provisionOffer({ model: provisionModel({ providers: TWO_SOURCES }) });
+    applyOffer?.(REPO_ID, offer);
+    host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
+    const picker = host.querySelector<HTMLSelectElement>("#wt-repo-select");
+    if (picker === null) {
+      throw new Error("expected a repo picker");
+    }
+    const move = (to: string) => {
+      picker.value = to;
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    move("/other/.git");
+    move(REPO_ID);
+    applyOffer?.(REPO_ID, offer);
+
+    expect(host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
+    // And the answer still restores it, so this is not a dead end.
+    applyOffer?.(
+      REPO_ID,
+      provisionOffer({ offerId: "provision-2", model: provisionModel({ providers: TWO_SOURCES }) }),
+    );
+    expect(host.querySelectorAll(".wt-bring-save")).toHaveLength(1);
+  });
+
+  it("says the save was sent, so a second press cannot start a second write", () => {
+    // Two presses posted two saves: the lock serializes them, the later raises
+    // the host's ceiling, and the first answer is dropped — one result shown for
+    // two writes (.reviews/round-1.md F014).
+    const form = switchable();
+
+    form.configure();
+    form.configure();
+
+    expect(form.posted).toHaveLength(1);
+    expect(form.host.querySelector<HTMLButtonElement>(".wt-bring-save")?.disabled).toBe(true);
+    // The answering offer releases it.
+    form.answered("provision-2");
+    expect(form.host.querySelector<HTMLButtonElement>(".wt-bring-save")?.disabled).toBe(false);
+  });
+
   it("offers no save where nothing is listening for one", () => {
     // The same statement the missing offer already makes: a control whose press
     // the host would never hear is nothing at all (.reviews/round-1.md F009).
@@ -1637,6 +1697,127 @@ describe("Bring over — recording the choice in the repository's own configurat
 
     expect(submitted).toEqual([]);
     expect(configure?.type).toBe("button");
+  });
+
+  /**
+   * The same repository, twice, under ids that share nothing.
+   *
+   * The offer store remints every selectable id from a counter that never
+   * restarts, so the offer answering a save names the identical rows under
+   * identical-in-nothing ids (.reviews/round-2.md F018).
+   */
+  function reminted(): ProvisionModel {
+    const base = provisionModel();
+    return {
+      ...base,
+      entries: base.entries.map((e, i) => ({ ...e, id: `j${i + 1}` })),
+      ports: base.ports.map((p) => ({ ...p, id: "j4" })),
+      setup: base.setup.map((s) => ({ ...s, id: "j5" })),
+    };
+  }
+
+  /** A form that can be told the answer to the save it just posted. */
+  function answerable() {
+    const posted: { kept?: readonly string[] }[] = [];
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const { host } = open({
+      repos: [createDefaults({ provisioning: provisionOffer() })],
+      onProvisionSave: (request) => posted.push(request),
+      onProvisionSwitch: () => {},
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    const box = (value: string) =>
+      [...host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")].find((c) => c.value === value);
+    return {
+      host,
+      posted,
+      box,
+      set: (value: string, on: boolean) => {
+        const cb = box(value);
+        if (cb === undefined) {
+          throw new Error(`missing ${value}`);
+        }
+        cb.checked = on;
+        cb.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      configure: () => host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click(),
+      answered: (offerId: string, model: ProvisionModel) => applyOffer?.(REPO_ID, provisionOffer({ offerId, model })),
+    };
+  }
+
+  it("[F018] keeps the user's ticks across the offer that answers the save", () => {
+    // The answer is a FRESH offer, and every item id in it is new. Seeding the
+    // new offer from the model's defaults threw the selection away: a setup step
+    // the user had deliberately turned ON came back OFF, and an entry they had
+    // turned OFF came back ON — silently, in the one section whose whole job is
+    // to say what this create will bring over.
+    const form = answerable();
+    form.set("i5", true);
+    form.set("i2", false);
+    form.configure();
+    expect(form.posted[0]?.kept).toEqual(["i1", "i3", "i4", "i5"]);
+
+    form.answered("provision-2", reminted());
+
+    expect(form.box("j5")?.checked).toBe(true);
+    expect(form.box("j2")?.checked).toBe(false);
+    // And the selection is what a second save would actually post, not merely
+    // what the checkboxes draw.
+    form.configure();
+    expect(form.posted[1]?.kept).toEqual(["j1", "j3", "j4", "j5"]);
+  });
+
+  it("[F018] gives a row the previous offer did not have the new model's default", () => {
+    // Carried state is the user's answer to a row they saw. A row they never
+    // saw has no such answer, so it takes what the model offers — which for a
+    // setup step is OFF, whatever the user did to the steps beside it.
+    const form = answerable();
+    form.set("i5", true);
+    form.configure();
+
+    const grown = reminted();
+    form.answered("provision-2", {
+      ...grown,
+      setup: [...grown.setup, { id: "j6", kind: "shell", script: "pnpm build", source: "asimov/worktree.yaml" }],
+    });
+
+    expect(form.box("j5")?.checked).toBe(true);
+    expect(form.box("j6")?.checked).toBe(false);
+  });
+
+  it("[F018] does not carry a selection across a source the user took after saving", () => {
+    // A switch replaces the source. The rows the selection was taken against
+    // are not the rows this offer claims to have, even where the text matches,
+    // so the answer reseeds from the new source's defaults rather than
+    // restating a choice about a file that is no longer in play (design.md D15).
+    const TWO = [
+      { id: "asimov" as const, files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      { id: "orca" as const, files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+    ];
+    const posted: unknown[] = [];
+    let applyOffer: ((repoId: string, offer: ReturnType<typeof provisionOffer>) => void) | undefined;
+    const { host } = open({
+      repos: [createDefaults({ provisioning: provisionOffer({ model: provisionModel({ providers: TWO }) }) })],
+      onProvisionSave: (request) => posted.push(request),
+      onProvisionSwitch: (request) => posted.push(request),
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    const cb = [...host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")].find((c) => c.value === "i5");
+    if (cb === undefined) {
+      throw new Error("missing i5");
+    }
+    cb.checked = true;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+    host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
+    applyOffer?.(REPO_ID, provisionOffer({ offerId: "provision-2", model: { ...reminted(), providers: TWO } }));
+
+    const carried = [...host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")].find((c) => c.value === "j5");
+    expect(carried?.checked).toBe(false);
   });
 });
 

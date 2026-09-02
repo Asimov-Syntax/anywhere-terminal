@@ -136,3 +136,22 @@ genuinely parallel, so nothing here pretends to be.
     6. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`, including the take-then-configure interleaving.
 
 **Waves**: `2_1 | 2_2 | 2_3 | 2_4`
+
+## Wave 3 — round 2 remediation
+
+- [x] 3_1 Keep every accepted round-2 finding closed in one pass — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 2_4
+  - **Refs**: specs/worktree-panel/spec.md#{a-refusal-to-save-says-a-save-was-refused} <!-- design.md D1, D7, D12, D15, D16, D17, D18; .reviews/round-2.md F013-F020 -->
+  - **Acceptance**:
+    - Outcome: a save answered by a fresh offer redraws the section with the selection the user pressed it under
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Boundary**: no wire field is added and no path, key or script travels in a save request — the dialog correlates two host-supplied models locally (D1)
+  - **Plan**:
+    1. Bind the narrow edits to what they claimed in `src/worktree/provisioning/writeNativeConfig.ts`: re-parse and compare the key's value, fall back to a whole-key replace against the original text, and refuse rather than write a document the parser corrupted.
+    2. Resolve the containing directory once and take `lstat`, the symlink refusal and the mode inside the lock, in the same file (F019, D16).
+    3. In `src/webview/worktree/WorktreeCreateDialog.ts`, key the pending save by repository and hold the offer it went out against, that offer's model, and the selection at the press.
+    4. Match the answering offer's rows to the previous offer's by kind, subject, mode, source and occurrence, carry both ticks and unticks across, and apply the new model's defaults only to rows the previous offer did not have (F018).
+    5. Reseed from defaults when a source switch was taken after the save — the selection was about a source no longer in play (D15).
+    6. Cover each in `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/worktree/provisioning/writeNativeConfig.test.ts` and `src/types/messages.contract.test.ts`.
+
+**Waves**: `3_1`
