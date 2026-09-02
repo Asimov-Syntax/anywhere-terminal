@@ -176,6 +176,29 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
   };
 }
 
+/**
+ * The write landed, but the lock it took is still there.
+ *
+ * Said in the vocabulary of writing like the refusals above, because the user's
+ * next action is the same — try again — but the cause is the opposite: nothing
+ * is wrong with the file, and a live lock is never reclaimed by age, so this is
+ * the only place the user learns why the next save will hang (design.md D4 of
+ * `anchor-a-locked-write-to-the-directory-it-checked`).
+ */
+function leakedLock(model: ProvisionModel, lockPath: string): ProvisionModel {
+  return {
+    ...model,
+    problems: [
+      ...model.problems,
+      {
+        file: NATIVE_PROVIDER_FILE,
+        reason: "unsaved",
+        detail: `\`${NATIVE_PROVIDER_FILE}\` was saved, but it is still locked. Remove \`${lockPath}\` if no other window is writing it.`,
+      },
+    ],
+  };
+}
+
 export interface WorktreeHostOptions {
   deps: WorktreeTreeDeps;
   /** Read at rebuild time, not captured: folders change while the window lives. */
@@ -2493,7 +2516,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             if (model === undefined || disposed || !surfaces.has(surface)) {
               return;
             }
-            publish(written.ok ? model : refusedSave(model, written.reason));
+            publish(
+              written.ok
+                ? written.lockLeaked === undefined
+                  ? model
+                  : leakedLock(model, written.lockLeaked)
+                : refusedSave(model, written.reason),
+            );
           })
           // A save that throws leaves the form exactly as it was, and the
           // ceiling is NOT released — for the reason the switch records above.

@@ -3540,6 +3540,34 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  // The write LANDED, so this is not one of the refusals above. Reporting it as
+  // an ordinary success would leave the user with a file that quietly refuses
+  // every later save, because a live lock is never reclaimed by age.
+  it("tells the user a save that landed may have left the file locked", async () => {
+    const h = await opened({
+      write: async () => ({ ok: true, wrote: true, lockLeaked: "/repo/.vscode/worktree.json.anywhere-terminal.lock" }),
+    });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.map((p) => p.reason)).toEqual(["unsaved"]);
+    expect(last.model.problems.at(0)?.detail).toMatch(/saved.*still locked|locked/i);
+    h.dispose();
+  });
+
+  it("reports no problem at all for an ordinary save", async () => {
+    const h = await opened({ write: async () => ({ ok: true, wrote: true }) });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems).toEqual([]);
+    h.dispose();
+  });
+
   it("writes nothing for a save carrying a key this wire does not have", async () => {
     // `onlyKeys` is the single enforcement point for "ids and ordering, and
     // nothing else". An admitted-but-unchecked slot is where a later reader

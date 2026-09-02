@@ -18,7 +18,7 @@
     7. Arm-check by narrowing the identities back to `Number` and by dropping the identity comparison.
   - **Boundary**: do not add directory identity checks — design.md D2 cuts them to WT-012.21
 
-- [ ] 1_2 Report a save whose lock could not be released
+- [x] 1_2 Report a save whose lock could not be released — verified: bun test 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#a-save-whose-lock-could-not-be-released-says-so, specs/worktree-panel/spec.md#an-ordinary-save-is-unaffected; design.md D4
   - **Acceptance**:
@@ -27,6 +27,6 @@
   - **Plan**:
     1. In `src/worktree/provisioning/writeNativeConfig.ts`, add one outcome to the result vocabulary for a write that landed with the lock unreleased, and pass an `onLockReleaseFailed` that selects it — collecting during the operation and rewriting the returned outcome afterwards, the shape `ClaudeHookInstaller.ts:91-117` already uses.
     2. Let the type checker enumerate the consumers of that result and fix each.
-    3. In `src/providers/WorktreeHost.ts`, give the new outcome a message that says the write landed and the file may stay locked.
+    3. In `src/providers/WorktreeHost.ts`, give the new outcome a message that says the write landed and the file may stay locked, and witness it in `src/providers/WorktreeHost.actions.test.ts` — the suite that already owns the refusal messages.
     4. In `src/worktree/provisioning/writeNativeConfig.test.ts`, add a witness forcing release failure and asserting the distinct outcome, and one asserting an ordinary save still reports success unchanged.
     5. Arm-check by reverting the callback so the outcome falls back to success.

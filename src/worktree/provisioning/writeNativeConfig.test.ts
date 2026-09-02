@@ -965,3 +965,46 @@ describe("a target that is not an ordinary file", () => {
     await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
+
+describe("a save whose lock could not be released", () => {
+  // The write LANDS; only the release fails. Reporting that as an ordinary
+  // success is what design.md D4 refuses — the next save on this file will wait
+  // on a lock nothing is holding, and the user is never told why.
+  it("says the file may stay locked, rather than reporting plain success", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+
+    const wrote = await writeNativeConfig(
+      {
+        ...realDeps,
+        locked: {
+          fs: {
+            unlink: async (p) => {
+              if (String(p).endsWith(".lock")) {
+                throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+              }
+            },
+          },
+        },
+      },
+      root,
+      div({ exclude: ["node_modules"] }),
+    );
+
+    // Compared by basename: the writer resolves the temporary root, and on
+    // macOS that turns `/var` into `/private/var`, so an equality against the
+    // unresolved fixture path would fail for a reason that is not the claim.
+    expect(wrote).toMatchObject({ ok: true, wrote: true });
+    expect(path.basename((wrote as { lockLeaked?: string }).lockLeaked ?? "")).toBe(
+      `${path.basename(target)}.anywhere-terminal.lock`,
+    );
+    expect(await fs.readFile(target, "utf8")).toContain("node_modules");
+  });
+
+  it("reports an ordinary save unchanged, so the field is not always set", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+  });
+});

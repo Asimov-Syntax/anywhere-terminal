@@ -45,7 +45,19 @@ export interface NativeConfigDivergence {
 }
 
 export type NativeConfigWrite =
-  | { readonly ok: true; readonly wrote: boolean }
+  | {
+      readonly ok: true;
+      readonly wrote: boolean;
+      /**
+       * The lock this save took and could not remove, by exact path.
+       *
+       * The write LANDED — this is not a refusal. But the next save on this file
+       * will wait on a lock nothing holds, and locks are deliberately never
+       * reclaimed by age, so a success reported without this is a success the
+       * user cannot act on (design.md D4).
+       */
+      readonly lockLeaked?: string;
+    }
   | { readonly ok: false; readonly reason: NativeConfigRefusal };
 
 /**
@@ -402,7 +414,11 @@ export async function writeNativeConfig(
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
 
   const file = new LockedFile(target, deps.locked);
-  return file.withLock<NativeConfigWrite>(
+  // Collected during the operation and folded into the outcome afterwards —
+  // `withLock` returns the work's own result unchanged, so the report has
+  // nowhere else to go. Same shape `ClaudeHookInstaller` uses.
+  let leaked: string | undefined;
+  const written = await file.withLock<NativeConfigWrite>(
     async () => {
       // Inside the lock, not before it — the whole read-modify-write, and that
       // includes deciding WHAT is being written to. A symlink verdict or a mode
@@ -520,5 +536,9 @@ export async function writeNativeConfig(
     },
     { ok: false, reason: "unavailable" },
     { ok: false, reason: "unwritable" },
+    (lockPath) => {
+      leaked = lockPath;
+    },
   );
+  return written.ok && leaked !== undefined ? { ...written, lockLeaked: leaked } : written;
 }
