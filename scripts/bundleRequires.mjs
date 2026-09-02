@@ -277,6 +277,36 @@ function requireBindings(root, checker, stats) {
     return grew;
   };
 
+  /**
+   * One argument symbol's newly grown facts, delivered to the targets already
+   * held.
+   *
+   * A generic re-application traverses EVERY target and re-flows EVERY
+   * position, which is what left argument-side growth quadratic after the
+   * callee side was bounded: 40 targets against 40 argument callables cost 1640
+   * applications for 40 distinct pairs. Only the positions this symbol occupies
+   * can have changed (.reviews/round-6.md F006).
+   */
+  const deliverArgument = (call, symbol) => {
+    const grown = [];
+    for (const target of targetsOf(call)) {
+      target.parameters.forEach((parameter, position) => {
+        const argument = unwrap(call.arguments[position]);
+        if (argument === undefined || !ts.isIdentifier(argument) || symbolOf(argument) !== symbol) {
+          return;
+        }
+        if (!ts.isIdentifier(parameter.name)) {
+          return;
+        }
+        const held = symbolOf(parameter.name);
+        if (flow(held, valueOf(argument))) {
+          grown.push(held);
+        }
+      });
+    }
+    return grown;
+  };
+
   const queue = [...assignments.map((edge) => ({ assignment: edge })), ...calls.map((call) => ({ call }))];
 
   /**
@@ -298,7 +328,7 @@ function requireBindings(root, checker, stats) {
       queue.push({ assignment: edge });
     }
     for (const call of passedAs.get(symbol) ?? []) {
-      queue.push({ call });
+      queue.push({ call, fromArgument: symbol });
     }
   };
 
@@ -309,6 +339,13 @@ function requireBindings(root, checker, stats) {
       const symbol = symbolOf(name);
       if (flow(symbol, valueOf(initializer))) {
         enqueue(symbol);
+      }
+      drainFreshlyHeld();
+      continue;
+    }
+    if (work.fromArgument !== undefined) {
+      for (const grown of deliverArgument(work.call, work.fromArgument)) {
+        enqueue(grown);
       }
       drainFreshlyHeld();
       continue;

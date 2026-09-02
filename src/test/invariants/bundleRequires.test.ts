@@ -594,6 +594,53 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
   });
 });
 
+// [round-6 F006] The round-5 witness varied only CALLEE targets, so it could not
+// see the other boundary: a symbol passed as an ARGUMENT gained a fact,
+// `enqueue` pushed a generic call edge, and every target already held was
+// re-applied. Measured on the topology below: applications over distinct pairs
+// of 110/10, 420/20, 1640/40, 6480/80 — N squared plus N for N pairs.
+describe("[round-6 F006] argument-side arrivals are bounded too", () => {
+  // Targets are established BEFORE the argument callables arrive: the callee's
+  // assignments come last in source, and the worklist drains last-in-first-out.
+  const mixed = (n: number) => {
+    const lines: string[] = ["var f, a;"];
+    for (let i = 0; i < n; i++) {
+      lines.push(`a = function (q${i}) { var v${i} = q${i}; };`);
+    }
+    for (let i = 0; i < n; i++) {
+      lines.push(`f = function (p${i}) { var u${i} = p${i}; };`);
+    }
+    lines.push("f(a);");
+    return lines.join("\n");
+  };
+
+  it("applies no call-target pair twice under mixed fanout", () => {
+    const stats = propagationStats(mixed(40));
+    expect(stats.applications).toBe(stats.distinct);
+  });
+
+  it("counts one pair per callee target, whatever the argument gained", () => {
+    expect(propagationStats(mixed(40)).distinct).toBe(40);
+  });
+
+  it("grows with the pairs rather than with the pairs squared", () => {
+    const small = propagationStats(mixed(20)).applications;
+    const large = propagationStats(mixed(80)).applications;
+    // Quadratic would be 16x. Linear is 4x; allow slack without admitting N^2.
+    expect(large).toBeLessThan(small * 8);
+  });
+
+  it("still carries the argument's callables into every target it reaches", () => {
+    const bundle = [
+      "var f, a;",
+      'a = function (q) { q("./from-argument"); };',
+      "f = function (p) { p(require); };",
+      "f(a);",
+    ].join("\n");
+    expect(requiredSpecifiers(bundle)).toContain("./from-argument");
+  });
+});
+
 // [round-6 F018] D7 narrows the template sweep to call-argument positions. A
 // relative-headed template is overwhelmingly path DATA — a URL, a CSS url(), a
 // message — and only an argument can be a module request. A tagged template is

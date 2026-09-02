@@ -227,7 +227,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, report a relative-headed template only in a call-argument position, excluding tagged templates.
     2. Witness relative-headed path data and a tagged template both unreported, and witness the UMD call shape still reported.
 
-- [ ] 7_4 Bound argument-side fact arrivals too
+- [x] 7_4 Bound argument-side fact arrivals too — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_3
   - **Refs**: design.md D2, .reviews/round-6.md#f006
   - **Acceptance**:
