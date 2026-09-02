@@ -284,6 +284,13 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     await received.actions?.viewSetupOutput?.(stale?.outputId ?? "", origin);
     expect(setupAssembly.reveals).toHaveLength(1);
     expect(setupAssembly.disposals).toEqual([1, 2, 3]);
+    expect(posted.at(-1)).toMatchObject({
+      type: "worktreeProvisionResult",
+      worktreeId: "/repo/wt",
+      setup: expect.any(Array),
+    });
+    expect(posted.at(-1)).not.toHaveProperty("setupOutputId");
+    expect(posted.at(-1)).not.toHaveProperty("setupRetryId");
 
     setupAssembly.authorized = true;
     await received.deps?.runSetup?.(

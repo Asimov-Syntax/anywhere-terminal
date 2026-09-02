@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -39,3 +39,4 @@ Verify gate lint exception: Biome 2.4.5 still exits 1 on clean `71c8cf2e` only i
 Review round 1 handback: accepted F001-F010; the reserved-port collision changes the external port contract, so D2-D5 and the delta spec were reopened before remediation.
 Replan Oracle: F001-F010 supported; narrowed F006 ownership to tasks 5_1/5_2 and added oversized/UTF-8/batching/disposal plus controller stale-action witnesses.
 Validation warning accepted: completed task 4_4 is one behavior-free formatting pass despite spanning 11 already-changed files; splitting it retroactively adds no verification value.
+Round 4 grant: the user's prior instruction `cho phép replan, them round review` authorizes one bounded extra review; fix hypothesis is null-prototype environments, settle-before-kill, copied retained slices, and replay recreation.

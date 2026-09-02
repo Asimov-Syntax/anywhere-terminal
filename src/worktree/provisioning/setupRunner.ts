@@ -175,7 +175,7 @@ function commandFor(
 }
 
 function setupEnvironment(input: SetupRunInput, base: Record<string, string>): Record<string, string> {
-  const environment: Record<string, string> = { ...base };
+  const environment: Record<string, string> = Object.assign(Object.create(null), base);
   for (const [name, port] of Object.entries(input.ports)) {
     if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !/^(?:ANYWHERE_TERMINAL_|ASIMOV_)/i.test(name)) {
       environment[name] = String(port);
@@ -313,10 +313,10 @@ function waitForExit(child: Pty, cancellation: SetupCancellation): Promise<Proce
       return;
     }
     stopSubscription = cancellation.onStop((reason) => {
+      settle({ kind: reason === "setup deadline exceeded" ? "timeout" : "closed" });
       if (reason === "setup deadline exceeded") {
         safeKill(child);
       }
-      settle({ kind: reason === "setup deadline exceeded" ? "timeout" : "closed" });
     });
     if (settled) {
       stopSubscription.dispose();

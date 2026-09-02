@@ -991,7 +991,10 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // (round-4 B1) — here the order is production's, not the test's.
     await assemble();
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(
+      () => document.querySelector('[role="dialog"] button.wt-btn--danger') !== null,
+      "the removal confirmation",
+    );
     confirmRemoval("feature");
     await settle();
     expect(document.body.textContent).toContain("Remove done.");

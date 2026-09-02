@@ -268,11 +268,12 @@ describe("runSetup", () => {
         branch: "feature",
         authorization: authorization("/worktree"),
         asimovEnvironment: true,
-        ports: {
-          PORT: 3210,
-          ANYWHERE_TERMINAL_WORKTREE_PATH: 1,
-          aSiMoV_ChAnGe_Id: 2,
-        },
+        ports: Object.fromEntries([
+          ["PORT", 3210],
+          ["__proto__", 4321],
+          ["ANYWHERE_TERMINAL_WORKTREE_PATH", 1],
+          ["aSiMoV_ChAnGe_Id", 2],
+        ]),
         steps: [{ id: "one", source: "source", kind: "shell", script: "true" }],
       },
       {
@@ -289,6 +290,8 @@ describe("runSetup", () => {
       ANYWHERE_TERMINAL_WORKTREE_PATH: "/worktree",
       ASIMOV_WORKTREE_PATH: "/worktree",
     });
+    expect(options.env).toHaveProperty("__proto__", "4321");
+    expect(Object.hasOwn(options.env, "__proto__")).toBe(true);
     expect(options.env).not.toHaveProperty("aSiMoV_ChAnGe_Id");
   });
 
@@ -397,5 +400,43 @@ describe("runSetup", () => {
       steps: [{ outcome: { kind: "failed", reason: "setup deadline exceeded" } }],
     });
     vi.useRealTimers();
+  });
+
+  it("keeps deadline cancellation authoritative when kill emits a synchronous successful exit", async () => {
+    vi.useFakeTimers();
+    let exit: ((event: { exitCode: number; signal?: number }) => void) | undefined;
+    const hung = {
+      ...child(0),
+      onExit: vi.fn((listener: (event: { exitCode: number; signal?: number }) => void) => {
+        exit = listener;
+        return { dispose: vi.fn() };
+      }),
+      kill: vi.fn(() => exit?.({ exitCode: 0 })),
+    };
+    const run = runSetup(
+      {
+        repoId: "repo",
+        mainPath: "/main",
+        worktreeId: "worktree",
+        worktreePath: "/worktree",
+        branch: "feature",
+        authorization: authorization("/worktree"),
+        asimovEnvironment: false,
+        ports: {},
+        steps: [{ id: "one", source: "source", kind: "shell", script: "hung" }],
+      },
+      {
+        pty: { spawn: () => hung },
+        terminal: { open: async () => true, attach: vi.fn() },
+        directoryStillAuthorized: async () => true,
+        timeoutMs: 10,
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await run;
+    vi.useRealTimers();
+
+    expect(result.steps[0]?.outcome).toEqual({ kind: "failed", reason: "setup deadline exceeded" });
   });
 });

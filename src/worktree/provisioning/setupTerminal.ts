@@ -3,7 +3,7 @@ import type { Pty } from "../../pty/PtyManager";
 
 const TRANSCRIPT_LIMIT = 1024 * 1024;
 const MAX_TRANSCRIPT_CHUNKS = 256;
-const LIVE_FLUSH_CHARS = 64 * 1024;
+const LIVE_FLUSH_BYTES = 64 * 1024;
 const LIVE_FLUSH_MS = 8;
 
 interface EmitterLike {
@@ -49,8 +49,8 @@ export class SetupTerminal {
   private tailChunks: Buffer[] = [];
   private tailHead = 0;
   private tailBytes = 0;
-  private liveChunks: string[] = [];
-  private liveChars = 0;
+  private liveChunks: Buffer[] = [];
+  private liveBytes = 0;
   private liveFlush: ReturnType<typeof setTimeout> | undefined;
   private replayTerminal: TerminalLike | undefined;
   private retainedOutput: { id: string; origin: string } | undefined;
@@ -142,7 +142,8 @@ export class SetupTerminal {
     }
     const transcript = this.transcript();
     const emitter = this.createEmitter();
-    this.replayTerminal = this.createTerminal({
+    let replay: TerminalLike | undefined;
+    replay = this.createTerminal({
       name: `${this.name} output`,
       pty: {
         onDidWrite: emitter.event,
@@ -151,10 +152,16 @@ export class SetupTerminal {
             emitter.fire(transcript);
           }
         },
-        close: () => emitter.dispose(),
+        close: () => {
+          emitter.dispose();
+          if (this.replayTerminal === replay) {
+            this.replayTerminal = undefined;
+          }
+        },
       },
     });
-    this.replayTerminal.show(true);
+    this.replayTerminal = replay;
+    replay.show(true);
     return true;
   }
 
@@ -174,15 +181,16 @@ export class SetupTerminal {
       return;
     }
     this.childData = this.child.onData((data) => {
-      this.append(data);
-      this.queueLiveWrite(data);
+      const chunk = Buffer.from(data);
+      this.append(chunk);
+      this.queueLiveWrite(chunk);
     });
   }
 
-  private append(data: string): void {
-    let chunk: Buffer = Buffer.from(data);
+  private append(input: Buffer): void {
+    let chunk = input;
     if (chunk.length >= TRANSCRIPT_LIMIT) {
-      chunk = utf8Tail(chunk, TRANSCRIPT_LIMIT);
+      chunk = Buffer.from(utf8Tail(chunk, TRANSCRIPT_LIMIT));
       this.tailChunks = [chunk];
       this.tailHead = 0;
       this.tailBytes = chunk.length;
@@ -207,7 +215,7 @@ export class SetupTerminal {
         excess -= oldest.length;
         continue;
       }
-      const retained = utf8Tail(oldest, oldest.length - excess);
+      const retained = Buffer.from(utf8Tail(oldest, oldest.length - excess));
       this.tailChunks[this.tailHead] = retained;
       this.tailBytes -= oldest.length - retained.length;
       excess = 0;
@@ -218,10 +226,10 @@ export class SetupTerminal {
     }
   }
 
-  private queueLiveWrite(data: string): void {
+  private queueLiveWrite(data: Buffer): void {
     this.liveChunks.push(data);
-    this.liveChars += data.length;
-    if (this.liveChars >= LIVE_FLUSH_CHARS) {
+    this.liveBytes += data.length;
+    if (this.liveBytes >= LIVE_FLUSH_BYTES) {
       this.flushLiveWrites();
       return;
     }
@@ -233,16 +241,19 @@ export class SetupTerminal {
       clearTimeout(this.liveFlush);
       this.liveFlush = undefined;
     }
-    if (this.liveChars === 0 || this.closed || this.disposed) {
+    if (this.liveBytes === 0 || this.closed || this.disposed) {
       this.liveChunks = [];
-      this.liveChars = 0;
+      this.liveBytes = 0;
       return;
     }
-    const output = this.liveChunks.join("");
+    const output = Buffer.concat(this.liveChunks, this.liveBytes);
     this.liveChunks = [];
-    this.liveChars = 0;
-    for (let start = 0; start < output.length; start += LIVE_FLUSH_CHARS) {
-      this.writer?.fire(output.slice(start, start + LIVE_FLUSH_CHARS));
+    this.liveBytes = 0;
+    let start = 0;
+    while (start < output.length) {
+      const end = utf8ChunkEnd(output, start, LIVE_FLUSH_BYTES);
+      this.writer?.fire(output.subarray(start, end).toString("utf8"));
+      start = end;
     }
   }
 
@@ -268,6 +279,10 @@ export class SetupTerminal {
     }
     this.closed = true;
     this.resolveOpen?.(false);
+    for (const listener of this.closeListeners) {
+      listener();
+    }
+    this.closeListeners.clear();
     const child = this.child;
     if (child !== undefined) {
       try {
@@ -282,11 +297,7 @@ export class SetupTerminal {
       this.liveFlush = undefined;
     }
     this.liveChunks = [];
-    this.liveChars = 0;
-    for (const listener of this.closeListeners) {
-      listener();
-    }
-    this.closeListeners.clear();
+    this.liveBytes = 0;
     this.writer?.dispose();
     this.writer = undefined;
   }
@@ -298,4 +309,12 @@ function utf8Tail(bytes: Buffer, limit: number): Buffer {
     start += 1;
   }
   return bytes.subarray(start);
+}
+
+function utf8ChunkEnd(bytes: Buffer, start: number, limit: number): number {
+  let end = Math.min(bytes.length, start + limit);
+  while (end > start && end < bytes.length && (bytes[end] & 0xc0) === 0x80) {
+    end -= 1;
+  }
+  return end;
 }

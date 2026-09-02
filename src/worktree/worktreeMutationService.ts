@@ -483,7 +483,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
     }));
 
   const portEnvironment = (ports: readonly ProvisionPortResult[]): Readonly<Record<string, number>> => {
-    const environment: Record<string, number> = {};
+    const environment: Record<string, number> = Object.create(null);
     for (const port of ports) {
       if (port.outcome.kind === "allocated" || port.outcome.kind === "reused") {
         environment[port.name] = port.outcome.port;

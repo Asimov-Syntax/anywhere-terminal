@@ -90,6 +90,10 @@ describe("SetupTerminal", () => {
     expect(terminal.reveal(outputId, "surface-a")).toBe(true);
     expect(terminals).toHaveLength(2);
     expect(terminals[1]?.show).toHaveBeenCalled();
+    pseudo?.close?.();
+    expect(terminal.reveal(outputId, "surface-a")).toBe(true);
+    expect(terminals).toHaveLength(3);
+    expect(terminals[2]?.show).toHaveBeenCalled();
   });
 
   it("evicts transcript chunks on UTF-8 boundaries and bounds one oversized event", async () => {
@@ -113,9 +117,13 @@ describe("SetupTerminal", () => {
     expect(terminal.transcript()).not.toContain("�");
     expect(terminal.transcript()).toMatch(/🙂END$/);
 
-    pty.data("z".repeat(1024 * 1024 + 100));
+    pty.data("z".repeat(4 * 1024 * 1024));
     expect(Buffer.byteLength(terminal.transcript())).toBe(1024 * 1024);
     expect(terminal.transcript()).toBe("z".repeat(1024 * 1024));
+    const retained = terminal as unknown as { tailChunks: Buffer[]; tailHead: number };
+    expect(retained.tailChunks.slice(retained.tailHead).every((chunk) => chunk.buffer.byteLength <= 1024 * 1024)).toBe(
+      true,
+    );
   });
 
   it("batches live writes by latency and size and drops a pending flush on disposal", async () => {
@@ -149,6 +157,12 @@ describe("SetupTerminal", () => {
     expect(fire).toHaveBeenCalledTimes(2);
     expect(fire).toHaveBeenLastCalledWith("x".repeat(64 * 1024));
 
+    fire.mockClear();
+    const nonAscii = "€".repeat(30_000);
+    pty.data(nonAscii);
+    expect(fire.mock.calls.map(([data]) => data).join("")).toBe(nonAscii);
+    expect(fire.mock.calls.every(([data]) => Buffer.byteLength(data) <= 64 * 1024)).toBe(true);
+
     pty.data("pending");
     terminal.dispose();
     terminal.dispose();
@@ -168,12 +182,14 @@ describe("SetupTerminal", () => {
       }),
       createEmitter: () => ({ event: vi.fn(), fire: vi.fn(), dispose: vi.fn() }),
     });
+    const events: string[] = [];
     const current = child();
     current.child.kill = vi.fn(() => {
+      events.push("kill");
       throw new Error("already exited");
     });
     const foreign = child();
-    const closed = vi.fn();
+    const closed = vi.fn(() => events.push("closed"));
     const opened = terminal.open();
     pseudo?.open?.();
     await opened;
@@ -185,6 +201,7 @@ describe("SetupTerminal", () => {
     expect(current.child.write).toHaveBeenCalledWith("still-current");
     expect(() => pseudo?.close?.()).not.toThrow();
     expect(closed).toHaveBeenCalledOnce();
+    expect(events).toEqual(["closed", "kill"]);
     pseudo?.handleInput?.("after-close");
     expect(current.child.write).toHaveBeenCalledTimes(1);
   });

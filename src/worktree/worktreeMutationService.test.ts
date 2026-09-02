@@ -2416,7 +2416,10 @@ describe("provisioning rides the create without ever costing it", () => {
     const seen: string[] = [];
     const setupRun = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["runSetup"]>>[0]) => {
       seen.push("setup");
-      expect(input.ports).toEqual({ APP: 5184, DB: 5432 });
+      expect(input.ports.APP).toBe(5184);
+      expect(input.ports.DB).toBe(5432);
+      expect(input.ports.__proto__).toBe(6000);
+      expect(Object.hasOwn(input.ports, "__proto__")).toBe(true);
       expect(input.branch).toBe("feat");
       expect(input.asimovEnvironment).toBe(true);
       return {
@@ -2438,6 +2441,7 @@ describe("provisioning rides the create without ever costing it", () => {
           ports: [
             { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated" as const, port: 5184 } },
             { id: "p2", name: "DB", preview: 5432, outcome: { kind: "reused" as const, port: 5432 } },
+            { id: "p3", name: "__proto__", outcome: { kind: "allocated" as const, port: 6000 } },
           ],
           warnings: [],
         };

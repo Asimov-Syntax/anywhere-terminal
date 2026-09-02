@@ -46,6 +46,7 @@ import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
   ProvisionResultContest,
+  ProvisionSetupResult,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
@@ -584,7 +585,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const provisionContests = new Map<string, readonly ProvisionResultContest[]>();
   const setupOutputs = new Map<
     string,
-    { worktreeId: string; authorization: AuthorizedDirectory; terminal: SetupTerminal }
+    {
+      worktreeId: string;
+      authorization: AuthorizedDirectory;
+      setup: readonly ProvisionSetupResult[];
+      origin: WorktreeSurface;
+      terminal: SetupTerminal;
+    }
   >();
   const setupOutputByWorktree = new Map<string, string>();
   const setupSurfaceIds = new WeakMap<WorktreeSurface, string>();
@@ -611,11 +618,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     worktreeId: string,
     outputId: string,
     authorization: AuthorizedDirectory,
+    setup: readonly ProvisionSetupResult[],
+    origin: WorktreeSurface,
     terminal: SetupTerminal,
   ): void => {
     retireSetupOutput(worktreeId);
     setupOutputByWorktree.set(worktreeId, outputId);
-    setupOutputs.set(outputId, { worktreeId, authorization, terminal });
+    setupOutputs.set(outputId, { worktreeId, authorization, setup, origin, terminal });
   };
   const reconcileSetupOutputs = (presentWorktreeIds: readonly string[]): void => {
     const present = new Set(presentWorktreeIds);
@@ -712,7 +721,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             return result;
           }
           const outputId = terminal.outputId(setupSurfaceId(origin));
-          retainSetupOutput(input.worktreeId, outputId, input.authorization, terminal);
+          retainSetupOutput(input.worktreeId, outputId, input.authorization, result.steps, origin, terminal);
           return { ...result, outputId };
         },
         writeProvisionManifest: (worktreePath, steps, ports, setup) =>
@@ -1204,6 +1213,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
         if (!(await directoryStillAuthorized(output.authorization))) {
           retireSetupOutput(output.worktreeId);
+          worktreeHost.reportProvisioning?.(output.origin, {
+            type: "worktreeProvisionResult",
+            worktreeId: output.worktreeId,
+            setup: output.setup,
+          });
           return;
         }
         output.terminal.reveal(outputId, setupSurfaceId(origin));

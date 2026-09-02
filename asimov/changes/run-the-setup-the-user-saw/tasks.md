@@ -154,3 +154,17 @@
     3. Extend `src/extension.worktreeMutations.test.ts` for retry-start disposal, completed-run replacement disposal, same-id authority refusal, rebuild disappearance, and empty-manifest production wiring.
     4. Reassert in `src/webview/worktree/WorktreeController.test.ts` that a rejection update without a retry id removes the stale action.
     5. Extend the production assembly mock and retry witness in `src/extension.worktreeAssembly.test.ts` to prove prior output is disposed before the retry run.
+
+- [x] 6_1 Close final arbitration findings — verified: pnpm exec vitest run src/worktree/provisioning/setupRunner.test.ts src/worktree/provisioning/setupTerminal.test.ts src/worktree/worktreeMutationService.test.ts src/extension.worktreeMutations.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_3
+  - **Refs**: design.md D2, D3, D4 <!-- review round 3 F001, F006, F011-F014 -->
+  - **Acceptance**:
+    - Outcome: Setup identity, cancellation, retained memory, replay, batching, and stale actions remain correct on adversarial boundaries
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/setupRunner.test.ts src/worktree/provisioning/setupTerminal.test.ts src/worktree/worktreeMutationService.test.ts src/extension.worktreeMutations.test.ts
+  - **Plan**:
+    1. Use null-prototype port and setup environments in `src/worktree/worktreeMutationService.ts` and `src/worktree/provisioning/setupRunner.ts`; cover `__proto__` as an own authoritative value in `src/worktree/worktreeMutationService.test.ts` and `src/worktree/provisioning/setupRunner.test.ts`.
+    2. Settle runner cancellation before deadline kill and notify terminal close listeners before terminal-owned kill; add synchronous-exit-on-kill witnesses in `src/worktree/provisioning/setupRunner.test.ts` and `src/worktree/provisioning/setupTerminal.test.ts`.
+    3. Copy every retained trimmed buffer, batch live writes by UTF-8 bytes, and clear the replay-terminal reference on close in `src/worktree/provisioning/setupTerminal.ts`; cover retained backing allocation, non-ASCII batches, and replay recreation in `src/worktree/provisioning/setupTerminal.test.ts`.
+    4. Retain setup results plus the owning surface in `src/extension.ts` and post a setup-only retirement update when reveal finds replaced authority; cover capability disposal and stale action removal in `src/extension.worktreeMutations.test.ts`.
+    5. In `src/extension.worktreeAssembly.test.ts`, replace the unrelated removal test's fixed event-loop pump with a wait for its exact confirmation control so the required full-suite verification is deterministic.
+
