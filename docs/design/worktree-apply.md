@@ -244,6 +244,9 @@ appears in `git status`, and git's own removal takes it with the worktree.
 | Case | Behaviour |
 |---|---|
 | Entry path already exists in the new checkout | Copy skipped and reported (§ 2.1) |
+| Selected entries may name one destination | Decided by how many of them the repository's own file declared, over the selection submitted — see worktree-provisioning.md § 4.4. The destination is read before the ordered pass AND again immediately before the favoured member's turn, because an earlier uncontested copy can create the name in between |
+| A contested destination cannot be shown free | The whole group is refused, not only the losing member: letting the favoured member run would merge it into a directory it did not create, installing neither its material nor its mode |
+| A contested member is refused by a rule of its own | It is refused ALONE and keeps the rule that fired — an unsupported file type stays an unsupported file type, never a destination collision — and the group goes on without it. Every refusal still identifies every member of the contest |
 | Symlink unavailable on the platform | Degrades to copy and says so (§ 2.2) |
 | `node_modules` declared as a link | Refused with the reason (§ 2.2) |
 | Lockfile declared in copy or link | Skipped with the reason (§ 2.1) |
@@ -259,7 +262,7 @@ appears in `git status`, and git's own removal takes it with the worktree.
 
 | Area | Cases |
 |---|---|
-| Apply | Ordering copy → link → ports → setup; never overwrite; lockfile refusal; `node_modules` link refusal; symlink degradation reports; every setup step runs through a shell in the new worktree's directory, none through the VS Code task system |
+| Apply | Ordering copy → link → ports → setup; never overwrite; lockfile refusal; `node_modules` link refusal; symlink degradation reports; every setup step runs through a shell in the new worktree's directory, none through the VS Code task system; each contested-group outcome — favoured member claims, group refused for an unprovable destination, favoured member refused before claiming, and more than one of the repository's own declarations selected — asserting that nothing was written for every refusing case |
 | Ports | Sibling `.env.worktree` values are excluded; re-probe before write; a changed number is reported; existing `.env.worktree` is not overwritten |
 | Failure | Setup failure leaves the worktree and every prior step standing; retry re-runs setup only |
 | Manifest | Written after a successful apply; a missing or unreadable manifest degrades a claim rather than blocking |

@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -47,3 +47,8 @@ Planned at: ae9d85befbfbd97b336e8da318dec4f2a4bd6b6a
 Round-7 handback: F007 reopened — D3b settled how a two-native group is APPLIED and left how it is OFFERED unmoved, so the dialog ticks and counts rows the apply refuses entire. Gates unticked: Gate 2, All tasks done, and the Verify gate. F013 rides the same requirement; F014, F015, F016 and F017 are accepted and become tasks in the replan.
 
 Round-7 replan: D3c makes the offer and the apply decide a contested group by one predicate over which members are the repository's own, read against the selection currently held. The plan attack refuted the first draft — a two-repository-declaration group offered UNSELECTED is not a fixed point of that predicate, so its rows would carry a note the rule contradicts and the inherited member ticked alone would be copied while saying it would not be. The rows are offered selected instead.
+- Round 8 (cycle 6 discovery, after the round-7 handback) returned WARN with ZERO blockers. F007 adjudicated FIXED: the dialog and the apply now decide from the same count of selected repository declarations, and the summary and submitted ids follow the same live selection. F013-F017 all confirmed fixed.
+- All three new findings were accepted and fixed in ONE task (11_1), because all three were in the note representation task 10_6 introduced and share one lease. None needed a `D#` change, so the remediation boundary was not crossed and no handback was owed: D3c owns the predicate, and every finding was about how the predicate is REPRESENTED. No re-review round was opened — no BLOCK was fixed or rebutted, so the cycle ends at Re-Verify.
+- F019 was a regression 10_6 introduced and worth remembering as a shape: rendering one note per candidate turned a group into `(M-K)*K` DOM nodes each carrying a copy of the group's ids. `MAX_MODEL_ROWS` is 200 and a contender group is every entry sharing one fold key, so the worst case is reachable from a checked-in file rather than only in theory. The fix is the same one `contestedBy` already implied: point at the group, read it once per group, never copy it into the thing that explains it.
+- Re-Verify after 11_1: check-types clean, biome check-mode at the 3/14/1 baseline with all three errors in `agentHooks`/`cursor` test files this branch never touches, I10 gate ok, shipped-bundle gate ok, 6,833 unit tests pass, `verify-status` exit 0.
+

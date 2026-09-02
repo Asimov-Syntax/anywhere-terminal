@@ -119,8 +119,13 @@ export interface ProvisionModel {
 export interface ProvisionContenders {
   /** Entry ids in one connected component of the folding key — two or more. */
   readonly members: readonly string[];
-  /** The repository's own declaration, when exactly one member is it. */
-  readonly favoured?: string;
+  /**
+   * The members the repository's own file declared, in `members` order.
+   *
+   * Reported, not adjudicated: how many of them the SELECTION still holds is
+   * what decides the group, and only the side holding a selection can ask.
+   */
+  readonly natives: readonly string[];
 }
 
 export interface ProvisionProvider {
@@ -345,9 +350,23 @@ whose apply order decides which `mode` lands.
 
 So they are neither merged nor discarded. Both stay offered, each with the spelling and `source`
 its own file wrote, and the model carries a **contender group** naming them — a connected
-component over the folding key, not a pair, since three spellings can collide. When one member is
-the repository's own declaration, the group records it as `favoured`: the row the merge rule would
-have awarded the destination to.
+component over the folding key, not a pair, since three spellings can collide. The group records
+which of its members the repository's own file declared, as `natives`. It records no winner: a
+group is decided by how many of those the user's SELECTION still holds, and the offer has no
+selection to ask about.
+
+That count is the whole rule, and both sides run it over `natives` intersected with the selection:
+
+| Selected repository declarations | Outcome |
+|---|---|
+| exactly one | it is favoured and materialized; every other member is refused, naming the contest |
+| none | nothing claims priority, so the selected members are applied in their ordinary place |
+| more than one | the group is **refused entire** — nothing available can choose between two of the repository's own declarations, and picking one would decide a user's config silently |
+
+Carrying a winner instead of the count is what made the dialog and the apply disagree three times
+over: a winner computed once against the full offer goes stale the moment the user unticks a row.
+So the dialog offers a doubly-declared group SELECTED and says every member will be refused —
+unticking it on the user's behalf would read back as "none", which is the state that APPLIES.
 
 The folding key is per path segment: NFKC, lowercase, the Win32 trailing-dot/space and `::$DATA`
 fold, then **uppercase, then NFKC again**. Uppercase last is load-bearing — it is what performs the
