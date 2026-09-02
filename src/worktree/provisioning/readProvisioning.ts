@@ -58,12 +58,7 @@ export const DETECTION_ORDER: readonly ProviderAdapter[] = [
  * itself, duplicating its ports and setup steps (design.md D2 rule 1). Deeper
  * cycles cannot be written, because no framework format has an `extends`.
  */
-/**
- * The adapters an `extends` may name. Exported so the writer asks this list
- * rather than keeping a second copy of the rule that a base is a framework file
- * (.reviews/round-3.md F025).
- */
-export const FRAMEWORK_ORDER: readonly ProviderAdapter[] = DETECTION_ORDER.filter((a) => a.id !== "native");
+const FRAMEWORK_ORDER: readonly ProviderAdapter[] = DETECTION_ORDER.filter((a) => a.id !== "native");
 
 const NATIVE: ProviderContext = { id: "native", file: NATIVE_PROVIDER_FILE };
 
@@ -220,12 +215,12 @@ async function publish(
  * Once it resolves, the WHOLE adapter reads — both of orca's files, not the one
  * that was named. Half of orca is a model orca would not recognize.
  */
-type BaseResolution =
+export type BaseResolution =
   | { ok: true; adapter: ProviderAdapter; authorized: Authorized }
   | { ok: false; why: "missing" }
   | { ok: false; why: "unreadable"; problem: ProvisionProblem };
 
-async function baseFor(deps: ProviderDeps, repoRoot: string, target: string): Promise<BaseResolution> {
+export async function baseFor(deps: ProviderDeps, repoRoot: string, target: string): Promise<BaseResolution> {
   const adapter = FRAMEWORK_ORDER.find((a) => a.files.includes(target));
   if (adapter === undefined) {
     return { ok: false, why: "missing" };

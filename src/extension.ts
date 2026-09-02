@@ -884,7 +884,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // control is inert in the shipped extension while every module test passes
     // against its own fake.
     writeNativeConfig: (mainWorktree, divergence) =>
-      writeNativeConfig({ realpath: (p) => fsp.realpath(p), lstat: (p) => fsp.lstat(p) }, mainWorktree, divergence),
+      writeNativeConfig(
+        { realpath: (p) => fsp.realpath(p), lstat: (p) => fsp.lstat(p), provider: createProvisioningDeps() },
+        mainWorktree,
+        divergence,
+      ),
     // Same reason as the offer above: without this the create form never
     // receives a branch list and the combobox is a plain text field in the
     // shipped extension, with every module test green against its own fake.

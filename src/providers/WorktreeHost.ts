@@ -161,7 +161,7 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
     outside: "It does not resolve inside this repository.",
     malformed: "It could not be edited without rewriting parts this did not change.",
     unwritable: "The replacement could not be put in place.",
-    unnamed: "The source it builds on was no longer there.",
+    unnamed: "The source it builds on could not be read.",
   };
   return {
     ...model,

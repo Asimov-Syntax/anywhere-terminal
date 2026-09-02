@@ -14,6 +14,8 @@ import type { LockedFileDependencies } from "../../agentHooks/install/lockedJson
 import type { ProvisionEntry, ProvisionModel } from "../../types/messages";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { newBudget } from "./providerKit";
+import { createProvisioningDeps, MAX_PROVIDER_BYTES } from "./provisioningDeps";
+import { readProvisioning } from "./readProvisioning";
 import {
   divergenceOf,
   type NativeConfigDeps,
@@ -24,7 +26,13 @@ import {
 let root: string;
 let target: string;
 
-const realDeps: NativeConfigDeps = { realpath: (p) => fs.realpath(p), lstat: (p) => fs.lstat(p) };
+// The reader's real dependencies, because the base check IS the reader's now:
+// a fake here would let the save agree with a reader nobody ships (D17).
+const realDeps: NativeConfigDeps = {
+  realpath: (p) => fs.realpath(p),
+  lstat: (p) => fs.lstat(p),
+  provider: createProvisioningDeps(),
+};
 
 const nothing: NativeConfigDivergence = { exclude: [], drop: [], unnamedSource: false, tookSource: false };
 const div = (over: Partial<NativeConfigDivergence> = {}): NativeConfigDivergence => ({
@@ -336,6 +344,7 @@ describe("the destination is the resolution that was checked", () => {
       [outside, await fs.realpath(backInside)],
     ]);
     const chained: NativeConfigDeps = {
+      provider: createProvisioningDeps(),
       lstat: (p) => fs.lstat(p),
       realpath: async (p) => chain.get(p) ?? fs.realpath(p),
     };
@@ -401,6 +410,7 @@ describe("what the lock covers", () => {
     const order: string[] = [];
     const deps: NativeConfigDeps = {
       realpath: (p) => fs.realpath(p),
+      provider: createProvisioningDeps(),
       lstat: async (p) => {
         order.push(`lstat ${path.basename(p)}`);
         return fs.lstat(p);
@@ -600,6 +610,52 @@ describe("the base a save records against", () => {
 
     expect(wrote).toEqual({ ok: true, wrote: true });
     expect((await fs.lstat(target)).mode & 0o777).toBe(0o600);
+  });
+
+  // The property four rounds of partial checks kept missing: the save and the
+  // read must agree about a base. Stated as agreement rather than as a list of
+  // refusals, because a list is what got reconstructed one clause per round —
+  // the reader is asked directly, so a rule this writer does not know about
+  // cannot go missing here (.reviews/round-5.md F025).
+  describe.each([
+    [
+      "one over the byte bound",
+      async (at: string) => {
+        await fs.writeFile(at, `copy:\n${"#".repeat(MAX_PROVIDER_BYTES)}\n`, "utf8");
+      },
+    ],
+    [
+      "a directory",
+      async (at: string) => {
+        await fs.mkdir(at, { recursive: true });
+      },
+    ],
+    [
+      "one that will not open",
+      async (at: string) => {
+        await fs.writeFile(at, "copy:\n", "utf8");
+        await fs.chmod(at, 0o000);
+      },
+    ],
+  ])("a base that is %s", (_what, make) => {
+    it("is refused by the save, and by the read that follows it", async () => {
+      const at = path.join(root, "asimov", "worktree.yaml");
+      await fs.mkdir(path.dirname(at), { recursive: true });
+      await make(at);
+      await put(`{ "extends": "asimov/worktree.yaml", "copy": [".env"] }\n`);
+      const before = await fs.readFile(target, "utf8");
+
+      const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"] }));
+      const read = await readProvisioning(createProvisioningDeps(), root);
+
+      expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+      // The file IS there in all three, so the reader's own word for it is
+      // `unreadable`, not `missingExtends` — agreement is that both refuse the
+      // same base, on the reader's rule.
+      expect(read.problems.map((p) => p.reason)).toContain("unreadable");
+      expect(await fs.readFile(target, "utf8")).toBe(before);
+      await fs.chmod(at, 0o700).catch(() => {});
+    });
   });
 
   it("refuses a base whose ancestor leaves the repository, however ordinary its name", async () => {

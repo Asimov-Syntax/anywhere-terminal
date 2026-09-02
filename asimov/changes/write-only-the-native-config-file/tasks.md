@@ -209,7 +209,7 @@ genuinely parallel, so nothing here pretends to be.
 
 ## Wave 7 — round 5 handback
 
-- [ ] 7_1 Ask the reader whether the base is usable, and hold no rule about it here
+- [x] 7_1 Ask the reader whether the base is usable, and hold no rule about it here — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm test exit 0
   - **Deps**: 6_1
   - **Refs**: design.md#{d17-presence-is-revalidated-at-the-write-not-trusted-from-the-offer, d13-a-write-that-was-refused-is-reported-in-the-vocabulary-of-writing} <!-- .reviews/round-5.md F025; D2 -->
   - **Acceptance**:
