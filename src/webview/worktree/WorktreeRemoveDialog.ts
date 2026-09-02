@@ -344,7 +344,11 @@ export function buildProofList(checks: readonly RemovalCheck[], info: WorktreeIn
  * that opens "Force remove…" beside a button reading "Remove" describes an
  * action the user was never offered.
  */
-function buildRemovalWarning(checks: readonly RemovalCheck[], info: WorktreeInfo): HTMLElement {
+function buildRemovalWarning(
+  checks: readonly RemovalCheck[],
+  info: WorktreeInfo,
+  branchDeleteOffered = false,
+): HTMLElement {
   const idlePanes = countOf(checks, "idlePanes");
   const box = document.createElement("div");
   box.className = "wt-warnbox";
@@ -367,7 +371,13 @@ function buildRemovalWarning(checks: readonly RemovalCheck[], info: WorktreeInfo
   if (info.branch) {
     const branch = document.createElement("b");
     branch.textContent = info.branch;
-    box.append(document.createTextNode(" The branch "), branch, document.createTextNode(" is kept."));
+    box.append(
+      document.createTextNode(" The branch "),
+      branch,
+      document.createTextNode(
+        branchDeleteOffered ? " is kept unless you select the separate deletion option below." : " is kept.",
+      ),
+    );
   }
   return box;
 }
@@ -558,7 +568,7 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
   if (proofs !== null) {
     shell.dialog.append(proofs);
   }
-  shell.dialog.append(buildRemovalWarning(checks, info));
+  shell.dialog.append(buildRemovalWarning(checks, info, deps.report.branchDelete !== undefined));
   const cancelBtn = textButton("Cancel", "plain", cancel);
   shell.actions.append(cancelBtn);
   const fingerprint = deps.report.fingerprint;

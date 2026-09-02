@@ -42,6 +42,7 @@ interface HarnessOptions {
   defaultBranch?: string;
   objectFormat?: "sha1" | "sha256";
   transaction?: GitCommandResult;
+  refOids?: Record<string, string>;
   files?: Record<string, string>;
   directories?: readonly string[];
   entries?: Record<string, readonly string[]>;
@@ -69,6 +70,14 @@ function runner(options: HarnessOptions = {}) {
     }
     if (args[0] === "config") {
       return result("", 1);
+    }
+    if (args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "--quiet") {
+      const defaults: Record<string, string> = {
+        "refs/heads/feature": EVIDENCE.branchOid,
+        "refs/heads/main": EVIDENCE.defaultOid,
+      };
+      const oid = options.refOids?.[args[3] ?? ""] ?? defaults[args[3] ?? ""];
+      return oid === undefined ? result("", 1) : result(`${oid}\n`);
     }
     if (args[0] === "rev-parse") {
       return result("a\n");
@@ -240,6 +249,47 @@ describe("deleteBranch", () => {
       h.events.indexOf("git:worktree list --porcelain -z"),
     );
     expect(h.events.slice(-2)).toEqual([`fs:read:${COMMON}/rebase-merge/update-refs`, "git:update-ref --stdin"]);
+  });
+
+  it("bounds the complete holder scan and never lets an abandoned read reach the transaction", async () => {
+    const h = runner();
+    const originalRead = h.fs.readFile;
+    let readStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    let rejectRead!: (error: unknown) => void;
+    const stalled = new Promise<string>((_resolve, reject) => {
+      rejectRead = reject;
+      setTimeout(() => reject(missing(`${COMMON}/rebase-merge/head-name`)), 50).unref?.();
+    });
+    h.fs.readFile = async (absPath) => {
+      if (absPath === `${COMMON}/rebase-merge/head-name`) {
+        readStarted();
+        return stalled;
+      }
+      return originalRead(absPath);
+    };
+    let expire!: () => void;
+    const elapsed = new Promise<void>((resolve) => {
+      expire = resolve;
+    });
+    const cancel = vi.fn();
+    const operation = deleteBranch(h.git, "/repo", EVIDENCE, h.fs, () => ({
+      elapsed,
+      expired: false,
+      cancel,
+    }));
+
+    await started;
+    expire();
+    await expect(operation).resolves.toEqual({ kind: "refused", reason: "holders-unavailable" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(h.calls.some((call) => call.args[0] === "update-ref")).toBe(false);
+
+    rejectRead(missing(`${COMMON}/rebase-merge/head-name`));
+    await Promise.resolve();
+    expect(h.calls.some((call) => call.args[0] === "update-ref")).toBe(false);
   });
 
   it("refuses a symbolic HEAD holder", async () => {
@@ -461,8 +511,37 @@ describe("deleteBranch", () => {
     await expectRefused(runner({ listing: result("", 1) }), "holders-unavailable");
   });
 
-  it("reports a moved ref when the verified transaction declines", async () => {
-    await expectRefused(runner({ transaction: result("", 1) }), "refs-moved");
+  it("reports a moved ref only when a post-failure read establishes movement", async () => {
+    const h = runner({
+      transaction: result("", 1),
+      refOids: {
+        "refs/heads/feature": "9".repeat(40),
+        "refs/heads/main": EVIDENCE.defaultOid,
+      },
+    });
+    await expect(deleteBranch(h.git, "/repo", EVIDENCE, h.fs)).resolves.toEqual({
+      kind: "refused",
+      reason: "refs-moved",
+    });
+  });
+
+  it("reports an unchanged transaction failure as guard-unavailable, not movement", async () => {
+    const h = runner({ transaction: result("", 1) });
+    await expect(deleteBranch(h.git, "/repo", EVIDENCE, h.fs)).resolves.toEqual({
+      kind: "refused",
+      reason: "holders-unavailable",
+    });
+  });
+
+  it.each([
+    ["timeout", { ...result("", 1), timedOut: true }],
+    ["spawn failure", { ...result("", 1), failedToSpawn: true }],
+  ])("reports a transaction %s as guard-unavailable", async (_name, transaction) => {
+    const h = runner({ transaction });
+    await expect(deleteBranch(h.git, "/repo", EVIDENCE, h.fs)).resolves.toEqual({
+      kind: "refused",
+      reason: "holders-unavailable",
+    });
   });
 
   it("rejects ref names that could inject another transaction command", async () => {

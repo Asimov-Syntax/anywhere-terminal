@@ -2,6 +2,7 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { afterDelay, type Deadline } from "./deadline";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { resolveDefaultBranch } from "./orphanProofs";
 
@@ -40,6 +41,9 @@ interface PorcelainWorktree {
 }
 
 type HolderRead = "held" | "clear" | "unavailable";
+
+/** One bound for the complete final holder scan, including raw administration. */
+export const MAX_HOLDER_READ_MS = 2_000;
 
 function isAbsent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
@@ -369,6 +373,20 @@ async function holders(
   return readAdministrativeHolders(fs, commonGitDir, targetRef, oidLength);
 }
 
+async function readRefOid(
+  runner: GitCommandRunner,
+  repoPath: string,
+  ref: string,
+  oidLength: number,
+): Promise<string | undefined> {
+  const result = await runner.run(["rev-parse", "--verify", "--quiet", ref], repoPath);
+  if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
+    return undefined;
+  }
+  const oid = outputPath(result.stdout.toString("utf8"));
+  return oid !== null && validOid(oid, oidLength) ? oid : undefined;
+}
+
 /**
  * Delete the recorded branch only while both recorded refs still hold and no
  * worktree or Git operation currently reports the branch as held.
@@ -378,6 +396,7 @@ export async function deleteBranch(
   repoPath: string,
   evidence: DeleteBranchEvidence,
   fs: DeleteBranchFsDeps = nodeFs,
+  makeHolderDeadline: () => Deadline = () => afterDelay(MAX_HOLDER_READ_MS),
 ): Promise<DeleteBranchOutcome> {
   const targetRef = `refs/heads/${evidence.branch}`;
   const defaultRef = `refs/heads/${evidence.defaultBranch}`;
@@ -406,7 +425,16 @@ export async function deleteBranch(
     return { kind: "refused", reason: "holders-unavailable" };
   }
 
-  const holder = await holders(runner, repoPath, targetRef, oidLength, fs);
+  const holderDeadline = makeHolderDeadline();
+  let holder: HolderRead;
+  try {
+    holder = await Promise.race([
+      holders(runner, repoPath, targetRef, oidLength, fs).catch(() => "unavailable" as const),
+      holderDeadline.elapsed.then(() => "unavailable" as const),
+    ]);
+  } finally {
+    holderDeadline.cancel();
+  }
   if (holder === "held") {
     return { kind: "refused", reason: "branch-in-use" };
   }
@@ -423,8 +451,19 @@ export async function deleteBranch(
     "",
   ].join("\n");
   const result = await runner.run(["update-ref", "--stdin"], repoPath, { input: transaction });
-  if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
-    return { kind: "refused", reason: "refs-moved" };
+  if (result.timedOut || result.failedToSpawn) {
+    return { kind: "refused", reason: "holders-unavailable" };
+  }
+  if (result.code !== 0) {
+    const [branchOid, defaultOid] = await Promise.all([
+      readRefOid(runner, repoPath, targetRef, oidLength),
+      readRefOid(runner, repoPath, defaultRef, oidLength),
+    ]);
+    return branchOid !== undefined &&
+      defaultOid !== undefined &&
+      (branchOid !== evidence.branchOid || defaultOid !== evidence.defaultOid)
+      ? { kind: "refused", reason: "refs-moved" }
+      : { kind: "refused", reason: "holders-unavailable" };
   }
   return { kind: "deleted", branch: evidence.branch };
 }

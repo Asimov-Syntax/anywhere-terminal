@@ -833,6 +833,12 @@ describe("[3_1] the branch-delete opt-in (design.md D1)", () => {
     expect(host.querySelector(".wt-delete-branch")?.textContent).toContain("spike/hooks");
   });
 
+  it("states that the branch is kept only while the separate deletion option stays unchecked", () => {
+    const { host } = open(WITH_OFFER);
+    const warning = host.querySelector(".wt-warnbox")?.textContent ?? "";
+    expect(warning).toContain("The branch spike/hooks is kept unless you select the separate deletion option below.");
+  });
+
   it("stays independent of the typed confirmation: typing it leaves the checkbox untouched", () => {
     const { host } = open(WITH_OFFER);
     const field = host.querySelector<HTMLInputElement>("#wt-confirm-name");

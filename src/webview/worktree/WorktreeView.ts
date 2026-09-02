@@ -1803,7 +1803,7 @@ function branchDeleteReason(outcome: WorktreeActionResult["branchDelete"]): stri
     case "default-branch":
       return "It is the default branch.";
     case "holders-unavailable":
-      return "Its status could not be checked.";
+      return "Git could not safely complete the branch guard.";
     case "refs-moved":
       return "It moved since it was checked.";
     default:

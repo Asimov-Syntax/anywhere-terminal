@@ -153,7 +153,7 @@
     2. In `src/worktree/worktreeMutationService.ts` and `src/worktree/worktreeMutationService.test.ts`, require the nested fingerprint plus every echoed branch name, default name, and OID to match the redeemed report before invoking the guarded delete.
     3. Preserve successful removal on any mismatch, return a separate refused branch outcome, and causally witness two same-risk reports whose proof evidence differs.
 
-- [ ] 5_2 Bound the final guard and keep its confirmation and result truthful
+- [x] 5_2 Bound the final guard and keep its confirmation and result truthful — verified: pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' 'src/webview/worktree/WorktreeRemoveDialog.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 4_1, 4_5
   - **Refs**: design.md D5, D7; .reviews/round-1.md F004, F006, F007
   - **Acceptance**:
