@@ -373,18 +373,26 @@ async function holders(
   return readAdministrativeHolders(fs, commonGitDir, targetRef, oidLength);
 }
 
+type RefRead = { kind: "oid"; oid: string } | { kind: "absent" } | { kind: "unavailable" };
+
 async function readRefOid(
   runner: GitCommandRunner,
   repoPath: string,
   ref: string,
   oidLength: number,
-): Promise<string | undefined> {
+): Promise<RefRead> {
   const result = await runner.run(["rev-parse", "--verify", "--quiet", ref], repoPath);
-  if (result.code !== 0 || result.timedOut || result.failedToSpawn) {
-    return undefined;
+  if (result.timedOut || result.failedToSpawn) {
+    return { kind: "unavailable" };
+  }
+  if (result.code === 1 && result.stdout.length === 0) {
+    return { kind: "absent" };
+  }
+  if (result.code !== 0) {
+    return { kind: "unavailable" };
   }
   const oid = outputPath(result.stdout.toString("utf8"));
-  return oid !== null && validOid(oid, oidLength) ? oid : undefined;
+  return oid !== null && validOid(oid, oidLength) ? { kind: "oid", oid } : { kind: "unavailable" };
 }
 
 /**
@@ -435,6 +443,9 @@ export async function deleteBranch(
   } finally {
     holderDeadline.cancel();
   }
+  if (holderDeadline.expired) {
+    return { kind: "refused", reason: "holders-unavailable" };
+  }
   if (holder === "held") {
     return { kind: "refused", reason: "branch-in-use" };
   }
@@ -459,11 +470,12 @@ export async function deleteBranch(
       readRefOid(runner, repoPath, targetRef, oidLength),
       readRefOid(runner, repoPath, defaultRef, oidLength),
     ]);
-    return branchOid !== undefined &&
-      defaultOid !== undefined &&
-      (branchOid !== evidence.branchOid || defaultOid !== evidence.defaultOid)
-      ? { kind: "refused", reason: "refs-moved" }
-      : { kind: "refused", reason: "holders-unavailable" };
+    const moved =
+      branchOid.kind === "absent" ||
+      defaultOid.kind === "absent" ||
+      (branchOid.kind === "oid" && branchOid.oid !== evidence.branchOid) ||
+      (defaultOid.kind === "oid" && defaultOid.oid !== evidence.defaultOid);
+    return moved ? { kind: "refused", reason: "refs-moved" } : { kind: "refused", reason: "holders-unavailable" };
   }
   return { kind: "deleted", branch: evidence.branch };
 }

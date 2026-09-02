@@ -164,3 +164,14 @@
     2. In `src/worktree/deleteBranch.ts` and `src/worktree/deleteBranch.test.ts`, put one injected deadline around the complete holder scan; expiry returns `holders-unavailable`, cancels the timer, and cannot later reach the transaction.
     3. In `src/worktree/deleteBranch.ts` and `src/worktree/deleteBranch.test.ts`, classify a failed transaction as `refs-moved` only when bounded post-failure reads establish changed OIDs; otherwise use the generic guard-unavailable refusal.
     4. In `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeView.test.ts`, word the generic refusal as inability to complete the branch guard rather than a specific holder or movement claim.
+
+- [x] 5_3 Close the final deadline and refusal-classification edges — verified: pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 5_2
+  - **Refs**: .reviews/round-2.md F007, F008, F009
+  - **Acceptance**:
+    - Outcome: Every branch refusal remains bounded and factually accurate
+    - Verify: command pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' 'src/webview/worktree/WorktreeView.test.ts'
+  - **Plan**:
+    1. In `src/worktree/deleteBranch.ts` and `src/worktree/deleteBranch.test.ts`, refuse a clear scan when its deadline is synchronously expired, including when `elapsed` has not resolved.
+    2. In `src/worktree/deleteBranch.ts` and `src/worktree/deleteBranch.test.ts`, distinguish post-failure OID, absent, and unavailable reads; changed OIDs and established absence report movement.
+    3. In `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeView.test.ts`, use actor-neutral generic refusal copy valid for consent and Git failures.

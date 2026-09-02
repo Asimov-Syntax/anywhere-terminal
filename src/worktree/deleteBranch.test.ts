@@ -42,7 +42,7 @@ interface HarnessOptions {
   defaultBranch?: string;
   objectFormat?: "sha1" | "sha256";
   transaction?: GitCommandResult;
-  refOids?: Record<string, string>;
+  refOids?: Record<string, string | null>;
   files?: Record<string, string>;
   directories?: readonly string[];
   entries?: Record<string, readonly string[]>;
@@ -76,8 +76,13 @@ function runner(options: HarnessOptions = {}) {
         "refs/heads/feature": EVIDENCE.branchOid,
         "refs/heads/main": EVIDENCE.defaultOid,
       };
-      const oid = options.refOids?.[args[3] ?? ""] ?? defaults[args[3] ?? ""];
-      return oid === undefined ? result("", 1) : result(`${oid}\n`);
+      const ref = args[3] ?? "";
+      const afterTransaction = calls.some((call) => call.args[0] === "update-ref");
+      const oid =
+        afterTransaction && options.refOids !== undefined && ref in options.refOids
+          ? options.refOids[ref]
+          : defaults[ref];
+      return oid == null ? result("", 1) : result(`${oid}\n`);
     }
     if (args[0] === "rev-parse") {
       return result("a\n");
@@ -289,6 +294,21 @@ describe("deleteBranch", () => {
 
     rejectRead(missing(`${COMMON}/rebase-merge/head-name`));
     await Promise.resolve();
+    expect(h.calls.some((call) => call.args[0] === "update-ref")).toBe(false);
+  });
+
+  it("refuses a clear scan whose deadline is already expired", async () => {
+    const h = runner();
+    const cancel = vi.fn();
+
+    await expect(
+      deleteBranch(h.git, "/repo", EVIDENCE, h.fs, () => ({
+        elapsed: new Promise<void>(() => {}),
+        expired: true,
+        cancel,
+      })),
+    ).resolves.toEqual({ kind: "refused", reason: "holders-unavailable" });
+    expect(cancel).toHaveBeenCalledOnce();
     expect(h.calls.some((call) => call.args[0] === "update-ref")).toBe(false);
   });
 
@@ -519,6 +539,17 @@ describe("deleteBranch", () => {
         "refs/heads/main": EVIDENCE.defaultOid,
       },
     });
+    await expect(deleteBranch(h.git, "/repo", EVIDENCE, h.fs)).resolves.toEqual({
+      kind: "refused",
+      reason: "refs-moved",
+    });
+  });
+
+  it.each([
+    "refs/heads/feature",
+    "refs/heads/main",
+  ])("reports an established absent ref as movement: %s", async (absentRef) => {
+    const h = runner({ transaction: result("", 1), refOids: { [absentRef]: null } });
     await expect(deleteBranch(h.git, "/repo", EVIDENCE, h.fs)).resolves.toEqual({
       kind: "refused",
       reason: "refs-moved",

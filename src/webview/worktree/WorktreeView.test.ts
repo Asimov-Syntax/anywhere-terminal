@@ -2417,7 +2417,7 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
   it.each([
     ["branch-in-use", "It is checked out in another worktree."],
     ["default-branch", "It is the default branch."],
-    ["holders-unavailable", "Git could not safely complete the branch guard."],
+    ["holders-unavailable", "The branch deletion could not be safely authorized or completed."],
     ["refs-moved", "It moved since it was checked."],
   ] as const)("says the removal succeeded but the branch delete was refused: %s", (reason, text) => {
     const { view } = mount();
