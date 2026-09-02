@@ -568,6 +568,84 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
 }
 
 /**
+ * What each selectable row IS, independent of the id it was minted under.
+ *
+ * Item ids are offer-local — `messages.ts` says so, and the offer store remints
+ * every one from a counter that never restarts — so a selection held under one
+ * offer's ids names nothing under the next one's. A save answers with a fresh
+ * offer, and without this the user's ticks were silently replaced by the new
+ * model's defaults: every setup step they had turned ON came back OFF
+ * (.reviews/round-2.md F018).
+ *
+ * The descriptor carries `source` and an occurrence index as well as the
+ * subject. Two providers may declare the same script, and a single provider may
+ * declare it twice — both are preserved rather than deduplicated
+ * (`providerKit.ts` appends setup rows unconditionally), so the display text
+ * alone would move one row's state onto another's.
+ *
+ * `excluded` rows are absent: they carry no checkbox, so they have no state to
+ * carry anywhere.
+ */
+function rowDescriptors(model: WorktreeProvisionOffer["model"]): Map<string, string> {
+  const seen = new Map<string, number>();
+  const out = new Map<string, string>();
+  const put = (id: string, base: string): void => {
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    out.set(id, `${base}\u0000${n}`);
+  };
+  for (const entry of model.entries) {
+    put(entry.id, `entry\u0000${entry.path}\u0000${entry.mode}\u0000${entry.source}`);
+  }
+  for (const port of model.ports) {
+    put(port.id, `port\u0000${port.name}\u0000${port.source}`);
+  }
+  for (const step of model.setup) {
+    put(step.id, `setup\u0000${step.script}\u0000${step.source}`);
+  }
+  return out;
+}
+
+/**
+ * Move a selection off the offer it was taken under and onto the one answering it.
+ *
+ * Both the ticks and the unticks travel: a setup step the user turned ON stays
+ * on, and an entry they turned OFF stays off even though the model offers it
+ * ticked. A row the previous offer did not have is genuinely new, so it takes
+ * the new model's default — which is the only state the user has expressed
+ * nothing about.
+ */
+function carryForward(
+  before: WorktreeProvisionOffer["model"],
+  kept: ReadonlySet<string>,
+  rows: readonly BringRow[],
+  after: WorktreeProvisionOffer["model"],
+): Set<string> {
+  const was = rowDescriptors(before);
+  const keptKeys = new Set<string>();
+  for (const id of kept) {
+    const key = was.get(id);
+    if (key !== undefined) {
+      keptKeys.add(key);
+    }
+  }
+  const known = new Set(was.values());
+  const now = rowDescriptors(after);
+  const next = new Set<string>();
+  for (const row of rows) {
+    const key = now.get(row.id);
+    if (key !== undefined && known.has(key)) {
+      if (keptKeys.has(key)) {
+        next.add(row.id);
+      }
+    } else if (row.checked) {
+      next.add(row.id);
+    }
+  }
+  return next;
+}
+
+/**
  * `2 copied · 1 linked · 1 port · 1 setup step` — what the section will do.
  *
  * Four states, four sentences. "Nothing configured" is a repository that
@@ -1210,10 +1288,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   saveButton.setAttribute("aria-describedby", saveNote.id);
   saveRow.append(saveButton, saveNote);
   saveButton.addEventListener("click", () => {
-    // Resolved at event time, never captured: item ids are offer-local and
-    // every offer starts at `i1`, so a handler closing over one redraw's set
-    // would write another offer's selection under a colliding id (round-2 W5).
-    if (drawnOfferId === null || awaitingSwitch) {
+    // Resolved at event time, never captured: item ids are offer-local, so a
+    // handler closing over one redraw's set would write into an offer the form
+    // no longer holds (round-2 W5).
+    if (
+      drawnOfferId === null ||
+      drawnModel === null ||
+      pendingSwitch.has(draft.repoId) ||
+      pendingSave.has(draft.repoId)
+    ) {
       return;
     }
     const ticked = checkedByOffer.get(drawnOfferId);
@@ -1221,6 +1304,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       return;
     }
     switchSeq += 1;
+    // The model too, not just the ids: the answering offer mints new ones, and
+    // matching the two requires knowing what each old id stood for (F018).
+    pendingSave.set(draft.repoId, { offerId: drawnOfferId, model: drawnModel, kept: new Set(ticked) });
+    saveButton.disabled = true;
     deps.onProvisionSave?.({
       repoId: draft.repoId,
       switch: switchSeq,
@@ -1232,7 +1319,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** The offer currently drawn, so an unchanged one is not redrawn. */
   let drawnOfferId: string | null = null;
   /**
-   * A switch this form took and has not been answered for.
+   * Per repository, the offer a switch was taken AGAINST and not yet answered for.
    *
    * The offer on screen is superseded the moment a source is taken, so a save
    * pressed before the replacement arrives would record the SUPERSEDED source —
@@ -1241,8 +1328,33 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * as long as that is true, which is the same statement its absence already
    * makes when no offer has arrived: there is nothing here this save can
    * honestly be about (design.md D15).
+   *
+   * Keyed by repository, and holding the offer id rather than a boolean, because
+   * one form-wide flag could not survive the repo picker: moving away and back
+   * re-supplies the SAME cached offer, and a flag cleared by any redraw restored
+   * the control with the switch still in flight (.reviews/round-2.md F020). The
+   * answer is an offer id that DIFFERS from the one the switch was taken
+   * against; the same one again is a redraw.
    */
-  let awaitingSwitch = false;
+  const pendingSwitch = new Map<string, string>();
+  /**
+   * Per repository, a save this form posted and has not been answered for.
+   *
+   * Nothing on screen distinguished "sent" from "not pressed", so a second press
+   * posted a second save: the lock serializes them, the later one raises the
+   * host's ceiling, and the first answer is dropped — the user sees one result
+   * for two writes (.reviews/round-1.md F014).
+   *
+   * It holds the offer the save went out against, that offer's model, and the
+   * selection at the moment of the press, because the answer arrives as a FRESH
+   * offer whose item ids are all new. Keyed by repository for the same reason
+   * `pendingSwitch` is: a form-wide flag was cleared by an unrelated
+   * repository's offer and by the repo picker re-delivering a cached one.
+   */
+  const pendingSave = new Map<
+    string,
+    { offerId: string; model: WorktreeProvisionOffer["model"]; kept: ReadonlySet<string> }
+  >();
   // The model behind `drawnOfferId`, so the toggle handler can restate the
   // summary without a redraw — redrawing on a tick is what W2 forbids.
   let drawnModel: WorktreeProvisionOffer["model"] | null = null;
@@ -1257,10 +1369,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const checkedByOffer = new Map<string, Set<string>>();
 
   // Registered ONCE. Inside the redraw it added a handler per rebuild, each
-  // closing over that redraw's own set — and item ids are offer-local, every
-  // offer starting at `i1`, so a stale handler wrote another offer's selection
-  // under a colliding id (.reviews/round-2.md W5). The set is resolved at event
-  // time instead of captured.
+  // closing over that redraw's own set — and item ids are offer-local, so a
+  // stale handler wrote into an offer the form no longer holds
+  // (.reviews/round-2.md W5). The set is resolved at event time instead of
+  // captured.
   bringBox.addEventListener("change", (ev) => {
     const cb = ev.target;
     if (!(cb instanceof HTMLInputElement) || !cb.classList.contains("wt-brow-cb") || drawnOfferId === null) {
@@ -1359,21 +1471,52 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     drawnOfferId = offer.offerId;
     drawnModel = offer.model;
     bringField.hidden = false;
-    // A NEW offer id is the answer the removed control was waiting for.
-    awaitingSwitch = false;
+    // A DIFFERENT offer id is the answer the removed control was waiting for.
+    // The same id again is this form being redrawn — through the repo picker,
+    // most of all — and a redraw is not an answer.
+    const switched = pendingSwitch.get(draft.repoId);
+    const saved = pendingSave.get(draft.repoId);
+    if (switched !== offer.offerId) {
+      pendingSwitch.delete(draft.repoId);
+    }
+    // The switched-FROM offer's selection, dropped the same way a save answer
+    // drops its own. Only save answers were evicting, so repeated switches left
+    // one unreachable set per superseded offer for the dialog's lifetime
+    // (.reviews/round-3.md F023).
+    if (switched !== undefined && switched !== offer.offerId) {
+      checkedByOffer.delete(switched);
+    }
+    // A save is answered only by an offer that is neither the one it went out
+    // against nor the answer to a switch taken after it. A switch replaces the
+    // source, so the selection it was taken under is about rows this offer no
+    // longer claims to have — that reseeds from the new model's defaults.
+    const answering = saved !== undefined && saved.offerId !== offer.offerId && switched === undefined;
+    if (saved !== undefined && saved.offerId !== offer.offerId) {
+      pendingSave.delete(draft.repoId);
+      // The superseded offer can never be submitted again, and its selection is
+      // either carried below or deliberately dropped. Either way it is dead
+      // state keyed by an id nothing will name.
+      checkedByOffer.delete(saved.offerId);
+    }
+    // DERIVED, never toggled. The record is per repository and the button is
+    // one control shared by all of them, so a `disabled = false` on any redraw
+    // re-enabled a button whose handler then silently returned — the busy state
+    // the F014 fix exists to show, showing the wrong thing after a trip through
+    // the repo picker (.reviews/round-3.md F014).
+    saveButton.disabled = pendingSave.has(draft.repoId);
     // And only where a save can actually be made: a control whose press the
     // host would never hear is the same nothing as a control with no offer
     // behind it (.reviews/round-1.md F009).
-    if (deps.onProvisionSave !== undefined) {
+    if (deps.onProvisionSave !== undefined && !pendingSwitch.has(draft.repoId)) {
       bringField.appendChild(saveRow);
     }
     let ticked = checkedByOffer.get(offer.offerId);
     if (ticked === undefined) {
-      ticked = new Set(
-        bringRows(offer.model)
-          .filter((r) => r.checked)
-          .map((r) => r.id),
-      );
+      const fresh = bringRows(offer.model);
+      ticked =
+        answering && saved !== undefined
+          ? carryForward(saved.model, saved.kept, fresh, offer.model)
+          : new Set(fresh.filter((r) => r.checked).map((r) => r.id));
       checkedByOffer.set(offer.offerId, ticked);
     }
     // After the selection exists, never before: the counts are read off it.
@@ -1394,7 +1537,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       ...inactive.map((provider) =>
         switchRow(provider, () => {
           switchSeq += 1;
-          awaitingSwitch = true;
+          pendingSwitch.set(draft.repoId, offer.offerId);
           saveRow.remove();
           deps.onProvisionSwitch?.({ repoId: draft.repoId, switch: switchSeq, provider: provider.id });
         }),

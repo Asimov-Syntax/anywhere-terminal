@@ -18,6 +18,7 @@ import type { ProvisionModel } from "../../types/messages";
 import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { readJsonc } from "./providerKit";
+import { FRAMEWORK_ORDER } from "./readProvisioning";
 
 /** What the selection diverges to, in the vocabulary the native file has (design.md D6). */
 export interface NativeConfigDivergence {
@@ -71,6 +72,13 @@ export interface NativeConfigDeps {
   lstat(p: string): Promise<NativeConfigStat>;
   /** Passed through to `LockedFile`, so a test can fail one syscall and nothing else. */
   readonly locked?: LockedFileDependencies;
+  /**
+   * The process's file-creation mask, injectable because a vitest worker refuses
+   * `process.umask(mask)` — so a witness for the masking can only be written by
+   * supplying the mask (.reviews/round-3.md F022, and the same constraint
+   * `applyEntries.node.test.ts` records).
+   */
+  umask?(): number;
 }
 
 /**
@@ -189,10 +197,10 @@ interface Edit {
 
 interface Planned {
   readonly edits: readonly Edit[];
-  /** The document names a file to build on once the edits are applied. */
-  readonly named: boolean;
-  /** The base an edit writes, which D17 confirms is still there before the write. */
+  /** The base an edit writes. */
   readonly writes?: string;
+  /** The base the document already names, which no edit touches. */
+  readonly declared?: string;
 }
 
 /** The value `key` holds in `text`, or `undefined` for a document that will not parse. */
@@ -339,7 +347,7 @@ function planEdits(text: string, divergence: NativeConfigDivergence): Planned | 
     edits.push({ key: "extends", ops: [{ path: ["extends"], value: writes }], whole: writes });
   }
 
-  return { edits, named: declaredBase !== undefined || writes !== undefined, writes };
+  return { edits, writes, declared: declaredBase };
 }
 
 /**
@@ -370,9 +378,10 @@ export async function writeNativeConfig(
     return { ok: false, reason: "outside" };
   }
   const dir = path.join(repoRoot, path.dirname(NATIVE_PROVIDER_FILE));
-  if (!(await isResolvedPathInsideRoot(dir, prepared, deps))) {
-    return { ok: false, reason: "outside" };
-  }
+  // ONE resolution, and it is the one that gets checked. Checking `dir` and then
+  // resolving it again afterwards asks the filesystem the same question twice
+  // and builds the destination from the answer nobody checked
+  // (.reviews/round-2.md F019).
   let here = dir;
   try {
     here = await deps.realpath(dir);
@@ -380,7 +389,12 @@ export async function writeNativeConfig(
     if (!isNotFound(error)) {
       return { ok: false, reason: "outside" };
     }
-    // Not there yet. `LockedFile` creates it, beneath a parent already checked.
+    // Not there yet, so `here` stays the unresolved spelling — which the check
+    // below tolerates for an absent tail beneath a parent that resolves, and
+    // `LockedFile` then creates.
+  }
+  if (!(await isResolvedPathInsideRoot(here, prepared, deps))) {
+    return { ok: false, reason: "outside" };
   }
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
 
@@ -414,11 +428,16 @@ export async function writeNativeConfig(
       if (planned === null) {
         return { ok: false, reason: "malformed" };
       }
-      // A source that supplied the offer and can no longer be named: writing the
+      // A source that supplied the offer and can no longer be named. Writing the
       // user's choice into a document that names no base records the opposite of
       // what they chose, and a take that names nothing records nothing at all
       // (design.md D12).
-      if (divergence.unnamedSource && !planned.named && (planned.edits.length > 0 || divergence.tookSource)) {
+      //
+      // A base the document ALREADY declares does not excuse it: the exclusions
+      // were computed against the source the user was looking at, and committing
+      // them under a different base records the choice against something else
+      // while losing the source change entirely (.reviews/round-2.md F021).
+      if (divergence.unnamedSource && (planned.edits.length > 0 || divergence.tookSource)) {
         return { ok: false, reason: "unnamed" };
       }
       if (planned.edits.length === 0) {
@@ -429,9 +448,30 @@ export async function writeNativeConfig(
       // away between the read the form was built from and this save, and the
       // read side then answers `missingExtends` for a document we just wrote
       // (design.md D17).
-      if (planned.writes !== undefined) {
+      //
+      // The base IN FORCE, which is the one being written when there is one and
+      // otherwise the one the document already names. D17 says the base is
+      // confirmed before the write; it never said "only a base this call adds",
+      // and reading it that way left a declared base unprobed
+      // (.reviews/round-2.md F021).
+      const base = planned.writes ?? planned.declared;
+      if (base !== undefined) {
+        // Membership FIRST, and asked of the read side's own list. A declared
+        // base is untrusted repository text, and probing it before establishing
+        // that it names an adapter file at all turned this confirmation into a
+        // filesystem oracle: `"extends": "../../elsewhere"` reported whether an
+        // arbitrary path outside the checkout exists (.reviews/round-3.md F025).
+        //
+        // The exact spelling, exactly as `baseFor` asks it: `../` and an
+        // absolute path match no adapter's constant and so need no containment
+        // check of their own (readProvisioning.ts `baseFor`, design.md D2).
+        // A name that is not a member is refused rather than probed — which is
+        // also what the next read would answer about it.
+        if (!FRAMEWORK_ORDER.some((adapter) => adapter.files.includes(base))) {
+          return { ok: false, reason: "unnamed" };
+        }
         try {
-          await deps.lstat(path.join(repoRoot, planned.writes));
+          await deps.lstat(path.join(repoRoot, base));
         } catch (error) {
           return { ok: false, reason: isNotFound(error) ? "unnamed" : "unwritable" };
         }
@@ -448,7 +488,18 @@ export async function writeNativeConfig(
         next = applied;
       }
       if (existing === undefined) {
-        const staged = await file.stageReplacement(next, undefined);
+        // `LockedFile` opens its temporary `0o600` and skips the chmod when no
+        // mode is given, so a file created through it landed at the temporary's
+        // own mode — one nobody chose, and unlike every sibling in the
+        // repository (.reviews/round-2.md F022).
+        //
+        // Masked before it is passed. `stageReplacement` opens `wx` with the
+        // mode — which the umask DOES narrow — and then chmods it exactly,
+        // which the umask does not: `0o644` under `umask 0077` produced a
+        // world-readable file where the process's own policy says `0600`
+        // (.reviews/round-3.md F022). Masking here lands the chmod on the same
+        // value the create would have produced alone.
+        const staged = await file.stageReplacement(next, mode ?? 0o644 & ~(deps.umask ?? process.umask)());
         if (staged === undefined) {
           return { ok: false, reason: "unwritable" };
         }

@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -190,3 +190,33 @@ Planned at: a82ccc85
   D14's `took` was refuted at plan time and never implemented — so `WorktreeController.ts` needed no
   change and its test no addition. The take-then-configure interleaving is witnessed in
   `WorktreeCreateDialog.test.ts`, where the control lives.
+- Round-2 F018's suggested MECHANISM was wrong and the finding still stood. It proposed carrying the
+  previous selection forward "intersected with the new model's ids"; `offerStore.issue` remints every
+  selectable id from an `itemSequence` that never restarts, so that intersection is always empty. The
+  rows are matched by what they ARE instead — kind, subject, mode, `source` and occurrence index.
+  `source` and occurrence are load-bearing: two providers may declare the same script and
+  `providerKit` appends setup rows without deduplicating.
+- Plan attack (`asm-oracle`, HIGH) classified the F018 fix as remediation rather than a handback: the
+  correlation is local to the dialog, no path or script joins the wire, D1's outbound authority
+  boundary is untouched, and the state stays dialog-lifetime UI state beside `checkedByOffer`.
+- Knowledge candidate: `src/extension.worktreeAssembly.test.ts` fails a DIFFERENT test on each
+  full-suite run under machine load and passes 55/55 alone. | Surprise: it reproduced identically on
+  a clean detached worktree at HEAD with no diff, so three `verify-task` runs locked a task the diff
+  could not have broken. | Evidence: `extension.worktreeAssembly.test.ts:575` fires
+  `void host.handleMessage(...)`, `:608-613` pumps a fixed 40 zero-delay timers, `:1498-1510` waits
+  for ANY `.wt-notice` while admitting an unrelated one already exists, and `:38-43` vs `:435-458`
+  share one module-global `REPO` that `beforeEach` never resets. | Consumer: debug | Action: an
+  assembly-test failure naming a test the diff cannot reach is checked against a clean-HEAD full-suite
+  run before it is treated as a regression.
+- Round-3 F025 is the round-2 fix's own defect: F021 widened the D17 probe to cover a base the
+  document already declared, and that value is untrusted repository text. Probing it before asking
+  whether it names an adapter file made the confirmation a filesystem oracle. The writer now asks
+  `FRAMEWORK_ORDER` — exported from `readProvisioning.ts` so one list serves both sides rather than
+  a second copy of the rule living in the writer.
+- Round-3 F023 is fixed without a witness of its own. A superseded offer's selection set is keyed by
+  an id nothing can name again, so its retention is observable only as memory: no assertion can tell
+  the evicted state from the retained one through any surface the dialog exposes. Recorded rather
+  than covered by a test that could not fail.
+- `NativeConfigDeps` gained an injectable `umask()` because a vitest worker refuses
+  `process.umask(mask)` and the ambient `0o022` makes `0o644 & ~umask` equal `0o644` — the existing
+  mode assertion could not tell a masked write from an unmasked one.

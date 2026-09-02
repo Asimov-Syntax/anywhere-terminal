@@ -16,12 +16,15 @@ import type {
   DestinationDisposition,
   ExtensionToWebViewMessage,
   ProvisionPortResult,
+  ProvisionProblem,
+  ProvisionProvider,
   ProvisionSelection,
   ProvisionStepOutcome,
   ProvisionStepResult,
   WorktreeAfterCreate,
   WorktreeCreateMode,
   WorktreeProvisionResultMessage,
+  WorktreeProvisionSaveMessage,
   WorktreeRemoveAssessmentPayload,
   WorktreeRemoveRequestMessage,
 } from "./messages";
@@ -250,6 +253,65 @@ const provisionResultWithVerdict: WorktreeProvisionResultMessage = {
   ok: false,
 };
 
+// --- A save carries ids and ordering, and nothing else -----------------------
+
+// Every field is an id the host minted or a number it orders by. A path, a key
+// or a model here would make the webview the authority on what the repository's
+// configuration says (design.md D1).
+const save: WorktreeProvisionSaveMessage = {
+  type: "worktreeProvisionSave",
+  repoId: "/repo/.git",
+  opening: 1,
+  switch: 2,
+  offerId: "o1",
+  kept: ["i1", "i2"],
+};
+
+const saveNamingASource: WorktreeProvisionSaveMessage = {
+  type: "worktreeProvisionSave",
+  repoId: "/repo/.git",
+  opening: 1,
+  switch: 2,
+  offerId: "o1",
+  kept: [],
+  // @ts-expect-error the offer already records which source was active; a field
+  // beside it is a second answer, free to disagree with what the user saw
+  provider: "orca",
+};
+
+// `present` is what was FOUND, not what the adapter declares it can read: a
+// provider detected through only the second of its files must not be given an
+// `extends` naming the first (design.md D11).
+const detectedProvider: ProvisionProvider = {
+  id: "orca",
+  files: ["orca.yaml", ".worktreeinclude"],
+  present: [".worktreeinclude"],
+  active: true,
+};
+
+// @ts-expect-error presence is not optional — a consumer that needs one existing
+// file cannot get it from `files`
+const providerWithoutPresence: ProvisionProvider = {
+  id: "orca",
+  files: ["orca.yaml"],
+  active: true,
+};
+
+// A refused save is said in the vocabulary of writing. The other five reasons
+// all describe a READ going wrong (design.md D13).
+const refusedSaveProblem: ProvisionProblem = {
+  file: ".vscode/worktree.json",
+  reason: "unsaved",
+  detail: "`.vscode/worktree.json` was not saved. Another process is holding it.",
+};
+
+const problemWithAnInventedReason: ProvisionProblem = {
+  file: ".vscode/worktree.json",
+  // @ts-expect-error the reasons are enumerated; a write refusal is `unsaved`
+  reason: "locked",
+  detail: "held elsewhere",
+};
+
 describe("the wire contract", () => {
   it("is judged by pnpm run check-types, not by this assertion", () => {
     // The suite exists so the file is a valid Vitest module; the proofs above
@@ -295,5 +357,9 @@ describe("the wire contract", () => {
       portWithPath,
       provisionResultWithVerdict,
     ]).toHaveLength(5);
+    expect(save.kept).toHaveLength(2);
+    expect(detectedProvider.present).toEqual([".worktreeinclude"]);
+    expect(refusedSaveProblem.reason).toBe("unsaved");
+    expect([saveNamingASource, providerWithoutPresence, problemWithAnInventedReason]).toHaveLength(3);
   });
 });

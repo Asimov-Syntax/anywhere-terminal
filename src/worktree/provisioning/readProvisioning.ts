@@ -58,7 +58,12 @@ export const DETECTION_ORDER: readonly ProviderAdapter[] = [
  * itself, duplicating its ports and setup steps (design.md D2 rule 1). Deeper
  * cycles cannot be written, because no framework format has an `extends`.
  */
-const FRAMEWORK_ORDER: readonly ProviderAdapter[] = DETECTION_ORDER.filter((a) => a.id !== "native");
+/**
+ * The adapters an `extends` may name. Exported so the writer asks this list
+ * rather than keeping a second copy of the rule that a base is a framework file
+ * (.reviews/round-3.md F025).
+ */
+export const FRAMEWORK_ORDER: readonly ProviderAdapter[] = DETECTION_ORDER.filter((a) => a.id !== "native");
 
 const NATIVE: ProviderContext = { id: "native", file: NATIVE_PROVIDER_FILE };
 

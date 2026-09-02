@@ -314,6 +314,37 @@ describe("the destination is computed, never accepted", () => {
   });
 });
 
+describe("the destination is the resolution that was checked", () => {
+  it("writes to the value it checked, not to a later answer for the same path", async () => {
+    // Two resolutions of one path are two answers, and only one of them was
+    // checked. Staged through the injected `realpath` rather than by racing the
+    // filesystem: a path that answers differently the second time is exactly
+    // what the ordering has to survive (.reviews/round-2.md F019).
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-second-"));
+    const here = path.dirname(target);
+    let asked = 0;
+    const flipping: NativeConfigDeps = {
+      lstat: (p) => fs.lstat(p),
+      realpath: async (p) => {
+        if (p !== here) {
+          return fs.realpath(p);
+        }
+        asked += 1;
+        return asked === 1 ? fs.realpath(p) : outside;
+      },
+    };
+
+    const wrote = await writeNativeConfig(flipping, root, div({ exclude: ["dist"] }));
+
+    // Asked once, so there is no second answer to build a destination from —
+    // and the write landed where the check said it would.
+    expect(asked).toBe(1);
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(await fs.readdir(outside)).toEqual([]);
+    await fs.rm(outside, { recursive: true, force: true });
+  });
+});
+
 describe("a save that fails leaves the file as it was", () => {
   it("changes nothing when the replacement cannot land", async () => {
     const original = `{ "copy": [".env"] }\n`;
@@ -499,7 +530,7 @@ describe("a repository with no configuration of its own", () => {
 describe("saving twice does not grow the file", () => {
   it("is byte-identical after a repeated save", async () => {
     await put(`{\n  "extends": "orca.yaml",\n  "copy": [".env", ".env.local"]\n}\n`);
-    const change = div({ exclude: ["node_modules"], drop: [".env.local"], extends: "orca.yaml" });
+    const change = div({ exclude: ["node_modules"], drop: [".env.local"], extends: await base("orca.yaml") });
 
     await writeNativeConfig(realDeps, root, change);
     const once = await fs.readFile(target, "utf8");
@@ -512,6 +543,91 @@ describe("saving twice does not grow the file", () => {
       copy: [".env"],
       exclude: ["node_modules"],
     });
+  });
+});
+
+describe("the base a save records against", () => {
+  it("refuses when the base the document already names has gone", async () => {
+    // D17 confirms the base before the write, and "the base" is the one in
+    // force — not only one this call is adding. A document whose declared base
+    // has gone records the user's choice against nothing
+    // (.reviews/round-2.md F021).
+    await put(`{ "extends": "orca.yaml", "copy": [".env"] }\n`);
+    const before = await fs.readFile(target, "utf8");
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"] }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+  });
+
+  it("refuses an unnameable source even where the document names some other base", async () => {
+    // The exclusions were computed against the source the user was LOOKING at.
+    // Committing them under a base that is not that source records the choice
+    // against something else and loses the source change entirely.
+    await put(`{ "extends": "asimov/worktree.yaml", "copy": [".env"] }\n`);
+    await base("asimov/worktree.yaml");
+    const before = await fs.readFile(target, "utf8");
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"], unnamedSource: true }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+  });
+
+  it("creates a first configuration readable the way its siblings are", async () => {
+    // `LockedFile` opens its temporary `0o600`; a file created through it took
+    // that mode, which nobody chose (.reviews/round-2.md F022).
+    const wrote = await writeNativeConfig(realDeps, root, div({ extends: await base("orca.yaml"), tookSource: true }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect((await fs.lstat(target)).mode & 0o777).toBe(0o644 & ~process.umask());
+  });
+
+  it("never creates one broader than the process's own policy allows", async () => {
+    // The mask is SUPPLIED, because the assertion above cannot tell the two
+    // apart on a machine whose umask is the usual `0o022` — `0o644` masked by
+    // it is `0o644` again — and a vitest worker refuses `process.umask(mask)`.
+    // `stageReplacement` chmods the mode exactly, and a chmod is not narrowed
+    // the way the create is, so an unmasked `0o644` under `umask 0o077` landed
+    // world-readable against the process's own policy (.reviews/round-3.md F022).
+    const strict: NativeConfigDeps = { ...realDeps, umask: () => 0o077 };
+
+    const wrote = await writeNativeConfig(strict, root, div({ extends: await base("orca.yaml"), tookSource: true }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect((await fs.lstat(target)).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses a base that names no adapter file without asking the filesystem about it", async () => {
+    // `extends` is untrusted repository text. Probing it before establishing
+    // that it names an adapter file at all made this confirmation a filesystem
+    // oracle: a committed `../../elsewhere` reported whether an arbitrary path
+    // outside the checkout exists. Membership is asked of the read side's own
+    // list, exactly as `baseFor` asks it (.reviews/round-3.md F025, design.md D2).
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-probe-"));
+    const reaching = path.relative(root, path.join(outside, "present.yaml"));
+    await fs.writeFile(path.join(outside, "present.yaml"), "copy:\n", "utf8");
+    await put(`{ "extends": ${JSON.stringify(reaching)}, "copy": [".env"] }\n`);
+    const before = await fs.readFile(target, "utf8");
+    const asked: string[] = [];
+    const watching: NativeConfigDeps = {
+      ...realDeps,
+      lstat: async (p) => {
+        asked.push(p);
+        return fs.lstat(p);
+      },
+    };
+
+    const wrote = await writeNativeConfig(watching, root, div({ exclude: ["dist"] }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    // Not merely refused — never probed. A refusal that still asked would leak
+    // the same bit through timing and through the `unwritable` answer a
+    // permission error would give instead.
+    expect(asked.filter((p) => p.includes(path.basename(outside)))).toEqual([]);
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+    await fs.rm(outside, { recursive: true, force: true });
   });
 });
 
