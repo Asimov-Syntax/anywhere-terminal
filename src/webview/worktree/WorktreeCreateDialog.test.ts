@@ -1155,6 +1155,39 @@ describe("Bring over — a repository that declares nothing, and a file that can
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Could not be read");
   });
 
+  // A written-but-locked save is a fifth statement. Calling it "Not saved" is
+  // false about a file that WAS saved, and "Could not be read" is false about a
+  // file this form has just rendered — so it gets its own answer (design.md D4).
+  it("says a saved file is still locked, rather than that it was not saved", () => {
+    const { host } = withModel({
+      ...emptyProvisionModel(),
+      problems: [
+        {
+          file: ".vscode/worktree.json",
+          reason: "locked",
+          detail: "`.vscode/worktree.json` was saved, but it may still be locked.",
+        },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Saved, still locked");
+    expect(host.querySelector(".wt-bring-problem")?.textContent).toContain("was saved");
+  });
+
+  // A refusal outranks it: the user must deal with the write that did not happen
+  // before the lock that might still be there.
+  it("keeps the refusal's answer when a save was refused AND may be locked", () => {
+    const { host } = withModel({
+      ...emptyProvisionModel(),
+      problems: [
+        { file: ".vscode/worktree.json", reason: "unsaved", detail: "`.vscode/worktree.json` was not saved." },
+        { file: ".vscode/worktree.json", reason: "locked", detail: "It may still be locked." },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Not saved");
+  });
+
   it("says a save did not happen, rather than that a file could not be read", () => {
     // The one problem reason that is not about a read. Reporting it as unread
     // would say the section could not read a file whose contents it has just

@@ -176,6 +176,30 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
   };
 }
 
+/**
+ * The save landed, or was refused, and the lock it took may still be there.
+ *
+ * `locked` rather than `unsaved` because the file WAS written in the common
+ * case, and the summary folds an all-`unsaved` set into "Not saved". No pathname:
+ * the wire carries no identity and the user acts on this long afterwards, so a
+ * name here would be a deletion instruction that can go stale
+ * (say-which-lock-a-save-left-behind design.md D1, D4).
+ */
+function leftLocked(model: ProvisionModel, wrote: boolean): ProvisionModel {
+  const what = wrote ? "was saved, but it may still be locked" : "may still be locked";
+  return {
+    ...model,
+    problems: [
+      ...model.problems,
+      {
+        file: NATIVE_PROVIDER_FILE,
+        reason: "locked",
+        detail: `\`${NATIVE_PROVIDER_FILE}\` ${what}. Saving it again may not work until the lock clears.`,
+      },
+    ],
+  };
+}
+
 export interface WorktreeHostOptions {
   deps: WorktreeTreeDeps;
   /** Read at rebuild time, not captured: folders change while the window lives. */
@@ -2489,11 +2513,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             // Plain precedence, with no provider preferred. The write just made
             // the native file the thing to read, and preferring the source it
             // extends would answer with the view from BEFORE the write.
-            const model = await options.readProvisioning?.(repo.mainPath);
-            if (model === undefined || disposed || !surfaces.has(surface)) {
+            // What the write said is known BEFORE the reread, so a reread that
+            // fails must not be able to swallow it — it used to, through the
+            // early return and the outer catch (round-3 F004). The pre-save view
+            // is the fallback: stale entries plus a true statement beats silence.
+            let reread: ProvisionModel | undefined;
+            try {
+              reread = await options.readProvisioning?.(repo.mainPath);
+            } catch {
+              reread = undefined;
+            }
+            if (disposed || !surfaces.has(surface)) {
               return;
             }
-            publish(written.ok ? model : refusedSave(model, written.reason));
+            const base = reread ?? shown;
+            const said = written.ok ? base : refusedSave(base, written.reason);
+            publish(written.mayStillBeLocked === true ? leftLocked(said, written.ok && written.wrote) : said);
           })
           // A save that throws leaves the form exactly as it was, and the
           // ceiling is NOT released — for the reason the switch records above.

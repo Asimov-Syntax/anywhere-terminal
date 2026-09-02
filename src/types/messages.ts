@@ -936,12 +936,25 @@ export interface ProvisionProblem {
    * not: a save was refused and nothing was written, about a file that may have
    * read perfectly well a moment earlier (design.md D13).
    *
+   * `locked` is a seventh thing again, and it exists because reusing either of
+   * the others states a falsehood: the file WAS written, so "not saved" is
+   * wrong, and it read fine, so "could not be read" is wrong. It carries no
+   * pathname — a person acts on what it says long after the name could have
+   * been rebound (say-which-lock-a-save-left-behind design.md D1).
+   *
    * One value for every write refusal rather than one each, with the cause in
    * `detail`: the writer's own enumeration cannot always tell a held lock from a
    * directory it could not create, so putting it on the wire would offer
    * distinctions that are not always real.
    */
-  readonly reason: "unreadable" | "malformed" | "unknownKey" | "missingExtends" | "unsubstituted" | "unsaved";
+  readonly reason:
+    | "unreadable"
+    | "malformed"
+    | "unknownKey"
+    | "missingExtends"
+    | "unsubstituted"
+    | "unsaved"
+    | "locked";
   /** Bounded, already safe to render. Parser text is quoted, never interpreted. */
   readonly detail: string;
 }

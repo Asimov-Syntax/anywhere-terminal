@@ -255,18 +255,29 @@ const providerWithoutPresence: ProvisionProvider = {
   active: true,
 };
 
-// A refused save is said in the vocabulary of writing. The other five reasons
-// all describe a READ going wrong (design.md D13).
+// A refused save is said in the vocabulary of writing. Five of the reasons
+// describe a READ going wrong (design.md D13).
 const refusedSaveProblem: ProvisionProblem = {
   file: ".vscode/worktree.json",
   reason: "unsaved",
   detail: "`.vscode/worktree.json` was not saved. Another process is holding it.",
 };
 
+// A save that LANDED and may have left its lock. Neither of the other two write
+// answers can carry it: the file was written, and it read fine
+// (say-which-lock-a-save-left-behind design.md D4). It names no lock — the wire
+// carries no identity, so a pathname here would be a deletion instruction that
+// goes stale.
+const savedButLockedProblem: ProvisionProblem = {
+  file: ".vscode/worktree.json",
+  reason: "locked",
+  detail: "`.vscode/worktree.json` was saved, but it may still be locked.",
+};
+
 const problemWithAnInventedReason: ProvisionProblem = {
   file: ".vscode/worktree.json",
-  // @ts-expect-error the reasons are enumerated; a write refusal is `unsaved`
-  reason: "locked",
+  // @ts-expect-error the reasons are enumerated; a lock left behind is `locked`
+  reason: "wedged",
   detail: "held elsewhere",
 };
 
@@ -311,6 +322,9 @@ describe("the wire contract", () => {
     expect(save.kept).toHaveLength(2);
     expect(detectedProvider.present).toEqual([".worktreeinclude"]);
     expect(refusedSaveProblem.reason).toBe("unsaved");
+    // Distinct from `unsaved`, and carrying no lock pathname.
+    expect(savedButLockedProblem.reason).toBe("locked");
+    expect(Object.keys(savedButLockedProblem)).toEqual(["file", "reason", "detail"]);
     expect([saveNamingASource, providerWithoutPresence, problemWithAnInventedReason]).toHaveLength(3);
   });
 });

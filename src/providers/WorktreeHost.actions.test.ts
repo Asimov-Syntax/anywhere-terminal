@@ -3529,6 +3529,40 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  // The lock is known before the reread, so a reread that fails must not be able
+  // to swallow it. It used to (round-3 F004).
+  it("still reports a lock when rebuilding the view afterwards fails", async () => {
+    // The first read opens the form; the reread AFTER the save is the one that
+    // has to fail, or there is no offer to report onto.
+    let reads = 0;
+    const h = await opened({
+      write: async () => ({ ok: true, wrote: true, mayStillBeLocked: true }),
+      read: async () => {
+        reads += 1;
+        return reads === 1 ? OFFERED : Promise.reject(new Error("gone"));
+      },
+    });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.map((p) => p.reason)).toEqual(["locked"]);
+    h.dispose();
+  });
+
+  it("says a written file was saved, and a no-op was not", async () => {
+    const h = await opened({ write: async () => ({ ok: true, wrote: false, mayStillBeLocked: true }) });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.at(0)?.reason).toBe("locked");
+    expect(last.model.problems.at(0)?.detail).not.toMatch(/was saved/i);
+    h.dispose();
+  });
+
   it("keeps `malformed` for the one refusal that IS about the file", async () => {
     const h = await opened({ write: async () => ({ ok: false, reason: "malformed" }) });
 

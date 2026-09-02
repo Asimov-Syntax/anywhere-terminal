@@ -732,7 +732,17 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
   // file read perfectly well, and saying it could not be read about a file this
   // form has just rendered the contents of is the category error `unsaved`
   // exists to end (design.md D13).
-  return model.problems.every((p) => p.reason === "unsaved") ? "Not saved" : "Could not be read";
+  // A refusal outranks a lock: the write that did not happen is what the user
+  // must deal with first. Note this comparison is NOT exhaustive over the union,
+  // so adding a reason does not make the compiler point here — the inventory is
+  // kept by hand in the change's tasks.md.
+  if (model.problems.some((p) => p.reason === "unsaved")) {
+    return "Not saved";
+  }
+  if (model.problems.every((p) => p.reason === "locked")) {
+    return "Saved, still locked";
+  }
+  return "Could not be read";
 }
 
 /**

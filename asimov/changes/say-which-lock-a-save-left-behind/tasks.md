@@ -29,15 +29,15 @@
     2. Witness the three outcomes — landed, no-op, refused — each carrying it only for those dispositions, and an ordinary save carrying nothing.
     3. Arm-check by setting it for every non-`released` disposition.
 
-- [ ] 1_3 Say it in the panel, without calling a written file unsaved
+- [x] 1_3 Say it in the panel, without calling a written file unsaved — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && pnpm exec biome check src/utils/fileIdentity.ts src/utils/regularFileRead.ts src/agentHooks/install src/worktree/provisioning src/types src/webview/worktree/WorktreeCreateDialog.ts src/webview/worktree/WorktreeCreateDialog.test.ts src/providers/WorktreeHost.ts src/providers/WorktreeHost.actions.test.ts && pnpm run test:unit exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#a-save-that-wrote-is-never-presented-as-unsaved, specs/worktree-panel/spec.md#a-lock-left-behind-survives-a-failed-refresh; design.md D4, D5
   - **Acceptance**:
     - Outcome: a written-but-locked save reads as written in the summary and in the detail
-    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts
   - **Plan**:
     1. Add `locked` to `ProvisionProblem.reason` in `src/types/messages.ts`.
-    2. Take the consumer inventory BY HAND — `p.reason === "unsaved"` is not exhaustive, so the type checker will not find them: `WorktreeCreateDialog.ts:723-735` (summary) and `:740-757` (detail), `readProvisioning.ts:218-239` (the one semantic reason check), and `messages.contract.test.ts:258-271`.
+    2. Take the consumer inventory BY HAND — `p.reason === "unsaved"` is not exhaustive, so the type checker will not find them: `WorktreeCreateDialog.ts:723-735` (summary) and `:740-757` (detail), `readProvisioning.ts:218-239` (the one semantic reason check), and `src/types/messages.contract.test.ts:258-271`, whose invented-reason example literally uses the string `locked` and stops being invalid.
     3. In `src/webview/worktree/WorktreeCreateDialog.ts`, give the summary its own arm for `locked` rather than folding it into either existing answer.
     4. In `src/providers/WorktreeHost.ts`, build the problem from the write's own outcome before the reread, so a rejected reread cannot swallow it.
     5. Witness the summary on a POPULATED model — an empty one returns counts before problems are inspected — plus a rejected reread at the host, and the wire shape in the contract test.
