@@ -925,10 +925,14 @@ describe("a target that is not an ordinary file", () => {
     const second = await raced(writeNativeConfig(realDeps, root, div({ exclude: ["dist"] })));
 
     expect(first).not.toBe("waited");
-    expect(second).not.toBe("waited");
-    // The second call is the whole point: a stranded lock answers `unavailable`
-    // for every later save, which is a persistent denial rather than a refusal.
-    expect(second).not.toEqual({ ok: false, reason: "unavailable" });
+    // Named exactly, not merely "answered": answering is what the timer above
+    // proves, and a save that returned success over a pipe would satisfy that
+    // and still be wrong (.reviews/round-7.md F027).
+    expect(first).toEqual({ ok: false, reason: "unwritable" });
+    expect(second).toEqual({ ok: false, reason: "unwritable" });
+    // And the second call is why both are asserted: a stranded lock answers
+    // `unavailable` for every later save, which is a persistent denial rather
+    // than a refusal.
     await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
