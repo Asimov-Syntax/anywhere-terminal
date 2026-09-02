@@ -395,3 +395,20 @@ job and a different task.
 
 The gate is armed against the artifact, not the source: its non-vacuity witness feeds it
 production-minified UMD output, because that is the shape the defect actually shipped in.
+
+### Plan attack on § Cost — dispositions, 2026-09-02
+
+| Row | Disposition | Evidence |
+|---|---|---|
+| Propagation work is bounded | **refuted** | `enqueue` (`scripts/bundleRequires.mjs:342-349`) pushes one item per `passedAs` entry on every growth, and none of those pushes is counted. When `targetsOf` returns `[]` — a callee holding no callable — the dequeued item costs zero counted units. Reproduced: a 52 KB fixture with no reassignment of any binding reads **2,400** work units, 0.12% of the ceiling, while the loop performs **1,442,400** queue pops in 767 ms. The proposed arm-check cannot see this, because the uncounted path never enters the target loop — round 6's failure mode one level further out. |
+| The ceiling never fires on a real build | **refuted as argued** | My linearity measurement was methodologically wrong: concatenating the artifact with itself duplicates independent symbol graphs and never grows a single symbol's fact set, so it measured the wrong axis. Work is quadratic in per-symbol callable fanout, not in bytes — `flow`'s replay loop costs ~F²/2 for a symbol holding F callables. The ceiling is ~58 KB of a higher-order-helper shape, not ~200 MB. |
+| Abandoning the pass cannot change a verdict | supported | Unchallenged; structural argument and four probes stand. |
+| A computed relative request is reported | **refuted, and wider than F019** | Parens are the only transparent wrapper a bundler emits, so 8_1 closes the reported case. But `` r(t + ".js") `` is a real relative request with head `./` that is missed today — a `BinaryExpression` parent, which paren-walking does not address. Keep the `parent.arguments` membership test: kind-only walking misreports `` `./${x}`() ``, where the template is the CALLEE. |
+
+Two refuted rows, and the first is the same mistake round 6 made, now in the design rather than the
+code. That is the strongest available evidence about this mechanism: the ceiling is a new invariant
+needing a counter on every path, an abandonment message, an above-ceiling fixture, an arm-check and a
+headroom assertion — and its first two drafts were both wrong in the way its predecessor was wrong.
+
+Recorded, not resolved. What replaces § Cost is a scope decision, not a mechanism choice, and it
+overturns the Gate 1 answer that kept these warnings.
