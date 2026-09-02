@@ -4,7 +4,7 @@
 // against the target the id names AFTER the rebuild.
 
 import { describe, expect, it, vi } from "vitest";
-import type { ProvisionStepResult } from "../types/messages";
+import type { BranchDeleteRequest, ProvisionStepResult } from "../types/messages";
 import type { ClearDebrisDeps } from "./clearDebris";
 import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
@@ -21,6 +21,13 @@ const REPO = "/repo/.git";
 /** Git reports this one with a trailing slash, so id and path differ. */
 const RAW_ID = "/repo-wt/raw";
 const RAW_PATH = "/repo-wt/raw/";
+const DELETE_BRANCH: BranchDeleteRequest = {
+  branch: "feature",
+  expectedBranchOid: "1".repeat(40),
+  defaultBranch: "main",
+  expectedDefaultOid: "2".repeat(40),
+  fingerprint: "branch-fp",
+};
 
 function ok(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
@@ -403,6 +410,77 @@ describe("a mutation reaches git through the coordinator", () => {
 
     await h.service.removeWorktree(target, blocked.fingerprint ?? "");
     expect(h.argv[0]).toEqual(["worktree", "remove", RAW_PATH]);
+  });
+
+  it("runs the opted-in branch action only after a successful removal", async () => {
+    const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: "feature" }));
+    const h = harness({ deleteBranch });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+
+    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+
+    expect(deleteBranch).toHaveBeenCalledWith("/repo", DELETE_BRANCH);
+    expect(h.outcomes[1]).toMatchObject({
+      kind: "ok",
+      verb: "remove",
+      branchDelete: { kind: "deleted", branch: "feature" },
+    });
+  });
+
+  it("reports a refused branch action without changing the successful removal", async () => {
+    const h = harness({
+      deleteBranch: async () => ({ kind: "refused", reason: "refs-moved" }),
+    });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+
+    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+
+    expect(h.outcomes[1]).toMatchObject({
+      kind: "ok",
+      verb: "remove",
+      branchDelete: { kind: "refused", reason: "refs-moved" },
+    });
+  });
+
+  it("keeps the removal successful when the branch binding rejects", async () => {
+    const h = harness({ deleteBranch: async () => Promise.reject(new Error("unavailable")) });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+
+    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+
+    expect(h.outcomes[1]).toMatchObject({
+      kind: "ok",
+      verb: "remove",
+      branchDelete: { kind: "refused", reason: "holders-unavailable" },
+    });
+  });
+
+  it("attempts no branch action when removal fails or the opt-in is absent", async () => {
+    const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: "feature" }));
+    const failingRunner: GitCommandRunner = {
+      run: vi.fn(async (args) => (args[0] === "worktree" && args[1] === "remove" ? ok({ code: 1 }) : ok())),
+    };
+    const failed = harness({ runner: failingRunner, deleteBranch });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await failed.service.removeWorktree(target, undefined);
+    const failedFingerprint = (failed.outcomes[0] as { fingerprint: string }).fingerprint;
+    await failed.service.removeWorktree(target, failedFingerprint, DELETE_BRANCH);
+
+    const unrequested = harness({ deleteBranch });
+    await unrequested.service.removeWorktree(target, undefined);
+    const unrequestedFingerprint = (unrequested.outcomes[0] as { fingerprint: string }).fingerprint;
+    await unrequested.service.removeWorktree(target, unrequestedFingerprint);
+
+    expect(deleteBranch).not.toHaveBeenCalled();
+    expect(failed.outcomes[1]).not.toMatchObject({ kind: "ok" });
+    expect(unrequested.outcomes[1]).toMatchObject({ kind: "ok", verb: "remove" });
+    expect(unrequested.outcomes[1]).not.toHaveProperty("branchDelete");
   });
 
   it("offers no token at all when the assessment refuses", async () => {

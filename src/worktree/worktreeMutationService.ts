@@ -11,7 +11,13 @@
 
 import * as nodePath from "node:path";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
-import type { ProvisionEntry, ProvisionStepResult, WorktreeAfterCreate, WorktreeCreateMode } from "../types/messages";
+import type {
+  BranchDeleteRequest,
+  ProvisionEntry,
+  ProvisionStepResult,
+  WorktreeAfterCreate,
+  WorktreeCreateMode,
+} from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type ClearDebrisDeps, clearDebris, nodeClearDebrisDeps } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
@@ -20,6 +26,7 @@ import {
   type DebrisAuthorizationStore,
   type DebrisIssueResult,
 } from "./debrisAuthorization";
+import type { DeleteBranchOutcome } from "./deleteBranch";
 import { messageOf } from "./errorMessage";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
@@ -76,6 +83,8 @@ export type MutationOutcome =
        * a follow-up notice sharing this one's scope replaces it (round-4 W7).
        */
       openFailed?: string;
+      /** The optional branch action runs only after the removal itself succeeded. */
+      branchDelete?: DeleteBranchOutcome;
       /**
        * What provisioning did, per entry, and the worktree it did it in.
        *
@@ -214,6 +223,9 @@ export interface MutationServiceDeps {
    * null for a path it cannot normalize, and the path is used then.
    */
   normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
+
+  /** Delete the requested branch only after the worktree removal is known to have succeeded. */
+  deleteBranch?(repoPath: string, request: BranchDeleteRequest): Promise<DeleteBranchOutcome>;
 
   runner: GitCommandRunner;
   /**
@@ -512,7 +524,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         settled("unlock", target.repoId, await unlockWorktree(deps.runner, paths(t))),
       ),
 
-    removeWorktree: (target, fingerprint) =>
+    removeWorktree: (target, fingerprint, deleteBranchRequest?: BranchDeleteRequest) =>
       withTarget(
         "remove",
         target,
@@ -626,7 +638,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           if (deps.resolve(target) === null) {
             fingerprints.forget(target.worktreeId);
           }
-          return asOutcome(
+          const removal = asOutcome(
             "remove",
             target.repoId,
             classifyRemoval({
@@ -636,6 +648,17 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               after: await deps.observeAfter(target, journal.worktreePath),
             }),
           );
+          if (removal.kind !== "ok" || deleteBranchRequest === undefined) {
+            return removal;
+          }
+          const branchDelete = await (
+            deps.deleteBranch?.(t.repoPath, deleteBranchRequest) ??
+            Promise.resolve({ kind: "refused" as const, reason: "holders-unavailable" as const })
+          ).catch(() => ({
+            kind: "refused" as const,
+            reason: "holders-unavailable" as const,
+          }));
+          return { ...removal, branchDelete };
         },
         // The id resolved to nothing on the far side of the forced rebuild, so
         // the worktree is already gone. That IS D15's observation, and it has to

@@ -39,7 +39,7 @@
     4. Issue `start` / `verify refs/heads/<default> <baseOid>` / `delete refs/heads/<branch> <branchOid>` / `commit` on one `git update-ref --stdin`, and treat a non-zero exit as a refusal that deleted nothing.
     5. Return a discriminated outcome naming which guard refused, never a bare boolean.
 
-- [ ] 2_2 Run the delete after the removal, and report it apart
+- [x] 2_2 Run the delete after the removal, and report it apart — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 2_1, 4_5
   - **Refs**: design.md D5; specs/worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal
   - **Acceptance**:

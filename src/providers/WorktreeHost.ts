@@ -9,6 +9,7 @@
 import type * as vscode from "vscode";
 import type {
   BaseVerdict,
+  BranchDeleteRequest,
   DebrisAuthorization,
   DestinationDisposition,
   ExtensionToWebViewMessage,
@@ -346,7 +347,11 @@ export interface WorktreeActions {
     provision?: readonly ProvisionEntry[];
     origin?: WorktreeSurface;
   }): Promise<void>;
-  removeWorktree?(target: WorktreeMutationTarget, fingerprint: string | undefined): Promise<void>;
+  removeWorktree?(
+    target: WorktreeMutationTarget,
+    fingerprint: string | undefined,
+    deleteBranch?: BranchDeleteRequest,
+  ): Promise<void>;
   /**
    * What removing this worktree WOULD cost, without removing it.
    *
