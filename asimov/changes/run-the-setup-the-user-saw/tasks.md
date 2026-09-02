@@ -104,7 +104,7 @@
   - **Deps**: 4_2
   - **Refs**: design.md D1, D2, D3, D4, D5, D6
   - **Acceptance**:
-    - Outcome: every source file changed for setup passes the repository's current check-mode formatter and linter without changing behavior
+    - Outcome: Four production assembly files satisfy current Biome checks
     - Verify: command pnpm exec biome check src/extension.ts src/extension.worktreeAssembly.test.ts src/providers/WorktreeHost.ts src/worktree/worktreeMutationService.ts
   - **Plan**:
     1. Apply only the block, import-order, and line-layout changes reported by check mode in `src/extension.ts`, `src/extension.worktreeAssembly.test.ts`, `src/providers/WorktreeHost.ts`, and `src/worktree/worktreeMutationService.ts`.
@@ -113,7 +113,43 @@
   - **Deps**: 4_3
   - **Refs**: design.md D1, D2, D3, D4, D5, D6
   - **Acceptance**:
-    - Outcome: all remaining setup-delta files pass the current repository formatter and linter without behavioral changes
+    - Outcome: The remaining setup-delta files satisfy current Biome checks
     - Verify: command git diff --name-only 45dab796 -- 'src/**' | xargs pnpm exec biome check
   - **Plan**:
     1. Apply only check-mode block, import-order, and line-layout findings in `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/worktree/ignoredMaterial.test.ts`, `src/worktree/provisioning/provisionManifest.test.ts`, `src/worktree/provisioning/setupRunner.ts`, `src/worktree/provisioning/setupRunner.test.ts`, `src/worktree/provisioning/setupTerminal.ts`, and `src/worktree/provisioning/setupTerminal.test.ts`.
+
+## 5. Review remediation
+
+- [ ] 5_1 Protect setup authority and the aggregate deadline
+  - **Deps**: 4_4
+  - **Refs**: specs/worktree-panel/spec.md#{setup-receives-authoritative-named-ports, setup-receives-the-worktree-paths-and-branch}; design.md D2, D3 <!-- review round 1 F001, F002; F006 runner half -->
+  - **Acceptance**:
+    - Outcome: Port authority and run cancellation remain valid across reserved names, hanging authorization, and pre-spawn races
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/providerKit.test.ts src/worktree/provisioning/setupRunner.test.ts
+  - **Plan**:
+    1. Validate portable, non-reserved port names while parsing in `src/worktree/provisioning/providerKit.ts`; cover malformed, reserved, and case-variant names in `src/worktree/provisioning/providerKit.test.ts`.
+    2. In `src/worktree/provisioning/setupRunner.ts`, overlay host variables after ports, create one deadline and close cancellation state, race authorization against it, recheck immediately before spawn, and make kill plus settlement exception-safe.
+    3. Extend `src/worktree/provisioning/setupRunner.test.ts` with collision, hanging authorization, close-before-spawn, deadline, and throwing-kill witnesses.
+
+- [ ] 5_2 Bound and dispose setup terminal resources
+  - **Deps**: 5_1
+  - **Refs**: design.md D2 <!-- review round 1 F003, F006, F009, F010 -->
+  - **Acceptance**:
+    - Outcome: Terminal output work and resources stay bounded across streaming, child settlement, and disposal
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/setupRunner.test.ts src/worktree/provisioning/setupTerminal.test.ts
+  - **Plan**:
+    1. Replace whole-tail rebuilds with a bounded byte-chunk deque and bounded live-write batching in `src/worktree/provisioning/setupTerminal.ts`; add identity-checked detach and idempotent dispose with best-effort kill.
+    2. Have `src/worktree/provisioning/setupRunner.ts` detach each settled child in `finally`.
+    3. Cover incremental eviction, an oversized event, UTF-8 partial-chunk eviction, 8 ms and 64 KiB flush bounds, pending-flush disposal, final-child detach, both throwing-kill paths, and repeated disposal in `src/worktree/provisioning/setupTerminal.test.ts` and `src/worktree/provisioning/setupRunner.test.ts`.
+
+- [ ] 5_3 Retire output authority and complete create records
+  - **Deps**: 5_2
+  - **Refs**: design.md D3, D4, D5, D6 <!-- review round 1 F004, F005, F007, F008 -->
+  - **Acceptance**:
+    - Outcome: Output authority, retry retirement, and manifests remain truthful across replacement, rejection, and empty creates
+    - Verify: command pnpm exec vitest run src/worktree/worktreeMutationService.test.ts src/extension.worktreeMutations.test.ts src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. Add retry-start output retirement and visible coordinator-rejection reporting to `src/worktree/worktreeMutationService.ts`; normalize every fresh create for a truthful empty manifest and cover all branches in `src/worktree/worktreeMutationService.test.ts`.
+    2. In `src/extension.ts`, bind retained output to its original `AuthorizedDirectory`, recheck it before reveal, and dispose on retry start, replacement, mismatch, and reconciliation.
+    3. Extend `src/extension.worktreeMutations.test.ts` for retry-start disposal, completed-run replacement disposal, same-id authority refusal, rebuild disappearance, and empty-manifest production wiring.
+    4. Reassert in `src/webview/worktree/WorktreeController.test.ts` that a rejection update without a retry id removes the stale action.

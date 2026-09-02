@@ -35,7 +35,12 @@ Every setup process SHALL inherit the extension-host environment and receive `AN
 
 ### Requirement: Setup receives authoritative named ports
 
-Each successfully allocated or reused named port SHALL be set in setup under its configured environment-variable name with its authoritative value.
+A provider port name SHALL be offerable only when it is a portable environment identifier and is outside the case-insensitive `ANYWHERE_TERMINAL_` and `ASIMOV_` namespaces. Each successfully allocated or reused offerable port SHALL be set in setup under its configured environment-variable name with its authoritative value; host-owned setup variables SHALL win any later collision.
+
+#### Scenario: A provider declares a reserved setup variable
+
+- **WHEN** a provider declares `ANYWHERE_TERMINAL_WORKTREE_PATH`, `ASIMOV_CHANGE_ID`, or a case variant as a port name
+- **THEN** the declaration is reported as malformed and is not offered or applied
 
 ### Requirement: Asimov setup receives its compatibility environment
 
