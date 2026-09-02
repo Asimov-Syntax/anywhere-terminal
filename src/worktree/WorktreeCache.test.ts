@@ -422,6 +422,47 @@ describe("WorktreeCache — two folders sharing one repository", () => {
 
     expect(cache.read().repos[0].degraded).toBeUndefined();
   });
+
+  it("pairs a fresh duplicate-repository generation and follow-up with its current registration", () => {
+    const cache = createWorktreeCache();
+    const registeredA = root("/a/.git", 11);
+    const registeredB = root("/a/.git", 12);
+    const listingB = listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]);
+    cache.applyBuild(
+      build(
+        [registeredA],
+        { "/a/.git": listingB },
+        both({ kind: "resolved", repo: registeredA }, { kind: "resolved", repo: registeredA }),
+      ),
+    );
+    const generationA = cache.readRepo("/a/.git")?.generation as number;
+
+    cache.applyBuild(
+      build([registeredB], { "/a/.git": listingB }, [
+        { folder: "/a", outcome: { kind: "failed", reason: "boom" } },
+        { folder: "/a/sub", outcome: { kind: "resolved", repo: registeredB } },
+      ]),
+    );
+
+    const generationB = cache.readRepo("/a/.git")?.generation as number;
+    expect(cache.registrationFor("/a/.git", generationA)).toBeUndefined();
+    expect(cache.registrationFor("/a/.git", generationB)).toEqual(registeredB.registration);
+    expect(cache.rootFor("/a/.git")).toEqual(registeredB);
+
+    cache.applyRepo("/a/.git", listingB);
+    const followUpGeneration = cache.readRepo("/a/.git")?.generation as number;
+    expect(cache.registrationFor("/a/.git", generationB)).toBeUndefined();
+    expect(cache.registrationFor("/a/.git", followUpGeneration)).toEqual(registeredB.registration);
+    expect(cache.rootFor("/a/.git")).toEqual(registeredB);
+
+    cache.applyBuild(build([], {}, [{ folder: "/a", outcome: { kind: "failed", reason: "still unavailable" } }]));
+    const retained = cache.readRepo("/a/.git");
+    expect(retained?.worktrees).toHaveLength(2);
+    expect(retained?.degraded).toBe("still unavailable");
+    expect(retained?.generation).toBeUndefined();
+    expect(cache.registrationFor("/a/.git", followUpGeneration)).toBeUndefined();
+    expect(cache.rootFor("/a/.git")).toEqual(registeredB);
+  });
 });
 
 // Review round 1, W2. design.md D3 says `read()` returns the retained

@@ -19,6 +19,8 @@ interface CachedRepo {
    * its worktrees instead of observing them.
    */
   generation: number | undefined;
+  /** The private registration observed by the apply that minted `generation`. */
+  registration: ResolvedRepo["registration"];
   /**
    * Why this repository is not being watched, if it is not.
    *
@@ -129,12 +131,18 @@ export function createWorktreeCache(): WorktreeCache {
    * Merge one incoming group over what is stored. A degraded listing carries no
    * worktrees and produced no records, so it retracts neither.
    */
-  function merge(repoId: string, incoming: WorktreeRepo, listing: RepoListing): CachedRepo {
+  function merge(
+    repoId: string,
+    incoming: WorktreeRepo,
+    listing: RepoListing,
+    registration: ResolvedRepo["registration"],
+  ): CachedRepo {
     const stored = repos.get(repoId);
     if (listing.degraded !== undefined && stored) {
       return {
         repo: { ...incoming, worktrees: stored.repo.worktrees, degraded: listing.degraded },
         generation: undefined,
+        registration: undefined,
         unwatched: stored.unwatched,
         reasons: stored.reasons,
         skipped: stored.skipped,
@@ -143,6 +151,7 @@ export function createWorktreeCache(): WorktreeCache {
     return {
       repo: incoming,
       generation: nextGeneration(),
+      registration,
       // Survives the listing that just replaced everything else: a rebuild says
       // what the repository contains, never whether it is being watched.
       unwatched: stored?.unwatched,
@@ -153,15 +162,18 @@ export function createWorktreeCache(): WorktreeCache {
 
   function applyBuild(build: WorktreeTreeBuild): void {
     const next = new Map<string, CachedRepo>();
+    const currentRoots = new Map(build.roots.map((root) => [root.repoId, root]));
     for (const repo of build.tree.repos) {
       const listing = build.listings.get(repo.repoId);
+      const registration = currentRoots.get(repo.repoId)?.registration;
       next.set(
         repo.repoId,
         listing
-          ? merge(repo.repoId, repo, listing)
+          ? merge(repo.repoId, repo, listing, registration)
           : {
               repo,
               generation: nextGeneration(),
+              registration,
               unwatched: repos.get(repo.repoId)?.unwatched,
               reasons: [],
               skipped: 0,
@@ -178,7 +190,7 @@ export function createWorktreeCache(): WorktreeCache {
     for (const { folder, outcome } of build.folderOutcomes) {
       let resolved: ResolvedRepo | undefined;
       if (outcome.kind === "resolved") {
-        resolved = outcome.repo;
+        resolved = currentRoots.get(outcome.repo.repoId) ?? outcome.repo;
       } else if (outcome.kind === "failed") {
         // `absent` is an answer — that folder is not a repository, so anything
         // remembered for it is genuinely gone. `failed` is the absence of one.
@@ -186,15 +198,17 @@ export function createWorktreeCache(): WorktreeCache {
         const stored = remembered && repos.get(remembered.repoId);
         if (remembered && next.has(remembered.repoId)) {
           // A sibling folder names this same repository and did resolve, so its
-          // fresh listing stands. This folder still keeps the mapping: the day
-          // that sibling closes, it is the only memory the group has left.
-          resolved = remembered;
+          // current root and fresh listing stand. Remember that root here too:
+          // the failed folder keeps the group if the sibling closes, but cannot
+          // later initiate a repo-scoped observation from stale registration.
+          resolved = currentRoots.get(remembered.repoId);
         } else if (remembered && stored) {
           next.set(remembered.repoId, {
             // Retained for the same reason and on the same terms: this folder
             // failed to resolve, so nothing here was observed either.
             repo: { ...stored.repo, degraded: outcome.reason },
             generation: undefined,
+            registration: undefined,
             unwatched: stored.unwatched,
             reasons: stored.reasons,
             skipped: stored.skipped,
@@ -232,7 +246,7 @@ export function createWorktreeCache(): WorktreeCache {
     if (!root) {
       return;
     }
-    repos.set(repoId, merge(repoId, assembleRepo(root, listing, folders, rank), listing));
+    repos.set(repoId, merge(repoId, assembleRepo(root, listing, folders, rank), listing, root.registration));
   }
 
   function markUnwatched(repoId: string, reason: string | undefined): void {
@@ -317,10 +331,8 @@ export function createWorktreeCache(): WorktreeCache {
   }
 
   function registrationFor(repoId: string, generation: number): ResolvedRepo["registration"] {
-    if (repos.get(repoId)?.generation !== generation) {
-      return undefined;
-    }
-    return order.find((one) => one.repoId === repoId)?.registration;
+    const cached = repos.get(repoId);
+    return cached?.generation === generation ? cached.registration : undefined;
   }
 
   return {

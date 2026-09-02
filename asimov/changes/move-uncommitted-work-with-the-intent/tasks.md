@@ -204,7 +204,7 @@
 
 ## 5. Keep publication authority in one cache record
 
-- [ ] 5_1 Pair each generation with its observed registration
+- [x] 5_1 Pair each generation with its observed registration — verified: bun test 'src/worktree/WorktreeCache.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 4_6
   - **Refs**: design.md D3 <!-- review round 3 F010 -->
   - **Acceptance**:
