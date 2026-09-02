@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -43,3 +43,5 @@ Planned at: 8a48e52c
 - Round-3 split: `offer-a-yielding-declaration-as-yielding` owns F007's live half (the dialog checks every contender and counts it into "N copied" before the apply refuses it) and `carry-a-contest-membership-once` owns F008's wire contract. This change keeps F006 and F007's artifact half. Both are scaffolded and this change depends on them.
 - Follow-up for the blueprint owner, NOT taken here: docs/PLAN.md needs rows for those two changes. PLAN.md is not edited beyond a Status row without the user.
 - Round-4 contracts specialist reached this session directly after its hand-back to the chair failed to route: the F006 fix preserves a contested entry's own rule but drops contest membership from it, so the favoured member's ordinary refusal names nobody — against D4a and D4b, which require every refusal to name every member. Confirmed against src/worktree/provisioning/applyProvisioning.ts. The F006 witness asserts only the rule substring and does not witness membership. To be fixed whatever the chair returns, since the chair may never have received this finding.
+
+Round-7 handback: F007 reopened — D3b settled how a two-native group is APPLIED and left how it is OFFERED unmoved, so the dialog ticks and counts rows the apply refuses entire. Gates unticked: Gate 2, All tasks done, and the Verify gate. F013 rides the same requirement; F014, F015, F016 and F017 are accepted and become tasks in the replan.
