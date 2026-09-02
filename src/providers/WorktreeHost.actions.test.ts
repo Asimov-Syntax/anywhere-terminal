@@ -3582,6 +3582,53 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  // A failed reread falls back to the model ALREADY PUBLISHED, which carries the
+  // previous save's report. Appending onto it stacks two answers about one file
+  // and the summary then reads the older one (round-2 F004).
+  it.each([
+    [
+      "written then unchanged",
+      [
+        { ok: true, wrote: true, mayStillBeLocked: true },
+        { ok: true, wrote: false, mayStillBeLocked: true },
+      ],
+      "unchanged",
+    ],
+    [
+      "refused then written",
+      [
+        { ok: false, reason: "unwritable", mayStillBeLocked: true },
+        { ok: true, wrote: true, mayStillBeLocked: true },
+      ],
+      "written",
+    ],
+  ] as const)("reports only the latest save when the refresh keeps failing (%s)", async (_name, writes, latest) => {
+    let attempt = 0;
+    let reads = 0;
+    const h = await opened({
+      write: async () => writes[Math.min(attempt++, writes.length - 1)],
+      read: async () => {
+        reads += 1;
+        return reads === 1 ? OFFERED : Promise.reject(new Error("gone"));
+      },
+    });
+
+    // The second save carries a HIGHER `switch`: the ceiling at `:2483` is
+    // monotonic, so a repeat at the same value is dropped before it writes and
+    // the accumulation this test is about would never be reached.
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 1 }));
+    await settle();
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 2 }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    const locks = last.model.problems.filter((p) => p.reason === "locked");
+    expect(locks).toHaveLength(1);
+    expect(locks[0]?.reason === "locked" ? locks[0].writeOutcome : undefined).toBe(latest);
+    expect(last.model.problems.filter((p) => p.reason === "unsaved")).toHaveLength(0);
+    h.dispose();
+  });
+
   it("keeps `malformed` for the one refusal that IS about the file", async () => {
     const h = await opened({ write: async () => ({ ok: false, reason: "malformed" }) });
 

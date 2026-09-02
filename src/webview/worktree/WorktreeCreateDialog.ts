@@ -762,6 +762,14 @@ function saveSummary(problems: WorktreeProvisionOffer["model"]["problems"]): str
   if (locked.some((p) => p.writeOutcome === "refused")) {
     return "Not saved";
   }
+  // A lock never speaks over a file that could not be READ. This is the old
+  // `every((p) => p.reason === "locked")` restated: the lock answer applies only
+  // when a lock is the only kind of problem. Splitting the helper out dropped it,
+  // and a headline claiming a save landed over an unreadable provider file is
+  // the same falsehood F002 was about (round-2 F005).
+  if (problems.some((p) => p.reason !== "locked")) {
+    return undefined;
+  }
   return locked.some((p) => p.writeOutcome === "written")
     ? "Saved, may still be locked"
     : "Already up to date, may still be locked";

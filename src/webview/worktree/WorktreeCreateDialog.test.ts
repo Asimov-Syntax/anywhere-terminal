@@ -1224,6 +1224,26 @@ describe("Bring over — a repository that declares nothing, and a file that can
 
   // A refusal outranks it: the user must deal with the write that did not happen
   // before the lock that might still be there.
+  // A lock must not speak over a file that could not be READ. The old summary
+  // said the lock answer applies only when a lock is the only kind of problem,
+  // and task 2_2 dropped that guard when it split the helper out (round-2 F005).
+  it("does not let a lock mask a provider file that could not be read", () => {
+    const { host } = withModel({
+      ...emptyProvisionModel(),
+      problems: [
+        { file: "asimov/worktree.yaml", reason: "malformed", detail: "Unexpected key `copyFiles`." },
+        {
+          file: ".vscode/worktree.json",
+          reason: "locked",
+          writeOutcome: "written",
+          detail: "`.vscode/worktree.json` was saved, but it may still be locked.",
+        },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Could not be read");
+  });
+
   it("keeps the refusal's answer when a save was refused AND may be locked", () => {
     const { host } = withModel({
       ...emptyProvisionModel(),

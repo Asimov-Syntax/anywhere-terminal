@@ -16,6 +16,7 @@ import type {
   ProbeBase,
   ProvisionEntry,
   ProvisionModel,
+  ProvisionProblem,
   ProvisionProvider,
   ProvisionSelection,
   ProvisionWriteOutcome,
@@ -156,6 +157,27 @@ export interface WorktreeSurface {
  * saved is not a reason to refuse to make a worktree
  * (worktree-provisioning.md § 9).
  */
+/**
+ * The problems the SAVE path put on a model, as opposed to the ones a read found.
+ *
+ * A failed reread republishes the model already shown, which carries the previous
+ * save's report — so appending stacks two answers about one file and the summary
+ * reads the older one (round-2 F004). Identity is the only workable key: a
+ * `malformed` refusal is posted under the same reason a READ produces, so
+ * filtering by reason or filename would eat a genuine read problem.
+ *
+ * Weak, because the entries live exactly as long as the model holding them.
+ */
+const postedBySave = new WeakSet<ProvisionProblem>();
+
+function post(model: ProvisionModel, problem: ProvisionProblem): ProvisionModel {
+  postedBySave.add(problem);
+  return {
+    ...model,
+    problems: [...model.problems.filter((p) => !postedBySave.has(p)), problem],
+  };
+}
+
 function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): ProvisionModel {
   const detail: Record<NativeConfigRefusal, string> = {
     unavailable: "Another process is holding it, or the folder could not be created.",
@@ -164,17 +186,11 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
     unwritable: "The replacement could not be put in place.",
     unnamed: "The source it builds on could not be read.",
   };
-  return {
-    ...model,
-    problems: [
-      ...model.problems,
-      {
-        file: NATIVE_PROVIDER_FILE,
-        reason: reason === "malformed" ? "malformed" : "unsaved",
-        detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
-      },
-    ],
-  };
+  return post(model, {
+    file: NATIVE_PROVIDER_FILE,
+    reason: reason === "malformed" ? "malformed" : "unsaved",
+    detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
+  });
 }
 
 /**
@@ -201,18 +217,12 @@ const LOCK_WORDING: Record<ProvisionWriteOutcome, string> = {
  * (design.md D4). It names no lock, deliberately (D1).
  */
 function leftLocked(model: ProvisionModel, writeOutcome: ProvisionWriteOutcome): ProvisionModel {
-  return {
-    ...model,
-    problems: [
-      ...model.problems,
-      {
-        file: NATIVE_PROVIDER_FILE,
-        reason: "locked",
-        writeOutcome,
-        detail: `\`${NATIVE_PROVIDER_FILE}\` ${LOCK_WORDING[writeOutcome]}. Saving it again may not work until the lock clears.`,
-      },
-    ],
-  };
+  return post(model, {
+    file: NATIVE_PROVIDER_FILE,
+    reason: "locked",
+    writeOutcome,
+    detail: `\`${NATIVE_PROVIDER_FILE}\` ${LOCK_WORDING[writeOutcome]}. Saving it again may not work until the lock clears.`,
+  });
 }
 
 export interface WorktreeHostOptions {

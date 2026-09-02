@@ -56,7 +56,7 @@
     3. Adopt `sameIdentity` from `src/utils/fileIdentity.ts` at `src/agentHooks/install/ClaudeHookInstaller.ts:377-379` (F003). Do NOT convert the installer's existing stat captures to `{ bigint: true }` — that is separate ownership work and would widen this task.
     4. Witness each arm in `src/agentHooks/install/ClaudeHookInstaller.test.ts` and `src/agentHooks/AgentHookController.test.ts`: a `lock-unavailable` outcome, and a `stuck` release, neither carrying the lock path; and `AgentHookController.formatWarning` still firing on a mismatch while naming no path.
     5. The invariant has a SECOND boundary the review did not list, found by grepping for the shape rather than the quoted line: `src/cursor/CursorHookInstaller.ts` puts the lock path into `unresolved` on its release-failure arms (`:178`, `:237`) and into `unresolvedConfigPaths(true)` for `lock-unavailable` (`:243`), reaching the same `formatWarning`. Close it there too — `appendUnresolved` loses its only caller.
-    6. `unresolved` was doing DOUBLE DUTY — a user-facing path list AND the internal "something is unresolved" signal — so emptying it silently disarms three consumers. In `src/agentHooks/AgentHookController.ts` a lock-release failure then reaches `{ success: true, reason: "" }`, so no warning fires at all (`:239`, `:266`), and uninstall GRANTS the authority D5/D9 says to withhold; in `src/cursor/CursorHookInstaller.ts:117` the Windows install path reads it as a clean cleanup and reports `unsupported-platform` over a stuck lock. Make the residue signal the REASON, keeping the path check as an OR so no existing behaviour moves.
+    6. `unresolved` was doing DOUBLE DUTY — a user-facing path list AND the internal "something is unresolved" signal — so emptying it silently disarms three consumers. In `src/agentHooks/AgentHookController.ts` a lock-release failure then reaches `{ success: true, reason: "" }`, so no warning fires at all (`:239`, `:266`), and uninstall GRANTS the authority D5 and D9 say to withhold; in `src/cursor/CursorHookInstaller.ts:117` the Windows install path reads it as a clean cleanup and reports `unsupported-platform` over a stuck lock. Make the residue signal the REASON, keeping the path check as an OR so no existing behaviour moves.
     7. Arm-check by putting each path back and confirming the witness fails, and by emptying `unresolved` WITHOUT the reason arm to confirm the warning-still-fires witness catches it.
   - **Boundary**: no `{ bigint: true }` conversion of either installer's pre-existing stat captures; the authority RULE stated in D5 and D9 is unchanged — only the signal it reads
 
@@ -75,3 +75,17 @@
     6. Witness every row of D4's summary table on a POPULATED model in `src/webview/worktree/WorktreeCreateDialog.test.ts`, plus refusal precedence and the failed reread from 1_3 in `src/providers/WorktreeHost.actions.test.ts`.
     7. Arm-check by restoring the early return and by collapsing the three outcomes back to a boolean.
   - **Boundary**: `media/webview.js` is a build artifact and untracked — do not edit it
+
+- [x] 3_1 Report the save that just happened, not the one before it — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && pnpm exec biome check src/providers/WorktreeHost.ts src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.ts src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run test:unit exit 0
+  - **Deps**: 2_2
+  - **Refs**: specs/worktree-panel/spec.md#a-save-that-wrote-is-never-presented-as-unsaved; design.md D4, D5; .reviews/round-2.md F004, F005
+  - **Acceptance**:
+    - Outcome: the panel's save answer describes the latest attempt only
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. In `src/providers/WorktreeHost.ts` — a failed reread falls back to the model already published, which carries the PREVIOUS save's appended problems, so `refusedSave` and `leftLocked` stack reports about one file. Remember the problems the save path appended for a surface and drop exactly those from the fallback before appending the new ones. Identity, not reason or filename: `refusedSave` maps a `malformed` refusal onto the same reason a READ produces, so a reason filter would eat genuine read problems.
+    2. In `src/webview/worktree/WorktreeCreateDialog.ts` — restore the guard that task 2_2 dropped. The old `every((p) => p.reason === "locked")` said the lock answer applies only when a lock is the ONLY kind of problem; the rewrite's `filter`/`some` lets a lock mask a `malformed` or `unreadable` alongside it. Fall through to the existing answers when a non-lock problem is present, so nothing else about the precedence moves.
+    3. Witness two saves through the failed-reread fallback for `written → unchanged` and `refused → written`, asserting ONE lock problem and the latest outcome.
+    4. Witness a read problem beside a lock, asserting the read failure is not masked.
+    5. Arm-check by restoring the append and by removing the non-lock guard.
+  - **Boundary**: genuine read problems are preserved — the fix removes only what the save path itself added
