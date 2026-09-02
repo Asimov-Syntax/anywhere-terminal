@@ -73,8 +73,12 @@ survived seven rounds lived in it.
 
 Externals are still READ FROM `esbuild.js` rather than copied here, by the config object whose
 `outfile` is the extension bundle (D5), because a second hand-maintained list drifts silently.
-Builtins come from `node:module`'s `builtinModules`. Both still matter: they are what keeps `vscode`
-and `node:fs` out of the relative and absolute verdicts.
+Builtins come from `node:module`'s `builtinModules`. Note what the deletion does to them: nothing the
+sweep now collects — a relative literal, or an absolute one under the build root — can be a builtin
+or a declared external, so neither set can change a verdict any more. They remain because `classify`
+is the exported classification function and is still driven directly, and because D5's refusal of an
+unreadable config is a property of the gate independent of what the set is consulted for. Deleting
+them is a further scope cut this change does not make.
 
 **Resolution is what the PACKAGED extension could load, not what exists on the build machine**
 (.reviews/round-1.md F001). `scripts/` and `node_modules/` exist in the checkout and not in the VSIX,

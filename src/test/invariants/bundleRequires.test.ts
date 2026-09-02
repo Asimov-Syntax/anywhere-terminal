@@ -11,10 +11,8 @@ import {
   declaredExternals,
   exitCodeFor,
   parseCount,
-  propagationStats,
   relativeLiterals,
   relativeTemplates,
-  requiredSpecifiers,
   unresolvableRequires,
 } from "../../../scripts/bundleRequires.mjs";
 
@@ -76,9 +74,12 @@ describe("[round-1 F003] the externals come from the bundle's own build", () => 
 
   it("does not take the other build's externals", () => {
     // The webview config sits in the same file; allowlisting its externals for
-    // the extension bundle is the drift D2 exists to prevent.
+    // the extension bundle is the drift D2 exists to prevent. Driven through
+    // `classify` since round 7: bare specifiers no longer reach the sweep, so
+    // `verdicts` can no longer witness which config was read.
     expect(declaredExternals(ESBUILD, OUT).has("never-allowlist-me")).toBe(false);
-    expect(verdicts(`require("never-allowlist-me")`)).toHaveLength(1);
+    const externals = declaredExternals(ESBUILD, OUT);
+    expect(classify("never-allowlist-me", { externals, resolvesFrom: DIST }).ok).toBe(false);
   });
 
   it("does not count a commented-out entry as declared", () => {
@@ -97,39 +98,6 @@ describe("[round-1 F003] the externals come from the bundle's own build", () => 
     expect(() => declaredExternals(computed, OUT)).toThrow(/computed/);
   });
 });
-
-describe("[round-1 F002] a require is a call, not a piece of text", () => {
-  it("catches the relative require a UMD factory left behind", () => {
-    // INVOKED. The uninvoked spelling this once used is source-only — it never
-    // reaches a bundle — and keeping it forced a spelling seed that falsely
-    // rejected a legitimate local binding named `require` (round-3 F007).
-    expect(
-      requiredSpecifiers(`(function(require, exports){ var f = require("./impl/format"); })(require, {});`),
-    ).toEqual(["./impl/format"]);
-  });
-
-  it("does not report one written inside a comment", () => {
-    expect(requiredSpecifiers(`// require("./missing")\n/* require("./missing") */`)).toEqual([]);
-  });
-
-  it("does not report one quoted inside a diagnostic string", () => {
-    expect(requiredSpecifiers(`var msg = "Cannot find module: require(\\"./missing\\")";`)).toEqual([]);
-  });
-
-  it("does not report a method that merely shares the name", () => {
-    // `loader.require(...)` is a property access, not this `require`.
-    expect(requiredSpecifiers(`loader.require("./missing"); mod.require("./missing");`)).toEqual([]);
-  });
-
-  it("still catches a call the old spelling would have missed", () => {
-    expect(requiredSpecifiers(`require\n(\n  /* here */ "./spaced"\n)`)).toEqual(["./spaced"]);
-  });
-
-  it("ignores a computed require, which is the stated limit", () => {
-    expect(requiredSpecifiers("require(name); require(a + b);")).toEqual([]);
-  });
-});
-
 describe("[round-1 F001] resolution is what the PACKAGED extension could load", () => {
   it("fails the defect's own require when nothing is beside the bundle", () => {
     expect(one(`require("./impl/format")`)).toMatchObject({ specifier: "./impl/format", ok: false });
@@ -188,8 +156,11 @@ describe("[WT-011.12] what the gate must not report", () => {
     expect(verdicts(`require("vscode");require("node-pty")`)).toEqual([]);
   });
 
-  it("fails a bare specifier that was never bundled", () => {
-    expect(verdicts(`require("lodash")`)).toEqual([expect.objectContaining({ specifier: "lodash", ok: false })]);
+  it("does not report a bare specifier at all, which is round 7's stated price", () => {
+    // design.md D2 § the round-7 scope cut. Telling a bare specifier from
+    // ordinary text is exactly the question that needed the checker, and the
+    // checker is gone. PLAN WT-011.12's acceptance never asked for this class.
+    expect(verdicts(`require("lodash")`)).toEqual([]);
   });
 
   it("does not treat a builtin as an external, nor the reverse", () => {
@@ -199,38 +170,13 @@ describe("[WT-011.12] what the gate must not report", () => {
   });
 });
 
-// [round-2 F002] The gate reads a --production bundle, and minification renames
-// the UMD factory's `require` parameter. The literal below is esbuild's own
-// output for a jsonc-parser-shaped dependency under
-// `--bundle --platform=node --minify`: `require` survives only as an ARGUMENT,
-// and the call that carries the defect is on the renamed binding `e`.
+// The gate reads a --production bundle, and minification renames the UMD
+// factory's `require` parameter. The literal below is esbuild's own output for a
+// jsonc-parser-shaped dependency under `--bundle --platform=node --minify`:
+// `require` survives only as an ARGUMENT, and the call that carries the defect
+// is on the renamed binding `e`. Round 2 used it to prove call detection
+// followed the rename; round 7 uses it to prove the sweep never needed to.
 const MINIFIED_UMD = `var i=(e,o)=>()=>(o||e((o={exports:{}}).exports,o),o.exports);var f=i((r,t)=>{(function(e){if(typeof t=="object"&&typeof t.exports=="object"){var o=e(require,r);o!==void 0&&(t.exports=o)}})(function(e,o){"use strict";var n=e("./impl/format");o.go=function(){return n}})});var c=f();console.log(c.go());`;
-
-describe("[round-2 F002] a require whose callee minification renamed", () => {
-  it("reports the specifier the renamed binding requires", () => {
-    expect(requiredSpecifiers(MINIFIED_UMD)).toContain("./impl/format");
-  });
-
-  it("still reports it as unresolvable against an artifact that lacks it", () => {
-    const found = unresolvableRequires(MINIFIED_UMD, {
-      esbuildSource: ESBUILD,
-      outfile: OUT,
-      resolvesFrom: "/nowhere/dist",
-      exists: () => false,
-      isDirectory: () => false,
-    });
-    expect(found.map((v) => v.specifier)).toContain("./impl/format");
-  });
-
-  it("does not taint a method that merely shares the name", () => {
-    expect(requiredSpecifiers(`var loader={require(x){}};loader.require("./nope");`)).toEqual([]);
-  });
-
-  it("leaves an untainted local call alone", () => {
-    expect(requiredSpecifiers(`function t(m){return m}t("./not-a-require");`)).toEqual([]);
-  });
-});
-
 // [round-2 F001] A manifest is a POINTER, not a resolution. `main` can name a
 // file the VSIX does not carry, escape the artifact directory, or be missing
 // entirely — Node throws MODULE_NOT_FOUND for each, while stopping at "the
@@ -297,30 +243,6 @@ describe("[round-2 F003] a config the extractor cannot read is refused", () => {
     expect([...declaredExternals(ESBUILD, OUT)]).toEqual(["vscode", "node-pty"]);
   });
 });
-
-// [round-3 F004/F005/F007] Lexical identity comes from TypeScript's binder, so a
-// callee is judged by what it RESOLVES to. `declarations === null` is the exact
-// ambient test; a local binding that merely spells `require` has a declaration.
-describe("[round-3] a callee is judged by what it resolves to", () => {
-  it("follows a scalar alias of require", () => {
-    expect(requiredSpecifiers(`var r = require; r("./alias");`)).toEqual(["./alias"]);
-  });
-
-  it("follows a factory declared with a function declaration", () => {
-    expect(requiredSpecifiers(`function factory(req){ req("./decl"); } factory(require);`)).toEqual(["./decl"]);
-  });
-
-  it("does not report a declared local that merely spells require", () => {
-    expect(
-      requiredSpecifiers(`function outer(require){ return require("./local-cb"); } outer(function (x) { return x; });`),
-    ).toEqual([]);
-  });
-
-  it("still reports the ambient require", () => {
-    expect(requiredSpecifiers(`require("./direct");`)).toEqual(["./direct"]);
-  });
-});
-
 // [round-3 F001] A malformed manifest is fatal to the directory. Accepting a
 // sibling index first let a directory both Node 18 and Node 24 throw on pass.
 describe("[round-3 F001] a manifest is read before its sibling index", () => {
@@ -455,28 +377,6 @@ describe("[round-5 F014] every relative spelling Node accepts is swept", () => {
     }
   });
 });
-
-// [round-4 F006] The rescan loop re-walked every edge whenever one fact landed,
-// so a reverse forwarding chain cost edges x facts: 2000 links took ~2.0s and
-// 4000 took ~8.3s. The worklist processes each edge once.
-describe("[round-4 F006] propagation cost grows with edges, not edges times facts", () => {
-  const chain = (n: number) => {
-    const lines: string[] = [];
-    for (let i = n; i >= 1; i--) {
-      lines.push(`var a${i} = a${i - 1};`);
-    }
-    lines.push("var a0 = require;");
-    lines.push(`a${n}("./deep");`);
-    return lines.join("\n");
-  };
-
-  it("resolves a deep reverse chain well inside a rescan loop's cost", () => {
-    const started = Date.now();
-    expect(requiredSpecifiers(chain(2000))).toContain("./deep");
-    expect(Date.now() - started).toBeLessThan(600);
-  });
-});
-
 // [round-5 F008/F009/F010] Five rounds could not make call detection sound for
 // bare and absolute requests, and PLAN acceptance never asked it to be: it
 // requires a RELATIVE require that will not resolve to fail the build. Those
@@ -484,8 +384,8 @@ describe("[round-4 F006] propagation cost grows with edges, not edges times fact
 // fails builds can reject a legitimate one for a guarantee the gate no longer
 // makes (design.md D2 § Coverage).
 describe("[round-5 D2] only the relative class fails the build", () => {
-  it("warns on a bare specifier that was never bundled", () => {
-    expect(one(`require("lodash")`)).toMatchObject({ ok: false, severity: "warns" });
+  it("does not report a bare specifier, after round 7 deleted the pass that found one", () => {
+    expect(verdicts(`require("lodash")`)).toEqual([]);
   });
 
   it("warns on an absolute path baked into the bundle", () => {
@@ -505,7 +405,7 @@ describe("[round-5 D2] only the relative class fails the build", () => {
   });
 
   it("exits 0 when only warnings are present", () => {
-    expect(exitCodeFor(verdicts(`require("lodash")`))).toBe(0);
+    expect(exitCodeFor(verdicts(`var p = "/repo/dist/impl/format.js";`))).toBe(0);
   });
 
   it("exits nonzero when a relative request fails", () => {
@@ -513,53 +413,13 @@ describe("[round-5 D2] only the relative class fails the build", () => {
   });
 
   it("exits nonzero when a failure sits behind warnings", () => {
-    expect(exitCodeFor(verdicts(`require("lodash");require("./gone")`))).not.toBe(0);
+    expect(exitCodeFor(verdicts(`var p = "/repo/dist/impl/format.js"; require("./gone")`))).not.toBe(0);
   });
 
   it("exits 0 when there is nothing to report", () => {
     expect(exitCodeFor(verdicts(`require("vscode")`))).toBe(0);
   });
 });
-
-// [round-5 F006] A call whose callee gained a callable re-applied EVERY target,
-// so N callables cost N^2/2 applications: 100/200/400/800 took 14/34/124/502ms.
-// Timing cannot witness the fix — the round-4 assertion passed while the fanout
-// was still quadratic — so the witness counts applications instead.
-describe("[round-5 F006] each propagation edge is applied once", () => {
-  const fanout = (n: number) => {
-    const lines: string[] = [];
-    for (let i = 0; i < n; i++) {
-      lines.push(`function t${i}(r){ r("./x${i}"); }`);
-    }
-    lines.push("var h = t0;");
-    for (let i = 1; i < n; i++) {
-      lines.push(`h = t${i};`);
-    }
-    lines.push("h(require);");
-    return lines.join("\n");
-  };
-
-  it("applies no edge twice", () => {
-    const stats = propagationStats(fanout(200));
-    expect(stats.applications).toBe(stats.distinct);
-  });
-
-  it("applies each of the callee's targets exactly once", () => {
-    expect(propagationStats(fanout(200)).distinct).toBe(200);
-  });
-
-  it("grows with callables rather than with callables squared", () => {
-    const small = propagationStats(fanout(100)).applications;
-    const large = propagationStats(fanout(400)).applications;
-    // Quadratic would be 16x. Linear is 4x; allow slack without admitting N^2.
-    expect(large).toBeLessThan(small * 8);
-  });
-
-  it("still finds the specifier every callable requires", () => {
-    expect(requiredSpecifiers(fanout(50))).toContain("./x49");
-  });
-});
-
 // [round-5 D7] PLAN acceptance says "a relative `require`", not "a relative
 // literal". esbuild preserves `r(`./${name}`)` when the loader reaches the
 // factory as a parameter — the exact UMD shape this change exists to catch —
@@ -609,10 +469,11 @@ describe("[round-7 D2] the failing class does not depend on call analysis", () =
       .map((v) => v.specifier);
 
   it("still fails the minified UMD shape this change exists for", () => {
-    const umd = `var i=(e,o)=>()=>(o||e((o={exports:{}}).exports,o),o.exports);var f=i((r,t)=>{(function(e){if(typeof t=="object"){var o=e(require,r)}})(function(e,o){var n=e("./impl/format")})});f();`;
-    expect(failing(umd)).toContain("./impl/format");
+    // esbuild's own --minify output, kept from round 2: the call carrying the
+    // defect is on the renamed binding `e`, which is why it took a checker.
+    expect(failing(MINIFIED_UMD)).toContain("./impl/format");
     // The sweep is what carries it once call analysis is gone.
-    expect(relativeLiterals(umd)).toContain("./impl/format");
+    expect(relativeLiterals(MINIFIED_UMD)).toContain("./impl/format");
   });
 
   it("still fails a parenthesized argument", () => {
@@ -701,8 +562,8 @@ describe("[round-7 F019] a computed request is found through the parentheses", (
 });
 
 // [round-6 F015] Each collector parsed the artifact for itself, so a 1 MB
-// bundle paid three AST constructions and three walks per gate run, and the two
-// relative-prefix conditions could drift apart. One AST now serves all three.
+// bundle paid an AST construction and a walk apiece per gate run, and the
+// relative-prefix conditions could drift apart. One AST now serves them all.
 describe("[round-6 F015] one parse of the bundle serves every collector", () => {
   const OPEN = `$${"{"}`;
   const BUNDLE = [
@@ -726,64 +587,12 @@ describe("[round-6 F015] one parse of the bundle serves every collector", () => 
 
   it("agrees with each collector's own string-taking form", () => {
     const shared = verdicts(BUNDLE).map((v) => v.specifier);
-    for (const specifier of requiredSpecifiers(BUNDLE)) {
-      if (specifier !== "lodash") {
-        expect(shared).toContain(specifier);
-      }
-    }
+    expect(shared).toContain("./impl/format");
     expect(shared).toContain("./swept-only");
     expect(relativeLiterals(BUNDLE)).toContain("./swept-only");
     expect(relativeTemplates(BUNDLE)).toEqual(["../"]);
   });
 });
-
-// [round-6 F006] The round-5 witness varied only CALLEE targets, so it could not
-// see the other boundary: a symbol passed as an ARGUMENT gained a fact,
-// `enqueue` pushed a generic call edge, and every target already held was
-// re-applied. Measured on the topology below: applications over distinct pairs
-// of 110/10, 420/20, 1640/40, 6480/80 — N squared plus N for N pairs.
-describe("[round-6 F006] argument-side arrivals are bounded too", () => {
-  // Targets are established BEFORE the argument callables arrive: the callee's
-  // assignments come last in source, and the worklist drains last-in-first-out.
-  const mixed = (n: number) => {
-    const lines: string[] = ["var f, a;"];
-    for (let i = 0; i < n; i++) {
-      lines.push(`a = function (q${i}) { var v${i} = q${i}; };`);
-    }
-    for (let i = 0; i < n; i++) {
-      lines.push(`f = function (p${i}) { var u${i} = p${i}; };`);
-    }
-    lines.push("f(a);");
-    return lines.join("\n");
-  };
-
-  it("applies no call-target pair twice under mixed fanout", () => {
-    const stats = propagationStats(mixed(40));
-    expect(stats.applications).toBe(stats.distinct);
-  });
-
-  it("counts one pair per callee target, whatever the argument gained", () => {
-    expect(propagationStats(mixed(40)).distinct).toBe(40);
-  });
-
-  it("grows with the pairs rather than with the pairs squared", () => {
-    const small = propagationStats(mixed(20)).applications;
-    const large = propagationStats(mixed(80)).applications;
-    // Quadratic would be 16x. Linear is 4x; allow slack without admitting N^2.
-    expect(large).toBeLessThan(small * 8);
-  });
-
-  it("still carries the argument's callables into every target it reaches", () => {
-    const bundle = [
-      "var f, a;",
-      'a = function (q) { q("./from-argument"); };',
-      "f = function (p) { p(require); };",
-      "f(a);",
-    ].join("\n");
-    expect(requiredSpecifiers(bundle)).toContain("./from-argument");
-  });
-});
-
 // [round-6 F018] D7 narrows the template sweep to call-argument positions. A
 // relative-headed template is overwhelmingly path DATA — a URL, a CSS url(), a
 // message — and only an argument can be a module request. A tagged template is
@@ -818,8 +627,11 @@ describe("[round-6 F018] a template is reported only where a request can occur",
 // begins with a dot — `.pkg` resolves from `node_modules/.pkg/` at runtime — so
 // the gate failed a build over a request D2 says may only warn.
 describe("[round-6 F016] one predicate decides the class", () => {
-  it("warns on a dot-prefixed bare specifier rather than failing", () => {
-    expect(one(`require(".pkg")`)).toMatchObject({ ok: false, severity: "warns" });
+  it("does not sweep a dot-prefixed bare specifier as a relative one", () => {
+    // A `startsWith(".")` predicate would sweep `.pkg` and FAIL the build over
+    // a package that resolves from `node_modules/.pkg/` at runtime.
+    expect(verdicts(`require(".pkg")`)).toEqual([]);
+    expect(relativeLiterals(`require(".pkg")`)).toEqual([]);
   });
 
   it("exits 0 on it", () => {

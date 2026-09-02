@@ -284,7 +284,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `src/test/invariants/bundleRequires.test.ts`, witness that the minified UMD fixture whose relative request arrived only through call analysis is still reported, and still fails.
     2. In the same file, witness the parenthesized-argument, the no-substitution-template argument, and the concat-argument shape all still failing.
 
-- [ ] 8_4 Remove the propagation pass and the checker
+- [x] 8_4 Remove the propagation pass and the checker — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_3
   - **Refs**: design.md D2
   - **Acceptance**:
@@ -295,3 +295,4 @@ the extension failed to activate. No suite could catch it, because every suite i
     2. In `scripts/bundleRequires.d.mts`, drop the declarations that go with them.
     3. In `src/test/invariants/bundleRequires.test.ts`, remove the witnesses whose subject no longer exists, declaring the suite change with the reason; keep every witness whose subject survives, and keep `parseCount()` asserting the artifact is parsed once.
     4. Run the gate against the real `dist/extension.js` and confirm it still exits 0, and still reports the relative request when the minified UMD shape is appended.
+    5. In `asimov/changes/fail-a-build-whose-bundle-cannot-resolve-itself/design.md`, correct D2's claim that externals and builtins keep `vscode` and `node:fs` out of the verdicts — after the deletion no candidate the sweep collects can be either, so neither set changes a verdict any more.
