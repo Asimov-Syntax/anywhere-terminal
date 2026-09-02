@@ -15,6 +15,7 @@
 import * as path from "node:path";
 import { getNodeValue, type ParseError, parseTree } from "jsonc-parser";
 import type {
+  NonLockProvisionProblemReason,
   ProvisionContenders,
   ProvisionEntry,
   ProvisionModel,
@@ -250,7 +251,7 @@ function addProblem(draft: Draft, p: ProvisionProblem): void {
   draft.problems.push(p);
 }
 
-export function problem(ctx: ProviderContext, reason: ProvisionProblem["reason"], detail: string): ProvisionProblem {
+export function problem(ctx: ProviderContext, reason: NonLockProvisionProblemReason, detail: string): ProvisionProblem {
   return { file: ctx.file, reason, detail: bounded(detail) };
 }
 

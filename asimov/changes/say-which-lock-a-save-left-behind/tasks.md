@@ -60,7 +60,7 @@
     7. Arm-check by putting each path back and confirming the witness fails, and by emptying `unresolved` WITHOUT the reason arm to confirm the warning-still-fires witness catches it.
   - **Boundary**: no `{ bigint: true }` conversion of either installer's pre-existing stat captures; the authority RULE stated in D5 and D9 is unchanged — only the signal it reads
 
-- [ ] 2_2 Say what the save actually did, on a panel that has contents
+- [x] 2_2 Say what the save actually did, on a panel that has contents — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts && pnpm run check-types && pnpm exec biome check src/types/messages.ts src/types/messages.contract.test.ts src/providers/WorktreeHost.ts src/providers/WorktreeHost.actions.test.ts src/webview/worktree/WorktreeCreateDialog.ts src/webview/worktree/WorktreeCreateDialog.test.ts src/worktree/provisioning/providerKit.ts && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#a-save-that-wrote-is-never-presented-as-unsaved; design.md D4, D5; .reviews/round-1.md F002
   - **Acceptance**:
@@ -68,9 +68,10 @@
     - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts
   - **Plan**:
     1. In `src/types/messages.ts` — split `ProvisionProblem` into the discriminated union in design.md D4; the `locked` member REQUIRES `writeOutcome`. Replace the `locked` comment that claims the file was written.
-    2. In `src/providers/WorktreeHost.ts`, at line 2531 — stop collapsing with `written.ok && written.wrote`; pass the writer's own three-way answer into `leftLocked`.
-    3. In `src/webview/worktree/WorktreeCreateDialog.ts` — move the save-outcome check AHEAD of the content-count return at `src/webview/worktree/WorktreeCreateDialog.ts:723-725`, which is what hid the summary. Use D4's exact strings.
-    4. In `src/types/messages.contract.test.ts` — the outcome-less locked object must now FAIL to compile; assert that rather than its key count at `:327`.
-    5. Witness every row of D4's summary table on a POPULATED model in `src/webview/worktree/WorktreeCreateDialog.test.ts`, plus refusal precedence and the failed reread from 1_3 in `src/providers/WorktreeHost.actions.test.ts`.
-    6. Arm-check by restoring the early return and by collapsing the three outcomes back to a boolean.
+    2. The read side produces problems through a factory typed on the whole union — `src/worktree/provisioning/providerKit.ts` at line 253 takes `ProvisionProblem["reason"]`. It never produces `locked`, so narrow it to the non-lock reasons rather than making it satisfy a member it cannot.
+    3. In `src/providers/WorktreeHost.ts`, at line 2531 — stop collapsing with `written.ok && written.wrote`; pass the writer's own three-way answer into `leftLocked`.
+    4. In `src/webview/worktree/WorktreeCreateDialog.ts` — move the save-outcome check AHEAD of the content-count return at `src/webview/worktree/WorktreeCreateDialog.ts:723-725`, which is what hid the summary. Use D4's exact strings.
+    5. In `src/types/messages.contract.test.ts` — the outcome-less locked object must now FAIL to compile; assert that rather than its key count at `:327`.
+    6. Witness every row of D4's summary table on a POPULATED model in `src/webview/worktree/WorktreeCreateDialog.test.ts`, plus refusal precedence and the failed reread from 1_3 in `src/providers/WorktreeHost.actions.test.ts`.
+    7. Arm-check by restoring the early return and by collapsing the three outcomes back to a boolean.
   - **Boundary**: `media/webview.js` is a build artifact and untracked — do not edit it

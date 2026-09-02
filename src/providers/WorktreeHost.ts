@@ -18,6 +18,7 @@ import type {
   ProvisionModel,
   ProvisionProvider,
   ProvisionSelection,
+  ProvisionWriteOutcome,
   ResolvedDisposition,
   ResolvedMode,
   WebViewToExtensionMessage,
@@ -185,8 +186,21 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
  * name here would be a deletion instruction that can go stale
  * (say-which-lock-a-save-left-behind design.md D1, D4).
  */
-function leftLocked(model: ProvisionModel, wrote: boolean): ProvisionModel {
-  const what = wrote ? "was saved, but it may still be locked" : "may still be locked";
+const LOCK_WORDING: Record<ProvisionWriteOutcome, string> = {
+  written: "was saved, but it may still be locked",
+  unchanged: "already had what you asked for, and may still be locked",
+  refused: "may still be locked",
+};
+
+/**
+ * The lock report, carrying what the save actually did.
+ *
+ * Not a boolean. A lock outlives a write that landed, a write that had nothing
+ * to do, and a refusal alike, and calling the middle one saved is what the spec
+ * forbids — "A save that wrote NOTHING SHALL NOT be described as written"
+ * (design.md D4). It names no lock, deliberately (D1).
+ */
+function leftLocked(model: ProvisionModel, writeOutcome: ProvisionWriteOutcome): ProvisionModel {
   return {
     ...model,
     problems: [
@@ -194,7 +208,8 @@ function leftLocked(model: ProvisionModel, wrote: boolean): ProvisionModel {
       {
         file: NATIVE_PROVIDER_FILE,
         reason: "locked",
-        detail: `\`${NATIVE_PROVIDER_FILE}\` ${what}. Saving it again may not work until the lock clears.`,
+        writeOutcome,
+        detail: `\`${NATIVE_PROVIDER_FILE}\` ${LOCK_WORDING[writeOutcome]}. Saving it again may not work until the lock clears.`,
       },
     ],
   };
@@ -2528,7 +2543,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             }
             const base = reread ?? shown;
             const said = written.ok ? base : refusedSave(base, written.reason);
-            publish(written.mayStillBeLocked === true ? leftLocked(said, written.ok && written.wrote) : said);
+            // The writer's own answer, not a boolean collapse of it: `ok && wrote`
+            // merged a refusal with a no-op and lost the distinction the summary
+            // needs (round-1 F002).
+            const did: ProvisionWriteOutcome = !written.ok ? "refused" : written.wrote ? "written" : "unchanged";
+            publish(written.mayStillBeLocked === true ? leftLocked(said, did) : said);
           })
           // A save that throws leaves the form exactly as it was, and the
           // ceiling is NOT released — for the reason the switch records above.

@@ -929,35 +929,55 @@ export interface ProvisionProvider {
   readonly active: boolean;
 }
 
-export interface ProvisionProblem {
+/** A read going wrong, or a save refused. None of these is about a lock. */
+export type NonLockProvisionProblemReason =
+  | "unreadable"
+  | "malformed"
+  | "unknownKey"
+  | "missingExtends"
+  | "unsubstituted"
+  | "unsaved";
+
+/**
+ * What the save DID, for a save that left a lock behind.
+ *
+ * A lock is orthogonal to the write: it can outlive a write that landed, one
+ * that had nothing to do, and one that was refused. The writer answers this
+ * exactly, so the wire carries the answer rather than a guess
+ * (say-which-lock-a-save-left-behind design.md D4).
+ */
+export type ProvisionWriteOutcome = "written" | "unchanged" | "refused";
+
+interface ProvisionProblemBase {
   readonly file: string;
-  /**
-   * The first five describe a READ going wrong. `unsaved` is the one that does
-   * not: a save was refused and nothing was written, about a file that may have
-   * read perfectly well a moment earlier (design.md D13).
-   *
-   * `locked` is a seventh thing again, and it exists because reusing either of
-   * the others states a falsehood: the file WAS written, so "not saved" is
-   * wrong, and it read fine, so "could not be read" is wrong. It carries no
-   * pathname — a person acts on what it says long after the name could have
-   * been rebound (say-which-lock-a-save-left-behind design.md D1).
-   *
-   * One value for every write refusal rather than one each, with the cause in
-   * `detail`: the writer's own enumeration cannot always tell a held lock from a
-   * directory it could not create, so putting it on the wire would offer
-   * distinctions that are not always real.
-   */
-  readonly reason:
-    | "unreadable"
-    | "malformed"
-    | "unknownKey"
-    | "missingExtends"
-    | "unsubstituted"
-    | "unsaved"
-    | "locked";
   /** Bounded, already safe to render. Parser text is quoted, never interpreted. */
   readonly detail: string;
 }
+
+/**
+ * A provider file that is present and unusable, or a save that did not go
+ * cleanly.
+ *
+ * `unsaved` is the one reason that is not about a read: a save was refused and
+ * nothing was written, about a file that may have read perfectly well a moment
+ * earlier (design.md D13).
+ *
+ * `locked` is different again — it reports a lock that outlived the save, and it
+ * carries no pathname. A person acts on what it says long after the name could
+ * have been rebound, so naming the lock would be a deletion instruction that
+ * goes stale (say-which-lock-a-save-left-behind design.md D1). It REQUIRES
+ * `writeOutcome`: a producer that cannot say what the save did has nothing the
+ * renderer can honestly print, and an optional field would let it forget.
+ *
+ * One value for every write refusal rather than one each, with the cause in
+ * `detail`: the writer's own enumeration cannot always tell a held lock from a
+ * directory it could not create, so putting it on the wire would offer
+ * distinctions that are not always real. That is about refusal CAUSES and does
+ * not extend to `writeOutcome`, which the writer knows exactly.
+ */
+export type ProvisionProblem =
+  | (ProvisionProblemBase & { readonly reason: NonLockProvisionProblemReason })
+  | (ProvisionProblemBase & { readonly reason: "locked"; readonly writeOutcome: ProvisionWriteOutcome });
 
 /**
  * Declarations that may turn out to name one destination.

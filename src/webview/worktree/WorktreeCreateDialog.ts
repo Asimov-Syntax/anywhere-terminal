@@ -686,6 +686,14 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
     const favoured = yielding.get(e.id);
     return favoured === undefined || !selected.has(favoured.id);
   });
+  // What the SAVE did outranks what the model contains, and it is checked here
+  // rather than after the counts because the counts return early. A model with
+  // contents therefore never reached the answers below — which is how a
+  // written-but-locked save went unreported (round-1 F002, design.md D4).
+  const saveOutcome = saveSummary(model.problems);
+  if (saveOutcome !== undefined) {
+    return saveOutcome;
+  }
   const copied = brought.filter((e) => e.mode === "copy").length;
   const linked = brought.length - copied;
   const parts: string[] = [];
@@ -728,21 +736,35 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
   if (model.problems.length === 0) {
     return "Nothing configured";
   }
-  // And a save that was refused is a fourth statement, not the third one: the
-  // file read perfectly well, and saying it could not be read about a file this
-  // form has just rendered the contents of is the category error `unsaved`
-  // exists to end (design.md D13).
-  // A refusal outranks a lock: the write that did not happen is what the user
-  // must deal with first. Note this comparison is NOT exhaustive over the union,
-  // so adding a reason does not make the compiler point here — the inventory is
-  // kept by hand in the change's tasks.md.
-  if (model.problems.some((p) => p.reason === "unsaved")) {
+  return "Could not be read";
+}
+
+/**
+ * The answer a save forces, or `undefined` when the save has nothing to say.
+ *
+ * A refusal outranks a lock: the write that did not happen is what the user must
+ * deal with first, and `refused` on the lock report is the same event seen from
+ * the other side. Below that, the lock report says what the save DID — calling a
+ * no-op saved is the thing the spec forbids outright.
+ *
+ * A save that was refused is its own statement, not "could not be read": the
+ * file read perfectly well, and saying otherwise about a file this form has just
+ * rendered the contents of is the category error `unsaved` exists to end (D13).
+ */
+function saveSummary(problems: WorktreeProvisionOffer["model"]["problems"]): string | undefined {
+  if (problems.some((p) => p.reason === "unsaved")) {
     return "Not saved";
   }
-  if (model.problems.every((p) => p.reason === "locked")) {
-    return "Saved, still locked";
+  const locked = problems.filter((p) => p.reason === "locked");
+  if (locked.length === 0) {
+    return undefined;
   }
-  return "Could not be read";
+  if (locked.some((p) => p.writeOutcome === "refused")) {
+    return "Not saved";
+  }
+  return locked.some((p) => p.writeOutcome === "written")
+    ? "Saved, may still be locked"
+    : "Already up to date, may still be locked";
 }
 
 /**

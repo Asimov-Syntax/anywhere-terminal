@@ -271,7 +271,28 @@ const refusedSaveProblem: ProvisionProblem = {
 const savedButLockedProblem: ProvisionProblem = {
   file: ".vscode/worktree.json",
   reason: "locked",
+  writeOutcome: "written",
   detail: "`.vscode/worktree.json` was saved, but it may still be locked.",
+};
+
+// The same lock over a save that had nothing to write. Reporting this one as
+// written is what the spec forbids, so the outcome is on the wire rather than
+// inferred from the prose in `detail`.
+const upToDateButLockedProblem: ProvisionProblem = {
+  file: ".vscode/worktree.json",
+  reason: "locked",
+  writeOutcome: "unchanged",
+  detail: "`.vscode/worktree.json` already had what you asked for, and may still be locked.",
+};
+
+// `writeOutcome` is REQUIRED on the locked member, and this is the proof. An
+// optional field would let a producer forget it, and a forgotten field renders a
+// written save as a no-op — the same silent omission round-1 F002 exposed.
+// @ts-expect-error a locked problem must say what the save did
+const lockedProblemWithNoOutcome: ProvisionProblem = {
+  file: ".vscode/worktree.json",
+  reason: "locked",
+  detail: "`.vscode/worktree.json` may still be locked.",
 };
 
 const problemWithAnInventedReason: ProvisionProblem = {
@@ -322,9 +343,16 @@ describe("the wire contract", () => {
     expect(save.kept).toHaveLength(2);
     expect(detectedProvider.present).toEqual([".worktreeinclude"]);
     expect(refusedSaveProblem.reason).toBe("unsaved");
-    // Distinct from `unsaved`, and carrying no lock pathname.
+    // Distinct from `unsaved`, and carrying no lock pathname. What it DOES carry
+    // is the write outcome, which is why the key count is no longer the check —
+    // the `@ts-expect-error` above is, and it fails the build rather than this test.
     expect(savedButLockedProblem.reason).toBe("locked");
-    expect(Object.keys(savedButLockedProblem)).toEqual(["file", "reason", "detail"]);
+    expect([savedButLockedProblem.writeOutcome, upToDateButLockedProblem.writeOutcome]).toEqual([
+      "written",
+      "unchanged",
+    ]);
+    expect(Object.keys(savedButLockedProblem)).not.toContain("lockPath");
+    expect(lockedProblemWithNoOutcome.reason).toBe("locked");
     expect([saveNamingASource, providerWithoutPresence, problemWithAnInventedReason]).toHaveLength(3);
   });
 });

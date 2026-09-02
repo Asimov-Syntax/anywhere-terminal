@@ -3563,6 +3563,25 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  // The three writer answers travel SEPARATELY. `ok && wrote` collapsed a
+  // refusal and a no-op into one `false`, and the summary cannot tell them apart
+  // once that has happened (round-1 F002, design.md D4).
+  it.each([
+    ["written", { ok: true, wrote: true, mayStillBeLocked: true }],
+    ["unchanged", { ok: true, wrote: false, mayStillBeLocked: true }],
+    ["refused", { ok: false, reason: "unwritable", mayStillBeLocked: true }],
+  ] as const)("carries `%s` as the lock report's own write outcome", async (outcome, result) => {
+    const h = await opened({ write: async () => result });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    const lock = last.model.problems.find((p) => p.reason === "locked");
+    expect(lock?.reason === "locked" ? lock.writeOutcome : undefined).toBe(outcome);
+    h.dispose();
+  });
+
   it("keeps `malformed` for the one refusal that IS about the file", async () => {
     const h = await opened({ write: async () => ({ ok: false, reason: "malformed" }) });
 

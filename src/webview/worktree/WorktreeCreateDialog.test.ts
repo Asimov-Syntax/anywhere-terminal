@@ -1121,6 +1121,11 @@ describe("Bring over — what the new worktree will lack", () => {
 });
 
 describe("Bring over — a repository that declares nothing, and a file that cannot be read", () => {
+  /** One ordinary selected entry, so the summary is exercised on a model with contents. */
+  function bringEntry(path: string) {
+    return { id: `e-${path}`, path, mode: "copy" as const, source: "asimov/worktree.yaml" };
+  }
+
   function withModel(model: ReturnType<typeof provisionModel>) {
     return open({ repos: [createDefaults({ provisioning: provisionOffer({ model }) })] });
   }
@@ -1161,17 +1166,60 @@ describe("Bring over — a repository that declares nothing, and a file that can
   it("says a saved file is still locked, rather than that it was not saved", () => {
     const { host } = withModel({
       ...emptyProvisionModel(),
+      entries: [bringEntry("node_modules")],
       problems: [
         {
           file: ".vscode/worktree.json",
           reason: "locked",
+          writeOutcome: "written",
           detail: "`.vscode/worktree.json` was saved, but it may still be locked.",
         },
       ],
     });
 
-    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Saved, still locked");
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Saved, may still be locked");
     expect(host.querySelector(".wt-bring-problem")?.textContent).toContain("was saved");
+  });
+
+  // The empty model was the defeater the ledger named, and the witness that got
+  // written against it. `bringSummary` returns content counts BEFORE it inspects
+  // problems, so on any model a real repository produces the lock answer was
+  // unreachable — which is how round-1 F002 shipped.
+  it("says it on a model that actually carries contents", () => {
+    const { host } = withModel({
+      ...emptyProvisionModel(),
+      entries: [bringEntry("node_modules"), bringEntry(".env")],
+      problems: [
+        {
+          file: ".vscode/worktree.json",
+          reason: "locked",
+          writeOutcome: "written",
+          detail: "`.vscode/worktree.json` was saved, but it may still be locked.",
+        },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Saved, may still be locked");
+  });
+
+  // "A save that wrote NOTHING SHALL NOT be described as written". The file
+  // already held what was asked for, so there was no write to report — and the
+  // lock is still worth saying, because the next save may not get through.
+  it("does not call a save saved when there was nothing to write", () => {
+    const { host } = withModel({
+      ...emptyProvisionModel(),
+      entries: [bringEntry("node_modules")],
+      problems: [
+        {
+          file: ".vscode/worktree.json",
+          reason: "locked",
+          writeOutcome: "unchanged",
+          detail: "`.vscode/worktree.json` may still be locked.",
+        },
+      ],
+    });
+
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("Already up to date, may still be locked");
   });
 
   // A refusal outranks it: the user must deal with the write that did not happen
@@ -1179,9 +1227,15 @@ describe("Bring over — a repository that declares nothing, and a file that can
   it("keeps the refusal's answer when a save was refused AND may be locked", () => {
     const { host } = withModel({
       ...emptyProvisionModel(),
+      entries: [bringEntry("node_modules")],
       problems: [
         { file: ".vscode/worktree.json", reason: "unsaved", detail: "`.vscode/worktree.json` was not saved." },
-        { file: ".vscode/worktree.json", reason: "locked", detail: "It may still be locked." },
+        {
+          file: ".vscode/worktree.json",
+          reason: "locked",
+          writeOutcome: "refused",
+          detail: "It may still be locked.",
+        },
       ],
     });
 
