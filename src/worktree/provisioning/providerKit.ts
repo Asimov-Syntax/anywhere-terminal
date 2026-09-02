@@ -524,6 +524,22 @@ export async function readInlineKeys(
       report(draft, "`ports`", problem(ctx, "malformed", "`ports` must be a mapping of names."));
     } else {
       for (const name of Object.keys(record.ports as Record<string, unknown>)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          report(
+            draft,
+            `port \`${name}\``,
+            problem(ctx, "malformed", `port \`${name}\` is not a portable environment name.`),
+          );
+          continue;
+        }
+        if (/^(?:ANYWHERE_TERMINAL_|ASIMOV_)/i.test(name)) {
+          report(
+            draft,
+            `port \`${name}\``,
+            problem(ctx, "malformed", `port \`${name}\` uses a reserved environment namespace.`),
+          );
+          continue;
+        }
         // No number: the name is what the file declares, and probing for a free
         // port is WT-012.6's. The row is offered without one.
         if (!addPort(draft, { id: nextId(), name, source: ctx.file })) {

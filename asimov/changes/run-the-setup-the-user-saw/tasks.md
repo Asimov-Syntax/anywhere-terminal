@@ -120,7 +120,7 @@
 
 ## 5. Review remediation
 
-- [ ] 5_1 Protect setup authority and the aggregate deadline
+- [x] 5_1 Protect setup authority and the aggregate deadline — verified: pnpm exec vitest run src/worktree/provisioning/providerKit.test.ts src/worktree/provisioning/setupRunner.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 4_4
   - **Refs**: specs/worktree-panel/spec.md#{setup-receives-authoritative-named-ports, setup-receives-the-worktree-paths-and-branch}; design.md D2, D3 <!-- review round 1 F001, F002; F006 runner half -->
   - **Acceptance**:

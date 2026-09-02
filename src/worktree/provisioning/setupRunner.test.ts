@@ -7,6 +7,11 @@ function authorization(path: string): AuthorizedDirectory {
   return { path, platform: "linux", components: [] };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((settle) => (resolve = settle)), resolve };
+}
+
 function child(exitCode: number, signal: number | undefined = undefined): Pty {
   let exit: ((event: { exitCode: number; signal?: number }) => void) | undefined;
   return {
@@ -247,5 +252,148 @@ describe("runSetup", () => {
     expect(hung.kill).toHaveBeenCalledWith();
     expect(result.steps[0]?.outcome).toEqual({ kind: "failed", reason: "setup deadline exceeded" });
     expect(result.steps[1]?.outcome).toEqual({ kind: "skipped", reason: "previous setup step failed" });
+  });
+
+  it("keeps host identity authoritative over malformed reserved port input", async () => {
+    const spawn = vi.fn(() => child(0));
+
+    await runSetup(
+      {
+        repoId: "repo",
+        mainPath: "/main",
+        worktreeId: "worktree",
+        worktreePath: "/worktree",
+        branch: "feature",
+        authorization: authorization("/worktree"),
+        asimovEnvironment: true,
+        ports: {
+          PORT: 3210,
+          ANYWHERE_TERMINAL_WORKTREE_PATH: 1,
+          aSiMoV_ChAnGe_Id: 2,
+        },
+        steps: [{ id: "one", source: "source", kind: "shell", script: "true" }],
+      },
+      {
+        platform: "linux",
+        pty: { spawn },
+        terminal: { open: async () => true, attach: vi.fn() },
+        directoryStillAuthorized: async () => true,
+      },
+    );
+
+    const [, , options] = spawn.mock.calls[0] as unknown as [string, string[], { env: Record<string, string> }];
+    expect(options.env).toMatchObject({
+      PORT: "3210",
+      ANYWHERE_TERMINAL_WORKTREE_PATH: "/worktree",
+      ASIMOV_WORKTREE_PATH: "/worktree",
+    });
+    expect(options.env).not.toHaveProperty("aSiMoV_ChAnGe_Id");
+  });
+
+  it("cancels a hanging authorization without spawning after it later resolves", async () => {
+    const checked = deferred<boolean>();
+    let close: (() => void) | undefined;
+    const spawn = vi.fn();
+    const run = runSetup(
+      {
+        repoId: "repo",
+        mainPath: "/main",
+        worktreeId: "worktree",
+        worktreePath: "/worktree",
+        branch: "feature",
+        authorization: authorization("/worktree"),
+        asimovEnvironment: false,
+        ports: {},
+        steps: [{ id: "one", source: "source", kind: "shell", script: "true" }],
+      },
+      {
+        pty: { spawn },
+        terminal: {
+          open: async () => true,
+          attach: vi.fn(),
+          onClose: (listener) => {
+            close = listener;
+            return { dispose: vi.fn() };
+          },
+        },
+        directoryStillAuthorized: () => checked.promise,
+      },
+    );
+    await vi.waitFor(() => expect(close).toBeTypeOf("function"));
+
+    close?.();
+    checked.resolve(true);
+    const result = await run;
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(result.steps[0]?.outcome).toEqual({ kind: "failed", reason: "setup terminal was closed" });
+  });
+
+  it("bounds a hanging authorization with the shared deadline", async () => {
+    vi.useFakeTimers();
+    const spawn = vi.fn();
+    const run = runSetup(
+      {
+        repoId: "repo",
+        mainPath: "/main",
+        worktreeId: "worktree",
+        worktreePath: "/worktree",
+        branch: "feature",
+        authorization: authorization("/worktree"),
+        asimovEnvironment: false,
+        ports: {},
+        steps: [{ id: "one", source: "source", kind: "shell", script: "true" }],
+      },
+      {
+        pty: { spawn },
+        terminal: { open: async () => true, attach: vi.fn() },
+        directoryStillAuthorized: () => new Promise<boolean>(() => undefined),
+        timeoutMs: 10,
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await run;
+    vi.useRealTimers();
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(result.steps[0]?.outcome).toEqual({ kind: "failed", reason: "setup deadline exceeded" });
+  });
+
+  it("settles a timed-out child even when PTY termination throws", async () => {
+    vi.useFakeTimers();
+    const hung = {
+      ...child(0),
+      kill: vi.fn(() => {
+        throw new Error("already exited");
+      }),
+      onExit: vi.fn(() => ({ dispose: vi.fn() })),
+    };
+    const run = runSetup(
+      {
+        repoId: "repo",
+        mainPath: "/main",
+        worktreeId: "worktree",
+        worktreePath: "/worktree",
+        branch: "feature",
+        authorization: authorization("/worktree"),
+        asimovEnvironment: false,
+        ports: {},
+        steps: [{ id: "one", source: "source", kind: "shell", script: "hung" }],
+      },
+      {
+        pty: { spawn: () => hung },
+        terminal: { open: async () => true, attach: vi.fn() },
+        directoryStillAuthorized: async () => true,
+        timeoutMs: 10,
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(run).resolves.toMatchObject({
+      succeeded: false,
+      steps: [{ outcome: { kind: "failed", reason: "setup deadline exceeded" } }],
+    });
+    vi.useRealTimers();
   });
 });

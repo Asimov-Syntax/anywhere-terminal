@@ -39,7 +39,6 @@ export interface SetupRunnerDependencies {
   readonly detectShell?: () => { shell: string; args: string[] };
   readonly buildEnvironment?: () => Record<string, string>;
   readonly directoryStillAuthorized?: (authorization: AuthorizedDirectory) => Promise<boolean>;
-  readonly now?: () => number;
   readonly timeoutMs?: number;
 }
 
@@ -48,53 +47,62 @@ export async function runSetup(input: SetupRunInput, dependencies: SetupRunnerDe
   const pty = dependencies.pty ?? loadNodePty();
   const platform = dependencies.platform ?? process.platform;
   const stillAuthorized = dependencies.directoryStillAuthorized ?? directoryStillAuthorized;
-  const now = dependencies.now ?? Date.now;
-  const deadline = now() + (dependencies.timeoutMs ?? SETUP_DEADLINE_MS);
+  const cancellation = createCancellation(dependencies.terminal, dependencies.timeoutMs ?? SETUP_DEADLINE_MS);
   const results: ProvisionSetupResult[] = [];
   let stoppedReason: string | undefined;
 
-  const opened = await waitForOpen(dependencies.terminal, Math.max(0, deadline - now()));
-  if (!opened) {
-    stoppedReason = now() >= deadline ? "setup deadline exceeded" : "setup terminal was closed";
+  try {
+    const opened = await waitForOpen(dependencies.terminal, cancellation);
+    if (!opened) {
+      stoppedReason = cancellation.reason() ?? "setup terminal was closed";
+    }
+
+    for (const step of input.steps) {
+      if (stoppedReason !== undefined) {
+        results.push(
+          skipped(
+            step,
+            stoppedReason === "previous setup step failed" ? stoppedReason : `setup stopped: ${stoppedReason}`,
+          ),
+        );
+        continue;
+      }
+      const stopped = cancellation.reason();
+      if (stopped !== undefined) {
+        results.push(failed(step, stopped));
+        stoppedReason = "previous setup step failed";
+        continue;
+      }
+      const authorized = await waitForAuthorization(stillAuthorized(input.authorization), cancellation);
+      if (typeof authorized === "string") {
+        results.push(failed(step, authorized));
+        stoppedReason = "previous setup step failed";
+        continue;
+      }
+      if (!authorized) {
+        stoppedReason = "worktree directory is no longer authorized";
+        results.push(failed(step, stoppedReason));
+        continue;
+      }
+
+      const outcome = await runStep(step, input, {
+        pty,
+        terminal: dependencies.terminal,
+        platform,
+        detectShell: dependencies.detectShell ?? detectShell,
+        buildEnvironment: dependencies.buildEnvironment ?? buildEnvironment,
+        cancellation,
+      });
+      results.push(outcome.result);
+      if (!outcome.ok) {
+        stoppedReason = "previous setup step failed";
+      }
+    }
+
+    return { steps: results, succeeded: results.every((result) => result.outcome.kind === "ok") };
+  } finally {
+    cancellation.dispose();
   }
-
-  for (const step of input.steps) {
-    if (stoppedReason !== undefined) {
-      results.push(
-        skipped(
-          step,
-          stoppedReason === "previous setup step failed" ? stoppedReason : `setup stopped: ${stoppedReason}`,
-        ),
-      );
-      continue;
-    }
-    if (now() >= deadline) {
-      stoppedReason = "setup deadline exceeded";
-      results.push(failed(step, stoppedReason));
-      continue;
-    }
-    if (!(await stillAuthorized(input.authorization))) {
-      stoppedReason = "worktree directory is no longer authorized";
-      results.push(failed(step, stoppedReason));
-      continue;
-    }
-
-    const outcome = await runStep(step, input, {
-      pty,
-      terminal: dependencies.terminal,
-      platform,
-      detectShell: dependencies.detectShell ?? detectShell,
-      buildEnvironment: dependencies.buildEnvironment ?? buildEnvironment,
-      now,
-      deadline,
-    });
-    results.push(outcome.result);
-    if (!outcome.ok) {
-      stoppedReason = "previous setup step failed";
-    }
-  }
-
-  return { steps: results, succeeded: results.every((result) => result.outcome.kind === "ok") };
 }
 
 interface StepDependencies {
@@ -103,8 +111,7 @@ interface StepDependencies {
   readonly platform: NodeJS.Platform;
   readonly detectShell: () => { shell: string; args: string[] };
   readonly buildEnvironment: () => Record<string, string>;
-  readonly now: () => number;
-  readonly deadline: number;
+  readonly cancellation: SetupCancellation;
 }
 
 async function runStep(
@@ -112,6 +119,10 @@ async function runStep(
   input: SetupRunInput,
   dependencies: StepDependencies,
 ): Promise<{ ok: boolean; reason: string; result: ProvisionSetupResult }> {
+  const stopped = dependencies.cancellation.reason();
+  if (stopped !== undefined) {
+    return { ok: false, reason: stopped, result: failed(step, stopped) };
+  }
   const command = commandFor(step.script, dependencies.platform, dependencies.detectShell);
   let child: Pty;
   try {
@@ -125,11 +136,7 @@ async function runStep(
   }
 
   dependencies.terminal.attach(child);
-  const settled = await waitForExit(
-    child,
-    dependencies.terminal,
-    Math.max(0, dependencies.deadline - dependencies.now()),
-  );
+  const settled = await waitForExit(child, dependencies.cancellation);
   if (settled.kind === "exit" && settled.exitCode === 0 && settled.signal === undefined) {
     return { ok: true, reason: "", result: ok(step) };
   }
@@ -162,15 +169,15 @@ function commandFor(
 }
 
 function setupEnvironment(input: SetupRunInput, base: Record<string, string>): Record<string, string> {
-  const environment: Record<string, string> = {
-    ...base,
-    ANYWHERE_TERMINAL_WORKTREE_PATH: input.worktreePath,
-    ANYWHERE_TERMINAL_MAIN_PATH: input.mainPath,
-    ANYWHERE_TERMINAL_BRANCH: input.branch,
-  };
+  const environment: Record<string, string> = { ...base };
   for (const [name, port] of Object.entries(input.ports)) {
-    environment[name] = String(port);
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !/^(?:ANYWHERE_TERMINAL_|ASIMOV_)/i.test(name)) {
+      environment[name] = String(port);
+    }
   }
+  environment.ANYWHERE_TERMINAL_WORKTREE_PATH = input.worktreePath;
+  environment.ANYWHERE_TERMINAL_MAIN_PATH = input.mainPath;
+  environment.ANYWHERE_TERMINAL_BRANCH = input.branch;
   if (input.asimovEnvironment) {
     environment.ASIMOV_WORKTREE_PATH = input.worktreePath;
     environment.ASIMOV_MAIN_ROOT = input.mainPath;
@@ -179,43 +186,118 @@ function setupEnvironment(input: SetupRunInput, base: Record<string, string>): R
   return environment;
 }
 
-function waitForOpen(terminal: SetupRunTerminal, timeout: number): Promise<boolean> {
-  return new Promise((resolve) => {
+type SetupStopReason = "setup deadline exceeded" | "setup terminal was closed";
+
+type Disposable = { dispose(): void };
+
+interface SetupCancellation {
+  reason(): SetupStopReason | undefined;
+  onStop(listener: (reason: SetupStopReason) => void): Disposable;
+  dispose(): void;
+}
+
+function createCancellation(terminal: SetupRunTerminal, timeout: number): SetupCancellation {
+  const listeners = new Set<(reason: SetupStopReason) => void>();
+  let stopped: SetupStopReason | undefined;
+  let closeSubscription: Disposable | undefined;
+  const stop = (reason: SetupStopReason): void => {
+    if (stopped !== undefined) {
+      return;
+    }
+    stopped = reason;
+    for (const listener of listeners) {
+      listener(reason);
+    }
+    listeners.clear();
+  };
+  const timer = setTimeout(() => stop("setup deadline exceeded"), Math.max(0, timeout));
+  closeSubscription = terminal.onClose?.(() => stop("setup terminal was closed"));
+  if (stopped !== undefined) {
+    closeSubscription?.dispose();
+  }
+  return {
+    reason: () => stopped,
+    onStop: (listener) => {
+      if (stopped !== undefined) {
+        listener(stopped);
+        return { dispose: () => undefined };
+      }
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+    dispose: () => {
+      clearTimeout(timer);
+      closeSubscription?.dispose();
+      listeners.clear();
+    },
+  };
+}
+
+async function waitForOpen(terminal: SetupRunTerminal, cancellation: SetupCancellation): Promise<boolean> {
+  let opened: Promise<boolean>;
+  try {
+    opened = terminal.open();
+  } catch {
+    return false;
+  }
+  const result = await waitForBoundary(opened, cancellation);
+  return result.kind === "value" && result.value;
+}
+
+async function waitForAuthorization(
+  authorized: Promise<boolean>,
+  cancellation: SetupCancellation,
+): Promise<boolean | SetupStopReason> {
+  const result = await waitForBoundary(authorized, cancellation);
+  return result.kind === "value" ? result.value : result.reason;
+}
+
+function waitForBoundary<T>(
+  value: Promise<T>,
+  cancellation: SetupCancellation,
+): Promise<{ kind: "value"; value: T } | { kind: "stopped"; reason: SetupStopReason }> {
+  return new Promise((resolve, reject) => {
     let settled = false;
-    const settle = (opened: boolean): void => {
+    let stopSubscription: Disposable | undefined;
+    const finish = (result: { kind: "value"; value: T } | { kind: "stopped"; reason: SetupStopReason }): void => {
       if (settled) {
         return;
       }
       settled = true;
-      clearTimeout(timer);
-      resolve(opened);
+      stopSubscription?.dispose();
+      resolve(result);
     };
-    const timer = setTimeout(() => settle(false), timeout);
-    try {
-      void terminal.open().then(settle, () => settle(false));
-    } catch {
-      settle(false);
+    stopSubscription = cancellation.onStop((reason) => finish({ kind: "stopped", reason }));
+    if (settled) {
+      stopSubscription.dispose();
+      return;
     }
+    void value.then(
+      (result) => finish({ kind: "value", value: result }),
+      (error: unknown) => {
+        if (!settled) {
+          settled = true;
+          stopSubscription?.dispose();
+          reject(error);
+        }
+      },
+    );
   });
 }
 
 type ProcessSettlement = { kind: "exit"; exitCode: number; signal?: number } | { kind: "timeout" } | { kind: "closed" };
 
-function waitForExit(child: Pty, terminal: SetupRunTerminal, timeout: number): Promise<ProcessSettlement> {
+function waitForExit(child: Pty, cancellation: SetupCancellation): Promise<ProcessSettlement> {
   return new Promise((resolve) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let exitSubscription: { dispose(): void } | undefined;
-    let closeSubscription: { dispose(): void } | undefined;
+    let exitSubscription: Disposable | undefined;
+    let stopSubscription: Disposable | undefined;
     const settle = (result: ProcessSettlement): void => {
       if (settled) {
         return;
       }
       settled = true;
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-      closeSubscription?.dispose();
+      stopSubscription?.dispose();
       exitSubscription?.dispose();
       resolve(result);
     };
@@ -224,19 +306,22 @@ function waitForExit(child: Pty, terminal: SetupRunTerminal, timeout: number): P
       exitSubscription.dispose();
       return;
     }
-    closeSubscription = terminal.onClose?.(() => {
-      child.kill();
-      settle({ kind: "closed" });
+    stopSubscription = cancellation.onStop((reason) => {
+      safeKill(child);
+      settle({ kind: reason === "setup deadline exceeded" ? "timeout" : "closed" });
     });
     if (settled) {
-      closeSubscription?.dispose();
-      return;
+      stopSubscription.dispose();
     }
-    timer = setTimeout(() => {
-      child.kill();
-      settle({ kind: "timeout" });
-    }, timeout);
   });
+}
+
+function safeKill(child: Pty): void {
+  try {
+    child.kill();
+  } catch {
+    // The process may already have exited; cancellation settlement still wins.
+  }
 }
 
 function ok(step: ProvisionSetupStep): ProvisionSetupResult {
