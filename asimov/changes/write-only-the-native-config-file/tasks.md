@@ -14,7 +14,7 @@
 
 ## 2. The write
 
-- [ ] 1_2 Write the repository's own configuration, and nothing else
+- [x] 1_2 Write the repository's own configuration, and nothing else — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{no-configuration-file-another-tool-defined-is-ever-written, a-configuration-that-cannot-be-edited-safely-is-refused-rather-than-rewritten, an-existing-configuration-keeps-the-formatting-and-comments-it-had} <!-- design.md D2, D3, D4, D5, D7, D9, D10 -->
   - **Acceptance**:
