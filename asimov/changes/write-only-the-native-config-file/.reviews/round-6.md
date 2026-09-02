@@ -41,6 +41,15 @@
 - Impact: A repository-controlled special file, or a post-offer replacement with one, can leave the save unanswered and keep the native configuration locked until another process opens the FIFO or the extension process is restarted. Later saves wait for the sibling lock and then fail their one-second acquisition window; the changed flow turns an unreadable base into a persistent local denial of the save path rather than the required refusal.
 - SuggestedFix: Fix the reader-owned open, not the writer. Make the production provider open itself nonblocking and validate the opened handle as a regular file before reading (with the platform-equivalent safe operation), or enforce another real cancellation/liveness bound that closes the handle and returns the reader's unreadable result. Keep `writeNativeConfig` delegating only to `baseFor`; adding a writer-side `lstat` would reopen F025's partial-reconstruction failure and would remain racy.
 - Status: accepted
+- Resolution: closed by the dependency `open-a-provider-file-without-waiting-on-it`, planned, built
+  and reviewed to APPROVE independently (`docs/PLAN.md` WT-012.20, archived
+  260902-1135). The remediation is NOT in this change's diff: its plan attack refuted the
+  writer-side check this finding's SuggestedFix could also have been read as licensing, because
+  `lstat` then a path-based read is a race, so the bound went into the open itself. Both witnesses
+  the fix owes this change live in `src/worktree/provisioning/writeNativeConfig.test.ts` — a pipe
+  already at the target, and a pipe that replaces it after the writer observed it — and both assert
+  a refusal, no lock file left, and a following save that still runs. `writeNativeConfig.ts` is
+  unchanged.
 - Triage: New gating discovery finding. Boundary inventory searched: exact adapter membership, resolved containment, root preparation, bounded bytes, special-file type, lock acquisition/release, nested locks, adapter parsing, secondary-file reads, directory scanning, immediate host reread, and refusal mapping. Affected: special files whose open can wait indefinitely, especially a FIFO with no peer, because the wait now occurs while the native lock is held. Verified safe: stable unknown/absolute/traversal/outside/missing/oversized/directory/permission-denied cases fail closed; `baseFor` performs no adapter parse, secondary-file read, directory scan, or nested lock; F019's authorized destination remains intact.
 
 ## Verified sound
