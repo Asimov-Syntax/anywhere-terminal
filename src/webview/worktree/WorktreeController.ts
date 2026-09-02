@@ -341,7 +341,8 @@ export class WorktreeController {
    * `repoId` is the same on both (round-2 W2).
    */
   private refsToken = 0;
-  /** The repo a create was invoked for, waiting on its defaults. */
+  /** The row source for the live create opening, absent for repository and toolbar doors. */
+  private createSource: { repoId: string; worktreeId: string } | null = null;
   /**
    * The create waiting on the host, and the repositories it has yet to hear
    * from. A set rather than one id because an unscoped create asks every
@@ -485,11 +486,13 @@ export class WorktreeController {
         // The destination depends on the branch, so every settled branch edit
         // re-asks and the answer replaces the seed in place (round-3 B12).
         onSelectionChange: (selection) => {
+          const source = this.createSource;
           deps.postMessage({
             type: "requestWorktreeCreateDefaults",
             repoId: selection.repoId,
             opening: this.refsToken,
             branch: selection.branch,
+            ...(source?.repoId === selection.repoId ? { sourceWorktreeId: source.worktreeId } : {}),
           });
           // The same settled edit, asked as the other question: the defaults
           // answer where a create would GO, and this one answers what it would
@@ -878,7 +881,7 @@ export class WorktreeController {
     if (repo === undefined) {
       return;
     }
-    this.openCreateForRepo(repo.repoId);
+    this.openCreateForRepo(repo.repoId, info.id);
   }
 
   /**
@@ -886,14 +889,26 @@ export class WorktreeController {
    * repository, that one; without, every repository in the tree — a door that
    * names none must offer them all rather than pick one for the user.
    */
-  openCreateForRepo(repoId?: string): void {
+  openCreateForRepo(repoId?: string, sourceWorktreeId?: string): void {
     // EVERY door asks every repository. The picker is built from the answers the
     // seed holds, so a door that asked about one would offer one — and the doors
     // are required to differ only in which repository the form opens ON.
-    const targets = (this.tree?.repos ?? []).map((r) => r.repoId);
+    const repos = this.tree?.repos ?? [];
+    const targets = repos.map((repo) => repo.repoId);
     if (targets.length === 0 || (repoId !== undefined && !targets.includes(repoId))) {
       return;
     }
+    const source =
+      sourceWorktreeId === undefined
+        ? null
+        : repoId !== undefined &&
+            repos.find((repo) => repo.repoId === repoId)?.worktrees.some((row) => row.id === sourceWorktreeId)
+          ? { repoId, worktreeId: sourceWorktreeId }
+          : undefined;
+    if (source === undefined) {
+      return;
+    }
+    this.createSource = source;
     // A new form starts with no provisioning. Seeding it from the previous
     // form's offer meant a fresh read that FAILED left the old model on screen,
     // still resolvable, attributed to a form that had closed
@@ -916,7 +931,12 @@ export class WorktreeController {
       ...(repoId === undefined ? {} : { initialRepoId: repoId }),
     };
     for (const target of targets) {
-      this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: target, opening: this.refsToken });
+      this.deps.postMessage({
+        type: "requestWorktreeCreateDefaults",
+        repoId: target,
+        opening: this.refsToken,
+        ...(source?.repoId === target ? { sourceWorktreeId: source.worktreeId } : {}),
+      });
       // Not awaited by `pendingCreate`: the form opens on the destination alone
       // and gains the list when it lands, so a repository whose enumeration is
       // slow or fails never holds the dialog shut.

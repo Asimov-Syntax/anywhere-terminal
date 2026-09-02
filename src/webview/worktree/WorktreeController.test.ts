@@ -1391,9 +1391,9 @@ describe("the create a toolbar with no repository opens", () => {
     return { type: "worktreeTreeResponse", tree: twoRepoTree(), presence: singleRepoPresence(1_000_000) };
   }
   /** The asks a DOOR made. The open form asks for its own branch; those carry one. */
+  const defaultsRequests = (h: Harness) => h.posts.filter((m) => m.type === "requestWorktreeCreateDefaults");
   const asks = (h: Harness) =>
-    h.posts
-      .filter((m) => m.type === "requestWorktreeCreateDefaults")
+    defaultsRequests(h)
       .filter((m) => m.branch === undefined)
       .map((m) => m.repoId);
   const open = () => document.querySelector("#wt-branch") !== null;
@@ -1405,6 +1405,65 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.openCreate();
 
     expect(asks(h)).toEqual([REPO_A, REPO_B]);
+  });
+
+  it("carries the exact main or linked row only on that repository's opening", () => {
+    const h = ready(twoRepoResponse());
+    const rows = singleRepoTree().repos[0]?.worktrees ?? [];
+    const main = rows[0];
+    const linked = rows[1];
+    if (main === undefined || linked === undefined) {
+      throw new Error("fixture lost its source rows");
+    }
+
+    menuActions(h).createWorktree(main);
+    expect(defaultsRequests(h).filter((message) => message.branch === undefined)).toEqual([
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_A, opening: 1, sourceWorktreeId: main.id },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_B, opening: 1 },
+    ]);
+
+    h.posts.length = 0;
+    menuActions(h).createWorktree(linked);
+    expect(defaultsRequests(h).filter((message) => message.branch === undefined)).toEqual([
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_A, opening: 2, sourceWorktreeId: linked.id },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_B, opening: 2 },
+    ]);
+  });
+
+  it("repository and toolbar doors carry no source row", () => {
+    const h = ready(twoRepoResponse());
+
+    h.controller.openCreateForRepo(REPO_A);
+    expect(defaultsRequests(h).every((message) => message.sourceWorktreeId === undefined)).toBe(true);
+
+    h.posts.length = 0;
+    h.controller.openCreate();
+    expect(defaultsRequests(h).every((message) => message.sourceWorktreeId === undefined)).toBe(true);
+  });
+
+  it("drops the row source while the form is switched to another repository", () => {
+    const h = ready(twoRepoResponse());
+    const source = firstWorktree();
+    menuActions(h).createWorktree(source);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.posts.length = 0;
+    const select = document.querySelector<HTMLSelectElement>("#wt-repo-select");
+    if (select === null) {
+      throw new Error("expected the repository picker");
+    }
+
+    select.value = REPO_B;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(defaultsRequests(h)).toContainEqual(expect.objectContaining({ repoId: REPO_B }));
+    expect(defaultsRequests(h).some((message) => "sourceWorktreeId" in message)).toBe(false);
+
+    h.posts.length = 0;
+    select.value = REPO_A;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(defaultsRequests(h)).toContainEqual(
+      expect.objectContaining({ repoId: REPO_A, sourceWorktreeId: source.id }),
+    );
   });
 
   it("[1_1] waits for every repository it asked before opening", () => {
@@ -2171,7 +2230,7 @@ describe("the destination a create opens on", () => {
     // one conversation, and a form that asked under two identities could have a
     // reply from each honoured against the other.
     expect(h.posts).toEqual([
-      { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1, sourceWorktreeId: first.id },
       { type: "requestWorktreeRefs", repoId: REPO, token: 1 },
     ]);
   });

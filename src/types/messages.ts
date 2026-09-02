@@ -1184,6 +1184,8 @@ export interface WorktreeCreateDefaultsRequestMessage {
    * authority.
    */
   opening: number;
+  /** The worktree row that opened this form, absent for repository and toolbar doors. */
+  sourceWorktreeId?: string;
   /**
    * The branch the form currently holds, if any.
    *
