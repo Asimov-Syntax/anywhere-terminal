@@ -2296,11 +2296,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                   !row.missing &&
                   !row.prunable,
               );
-            if (
-              source === undefined ||
-              current === undefined ||
-              !isDeepStrictEqual(current, migrationOffer.evidence)
-            ) {
+            if (source === undefined || current === undefined || !isDeepStrictEqual(current, migrationOffer.evidence)) {
               surface.post({
                 type: "worktreeMutationResult",
                 verb: "create",

@@ -2261,14 +2261,8 @@ describe("migration runs inside the successful create", () => {
   });
 
   it.each([
-    [
-      "reattach",
-      { kind: "reattach" as const, branch: "feat", repairPath: "/repo-wt/stale", expectedOid: "oid-1" },
-    ],
-    [
-      "adopt",
-      { kind: "adopt" as const, branch: "feat", adoptPath: "/repo-wt/stale", expectedBranchOid: "oid-1" },
-    ],
+    ["reattach", { kind: "reattach" as const, branch: "feat", repairPath: "/repo-wt/stale", expectedOid: "oid-1" }],
+    ["adopt", { kind: "adopt" as const, branch: "feat", adoptPath: "/repo-wt/stale", expectedBranchOid: "oid-1" }],
   ])("refuses migration on %s before git or the adapter", async (_name, mode) => {
     const moved = vi.fn(async () => ({ kind: "moved" as const }));
     const h = harness({ migrateChanges: moved });

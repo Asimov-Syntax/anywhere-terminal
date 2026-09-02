@@ -2404,8 +2404,7 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
           action: "create",
           repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
           outcome: "ok",
-          migrationIndeterminate:
-            "Migration failed; changes were restored to the source and this is the only report.",
+          migrationIndeterminate: "Migration failed; changes were restored to the source and this is the only report.",
         },
       ],
     });

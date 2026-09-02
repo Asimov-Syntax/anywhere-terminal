@@ -1559,13 +1559,7 @@ export class WorktreeView {
             .join(" ") || undefined,
         ),
         reason:
-          [
-            migrationDetail,
-            result.openFailed,
-            branchDeleteReason(result.branchDelete),
-            brought?.reason,
-            ported?.reason,
-          ]
+          [migrationDetail, result.openFailed, branchDeleteReason(result.branchDelete), brought?.reason, ported?.reason]
             .filter((line) => line !== undefined)
             .join("\n") || undefined,
         onDismiss: dismiss,

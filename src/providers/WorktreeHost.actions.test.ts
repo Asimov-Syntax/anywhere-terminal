@@ -2819,16 +2819,19 @@ describe("redeeming a migration offer", () => {
         }),
       ],
     ]);
-    expect((h.calls.find(([name]) => name === "createWorktree")?.[1] as { migration: object }).migration).not.toHaveProperty(
-      "offerId",
-    );
+    expect(
+      (h.calls.find(([name]) => name === "createWorktree")?.[1] as { migration: object }).migration,
+    ).not.toHaveProperty("offerId");
     h.dispose();
   });
 
   it.each([
     ["unknown", { ...request("unknown") }],
     ["cross-opening", { ...request("migration-token"), opening: 2 }],
-    ["cross-source data", { ...request("migration-token"), migrateChanges: { offerId: "migration-token", sourcePath: "/tmp" } }],
+    [
+      "cross-source data",
+      { ...request("migration-token"), migrateChanges: { offerId: "migration-token", sourcePath: "/tmp" } },
+    ],
     ["malformed", { ...request("migration-token"), migrateChanges: { offerId: 7 } }],
     [
       "excluded mode",

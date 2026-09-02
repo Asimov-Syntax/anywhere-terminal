@@ -104,4 +104,15 @@
     4. `src/webview/worktree/WorktreeView.ts`: include it in the render signature; keep the create title successful, take warning tone, state that later steps did not run, and direct inspection of source, destination and stashes.
     5. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeView.test.ts`: cover transport, render updates, coexisting outcomes, and forbidden restoration or single-location claims.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3`
+- [x] 2_4 Conform the migration change to the repository formatter — verified: pnpm exec biome check src/providers/WorktreeHost.ts src/providers/WorktreeHost.actions.test.ts src/worktree/worktreeMutationService.ts src/worktree/worktreeMutationService.test.ts src/webview/worktree/WorktreeView.ts src/webview/worktree/WorktreeView.test.ts && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
+  - **Deps**: 2_3
+  - **Refs**: design.md D3, D6, D7
+  - **Acceptance**:
+    - Outcome: Every migration-owned source and test file passes the repository's check-mode formatter
+    - Verify: command pnpm exec biome check src/providers/WorktreeHost.ts src/providers/WorktreeHost.actions.test.ts src/worktree/worktreeMutationService.ts src/worktree/worktreeMutationService.test.ts src/webview/worktree/WorktreeView.ts src/webview/worktree/WorktreeView.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`: apply only formatter-equivalent line wrapping to migration redemption.
+    2. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: sort the migration type import and apply formatter-equivalent wrapping to migration execution tests.
+    3. `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`: apply formatter-equivalent wrapping to the uncertainty notice and witness.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4`

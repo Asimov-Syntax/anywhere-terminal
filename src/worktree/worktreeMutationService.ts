@@ -34,9 +34,9 @@ import type { DeleteBranchOutcome } from "./deleteBranch";
 import { messageOf } from "./errorMessage";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
+import type { MigrateChangesOutcome, MigrationOfferEvidence } from "./migrateChanges";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
 import { createMutationQueue } from "./mutationQueue";
-import type { MigrateChangesOutcome, MigrationOfferEvidence } from "./migrateChanges";
 import type { ReattachVerdict } from "./reattachProbe";
 import type { RemovalAssessment, RemovalEvidence } from "./worktreeBlockers";
 import { createFingerprintStore, type FingerprintStore } from "./worktreeFingerprint";
@@ -1043,10 +1043,8 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                   verb: "create",
                   repoId: request.repoId,
                   worktreeId,
-                  migrationIndeterminate: `the destination exclusion could not be established: ${migrationReasonOf(error)}`.slice(
-                    0,
-                    1_000,
-                  ),
+                  migrationIndeterminate:
+                    `the destination exclusion could not be established: ${migrationReasonOf(error)}`.slice(0, 1_000),
                 };
               }
             }
