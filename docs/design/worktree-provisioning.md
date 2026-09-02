@@ -435,6 +435,15 @@ additive rather than a snapshot that freezes today's framework config.
   can cause a command to run without the user having seen it in the dialog.
 - Problem `detail` text is bounded and rendered as text. A YAML parser's error message can quote
   arbitrary file content, so it is never interpreted as markup.
+- **A bounded read is not a bounded open.** Every read of a repository-controlled path goes through
+  `openRegularFile` (`src/utils/regularFileRead.ts`), which opens nonblocking where the platform has
+  it and takes the file's type from the OPENED HANDLE, refusing anything that is not an ordinary
+  file as `ENOTSUP`. A plain `open(path, "r")` on a named pipe with no writer never returns, so a
+  byte cap applied after the open protects nothing and a caller holding a lock across the read never
+  reaches its release. Both halves are required: nonblocking alone opens that pipe and reads zero
+  bytes, reporting a configuration that declares nothing instead of one that could not be read.
+  Taking the type from the handle rather than the path is also what makes the rule safe for a
+  caller that already observed the path — there is no window between the two answers.
 
 ## 8. What this does not do
 
