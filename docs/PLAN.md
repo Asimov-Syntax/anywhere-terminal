@@ -638,7 +638,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | The only task in the phase that writes a config file, sequenced last among the read tasks for that reason. Switching the active provider is also a write to this file — it rewrites `extends`, never the other framework's file |
 | **Acceptance** | Changing an inherited entry produces an inline entry or an exclude rather than an edit to the provider's file; a provider file is byte-identical after any operation this control offers; a first write points `extends` at whatever detection made active rather than freezing today's resolved list; an existing native file keeps its formatting and comments; switching the active provider rewrites only `extends` |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.6] Ports Are Allocated and Named Before They Collide
 
@@ -779,6 +779,34 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Notes** | Its own task because it is the only path in the subsystem that **writes into git's administrative directory**, which no other task does and which no git command offers. It is separate from reattach for the same reason reattach is separate from reuse: the recognising condition, the commands and the failure modes all differ. The branch-claimed refusal is the load-bearing part — `git worktree add` performs that check and a reconstructed entry never reaches it, so bypassing it silently produces a commit that reverts another worktree's work with no message at all. Treat the index rebuild as part of the operation, not as cleanup: without it the checkout reports every tracked file as both deleted and untracked |
 | **Acceptance** | A destination holding a populated checkout whose administrative entry is gone is offered as adopt rather than as debris or a suffixed fresh path; the entry is reconstructed and the checkout then lists, holds the branch at the tip the user was shown, survives a prune, and commits back into the repository; the index is rebuilt so a freshly adopted checkout reports only its genuine working-tree state, and no file inside the worktree is modified by the adoption; a branch any live worktree holds is refused before a single file is written, with no confirmation path offered; the branch tip is re-checked immediately before the write and a move refuses rather than attaching to a different commit; what adoption cannot restore is stated to the user before they authorize it, and is stated rather than probed; a directory holding a valid administrative entry is reattach and never reaches this path; base ref cannot be expressed |
 | **Status** | todo |
+
+### [WT-012.19] A Write Anchored to the Directory It Checked
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Give every locked write a destination that cannot be redirected after it was authorized, by anchoring the operations to an open directory rather than to a path string |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 7 |
+| **Depends On** | None |
+| **Stage** | 9 |
+| **Size** | L |
+| **Labels** | security-privacy |
+| **Notes** | Split out of WT-012.5, whose design records the refutation that forced it: `LockedFile` serializes an **inode** while every other operation names a **string**, and `realpath` returns a canonical spelling rather than a directory identity — so a rename-plus-symlink at that spelling redirects the lock, the temporary, the read and the commit at once, and `withLock` creates the lock before its callback, so no re-assertion inside the callback helps. Three obligation-ledger rows in that change are `supported for a non-adversarial filesystem, delegated otherwise` and name this task as their owner. A new invariant owner, not a detail of any one writer: the facility every `LockedFile` caller inherits. Two things to establish before building — `/dev/fd/<dirfd>/child` was probed and is NOT a usable descriptor-relative path on macOS, so the mechanism has to come from somewhere else; and `src/agentHooks/install/lockedJsonFile.ts` is concurrently changed by the `never-release-a-lock-a-pending-write-still-owns` change, whose retained-dirty-lock semantics the seam has to be checked against rather than assumed |
+| **Acceptance** | A write authorized against a directory lands in that directory or does not land: swapping the checked directory for a symlink to another location, at any point after the check and before the commit, leaves nothing written outside it and reports a refusal rather than succeeding elsewhere; the lock, the temporary, the read and the commit all name the same anchored directory, so two writers that resolve one spelling cannot hold two live locks; a failure part-way leaves no temporary behind even when the directory was renamed under it; the platforms the anchoring mechanism cannot serve are named with the behaviour offered there instead of failing silently |
+| **Status** | todo |
+
+### [WT-012.20] A Configuration Read That Always Answers
+
+| Field | Value |
+|-------|-------|
+| **Goal** | Make every read of a repository-named configuration terminate, so a path holding something other than an ordinary file is refused and reported rather than waited on |
+| **Design Ref** | [worktree-provisioning.md](design/worktree-provisioning.md) § 4 |
+| **Depends On** | WT-012.3 |
+| **Stage** | 9 |
+| **Size** | S |
+| **Labels** | security-privacy |
+| **Notes** | Split out of WT-012.5 at its round-6 review. The shared provider read enforces its byte cap on the READ and never on the OPEN, so `open(path, "r")` on a named pipe with no writer waits forever — reproduced on darwin against both `asimov/worktree.yaml` and `.vscode/worktree.json`. Since WT-012.5 moved base validation under the native-config lock, the same wait strands that lock and turns every later save into `unavailable`, leaving the lock file on disk. Two halves are needed and neither suffices alone: nonblocking alone opens the pipe and reads zero bytes, which silently substitutes an empty configuration for a refusal, and a regular-file test alone still waits on the open. The file-type test must read the OPEN HANDLE, not the path, for the same reason the byte cap is enforced on the read. `O_NONBLOCK` is undefined on win32, where a named pipe is not reachable by a repository-relative path at all, so the regular-file half is the operative bound there |
+| **Acceptance** | A repository whose configuration, or whose named source to build on, holds a named pipe with nothing writing to it is reported as unreadable rather than as absent, as empty, or as declaring nothing, and the section answers instead of waiting; a save refused for that reason leaves the next save of the same file able to run and leaves no lock behind; ordinary files, hard links, and symlinks to ordinary files read exactly as before |
+| **Status** | done |
 
 ---
 

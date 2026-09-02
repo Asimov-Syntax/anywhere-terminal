@@ -15,10 +15,10 @@ import * as path from "node:path";
 import { applyEdits, type FormattingOptions, type JSONPath, modify, type ParseError } from "jsonc-parser";
 import { isNotFound, LockedFile, type LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
 import type { ProvisionModel } from "../../types/messages";
-import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
+import { authorizedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
-import { readJsonc } from "./providerKit";
-import { FRAMEWORK_ORDER } from "./readProvisioning";
+import { type ProviderDeps, readJsonc } from "./providerKit";
+import { baseFor } from "./readProvisioning";
 
 /** What the selection diverges to, in the vocabulary the native file has (design.md D6). */
 export interface NativeConfigDivergence {
@@ -70,6 +70,13 @@ export interface NativeConfigStat {
 export interface NativeConfigDeps {
   realpath(p: string): Promise<string>;
   lstat(p: string): Promise<NativeConfigStat>;
+  /**
+   * The reader's own dependencies, so the base is authorized by `baseFor`
+   * rather than by a rule this module keeps (design.md D17). Wired from
+   * `createProvisioningDeps()` beside the `readProvisioning` wiring, so the
+   * save and the read that follows it cannot disagree about a base.
+   */
+  provider: ProviderDeps;
   /** Passed through to `LockedFile`, so a test can fail one syscall and nothing else. */
   readonly locked?: LockedFileDependencies;
   /**
@@ -378,22 +385,18 @@ export async function writeNativeConfig(
     return { ok: false, reason: "outside" };
   }
   const dir = path.join(repoRoot, path.dirname(NATIVE_PROVIDER_FILE));
-  // ONE resolution, and it is the one that gets checked. Checking `dir` and then
-  // resolving it again afterwards asks the filesystem the same question twice
-  // and builds the destination from the answer nobody checked
-  // (.reviews/round-2.md F019).
-  let here = dir;
-  try {
-    here = await deps.realpath(dir);
-  } catch (error) {
-    if (!isNotFound(error)) {
-      return { ok: false, reason: "outside" };
-    }
-    // Not there yet, so `here` stays the unresolved spelling — which the check
-    // below tolerates for an absent tail beneath a parent that resolves, and
-    // `LockedFile` then creates.
-  }
-  if (!(await isResolvedPathInsideRoot(here, prepared, deps))) {
+  // The destination is built from the value the check AUTHORIZED, which is the
+  // check's own resolution and not the spelling handed to it. Resolving here and
+  // then checking that answer looks like one resolution and is two: the
+  // predicate re-resolves by contract, and a second answer that differs but
+  // stays inside the root is authorized while the caller's stale spelling names
+  // the file (.reviews/round-3.md F019, design.md D7).
+  //
+  // An absent directory needs no separate branch — the walk reconstructs the
+  // unresolved tail beneath a resolved ancestor, and that is the path
+  // `LockedFile` then creates.
+  const here = await authorizedPathInsideRoot(dir, prepared, deps);
+  if (here === null) {
     return { ok: false, reason: "outside" };
   }
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
@@ -456,24 +459,26 @@ export async function writeNativeConfig(
       // (.reviews/round-2.md F021).
       const base = planned.writes ?? planned.declared;
       if (base !== undefined) {
-        // Membership FIRST, and asked of the read side's own list. A declared
-        // base is untrusted repository text, and probing it before establishing
-        // that it names an adapter file at all turned this confirmation into a
-        // filesystem oracle: `"extends": "../../elsewhere"` reported whether an
-        // arbitrary path outside the checkout exists (.reviews/round-3.md F025).
+        // Asked of the reader, whole. `baseFor` performs exact membership in
+        // the framework adapters, resolved containment AND the bounded readable
+        // open, with D2 rule 2's requirement that the named file itself be
+        // readable — one operation, and the same one `assemble` will run
+        // against this document a moment from now.
         //
-        // The exact spelling, exactly as `baseFor` asks it: `../` and an
-        // absolute path match no adapter's constant and so need no containment
-        // check of their own (readProvisioning.ts `baseFor`, design.md D2).
-        // A name that is not a member is refused rather than probed — which is
-        // also what the next read would answer about it.
-        if (!FRAMEWORK_ORDER.some((adapter) => adapter.files.includes(base))) {
+        // This module held its own version of that check for four review rounds
+        // and had a different clause missing each time: the declared base
+        // uncovered, then unvalidated, then validated as a name, then as a
+        // contained path whose readability nobody asked about. A base one byte
+        // over `MAX_PROVIDER_BYTES` saved and read back `unreadable`, which is
+        // precisely the disagreement D17 exists to prevent
+        // (.reviews/round-5.md F025).
+        //
+        // Both refusals land as `unnamed`: the target that names no adapter or
+        // is not there, and the one that is there and will not read. They are
+        // one fact the user acts on one way, which is the judgement `assemble`
+        // already makes when it reports both as `missingExtends`.
+        if ((await baseFor(deps.provider, repoRoot, base)).ok !== true) {
           return { ok: false, reason: "unnamed" };
-        }
-        try {
-          await deps.lstat(path.join(repoRoot, base));
-        } catch (error) {
-          return { ok: false, reason: isNotFound(error) ? "unnamed" : "unwritable" };
         }
       }
       const formattingOptions = formattingOf(existing ?? "");

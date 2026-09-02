@@ -96,6 +96,36 @@ export async function isResolvedPathInsideRoot(
   root: PreparedRoot,
   deps: ResolvedPathInsideDeps = {},
 ): Promise<boolean> {
+  return (await authorizedPathInsideRoot(candidate, root, deps)) !== null;
+}
+
+/**
+ * The same walk, returning the path it authorized rather than a bare verdict.
+ *
+ * A caller that passes `candidate` and then builds a destination from
+ * `candidate` has built from a value nobody checked: this walk resolves its
+ * argument again — deliberately, per the contract above — so **the value it
+ * authorized is its own resolution, not the spelling it was handed**. The two
+ * coincide on a quiescent filesystem and diverge silently otherwise, which is
+ * how that read survived every test until the round-3 plan attack named the
+ * state that separates them: a second answer that DIFFERS but stays inside the
+ * root is authorized, and only the caller's stale spelling then names the
+ * destination (design.md D7 of `write-only-the-native-config-file`).
+ *
+ * Additive on purpose. `isResolvedPathInsideRoot` keeps its name, signature and
+ * every one of its call sites; only a caller that must write through the
+ * answer needs this form. Nothing is cached, so the no-stale-authorization
+ * contract is untouched.
+ *
+ * For an absent candidate the value is reconstructed — the resolved ancestor
+ * plus the unresolved tail — which is the path a caller's own `mkdir` then
+ * creates.
+ */
+export async function authorizedPathInsideRoot(
+  candidate: string,
+  root: PreparedRoot,
+  deps: ResolvedPathInsideDeps = {},
+): Promise<string | null> {
   const realpath = deps.realpath ?? ((p: string) => fs.realpath(p));
   const lstat = deps.lstat ?? ((p: string) => fs.lstat(p));
   const api = isWindowsAbsPath(candidate) || isWindowsAbsPath(root.resolved) ? path.win32 : path.posix;
@@ -107,28 +137,28 @@ export async function isResolvedPathInsideRoot(
       const resolved = await realpath(current);
       const full = tail.length === 0 ? resolved : api.join(resolved, ...[...tail].reverse());
       const { same, beneath } = compareBoundary(full, root.resolved, normalizeResolvedForCompare);
-      return !same && beneath;
+      return !same && beneath ? full : null;
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
         // ELOOP, EACCES, ENOTDIR — the filesystem declined to answer, so we do
         // not answer for it.
-        return false;
+        return null;
       }
       // ENOENT from `realpath` covers two very different things: nothing is
       // here, or something IS here and its link target is not. `lstat` sees the
       // link itself, and a link we cannot follow is refused.
       try {
         await lstat(current);
-        return false;
+        return null;
       } catch (lstatError) {
         if (errnoCode(lstatError) !== "ENOENT") {
-          return false;
+          return null;
         }
       }
       const parent = api.dirname(current);
       if (parent === current) {
         // Not even the filesystem root resolved. No lexical fallback.
-        return false;
+        return null;
       }
       tail.push(api.basename(current));
       current = parent;

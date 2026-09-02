@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "prove-entry-reconstruction-on-windows"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788298618152,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788298618152,
+          "to": 1788298787882
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788298618152
+        }
+      ],
+      "firstAt": 1788298618152,
+      "lastAt": 1788298736706,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-master",
+          "model": "gpt-5.6-sol",
+          "messages": 3,
+          "inputTokens": 7722,
+          "outputTokens": 6493,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 259584,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}

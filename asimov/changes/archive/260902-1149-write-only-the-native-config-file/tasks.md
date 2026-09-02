@@ -173,3 +173,55 @@ genuinely parallel, so nothing here pretends to be.
     5. Cover each in `src/worktree/provisioning/writeNativeConfig.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`.
 
 **Waves**: `4_1`
+
+## Wave 5 — round 3 handback
+
+- [x] 5_1 Build the destination from the value the containment check authorized — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_1
+  - **Refs**: design.md#{d7-the-parent-is-resolved-once-and-written-through-and-a-symlinked-target-is-refused, obligation-ledger} <!-- .reviews/round-3.md F019; D16 -->
+  - **Acceptance**:
+    - Outcome: the file lands at the path the check authorized, not at the caller's spelling
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: `isResolvedPathInsideRoot` keeps its name, signature, contract and all 13 call sites — the new form is additive and only this writer consumes it; nothing caches an authorization
+  - **Plan**:
+    1. In `src/utils/resolvedPathBoundary.ts`, factor the existing walk into a form returning the authorized resolved path or `null`, and make `isResolvedPathInsideRoot` a wrapper over it.
+    2. In `src/worktree/provisioning/writeNativeConfig.ts`, drop the writer's own `realpath` of the directory and build `target` from the value the new form returns.
+    3. Replace the `asked === 1` assertion in `src/worktree/provisioning/writeNativeConfig.test.ts` with the discriminating state: an injected `realpath` whose second answer is a DIFFERENT path inside the root; assert the file lands there and not at the caller's spelling. Arm it by building from the caller's spelling.
+    4. Cover the absent-directory branch too — the walk reconstructs an unresolved tail beneath a resolved ancestor, and that reconstructed value is what `LockedFile` then creates.
+    5. Run `src/utils/resolvedPathBoundary.test.ts` to confirm the wrapper changed no existing answer.
+
+**Waves**: `5_1`
+
+## Wave 6 — round 4 remediation
+
+- [x] 6_1 Authorize the base as a path, not only as a name — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: design.md#{d7-the-parent-is-resolved-once-and-written-through-and-a-symlinked-target-is-refused, d17-presence-is-revalidated-at-the-write-not-trusted-from-the-offer} <!-- .reviews/round-4.md F025 -->
+  - **Acceptance**:
+    - Outcome: a base whose ancestor is a symlink out of the repository is refused and never probed
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: no containment rule of the writer's own — the same resolved boundary the reader routes a base through (D2)
+  - **Plan**:
+    1. In `src/worktree/provisioning/writeNativeConfig.ts`, put the joined base path through the resolved containment boundary after the adapter-name check and before the D17 `lstat`.
+    2. Witness it with a stable symlinked ancestor: assert the refusal, and that nothing outside was probed or written.
+
+**Waves**: `6_1`
+
+## Wave 7 — round 5 handback
+
+- [x] 7_1 Ask the reader whether the base is usable, and hold no rule about it here — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm test exit 0
+  - **Deps**: 6_1
+  - **Refs**: design.md#{d17-presence-is-revalidated-at-the-write-not-trusted-from-the-offer, d13-a-write-that-was-refused-is-reported-in-the-vocabulary-of-writing} <!-- .reviews/round-5.md F025; D2 -->
+  - **Acceptance**:
+    - Outcome: every base the save accepts is one the immediately following read also accepts
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: the writer keeps no base-eligibility clause of its own — no name list, no containment call, no `lstat` standing in for readability
+  - **Plan**:
+    1. Export `baseFor` from `src/worktree/provisioning/readProvisioning.ts`.
+    2. In `src/worktree/provisioning/writeNativeConfig.ts`, replace the membership check, the containment call and the `lstat` probe with one `baseFor`, refusing both of its failures as `unnamed`; add `provider` and a budget to `NativeConfigDeps`.
+    3. Wire them from `createProvisioningDeps()` in `src/extension.ts`, beside the `readProvisioning` wiring.
+    4. Widen the `unnamed` message in `src/providers/WorktreeHost.ts` from absence to usability.
+    5. Witness the agreement directly: for a base over the byte bound, a directory, and an unreadable file, assert the save refuses AND that a real `readProvisioning` of the same repository refuses the same base. Arm each by restoring the `lstat`.
+    6. Keep the round-3 and round-4 witnesses passing — they state the same property through a name and through a symlinked ancestor.
+
+**Waves**: `7_1`

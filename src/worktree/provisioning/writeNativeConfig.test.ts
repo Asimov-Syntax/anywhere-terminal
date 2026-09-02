@@ -5,15 +5,19 @@
 // models badly, and modelling them badly is how a witness passes over a broken
 // implementation.
 
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { parse as parseJsonc } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
 import type { ProvisionEntry, ProvisionModel } from "../../types/messages";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { newBudget } from "./providerKit";
+import { createProvisioningDeps, MAX_PROVIDER_BYTES } from "./provisioningDeps";
+import { readProvisioning } from "./readProvisioning";
 import {
   divergenceOf,
   type NativeConfigDeps,
@@ -24,7 +28,13 @@ import {
 let root: string;
 let target: string;
 
-const realDeps: NativeConfigDeps = { realpath: (p) => fs.realpath(p), lstat: (p) => fs.lstat(p) };
+// The reader's real dependencies, because the base check IS the reader's now:
+// a fake here would let the save agree with a reader nobody ships (D17).
+const realDeps: NativeConfigDeps = {
+  realpath: (p) => fs.realpath(p),
+  lstat: (p) => fs.lstat(p),
+  provider: createProvisioningDeps(),
+};
 
 const nothing: NativeConfigDivergence = { exclude: [], drop: [], unnamedSource: false, tookSource: false };
 const div = (over: Partial<NativeConfigDivergence> = {}): NativeConfigDivergence => ({
@@ -315,31 +325,35 @@ describe("the destination is computed, never accepted", () => {
 });
 
 describe("the destination is the resolution that was checked", () => {
-  it("writes to the value it checked, not to a later answer for the same path", async () => {
-    // Two resolutions of one path are two answers, and only one of them was
-    // checked. Staged through the injected `realpath` rather than by racing the
-    // filesystem: a path that answers differently the second time is exactly
-    // what the ordering has to survive (.reviews/round-2.md F019).
-    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-second-"));
-    const here = path.dirname(target);
-    let asked = 0;
-    const flipping: NativeConfigDeps = {
+  it("writes to the value the check authorized, not to the spelling it was handed", async () => {
+    // Resolving here and then checking THAT answer is two resolutions, and the
+    // predicate authorizes its own — so the pair could disagree about which
+    // path was approved. This is the state where the disagreement escapes: the
+    // directory resolves to somewhere OUTSIDE the repository, and that place in
+    // turn resolves back inside it. Checking the first answer's resolution says
+    // "inside" and the write then lands at the first answer, outside the root
+    // (.reviews/round-3.md F019 and its plan attack).
+    //
+    // Not two answers for one path: one answer per path, which is what a
+    // symlink chain actually is. A counter would model a filesystem that
+    // changes under the caller, and D16 owns that.
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-outside-"));
+    const backInside = path.join(root, "back-inside");
+    await fs.mkdir(backInside, { recursive: true });
+    const dir = path.dirname(target);
+    const chain = new Map([
+      [dir, outside],
+      [outside, await fs.realpath(backInside)],
+    ]);
+    const chained: NativeConfigDeps = {
+      provider: createProvisioningDeps(),
       lstat: (p) => fs.lstat(p),
-      realpath: async (p) => {
-        if (p !== here) {
-          return fs.realpath(p);
-        }
-        asked += 1;
-        return asked === 1 ? fs.realpath(p) : outside;
-      },
+      realpath: async (p) => chain.get(p) ?? fs.realpath(p),
     };
 
-    const wrote = await writeNativeConfig(flipping, root, div({ exclude: ["dist"] }));
+    const wrote = await writeNativeConfig(chained, root, div({ exclude: ["dist"] }));
 
-    // Asked once, so there is no second answer to build a destination from —
-    // and the write landed where the check said it would.
-    expect(asked).toBe(1);
-    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(wrote).toEqual({ ok: false, reason: "outside" });
     expect(await fs.readdir(outside)).toEqual([]);
     await fs.rm(outside, { recursive: true, force: true });
   });
@@ -398,6 +412,7 @@ describe("what the lock covers", () => {
     const order: string[] = [];
     const deps: NativeConfigDeps = {
       realpath: (p) => fs.realpath(p),
+      provider: createProvisioningDeps(),
       lstat: async (p) => {
         order.push(`lstat ${path.basename(p)}`);
         return fs.lstat(p);
@@ -597,6 +612,82 @@ describe("the base a save records against", () => {
 
     expect(wrote).toEqual({ ok: true, wrote: true });
     expect((await fs.lstat(target)).mode & 0o777).toBe(0o600);
+  });
+
+  // The property four rounds of partial checks kept missing: the save and the
+  // read must agree about a base. Stated as agreement rather than as a list of
+  // refusals, because a list is what got reconstructed one clause per round —
+  // the reader is asked directly, so a rule this writer does not know about
+  // cannot go missing here (.reviews/round-5.md F025).
+  describe.each([
+    [
+      "one over the byte bound",
+      async (at: string) => {
+        await fs.writeFile(at, `copy:\n${"#".repeat(MAX_PROVIDER_BYTES)}\n`, "utf8");
+      },
+    ],
+    [
+      "a directory",
+      async (at: string) => {
+        await fs.mkdir(at, { recursive: true });
+      },
+    ],
+    [
+      "one that will not open",
+      async (at: string) => {
+        await fs.writeFile(at, "copy:\n", "utf8");
+        await fs.chmod(at, 0o000);
+      },
+    ],
+  ])("a base that is %s", (_what, make) => {
+    it("is refused by the save, and by the read that follows it", async () => {
+      const at = path.join(root, "asimov", "worktree.yaml");
+      await fs.mkdir(path.dirname(at), { recursive: true });
+      await make(at);
+      await put(`{ "extends": "asimov/worktree.yaml", "copy": [".env"] }\n`);
+      const before = await fs.readFile(target, "utf8");
+
+      const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"] }));
+      const read = await readProvisioning(createProvisioningDeps(), root);
+
+      expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+      // The file IS there in all three, so the reader's own word for it is
+      // `unreadable`, not `missingExtends` — agreement is that both refuse the
+      // same base, on the reader's rule.
+      expect(read.problems.map((p) => p.reason)).toContain("unreadable");
+      expect(await fs.readFile(target, "utf8")).toBe(before);
+      await fs.chmod(at, 0o700).catch(() => {});
+    });
+  });
+
+  it("refuses a base whose ancestor leaves the repository, however ordinary its name", async () => {
+    // The name check proves the spelling is an adapter's; it proves nothing
+    // about where that spelling leads. `asimov/` as a symlink out of the
+    // checkout leaves `asimov/worktree.yaml` a perfectly well-known name
+    // resolving to a file the repository does not contain — so the probe still
+    // reported an outside path's existence, and the save still succeeded under
+    // a base the next read refuses (.reviews/round-4.md F025). No race: this is
+    // a directory that simply IS a link.
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-ancestor-"));
+    await fs.writeFile(path.join(outside, "worktree.yaml"), "copy:\n", "utf8");
+    await fs.symlink(outside, path.join(root, "asimov"));
+    await put(`{ "extends": "asimov/worktree.yaml", "copy": [".env"] }\n`);
+    const before = await fs.readFile(target, "utf8");
+    const asked: string[] = [];
+    const watching: NativeConfigDeps = {
+      ...realDeps,
+      lstat: async (p) => {
+        asked.push(p);
+        return fs.lstat(p);
+      },
+    };
+
+    const wrote = await writeNativeConfig(watching, root, div({ exclude: ["dist"] }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    expect(asked.filter((p) => p.includes(path.basename(outside)))).toEqual([]);
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+    await fs.rm(outside, { recursive: true, force: true });
   });
 
   it("refuses a base that names no adapter file without asking the filesystem about it", async () => {
@@ -801,5 +892,76 @@ describe("what the selection diverges to", () => {
 
     expect(divergenceOf(m, new Set(), false).extends).toBeUndefined();
     expect(divergenceOf(model(), new Set(), false).extends).toBeUndefined();
+  });
+});
+
+// Against a REAL filesystem and a real lock, because the failure this covers is
+// a syscall that never returns: the lock is taken, the read waits forever, and
+// `withLock` cannot reach its release. A fake read models that away.
+describe("a target that is not an ordinary file", () => {
+  const posixOnly = process.platform === "win32" ? it.skip : it;
+
+  const lockOf = (at: string) => `${at}.anywhere-terminal.lock`;
+
+  async function raced<T>(work: Promise<T>): Promise<T | "waited"> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<"waited">((resolve) => {
+          timer = setTimeout(() => resolve("waited"), 3000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  posixOnly("refuses a pipe already there, and leaves the next save able to run", async () => {
+    await fs.rm(target, { force: true });
+    await promisify(execFile)("mkfifo", [target]);
+
+    const first = await raced(writeNativeConfig(realDeps, root, div({ exclude: ["dist"] })));
+    const second = await raced(writeNativeConfig(realDeps, root, div({ exclude: ["dist"] })));
+
+    expect(first).not.toBe("waited");
+    // Named exactly, not merely "answered": answering is what the timer above
+    // proves, and a save that returned success over a pipe would satisfy that
+    // and still be wrong (.reviews/round-7.md F027).
+    expect(first).toEqual({ ok: false, reason: "unwritable" });
+    expect(second).toEqual({ ok: false, reason: "unwritable" });
+    // And the second call is why both are asserted: a stranded lock answers
+    // `unavailable` for every later save, which is a persistent denial rather
+    // than a refusal.
+    await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // The race the plan attack found, and the reason this bound lives in the open
+  // rather than in a check before it: a target that IS a regular file when the
+  // writer observes it, and a pipe by the time the read opens it. A file-type
+  // test taken from the path cannot close this window; taking the type from the
+  // opened handle means there is no window (design.md D4).
+  posixOnly("refuses a pipe that replaced the target after it was observed", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+    const deps: NativeConfigDeps = {
+      ...realDeps,
+      // Matched on the basename: the writer resolves the directory first, so on
+      // a host where the temporary root is reached through a symlink the path it
+      // hands us is not the spelling this suite holds.
+      lstat: async (p) => {
+        const stat = await fs.lstat(p);
+        if (path.basename(p) === path.basename(target)) {
+          await fs.rm(p, { force: true });
+          await promisify(execFile)("mkfifo", [p]);
+        }
+        return stat;
+      },
+    };
+
+    const wrote = await raced(writeNativeConfig(deps, root, div({ exclude: ["dist"] })));
+
+    expect(wrote).not.toBe("waited");
+    expect(wrote).toEqual({ ok: false, reason: "unwritable" });
+    await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

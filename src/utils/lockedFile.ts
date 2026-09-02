@@ -9,6 +9,7 @@ import type { FileHandle } from "node:fs/promises";
 import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { type FileIdentity, fileIdentityOf, sameFileIdentity } from "./authorizedDirectory";
+import { type OpenLike, openRegularFile } from "./regularFileRead";
 
 export type Platform = "darwin" | "linux" | "win32";
 
@@ -435,13 +436,19 @@ export class LockedFile {
 
   /** `undefined` for a file that is not there — every other read failure throws. */
   public async readText(): Promise<string | undefined> {
+    let handle: FileHandle;
     try {
-      return await this.fs.readFile(this.path, "utf8");
+      handle = await openRegularFile(this.path, this.fs.open as OpenLike);
     } catch (error) {
       if (isNotFound(error)) {
         return undefined;
       }
       throw error;
+    }
+    try {
+      return await handle.readFile("utf8");
+    } finally {
+      await handle.close().catch(() => {});
     }
   }
 

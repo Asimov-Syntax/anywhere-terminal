@@ -7,21 +7,21 @@
 ## Plan
 
 - [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
+- [x] `asm change validate` passes
 - [x] Gate 2: plan approved
 
 ## Implement
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -32,7 +32,7 @@
 Blueprint: docs/PLAN.md task WT-012.5
 Lane: full (standard) — MEDIUM-HIGH risk: the first control that writes a checked-in file,
 sitting beside files that must stay byte-identical | flags: user-visible-ui, new-api-contract
-Planned at: a82ccc85
+Planned at: e0c17b04
 - Admission screen: ONE new invariant owner — the writer of `.vscode/worktree.json`. The dialog
   control and the wire message are surfaces on it, and all five PLAN acceptance clauses are
   properties of the same write. One acceptance story, so no split at Size M.
@@ -220,3 +220,61 @@ Planned at: a82ccc85
 - `NativeConfigDeps` gained an injectable `umask()` because a vitest worker refuses
   `process.umask(mask)` and the ambient `0o022` makes `0o644 & ~umask` equal `0o644` — the existing
   mode assertion could not tell a masked write from an unmasked one.
+- Round-3 handback: D7's mechanism withdrawn and its obligation restated. The plan attack refuted
+  the first attempt at that restatement — I argued the current double resolution already satisfied
+  the checked-value property because a differing second answer would be refused. It is not refused
+  when it differs but stays INSIDE the root, and the value the predicate authorizes is its own
+  second resolution rather than the spelling the caller passed. It also refuted my reason for not
+  fixing the code: the walk factors into an additive form returning the authorized path, leaving the
+  boolean predicate and all 13 call sites untouched, so no invariant owner is minted and the fix
+  stays on this side of the remediation boundary. Recorded because the rationalisation is the
+  instructive part — "the two answers coincide" was true of every state I had tested.
+- Auto-decision (fastlane): the descriptor-anchored writer stays D16's separate change rather than
+  being folded in. `docs/PLAN.md` task WT-012.19 now owns it and D16 names that id.
+- Building 5_1's witness found the escape the plan attack's own counterexample had missed. It framed
+  the divergence as a race between two answers for one path; it is an ordinary symlink CHAIN needing
+  no concurrency at all — where `.vscode` resolves outside the repository and that place resolves
+  back inside it, resolve-then-check authorizes the second hop and writes at the first. Armed, the
+  previous writer returns `ok: true` having written outside the root. The first witness written for
+  this task (a counter answering differently the second time) could not fail once the writer stopped
+  resolving twice, which is the same defect F019 named one level up.
+- Round-4 reopened F025 on the same line the round-3 fix added: checking that `extends` names an
+  adapter file proves the spelling and not the destination, and `asimov/` as an ordinary symlink out
+  of the checkout leaves `asimov/worktree.yaml` a well-known name resolving outside the repository.
+  The reader had never had this hole — `baseFor` routes the target through `openProviderFile`'s
+  resolved containment — so the writer was reimplementing half of a check it should have been
+  reusing whole. Third time a name-shaped check has stood in for a path-shaped one in this change.
+- Round 5 found the fourth partial boundary and named the pattern rather than the bug: four rounds,
+  four reconstructions of one check the reader owns whole. Probed — a contained, correctly named
+  `asimov/worktree.yaml` of `MAX_PROVIDER_BYTES + 1` gives writer `ok: true, wrote: true` and an
+  immediate production read `unreadable`/`EFBIG`, which is exactly the disagreement D17 exists to
+  prevent. Directories and permission-denied files do the same. Handed back rather than patched: the
+  fifth partial would have been the obvious next move and the chair is right that it fails again.
+- Knowledge candidate: a writer that validates the same subject as an existing reader will
+  reconstruct that reader's check one clause per review round, and each round looks like progress.
+  | Surprise: three consecutive fixes were each correct about the defect in front of them and each
+  left the next clause missing; the pattern was only visible in the inventory the fourth round wrote
+  out. | Evidence: `.reviews/round-5.md` F025 inventory; `readProvisioning.ts` `baseFor` versus
+  `writeNativeConfig.ts` base handling. | Consumer: plan | Action: when a change validates a subject
+  an existing module already authorizes, plan makes reuse of that module's whole operation the
+  decision, and never lets the new module carry a clause of it.
+- Knowledge candidate: `readBounded`'s `open(filePath, "r")` waits indefinitely on a FIFO with no
+  writer, so the byte cap never gets a chance to apply — a bounded READ is not a bounded OPEN. |
+  Surprise: the module's whole contract is "bounded", and every existing witness (oversize,
+  directory, EACCES) returns promptly, so the bound read as total. | Evidence:
+  src/worktree/provisioning/provisioningDeps.ts:35 `readBounded`; probe: `readProvisioning` over a
+  repo whose `asimov/worktree.yaml` is a FIFO never resolves (4s cutoff). | Consumer: plan | Action:
+  any decision that moves a provider read under a lock, a deadline, or an interactive path budgets
+  a liveness bound for the open itself.
+- Round 6 (cycle 3) F026 accepted. The cycle cap makes handback mandatory rather than optional, and
+  the obligation test agrees independently: the fix adds a liveness rule to `provisioningDeps.ts`,
+  which this change does not own and which every provider read shares. Both remediation-boundary
+  signals fire, so it is its own change and this one depends on it. The writer stays as it is —
+  a writer-side `lstat` is exactly the reconstruction F025 spent four rounds refuting.
+- Verify gate ticked with a known-flaky file named, per the gate rule: `src/extension.worktreeAssembly.test.ts`
+  fails a DIFFERENT test on most full-suite runs and reproduces on a clean detached worktree at
+  HEAD with a zero-file diff (1 of 5 runs there, 3 of 4 here). This change touches neither that
+  file nor `src/extension.ts`. `src/agentHooks/AgentHookRuntime.test.ts` appeared in the same class
+  once; since this change DOES edit `src/agentHooks/install/lockedJsonFile.ts`, that suite was run
+  five times in isolation and passed 220/220 every time, so it is the same load-order flake and not
+  this change's.
