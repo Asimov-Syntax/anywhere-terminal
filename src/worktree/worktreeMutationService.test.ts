@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ProvisionStepResult } from "../types/messages";
+import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import type { ClearDebrisDeps } from "./clearDebris";
 import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
@@ -24,6 +25,14 @@ const RAW_PATH = "/repo-wt/raw/";
 
 function ok(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
+}
+
+function authorization(path: string): AuthorizedDirectory {
+  return {
+    path,
+    platform: process.platform,
+    components: [{ path, identity: { dev: 7, ino: path.length + 1 } }],
+  };
 }
 
 function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
@@ -93,6 +102,7 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     afterCreate: async () => {},
     gitExcludeDirFor: () => null,
     addToGitExclude: async () => {},
+    authorizeDirectory: async (candidate) => authorization(candidate),
     now: () => 0,
     ...over,
   };
@@ -1964,6 +1974,49 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(seen).toEqual(["files", "ports", "afterCreate"]);
   });
 
+  it("passes one mutation-issued source and destination authorization pair to selected writes", async () => {
+    const source = authorization("/repo");
+    const destination = authorization("/repo/wt/new");
+    const authorize = vi.fn(async (candidate: string) => (candidate === "/repo" ? source : destination));
+    const applyProvision = vi.fn(async () => []);
+    const applyPorts = vi.fn(async () => ({ ports: [], warnings: [] }));
+    const h = harness({ authorizeDirectory: authorize, applyProvision, applyPorts });
+
+    await h.service.createWorktree(create({ provision: entries, ports }));
+
+    expect(authorize.mock.calls.map(([candidate]) => candidate)).toEqual(["/repo", "/repo/wt/new"]);
+    expect(applyProvision).toHaveBeenCalledWith("/repo", "/repo/wt/new", entries, { source, destination });
+    expect(applyPorts).toHaveBeenCalledWith({
+      repoId: REPO,
+      repoPath: "/repo",
+      worktreePath: "/repo/wt/new",
+      ports,
+      authorization: destination,
+    });
+  });
+
+  it("keeps the create successful and launches when destination authorization fails", async () => {
+    const afterCreate = vi.fn(async () => undefined);
+    const applyProvision = vi.fn(async () => []);
+    const applyPorts = vi.fn(async () => ({ ports: [], warnings: [] }));
+    const h = harness({
+      authorizeDirectory: async (candidate) => (candidate === "/repo" ? authorization(candidate) : undefined),
+      applyProvision,
+      applyPorts,
+      afterCreate,
+    });
+
+    await h.service.createWorktree(create({ provision: entries, ports }));
+    const outcome = okOutcome(h);
+
+    expect(outcome?.kind).toBe("ok");
+    expect(outcome?.provision?.steps.map((step) => step.outcome.kind)).toEqual(["failed", "failed"]);
+    expect(outcome?.provision?.ports?.map((item) => item.outcome.kind)).toEqual(["failed", "failed"]);
+    expect(applyProvision).not.toHaveBeenCalled();
+    expect(applyPorts).not.toHaveBeenCalled();
+    expect(afterCreate).toHaveBeenCalledOnce();
+  });
+
   it("applies and reports ports when they are the only selected items", async () => {
     const normalized = vi.fn(async () => "/normalized/feat");
     const applied = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["applyPorts"]>>[0]) => ({
@@ -1980,7 +2033,13 @@ describe("provisioning rides the create without ever costing it", () => {
     await h.service.createWorktree(create({ ports }));
     const outcome = okOutcome(h);
 
-    expect(applied).toHaveBeenCalledWith({ repoId: REPO, repoPath: "/repo", worktreePath: "/repo/wt/new", ports });
+    expect(applied).toHaveBeenCalledWith({
+      repoId: REPO,
+      repoPath: "/repo",
+      worktreePath: "/repo/wt/new",
+      ports,
+      authorization: authorization("/repo/wt/new"),
+    });
     expect(outcome?.kind).toBe("ok");
     expect(outcome?.worktreeId).toBe("/normalized/feat");
     expect(outcome?.provision?.path).toBe("/normalized/feat");

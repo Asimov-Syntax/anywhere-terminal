@@ -142,6 +142,7 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     // lazily, so something has to ask for it first.
     received.actions?.reconcileFingerprints?.([]);
     expect(typeof received.deps?.observation).toBe("function");
+    expect(typeof received.deps?.authorizeDirectory).toBe("function");
     expect(typeof received.deps?.applyPorts).toBe("function");
   });
 });

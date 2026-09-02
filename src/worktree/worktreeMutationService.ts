@@ -20,6 +20,7 @@ import type {
   WorktreeAfterCreate,
   WorktreeCreateMode,
 } from "../types/messages";
+import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import { normalizePathForCompare } from "../utils/pathBoundary";
 import { type ClearDebrisDeps, clearDebris, nodeClearDebrisDeps } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
@@ -213,16 +214,19 @@ export interface MutationServiceDeps {
    * has already succeeded by then, and nothing provisioning does may change
    * that (design.md D1).
    */
+  authorizeDirectory(path: string): Promise<AuthorizedDirectory | undefined>;
   applyProvision?(
     mainCheckout: string,
     worktreePath: string,
     entries: readonly ProvisionEntry[],
+    authorization: { readonly source: AuthorizedDirectory; readonly destination: AuthorizedDirectory },
   ): Promise<readonly ProvisionStepResult[]>;
   applyPorts?(input: {
     repoId: string;
     repoPath: string;
     worktreePath: string;
     ports: readonly ProvisionPort[];
+    authorization: AuthorizedDirectory;
   }): Promise<{ ports: readonly ProvisionPortResult[]; warnings: readonly ProvisionPortWarning[] }>;
 
   /**
@@ -951,6 +955,16 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             if (!result.ok) {
               return settled("create", request.repoId, result);
             }
+            const wanted = request.provision ?? [];
+            const wantedPorts = request.ports ?? [];
+            let sourceAuthorization: AuthorizedDirectory | undefined;
+            let destinationAuthorization: AuthorizedDirectory | undefined;
+            if (wanted.length > 0 || wantedPorts.length > 0) {
+              [sourceAuthorization, destinationAuthorization] = await Promise.all([
+                deps.authorizeDirectory(repoPath).catch(() => undefined),
+                deps.authorizeDirectory(check.path).catch(() => undefined),
+              ]);
+            }
             // D8: a root inside the main worktree must not dirty the parent's
             // status. A failure here is reported, never fatal to the create.
             const exclude = deps.gitExcludeDirFor(request.repoId, repoPath, check.path);
@@ -969,7 +983,6 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             let allocatedPorts: readonly ProvisionPortResult[] | undefined;
             let portWarnings: readonly ProvisionPortWarning[] = [];
             let provisionedAt: string | undefined;
-            const wanted = request.provision ?? [];
             if (wanted.length > 0) {
               const failed = (reason: string): readonly ProvisionStepResult[] =>
                 wanted.map((entry) => ({
@@ -978,15 +991,21 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                   outcome: { kind: "failed" as const, reason },
                 }));
               provisioned =
-                deps.applyProvision === undefined
-                  ? // A host with no binding cannot provision, but it CAN say so.
-                    // Dropping the selection produced an outcome byte-identical
-                    // to "the user selected nothing", which is the one answer
-                    // nobody can tell from the truth (round-1 F009).
-                    failed("this window cannot bring files over")
-                  : await deps.applyProvision(repoPath, check.path, wanted).catch((error) => failed(messageOf(error)));
+                sourceAuthorization === undefined || destinationAuthorization === undefined
+                  ? failed("the checkout identity could not be verified after creation")
+                  : deps.applyProvision === undefined
+                    ? // A host with no binding cannot provision, but it CAN say so.
+                      // Dropping the selection produced an outcome byte-identical
+                      // to "the user selected nothing", which is the one answer
+                      // nobody can tell from the truth (round-1 F009).
+                      failed("this window cannot bring files over")
+                    : await deps
+                        .applyProvision(repoPath, check.path, wanted, {
+                          source: sourceAuthorization,
+                          destination: destinationAuthorization,
+                        })
+                        .catch((error) => failed(messageOf(error)));
             }
-            const wantedPorts = request.ports ?? [];
             if (wantedPorts.length > 0) {
               const failed = (reason: string): readonly ProvisionPortResult[] =>
                 wantedPorts.map((port) => ({
@@ -996,11 +1015,19 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                   outcome: { kind: "failed" as const, reason },
                 }));
               const applied =
-                deps.applyPorts === undefined
-                  ? { ports: failed("this window cannot allocate ports"), warnings: [] }
-                  : await deps
-                      .applyPorts({ repoId: request.repoId, repoPath, worktreePath: check.path, ports: wantedPorts })
-                      .catch((error) => ({ ports: failed(messageOf(error)), warnings: [] }));
+                destinationAuthorization === undefined
+                  ? { ports: failed("the worktree identity could not be verified after creation"), warnings: [] }
+                  : deps.applyPorts === undefined
+                    ? { ports: failed("this window cannot allocate ports"), warnings: [] }
+                    : await deps
+                        .applyPorts({
+                          repoId: request.repoId,
+                          repoPath,
+                          worktreePath: check.path,
+                          ports: wantedPorts,
+                          authorization: destinationAuthorization,
+                        })
+                        .catch((error) => ({ ports: failed(messageOf(error)), warnings: [] }));
               allocatedPorts = applied.ports;
               portWarnings = applied.warnings;
             }

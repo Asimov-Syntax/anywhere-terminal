@@ -15,7 +15,7 @@ Build the shared authorizer, mint it at the mutation seam, apply it to file prov
     2. `src/agentHooks/install/ClaudeHookInstaller.ts` and `src/worktree/createPath.ts`: consume the shared component and identity owner while preserving installer platform behavior and create-path dispositions.
     3. `src/utils/lockedFile.ts` and `src/utils/lockedFile.test.ts`: replace vacuous temporary and lock ownership comparisons with shared nonzero identity and cover substituted zero-inode paths.
 
-- [ ] 1_2 Mint one authorization pair at the create mutation seam
+- [x] 1_2 Mint one authorization pair at the create mutation seam — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/freeze-auth-recorded-3.log 2>&1 exit 0
   - **Deps**: 1_1
   - **Refs**: design.md D1, design.md D3; specs/worktree-panel/spec.md#selected-post-create-writes-retain-observed-checkout-identity
   - **Acceptance**:

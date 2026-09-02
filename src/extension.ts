@@ -49,6 +49,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
+import { authorizeDirectory } from "./utils/authorizedDirectory";
 import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
@@ -85,8 +86,11 @@ import { listRepoWorktrees } from "./worktree/WorktreeDiscovery";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
-import type { MutationOutcome } from "./worktree/worktreeMutationService";
-import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
+import {
+  createWorktreeMutationService,
+  existenceFromStatError,
+  type MutationOutcome,
+} from "./worktree/worktreeMutationService";
 import { worktreeHeadOid } from "./worktree/worktreeMutations";
 import { allocateWorktreePorts, previewWorktreePorts } from "./worktree/worktreePorts";
 
@@ -559,10 +563,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (worktreeMutations === undefined) {
       const bindings = worktreeHost.mutationBindings();
       worktreeMutations = createWorktreeMutationService({
+        authorizeDirectory,
         // Sequential, and every entry answers. `applyEntry` never throws, so a
         // rejection here would be a bug rather than a bad entry — the call site
         // catches one anyway, because the create has already succeeded by then.
-        applyProvision: async (mainCheckout, worktreePath, entries) => {
+        applyProvision: async (mainCheckout, worktreePath, entries, _authorization) => {
           const roots = await prepareEntryGate(mainCheckout, worktreePath);
           if (roots === null) {
             return entries.map((entry) => ({
