@@ -29,6 +29,7 @@ import type {
   WorktreeBranchMode,
   WorktreeCreateDefaults,
   WorktreeCreateDraft,
+  WorktreeMigrationOffer,
   WorktreeOpenAfter,
   WorktreeProvisionOffer,
   WorktreePullRequestOffer,
@@ -230,6 +231,8 @@ export interface WorktreeCreateDialogDeps {
    * the path resolved for the opening ask (.reviews/round-1.md B4).
    */
   bindProvisioning?: (apply: (repoId: string, offer: WorktreeProvisionOffer) => void) => void;
+  /** Receive the function that replaces the current source-snapshot move offer. */
+  bindMigration?: (apply: (repoId: string, offer: WorktreeMigrationOffer | undefined) => void) => void;
   /**
    * Receive the function that applies the repository's branch list.
    *
@@ -1239,6 +1242,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   pathInput.setAttribute("aria-describedby", "wt-path-note");
   pathField.appendChild(pathNote);
 
+  const migrationField = field("Uncommitted work", "wt-migrate-changes");
+  migrationField.classList.add("wt-migration");
+  migrationField.hidden = true;
+  const migrationRow = document.createElement("label");
+  migrationRow.className = "wt-check-row";
+  const migrationBox = document.createElement("input");
+  migrationBox.type = "checkbox";
+  migrationBox.id = "wt-migrate-changes";
+  const migrationText = document.createElement("span");
+  migrationRow.append(migrationBox, migrationText);
+  migrationField.appendChild(migrationRow);
+  shell.dialog.appendChild(migrationField);
+
   // ── Bring over — what the new worktree will NOT inherit ─────────────────
   // Below the destination and above the after-create choice, because it
   // describes the worktree being made rather than what happens once it exists.
@@ -1315,6 +1331,37 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       kept: [...ticked],
     });
   });
+
+  let drawnMigrationOfferId: string | null = null;
+
+  function migrationAllowed(): boolean {
+    return (
+      draft.branchMode === "detached" ||
+      (draft.branchMode !== "reattach" && effective?.mode.kind !== "reattach" && effective?.mode.kind !== "adopt")
+    );
+  }
+
+  function syncMigration(offer: WorktreeMigrationOffer | undefined): void {
+    if (offer === undefined || !migrationAllowed()) {
+      migrationField.hidden = true;
+      migrationBox.checked = false;
+      migrationText.textContent = "";
+      drawnMigrationOfferId = null;
+      return;
+    }
+    if (drawnMigrationOfferId !== offer.offerId) {
+      migrationBox.checked = false;
+      drawnMigrationOfferId = offer.offerId;
+    }
+    migrationField.hidden = false;
+    migrationText.textContent = `Move ${offer.count} ${offer.count === 1 ? "change" : "changes"} (current snapshot). Git moves the source's uncommitted work present when Create runs.`;
+  }
+
+  function settledMigration(): { offerId: string } | undefined {
+    return migrationField.hidden || !migrationBox.checked || drawnMigrationOfferId === null
+      ? undefined
+      : { offerId: drawnMigrationOfferId };
+  }
 
   /** The offer currently drawn, so an unchanged one is not redrawn. */
   let drawnOfferId: string | null = null;
@@ -1656,12 +1703,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // read it, so every tick the user made was discarded at the submit and the
     // whole provisioning flow was inert end to end (.reviews/round-1.md F005).
     const provision = settledProvision();
+    const migrateChanges = settledMigration();
     deps.onSubmit({
       ...draft,
       ...launch,
       ...(carried === null ? {} : { resolved: carried.mode }),
       ...(disposition === undefined ? {} : { disposition }),
       ...(provision === undefined ? {} : { provision }),
+      ...(migrateChanges === undefined ? {} : { migrateChanges }),
     });
     disposeAll();
   }
@@ -2226,6 +2275,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const repo = currentRepo();
     repoHint.textContent = repo.mainPath;
     syncBringOver(repo.provisioning);
+    syncMigration(repo.migration);
 
     const detached = draft.branchMode === "detached";
     nameInput.disabled = detached;
@@ -2559,6 +2609,22 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     repos[at] = { ...opened, provisioning: offer };
     if (repoId === draft.repoId) {
       syncBringOver(offer);
+    }
+  });
+
+  deps.bindMigration?.((repoId, offer) => {
+    const at = repos.findIndex((repo) => repo.repoId === repoId);
+    const opened = repos[at];
+    if (at < 0 || opened === undefined) {
+      return;
+    }
+    const next = { ...opened, migration: offer };
+    if (offer === undefined) {
+      delete next.migration;
+    }
+    repos[at] = next;
+    if (repoId === draft.repoId) {
+      syncMigration(offer);
     }
   });
 

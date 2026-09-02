@@ -189,6 +189,11 @@ export interface WorktreeProvisionOffer {
   readonly model: ProvisionModel;
 }
 
+export interface WorktreeMigrationOffer {
+  readonly offerId: string;
+  readonly count: number;
+}
+
 /** Host-computed seed for the create form (`requestWorktreeCreateDefaults`). */
 export interface WorktreeCreateDefaults {
   repoId: string;
@@ -226,6 +231,8 @@ export interface WorktreeCreateDefaults {
    * model, and the two say different things.
    */
   provisioning?: WorktreeProvisionOffer;
+  /** The current source snapshot this form may explicitly choose to move. */
+  migration?: WorktreeMigrationOffer;
   /**
    * The repository's local branches, and whether the list is partial.
    *
@@ -333,6 +340,8 @@ export interface WorktreeCreateDraft {
    * never told what the repository needs asks for nothing.
    */
   provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
+  /** Present only when the user checked the current move offer. */
+  migrateChanges?: { readonly offerId: string };
 }
 
 /** Re-exported so the view reads one module for the shapes it renders. */

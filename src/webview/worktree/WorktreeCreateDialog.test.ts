@@ -960,6 +960,151 @@ describe("round-2 review fixes", () => {
   });
 });
 
+describe("Move uncommitted work", () => {
+  const migration = (offerId = "migration-1", count = 1) => ({ offerId, count });
+
+  it("states the singular or plural current snapshot and starts unchecked", () => {
+    const one = open({ repos: [createDefaults({ migration: migration() })] });
+    expect(one.q<HTMLInputElement>("#wt-migrate-changes").checked).toBe(false);
+    expect(one.host.querySelector(".wt-migration")?.textContent).toContain("Move 1 change (current snapshot)");
+    expect(one.host.querySelector(".wt-migration")?.textContent).toContain(
+      "Git moves the source's uncommitted work present when Create runs",
+    );
+    one.dispose();
+
+    const many = open({ repos: [createDefaults({ migration: migration("migration-2", 2) })] });
+    expect(many.host.querySelector(".wt-migration")?.textContent).toContain("Move 2 changes (current snapshot)");
+  });
+
+  it("submits no migration by default and only the checked offer id after consent", () => {
+    const declined = open({ repos: [createDefaults({ migration: migration() })] });
+    type(declined.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    declined.q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(declined.submitted[0]).not.toHaveProperty("migrateChanges");
+
+    const accepted = open({ repos: [createDefaults({ migration: migration() })] });
+    type(accepted.q<HTMLInputElement>("#wt-branch"), "feat/x");
+    accepted.q<HTMLInputElement>("#wt-migrate-changes").click();
+    accepted.q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(accepted.submitted[0]?.migrateChanges).toEqual({ offerId: "migration-1" });
+  });
+
+  it("preserves consent on the same offer and resets it on a replacement", () => {
+    let apply: ((repoId: string, offer: { offerId: string; count: number } | undefined) => void) | undefined;
+    const h = open({
+      repos: [createDefaults({ migration: migration() })],
+      bindMigration: (next) => {
+        apply = next;
+      },
+    });
+    const box = h.q<HTMLInputElement>("#wt-migrate-changes");
+    box.click();
+
+    apply?.(REPO_ID, migration());
+    expect(box.checked).toBe(true);
+
+    apply?.(REPO_ID, migration("migration-2", 2));
+    expect(box.checked).toBe(false);
+    expect(h.host.querySelector(".wt-migration")?.textContent).toContain("Move 2 changes");
+  });
+
+  it("hides and resets the offer while another repository is selected", () => {
+    const other = "/other/.git";
+    const h = open({
+      repos: [createDefaults({ migration: migration() }), createDefaults({ repoId: other, repoLabel: "other" })],
+    });
+    const box = h.q<HTMLInputElement>("#wt-migrate-changes");
+    const picker = h.q<HTMLSelectElement>("#wt-repo-select");
+    box.click();
+
+    picker.value = other;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(h.host.querySelector<HTMLElement>(".wt-migration")?.hidden).toBe(true);
+    expect(box.checked).toBe(false);
+
+    picker.value = REPO_ID;
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(h.host.querySelector<HTMLElement>(".wt-migration")?.hidden).toBe(false);
+    expect(box.checked).toBe(false);
+  });
+
+  it("keeps the offer for a reused branch", () => {
+    let resolve: ((message: WorktreeCreateResolutionMessage) => void) | undefined;
+    const h = open({
+      repos: [createDefaults({ migration: migration() })],
+      bindResolution: (apply) => {
+        resolve = apply;
+      },
+    });
+    resolve?.({
+      type: "worktreeCreateResolution",
+      repoId: REPO_ID,
+      token: 1,
+      seq: 0,
+      query: "",
+      freePath: "/trees/repo",
+      mode: { kind: "reuse" },
+    });
+
+    expect(h.host.querySelector<HTMLElement>(".wt-migration")?.hidden).toBe(false);
+  });
+
+  it.each([
+    "reattach",
+    "adopt",
+  ] as const)("keeps the offer for fresh-detached even when the ref is classified as %s", (kind) => {
+    let resolve: ((message: WorktreeCreateResolutionMessage) => void) | undefined;
+    const h = open({
+      repos: [createDefaults({ migration: migration() })],
+      bindResolution: (apply) => {
+        resolve = apply;
+      },
+    });
+    h.q<HTMLButtonElement>(".wt-advanced-toggle").click();
+    h.q<HTMLButtonElement>("#wt-detached").click();
+    type(h.q<HTMLInputElement>("#wt-base"), "stale-ref");
+    resolve?.({
+      type: "worktreeCreateResolution",
+      repoId: REPO_ID,
+      token: 1,
+      seq: 0,
+      query: "stale-ref",
+      freePath: "/trees/repo",
+      mode:
+        kind === "reattach"
+          ? { kind, repairPath: "/trees/stale", expectedOid: "abc" }
+          : { kind, adoptPath: "/trees/adopt" },
+    });
+
+    expect(h.host.querySelector<HTMLElement>(".wt-migration")?.hidden).toBe(false);
+  });
+
+  it.each(["reattach", "adopt"] as const)("hides the offer for non-detached %s", (kind) => {
+    let resolve: ((message: WorktreeCreateResolutionMessage) => void) | undefined;
+    const h = open({
+      repos: [createDefaults({ migration: migration() })],
+      bindResolution: (apply) => {
+        resolve = apply;
+      },
+    });
+    resolve?.({
+      type: "worktreeCreateResolution",
+      repoId: REPO_ID,
+      token: 1,
+      seq: 0,
+      query: "",
+      freePath: "/trees/repo",
+      mode:
+        kind === "reattach"
+          ? { kind, repairPath: "/trees/stale", expectedOid: "abc" }
+          : { kind, adoptPath: "/trees/adopt" },
+    });
+
+    expect(h.host.querySelector<HTMLElement>(".wt-migration")?.hidden).toBe(true);
+    expect(h.q<HTMLInputElement>("#wt-migrate-changes").checked).toBe(false);
+  });
+});
+
 describe("Bring over — what the new worktree will lack", () => {
   /** The form opened against a repository whose provisioning offer has arrived. */
   function withOffer(over: Parameters<typeof provisionOffer>[0] = {}) {

@@ -6,6 +6,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
+import { createMessageRouter, type MessageHandlers } from "../messaging/MessageRouter";
 import type { PaneAttribution, PaneReport } from "../paneAttribution";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
 import { openWorktreeCreateDialog } from "./WorktreeCreateDialog";
@@ -774,6 +775,25 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     void h;
   });
 
+  it("routes a migration offer through the production router and delegated table", () => {
+    const handled: string[] = [];
+    const stub = {
+      handleMigrationOffer: (msg: { offerId: string }) => handled.push(msg.offerId),
+    } as unknown as WorktreeController;
+    const route = createMessageRouter(worktreeDelegatedHandlers(() => stub) as MessageHandlers);
+
+    route({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_ID,
+      opening: 1,
+      sourceWorktreeId: "/repo",
+      offerId: "migration-1",
+      count: 1,
+    });
+
+    expect(handled).toEqual(["migration-1"]);
+  });
+
   it("maps a new-branch draft onto the create request", () => {
     const posted: WebViewToExtensionMessage[] = [];
     const h = mount();
@@ -1464,6 +1484,75 @@ describe("the create a toolbar with no repository opens", () => {
     expect(defaultsRequests(h)).toContainEqual(
       expect.objectContaining({ repoId: REPO_A, sourceWorktreeId: source.id }),
     );
+  });
+
+  it("applies only the live opening's offer for the exact source row", () => {
+    const h = ready(twoRepoResponse());
+    const source = firstWorktree();
+    menuActions(h).createWorktree(source);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const row = document.querySelector<HTMLElement>(".wt-migration");
+    expect(row?.hidden).toBe(true);
+
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 0,
+      sourceWorktreeId: source.id,
+      offerId: "stale",
+      count: 1,
+    });
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: `${source.id}-other`,
+      offerId: "wrong-source",
+      count: 1,
+    });
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_B,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      offerId: "wrong-repo",
+      count: 1,
+    });
+    expect(row?.hidden).toBe(true);
+
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      offerId: "migration-1",
+      count: 2,
+    });
+    expect(row?.hidden).toBe(false);
+    expect(row?.textContent).toContain("Move 2 changes (current snapshot)");
+  });
+
+  it("withdraws the visible offer when another opening replaces it", () => {
+    const h = ready(twoRepoResponse());
+    const source = firstWorktree();
+    menuActions(h).createWorktree(source);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      offerId: "migration-1",
+      count: 1,
+    });
+    const row = document.querySelector<HTMLElement>(".wt-migration");
+    expect(row?.hidden).toBe(false);
+
+    h.controller.openCreate();
+
+    expect(row?.hidden).toBe(true);
   });
 
   it("[1_1] waits for every repository it asked before opening", () => {

@@ -15,6 +15,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeMigrationOfferMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
   WorktreeProvisionResultMessage,
@@ -37,6 +38,7 @@ import type {
   WorktreeCreateMode,
   WorktreeInfo,
   WorktreeLaunchAgent,
+  WorktreeMigrationOffer,
   WorktreeOpenAfter,
   WorktreePresence,
   WorktreeProvisionOffer,
@@ -304,6 +306,8 @@ export class WorktreeController {
    * would either re-mint it on every character or drop it on the second answer.
    */
   private readonly provisionOffers = new Map<string, WorktreeProvisionOfferMessage>();
+  /** The source snapshot move offer, held separately from per-keystroke defaults. */
+  private readonly migrationOffers = new Map<string, WorktreeMigrationOfferMessage>();
   /**
    * The repository's local branches, per repo.
    *
@@ -361,6 +365,7 @@ export class WorktreeController {
    * (.reviews/round-1.md B4).
    */
   private applyProvisionOffer: ((repoId: string, offer: WorktreeProvisionOffer) => void) | null = null;
+  private applyMigrationOffer: ((repoId: string, offer: WorktreeMigrationOffer | undefined) => void) | null = null;
   /**
    * Push the repository's branch list into the open form. Null when none is
    * open — which is what drops an answer that outlived its dialog.
@@ -519,6 +524,9 @@ export class WorktreeController {
         },
         bindProvisioning: (apply) => {
           this.applyProvisionOffer = apply;
+        },
+        bindMigration: (apply) => {
+          this.applyMigrationOffer = apply;
         },
         // A source the HOST detected, named by id. The message carries no file,
         // no path and no model — the host re-resolves that provider itself, and
@@ -915,6 +923,10 @@ export class WorktreeController {
     // (.reviews/round-2.md B6). Absent renders as "not told yet", which is the
     // honest state until the host answers.
     this.provisionOffers.clear();
+    for (const migrationRepoId of this.migrationOffers.keys()) {
+      this.applyMigrationOffer?.(migrationRepoId, undefined);
+    }
+    this.migrationOffers.clear();
     // Cleared on the same terms as the offer: a list seeded from the previous
     // form describes a repository state that may have moved, and the honest
     // opening state is "not told yet".
@@ -1180,6 +1192,7 @@ export class WorktreeController {
         continue;
       }
       const offer = this.provisionOffers.get(repo.repoId);
+      const migration = this.migrationOffers.get(repo.repoId);
       const refs = this.repoRefs.get(repo.repoId);
       const prs = this.repoPullRequests.get(repo.repoId);
       repos.push({
@@ -1201,6 +1214,7 @@ export class WorktreeController {
         // Absent until the offer arrives, which the form renders as "not told
         // yet" rather than as "nothing to bring over".
         ...(offer === undefined ? {} : { provisioning: { offerId: offer.offerId, model: offer.model } }),
+        ...(migration === undefined ? {} : { migration: { offerId: migration.offerId, count: migration.count } }),
         // Same terms as the offer: absent renders as "not told yet", never as
         // "this repository has no branches".
         ...(refs === undefined ? {} : { refs: { list: refs.refs, truncated: refs.truncated } }),
@@ -1210,6 +1224,23 @@ export class WorktreeController {
       });
     }
     return repos;
+  }
+
+  handleMigrationOffer(msg: WorktreeMigrationOfferMessage): void {
+    const source = this.createSource;
+    if (
+      msg.opening !== this.refsToken ||
+      source === null ||
+      source.repoId !== msg.repoId ||
+      source.worktreeId !== msg.sourceWorktreeId ||
+      msg.offerId.length === 0 ||
+      !Number.isSafeInteger(msg.count) ||
+      msg.count <= 0
+    ) {
+      return;
+    }
+    this.migrationOffers.set(msg.repoId, msg);
+    this.applyMigrationOffer?.(msg.repoId, { offerId: msg.offerId, count: msg.count });
   }
 
   /**
@@ -1614,6 +1645,23 @@ export class WorktreeController {
       if (!repos.has(repoId)) {
         this.provisionOffers.delete(repoId);
       }
+    }
+    for (const repoId of this.migrationOffers.keys()) {
+      if (!repos.has(repoId)) {
+        this.migrationOffers.delete(repoId);
+        this.applyMigrationOffer?.(repoId, undefined);
+      }
+    }
+    const source = this.createSource;
+    if (
+      source !== null &&
+      !next.repos
+        .find((repo) => repo.repoId === source.repoId)
+        ?.worktrees.some((row) => row.id === source.worktreeId && !row.bare && !row.missing && !row.prunable)
+    ) {
+      this.createSource = null;
+      this.migrationOffers.delete(source.repoId);
+      this.applyMigrationOffer?.(source.repoId, undefined);
     }
     for (const repoId of this.repoRefs.keys()) {
       if (!repos.has(repoId)) {
