@@ -4,7 +4,7 @@ The reconstruction recipe in `docs/design/worktree-create.md` § 2.4 writes into
 administrative directory and was verified on macOS only. Every one of its four files carries a path,
 one of them absolute. A platform where it half-works is worse than one where it plainly fails.
 
-- [x] 1_1 Record the macOS control the Windows run is diffed against
+- [x] 1_1 Record the macOS control the Windows run is diffed against — verified: node scripts/verify-windows-worktree-entry.mjs && pnpm exec tsc --noEmit -p tsconfig.json exit 0
   - **Refs**: docs/design/worktree-create.md#24-adopt-re-registers-a-surviving-checkout
   - **Acceptance**:
     - Outcome: The recipe's result on the platform it was designed against is captured verbatim
