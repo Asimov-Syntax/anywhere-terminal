@@ -14,6 +14,41 @@ import type { BranchDeleteRequest } from "./types/messages";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import type { MutationOutcome, MutationServiceDeps } from "./worktree/worktreeMutationService";
 
+const setupAssembly = vi.hoisted(() => ({
+  runs: [] as unknown[],
+  manifests: [] as unknown[],
+  reveals: [] as unknown[],
+}));
+
+vi.mock("./worktree/provisioning/setupRunner", () => ({
+  runSetup: async (input: { steps: readonly { id: string; source: string; script: string }[] }) => {
+    setupAssembly.runs.push(input);
+    return {
+      succeeded: false,
+      steps: input.steps.map((step) => ({ ...step, outcome: { kind: "failed" as const, reason: "test failure" } })),
+    };
+  },
+}));
+
+vi.mock("./worktree/provisioning/setupTerminal", () => ({
+  SetupTerminal: class {
+    outputId(origin: string): string {
+      return `output:${origin}`;
+    }
+    reveal(outputId: string, origin: string): boolean {
+      setupAssembly.reveals.push({ outputId, origin });
+      return true;
+    }
+  },
+}));
+
+vi.mock("./worktree/provisioning/provisionManifest", () => ({
+  writeProvisionManifest: async (...args: unknown[]) => {
+    setupAssembly.manifests.push(args);
+    return {};
+  },
+}));
+
 const received: {
   actions?: WorktreeActions;
   previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
@@ -75,6 +110,9 @@ beforeEach(() => {
   received.actions = undefined;
   received.deps = undefined;
   received.reports = [];
+  setupAssembly.runs = [];
+  setupAssembly.manifests = [];
+  setupAssembly.reveals = [];
   forceUndegraded = false;
   observations = [];
   vi.resetModules();
@@ -139,6 +177,8 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.actions?.lockWorktree).toBe("function");
     expect(typeof received.actions?.unlockWorktree).toBe("function");
     expect(typeof received.actions?.pruneRepo).toBe("function");
+    expect(typeof received.actions?.retrySetup).toBe("function");
+    expect(typeof received.actions?.viewSetupOutput).toBe("function");
     // Round-10 B8: the coordinator's last check before a destructive command is
     // only as real as production supplying what it asks. The service is built
     // lazily, so something has to ask for it first.
@@ -146,6 +186,49 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.deps?.observation).toBe("function");
     expect(typeof received.deps?.authorizeDirectory).toBe("function");
     expect(typeof received.deps?.applyPorts).toBe("function");
+    expect(typeof received.deps?.runSetup).toBe("function");
+    expect(typeof received.deps?.writeProvisionManifest).toBe("function");
+    expect(typeof received.deps?.reportProvisioning).toBe("function");
+  });
+
+  it("binds setup output, manifest writing, and provisioning-only reporting", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    const posted: unknown[] = [];
+    const origin: WorktreeSurface = { isReady: () => true, post: (message) => posted.push(message) };
+    const setup = [{ id: "s1", source: "asimov/worktree.yaml", kind: "shell" as const, script: "pnpm install" }];
+    const authorization = { path: "/repo/wt", platform: "linux" as const, components: [] };
+
+    const result = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: { APP_PORT: 5184 },
+        authorization,
+      },
+      origin,
+    );
+    await received.deps?.writeProvisionManifest?.("/repo/wt", [], [], result?.steps ?? []);
+    received.deps?.reportProvisioning?.(
+      {
+        type: "worktreeProvisionResult",
+        worktreeId: "/repo/wt",
+        setup: result?.steps ?? [],
+        setupOutputId: result?.outputId,
+      },
+      origin,
+    );
+    await received.actions?.viewSetupOutput?.(result?.outputId ?? "", origin);
+
+    expect(setupAssembly.runs).toHaveLength(1);
+    expect(setupAssembly.manifests).toHaveLength(1);
+    expect(setupAssembly.reveals).toEqual([expect.objectContaining({ outputId: result?.outputId })]);
+    expect(posted).toEqual([expect.objectContaining({ type: "worktreeProvisionResult", worktreeId: "/repo/wt" })]);
   });
 });
 

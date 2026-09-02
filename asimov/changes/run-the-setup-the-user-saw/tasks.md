@@ -89,7 +89,7 @@
     4. Cover message merging and replacement and action posting in `src/webview/worktree/WorktreeController.test.ts`; cover failure, warning, actions, retry success, and row rescoping in `src/webview/worktree/WorktreeView.test.ts`.
     5. In `src/extension.worktreeAssembly.test.ts`, wait for the provisioning result itself instead of an unrelated notice plus a fixed event-loop pump.
 
-- [ ] 4_2 Assemble the production runner, manifest, retry, and reporting path
+- [x] 4_2 Assemble the production runner, manifest, retry, and reporting path — verified: pnpm exec vitest run 'src/extension.worktreeMutations.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_3, 4_1
   - **Refs**: specs/worktree-panel/spec.md#{setup-runs-in-the-created-worktree-through-one-shell-argument, task-file-setup-does-not-use-the-task-system, setup-receives-the-worktree-paths-and-branch, setup-receives-authoritative-named-ports, asimov-setup-receives-its-compatibility-environment, setup-failure-leaves-the-successful-create-standing, agent-startup-honours-the-setup-wait-choice} <!-- design.md D1, D2, D3, D4, D5, D6 -->
   - **Acceptance**:
