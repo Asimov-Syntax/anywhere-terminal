@@ -129,7 +129,7 @@ describe("LockedFile deadline gate", () => {
 
     expire();
 
-    await expect(result).resolves.toEqual({ kind: "timedOut" });
+    await expect(result).resolves.toEqual({ kind: "timedOut", releasePending: true });
     await vi.waitFor(() => expect(unlink).toHaveBeenCalledWith(locked.lockPath));
   });
 
@@ -243,7 +243,7 @@ describe("LockedFile deadline gate", () => {
     moveClockBack();
     inspectRewind.resolve();
 
-    await expect(result).resolves.toEqual({ kind: "timedOut" });
+    await expect(result).resolves.toEqual({ kind: "timedOut", releasePending: true });
     expect(protectedStep).not.toHaveBeenCalled();
   });
 
@@ -266,7 +266,7 @@ describe("LockedFile deadline gate", () => {
     await started.promise;
 
     expire();
-    await expect(result).resolves.toEqual({ kind: "timedOut" });
+    await expect(result).resolves.toEqual({ kind: "timedOut", releasePending: true });
     moveClockBack();
     continueWork.resolve();
     await vi.waitFor(() => expect(protectedStep).not.toHaveBeenCalled());
@@ -279,6 +279,25 @@ describe("LockedFile deadline gate", () => {
 
     await expect(locked.withLock(deadline, async () => "done", "failed")).resolves.toEqual({ kind: "timedOut" });
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it("reports release pending when expiry is observed immediately after acquisition", async () => {
+    let expiryReads = 0;
+    const deadline: LockDeadline = {
+      elapsed: new Promise<void>(() => undefined),
+      get expired() {
+        expiryReads += 1;
+        return expiryReads >= 4;
+      },
+      cancel: vi.fn(),
+    };
+    const { locked, unlink } = lockHarness();
+
+    await expect(locked.withLock(deadline, async () => "done", "failed")).resolves.toEqual({
+      kind: "timedOut",
+      releasePending: true,
+    });
+    await vi.waitFor(() => expect(unlink).toHaveBeenCalledWith(locked.lockPath));
   });
 
   it("classifies a late parent mkdir as clean and never starts exclusive open", async () => {
@@ -542,7 +561,7 @@ describe("LockedFile deadline gate", () => {
 
     expire();
 
-    await expect(result).resolves.toEqual({ kind: "timedOut" });
+    await expect(result).resolves.toEqual({ kind: "timedOut", releasePending: true });
     await vi.waitFor(() => expect(unlink).toHaveBeenCalledWith(locked.lockPath));
     observation.resolve(fileStat(101));
   });

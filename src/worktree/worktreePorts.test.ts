@@ -584,6 +584,85 @@ describe("allocateWorktreePorts", () => {
     await expect(readFile(target, "utf8")).rejects.toThrow();
   });
 
+  it("warns when failed publication cannot remove its staged temporary", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    const staged: StagedReplacement = {
+      path: `${target}.tmp`,
+      commit: vi.fn(async () => false),
+      discard: vi.fn(async () => false),
+      abandon: vi.fn(async () => undefined),
+    };
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        lockedFile: (lockedPath) =>
+          lockedPath === sentinel
+            ? {
+                stageReplacement: async () => undefined,
+                withLock: async (_deadline, work) => ({ kind: "done" as const, value: await work(openGate) }),
+              }
+            : {
+                stageReplacement: async () => staged,
+                withLock: async () => ({ kind: "unavailable" as const }),
+              },
+        addExclude: async () => ({ added: false }),
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(staged.discard).toHaveBeenCalledWith(openGate);
+    expect(result.warnings).toEqual(["temporaryCleanupFailed"]);
+  });
+
+  it("warns when prepublication cleanup outlives the allocation deadline", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline, expire } = manualDeadline();
+    const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
+    const target = path.join(worktrees[1] as string, ".env.worktree");
+    const staged: StagedReplacement = {
+      path: `${target}.tmp`,
+      commit: vi.fn(async () => false),
+      discard: vi.fn(() => {
+        expire();
+        return new Promise<boolean>(() => undefined);
+      }),
+      abandon: vi.fn(async () => undefined),
+    };
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        lockedFile: (lockedPath) =>
+          lockedPath === sentinel
+            ? {
+                stageReplacement: async () => undefined,
+                withLock: async (given, work) =>
+                  Promise.race([
+                    work(openGate).then((value) => ({ kind: "done" as const, value })),
+                    given.elapsed.then(() => ({ kind: "timedOut" as const })),
+                  ]),
+              }
+            : {
+                stageReplacement: async () => staged,
+                withLock: async () => ({ kind: "unavailable" as const }),
+              },
+        addExclude: async () => ({ added: false }),
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(result.warnings).toContain("temporaryCleanupFailed");
+    expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
   it("preserves committed outcomes while reporting lock-release and exclude warnings", async () => {
     const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
     const sentinel = path.join(repoId, "anywhere-terminal-port-claims");
@@ -669,6 +748,27 @@ describe("allocateWorktreePorts", () => {
     });
     expect(result.warnings).toEqual([]);
     expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("maps a clean-timeout release still pending at return to a lock warning", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const { deadline } = manualDeadline();
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        deadline: () => deadline,
+        listWorktrees: async () => complete(worktrees),
+        lockedFile: () => ({
+          stageReplacement: async () => undefined,
+          withLock: async () => ({ kind: "timedOut" as const, releasePending: true as const }),
+        }),
+        addExclude: async () => ({ added: false }),
+      },
+    );
+
+    expect(result.ports[0]?.outcome.kind).toBe("failed");
+    expect(result.warnings).toEqual(["lockReleaseFailed"]);
   });
 
   it("starts no listing or publication after the shared deadline is already expired", async () => {
@@ -782,6 +882,27 @@ describe("allocateWorktreePorts", () => {
     expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
     expect(result.warnings).toEqual(["excludeFailed", "lockRetained"]);
     expect(deadline.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("maps pending exclude-lock release without changing committed ports", async () => {
+    const { repoId, repoPath, worktrees } = await fixture(["main", "new"]);
+    const addExclude = vi.fn(async () => ({
+      failed: "the repository-local exclude update timed out before publication",
+      timedOut: true as const,
+      releasePending: true as const,
+    }));
+
+    const result = await allocate(
+      { repoId, repoPath, worktreePath: worktrees[1] as string, ports: [port("APP")] },
+      {
+        listWorktrees: async () => complete(worktrees),
+        probe: probes([5183]),
+        addExclude,
+      },
+    );
+
+    expect(result.ports[0]?.outcome).toEqual({ kind: "allocated", port: 5183 });
+    expect(result.warnings).toEqual(["excludeFailed", "lockReleaseFailed"]);
   });
 
   it("turns a thrown exclude update into a warning without rejecting allocation", async () => {

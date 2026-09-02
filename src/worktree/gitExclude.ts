@@ -39,7 +39,7 @@ const realDeps: GitExcludeDeps = {
 export type ExcludeResult =
   | { added: boolean }
   | { failed: string }
-  | { failed: string; timedOut: true; retainedLockPath?: string };
+  | { failed: string; timedOut: true; retainedLockPath?: string; releasePending?: true };
 
 /** Turn a repo-relative directory into an anchored `info/exclude` pattern. */
 export function excludePatternFor(relativeDir: string): string {
@@ -99,7 +99,11 @@ export async function addToGitExclude(
         retainedLockPath: outcome.retainedLockPath,
       };
     }
-    return { failed: "the repository-local exclude update timed out before publication", timedOut: true };
+    return {
+      failed: "the repository-local exclude update timed out before publication",
+      timedOut: true,
+      ...(outcome.releasePending ? { releasePending: true as const } : {}),
+    };
   } finally {
     if (cancel) {
       ownedDeadline.cancel();

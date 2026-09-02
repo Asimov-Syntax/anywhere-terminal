@@ -41,7 +41,11 @@ export interface WriteGate {
 export type LockedOutcome<T> =
   | { readonly kind: "done"; readonly value: T }
   | { readonly kind: "unavailable" }
-  | { readonly kind: "timedOut"; readonly retainedLockPath?: string };
+  | {
+      readonly kind: "timedOut";
+      readonly retainedLockPath?: string;
+      readonly releasePending?: true;
+    };
 
 export type StagedCommit = "create" | "replace";
 
@@ -248,7 +252,7 @@ export class LockedFile {
           onLockReleaseFailed?.(this.lockPath);
         }
       });
-      return { kind: "timedOut" };
+      return { kind: "timedOut", releasePending: true };
     }
     const running = Promise.resolve()
       .then(() => work(gate))
@@ -267,7 +271,7 @@ export class LockedFile {
           onLockReleaseFailed?.(this.lockPath);
         }
       });
-      return { kind: "timedOut" };
+      return { kind: "timedOut", releasePending: true };
     }
 
     if (gate.closed) {
@@ -280,7 +284,7 @@ export class LockedFile {
           onLockReleaseFailed?.(this.lockPath);
         }
       });
-      return { kind: "timedOut" };
+      return { kind: "timedOut", releasePending: true };
     }
 
     const release = this.releaseLock(this.lockPath, lock);

@@ -164,6 +164,24 @@ describe("addToGitExclude", () => {
     });
   });
 
+  it("reports when clean-timeout lock release remains pending", async () => {
+    const deadline = pendingDeadline();
+    const withLock = vi.fn(async () => ({
+      kind: "timedOut" as const,
+      releasePending: true as const,
+    })) as unknown as GitExcludeLockedFile["withLock"];
+    const deps: GitExcludeDeps = {
+      mode: async () => undefined,
+      lockedFile: () => ({ withLock, readText: async () => "", atomicReplace: async () => true }),
+    };
+
+    await expect(addToGitExclude("/repo/.git", "/.env.worktree", deps, deadline)).resolves.toEqual({
+      failed: "the repository-local exclude update timed out before publication",
+      timedOut: true,
+      releasePending: true,
+    });
+  });
+
   it("reports and logs the exact lock retained by a dirty timeout", async () => {
     const deadline = pendingDeadline();
     const retainedLockPath = "/repo/.git/info/exclude.anywhere-terminal.lock";

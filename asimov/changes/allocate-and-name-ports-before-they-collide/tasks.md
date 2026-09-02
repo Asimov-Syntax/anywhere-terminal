@@ -102,3 +102,14 @@ The lock extraction and result skeleton can start together. Everything after the
     2. `src/worktree/WorktreeDiscovery.ts` and `src/worktree/WorktreeDiscovery.listRepo.test.ts`: accept an optional bounded-listing request, apply one remaining timeout across capability fallback, cap Git output, and reject over-cap records before normalization or missing probes.
     3. `src/extension.ts`: pass the allocator's listing bounds into the production Git listing.
     4. `src/webview/worktree/WorktreeCreateDialog.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`: visibly qualify numeric values as previews.
+
+- [x] 1_9 Report cleanup that remains unproven at the result boundary — verified: pnpm exec vitest run 'src/utils/lockedFile.test.ts' 'src/worktree/worktreePorts.test.ts' && pnpm run check-types && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 exit 0
+  - **Deps**: 1_8
+  - **Refs**: design.md D6, design.md D8; .reviews/round-4.md F006, F008
+  - **Acceptance**:
+    - Outcome: A returned allocation warns whenever its lock or staged temporary may remain
+    - Verify: command pnpm exec vitest run 'src/utils/lockedFile.test.ts' 'src/worktree/worktreePorts.test.ts' && pnpm run check-types
+  - **Plan**:
+    1. `src/utils/lockedFile.ts` and `src/utils/lockedFile.test.ts`: carry unproven asynchronous clean-timeout lock release in `LockedOutcome` and witness every clean-timeout release branch.
+    2. `src/worktree/worktreePorts.ts` and `src/worktree/worktreePorts.test.ts`: map release-pending state to `lockReleaseFailed`, track staged cleanup before publication settles, and emit `temporaryCleanupFailed` when prompt or deadline-bounded discard cannot prove removal.
+    3. `src/worktree/gitExclude.ts` and `src/worktree/gitExclude.test.ts`: preserve clean-timeout release-pending state through the exclude result so the port caller returns the same lock warning for either repository lock.

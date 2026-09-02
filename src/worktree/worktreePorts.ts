@@ -494,6 +494,7 @@ export async function allocateWorktreePorts(
   const deadline = deps.deadline(deps.transactionMs);
   const budget = { deadline, at: deps.now() + deps.transactionMs, now: deps.now };
   let postCommitCleanup: StagedReplacement | undefined;
+  let stagedCleanupUnproven = false;
 
   try {
     const lockedOutcome = await lock.withLock<WorktreePortApplyResult>(
@@ -625,6 +626,7 @@ export async function allocateWorktreePorts(
             pendingFailure = "the port claim file could not be staged";
           }
           if (staged !== undefined) {
+            stagedCleanupUnproven = true;
             const sourceProven =
               (await authorizedDirectoryStillMatches(input.authorization, deps, budget)) &&
               (await sourceStillMatches(target, source, deps, budget)) &&
@@ -644,7 +646,7 @@ export async function allocateWorktreePorts(
             if (persisted) {
               postCommitCleanup = staged;
             } else {
-              await staged.discard(gate);
+              stagedCleanupUnproven = !(await staged.discard(gate).catch(() => false));
             }
           }
           for (const [name, value] of pending) {
@@ -712,14 +714,18 @@ export async function allocateWorktreePorts(
         addWarning("lockRetained");
         deps.warn(`[AnyWhere Terminal] port-claim lock retained after timeout: ${lockedOutcome.retainedLockPath}`);
       }
+      if (lockedOutcome.releasePending) {
+        addWarning("lockReleaseFailed");
+      }
     }
 
     if (postCommitCleanup !== undefined) {
       const cleanup = postCommitCleanup.discard().catch(() => false);
       const cleaned = await Promise.race([cleanup, deadline.elapsed.then(() => false)]);
-      if (!cleaned) {
-        addWarning("temporaryCleanupFailed");
-      }
+      stagedCleanupUnproven = !cleaned;
+    }
+    if (stagedCleanupUnproven) {
+      addWarning("temporaryCleanupFailed");
     }
 
     try {
@@ -728,6 +734,9 @@ export async function allocateWorktreePorts(
         addWarning("excludeFailed");
         if ("retainedLockPath" in excluded && excluded.retainedLockPath !== undefined) {
           addWarning("lockRetained");
+        }
+        if ("releasePending" in excluded && excluded.releasePending) {
+          addWarning("lockReleaseFailed");
         }
       }
     } catch {
