@@ -2,7 +2,7 @@
 
 ## 1. A read that answers
 
-- [ ] 1_1 Add the helper that opens nonblocking and proves the handle regular
+- [x] 1_1 Add the helper that opens nonblocking and proves the handle regular — verified: pnpm exec vitest run 'src/utils/regularFileRead.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#a-configuration-path-that-is-not-an-ordinary-file-is-refused; design.md D1, D2, D3
   - **Acceptance**:
