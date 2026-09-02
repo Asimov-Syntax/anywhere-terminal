@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -110,4 +110,17 @@ Planned at: a82ccc85
   passing over the defect. Re-arming with the old predicate fails two cases; `verify-task` refuses a
   task already ticked, so 1_3's evidence stamp predates this fix and 1_4's full-suite run is what
   carries it. Recorded here because the stamp cannot say it.
-
+- 1_5 removed `provider` from the save message rather than sending it. D1 enumerates what a save
+  carries and a source is not on it: the named offer already records which provider was active, so a
+  wire field beside it is a second answer free to disagree with the offer the user is looking at. It
+  was worse than redundant — the host threaded it into the post-write re-read, which would have
+  re-resolved the extended source instead of the native file just written. `divergenceOf` now reads
+  `active` and takes two arguments.
+- Arm-checked at 1_5: breaking the controller's `postMessage` leaves every dialog test green and
+  fails only the two controller cases. That is the oracle's finding #8 reproduced, and the reason
+  those two drive the shipped button through the real `createDialogDeps` rather than calling
+  `onProvisionSave` by hand.
+- zsh does not word-split unquoted variables. A verification helper written as
+  `run(){ vitest $FILES }` passes the whole list as ONE filename, matches nothing, and prints a
+  clean-looking `filter:` line with no failures. Four arm-checks read as green before this was
+  caught; re-run with the paths inline, all four bite.
