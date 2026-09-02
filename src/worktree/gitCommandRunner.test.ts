@@ -25,11 +25,9 @@ describe("createGitCommandRunner", () => {
   });
 
   it("writes per-call input to stdin", async () => {
-    const result = await nodeRunner().run(
-      ["-e", "process.stdin.pipe(process.stdout)"],
-      cwd,
-      { input: "start\nverify refs/heads/main abc\ncommit\n" },
-    );
+    const result = await nodeRunner().run(["-e", "process.stdin.pipe(process.stdout)"], cwd, {
+      input: "start\nverify refs/heads/main abc\ncommit\n",
+    });
     expect(result.code).toBe(0);
     expect(result.stdout.toString()).toBe("start\nverify refs/heads/main abc\ncommit\n");
   });
