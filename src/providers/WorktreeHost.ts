@@ -146,7 +146,7 @@ export interface WorktreeSurface {
 /**
  * A save that did not happen, said on the model the section is already showing.
  *
- * The four refusals map onto the two problem reasons the wire has, rather than
+ * The refusals map onto the two problem reasons the wire has, rather than
  * widening it: `malformed` is the file's own state, and everything else is "the
  * write could not be made". Create stays enabled either way — a configuration
  * that could not be saved is not a reason to refuse to make a worktree
@@ -158,6 +158,7 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
     outside: "It does not resolve inside this repository.",
     malformed: "It could not be edited without rewriting parts this did not change.",
     unwritable: "The replacement could not be put in place.",
+    unnamed: "The source it builds on was no longer there.",
   };
   return {
     ...model,
@@ -2411,7 +2412,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         provisionSwitch.set(slot, msg.switch);
         const mine = msg.switch;
         void options
-          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept)))
+          // The third answer is the host's own: whether this opening took a
+          // different source. Wired to the baseline recorded at the first offer
+          // by task 2_3 (design.md D18); until then a save records only what the
+          // offer's own items diverge to.
+          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept), false))
           .then(async (written) => {
             if (disposed || !surfaces.has(surface)) {
               return;

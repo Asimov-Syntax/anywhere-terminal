@@ -90,7 +90,7 @@ genuinely parallel, so nothing here pretends to be.
     2. Record in the same file that `present` is a candidate and not an authorization — D17 revalidates it at the write, and this task widens the window between snapshot and save.
     3. Pin the ordering `divergenceOf` relies on — the chosen native adapter precedes its `base` in `DETECTION_ORDER` — with a test in `src/worktree/provisioning/readProvisioning.test.ts` (F013).
 
-- [ ] 2_2 Bind the write to what it checked, and narrow what it rewrites
+- [x] 2_2 Bind the write to what it checked, and narrow what it rewrites — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#{a-configuration-that-cannot-be-edited-safely-is-refused-rather-than-rewritten, an-existing-configuration-keeps-the-formatting-and-comments-it-had, a-configuration-written-for-the-first-time-names-a-source-that-exists} <!-- design.md D4, D16, D17; .reviews/round-1.md F003, F004, F005, F010, F011, F015 -->
   - **Acceptance**:

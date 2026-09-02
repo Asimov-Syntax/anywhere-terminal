@@ -12,11 +12,12 @@
 // computes its single destination itself (design.md D5, D7).
 
 import * as path from "node:path";
-import { applyEdits, type FormattingOptions, getNodeValue, modify, parseTree } from "jsonc-parser";
-import { LockedFile, type LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
+import { applyEdits, type FormattingOptions, type JSONPath, modify, type ParseError } from "jsonc-parser";
+import { isNotFound, LockedFile, type LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
 import type { ProvisionModel } from "../../types/messages";
 import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
+import { readJsonc } from "./providerKit";
 
 /** What the selection diverges to, in the vocabulary the native file has (design.md D6). */
 export interface NativeConfigDivergence {
@@ -24,8 +25,22 @@ export interface NativeConfigDivergence {
   readonly exclude: readonly string[];
   /** Paths the native file declares inline and the user cleared, to remove from `copy`/`link`. */
   readonly drop: readonly string[];
-  /** The present file to build on, when the user took a different source. */
+  /** The present file to build on. */
   readonly extends?: string;
+  /**
+   * An active non-native provider was found and none of its files is there
+   * (design.md D12).
+   *
+   * Reported rather than re-derived by the caller: `divergenceOf` is what looked
+   * for the source and failed to name one.
+   */
+  readonly unnamedSource: boolean;
+  /**
+   * The user took a source other than the one the form opened on, as the HOST
+   * derived it (design.md D18). It decides whether a document worth writing
+   * exists at all when nothing else diverges — never which file gets named.
+   */
+  readonly tookSource: boolean;
 }
 
 export type NativeConfigWrite =
@@ -38,8 +53,13 @@ export type NativeConfigWrite =
  * `unavailable` covers both a lock another process holds and a directory that
  * could not be created, because `LockedFile.acquireLock` answers `undefined` to
  * both — reporting one of them specifically would be a guess (design.md D9).
+ *
+ * `unnamed` is the source's absence, not the destination's: the file to build on
+ * was gone when the write was about to happen, or the active source had no file
+ * left to name at all. Recording a choice against a base that is not there is
+ * how one exclusion becomes every exclusion (design.md D12, D17).
  */
-export type NativeConfigRefusal = "unavailable" | "outside" | "malformed" | "unwritable";
+export type NativeConfigRefusal = "unavailable" | "outside" | "malformed" | "unwritable" | "unnamed";
 
 export interface NativeConfigStat {
   isSymbolicLink(): boolean;
@@ -65,7 +85,11 @@ export interface NativeConfigDeps {
  * Ports, setup steps and already-excluded rows are deliberately untouched, each
  * for its own reason — design.md D6.
  */
-export function divergenceOf(model: ProvisionModel, kept: ReadonlySet<string>): NativeConfigDivergence {
+export function divergenceOf(
+  model: ProvisionModel,
+  kept: ReadonlySet<string>,
+  tookSource: boolean,
+): NativeConfigDivergence {
   const exclude: string[] = [];
   const drop: string[] = [];
   for (const entry of model.entries) {
@@ -97,16 +121,18 @@ export function divergenceOf(model: ProvisionModel, kept: ReadonlySet<string>): 
   // `extends` naming a file that is not there. An empty `present` names
   // nothing — the provider's file went away between the read and the probe, and
   // there is no truthful answer to give.
-  const base = taken === undefined || taken.id === "native" ? undefined : taken.present[0];
-  return base === undefined ? { exclude, drop } : { exclude, drop, extends: base };
+  const inherited = taken !== undefined && taken.id !== "native";
+  const base = inherited ? taken.present[0] : undefined;
+  // Reported, not swallowed: a source that supplied the offer and can no longer
+  // be named is the state D12 refuses, and the writer is where the document
+  // being created is known.
+  const unnamedSource = inherited && base === undefined;
+  const rest = { exclude, drop, unnamedSource, tookSource };
+  return base === undefined ? rest : { ...rest, extends: base };
 }
 
 /** The keys this writer is allowed to touch. Nothing else is added, removed or reordered. */
 const WRITTEN_KEYS = ["extends", "exclude", "copy", "link"] as const;
-
-function notFound(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
-}
 
 /**
  * The file's own indentation and line ending, so an edit does not restyle its
@@ -140,28 +166,117 @@ function readKey(
   return typeof held === "string" ? held : null;
 }
 
+/** One `modify` call. `value: undefined` removes; `insert` adds without replacing. */
+interface Op {
+  readonly path: JSONPath;
+  readonly value: unknown;
+  readonly insert?: true;
+}
+
+/**
+ * One key's change: the narrow operations that make it, and the value the key
+ * must hold afterwards either way.
+ *
+ * The second is not bookkeeping. `modify` is checked against it after the
+ * narrow form runs, because on the pinned 3.3.1 the narrow form is not always
+ * safe — see `applyEdit`.
+ */
+interface Edit {
+  readonly key: string;
+  readonly ops: readonly Op[];
+  readonly whole: unknown;
+}
+
 interface Planned {
-  readonly edits: readonly { key: string; value: unknown }[];
+  readonly edits: readonly Edit[];
+  /** The document names a file to build on once the edits are applied. */
+  readonly named: boolean;
+  /** The base an edit writes, which D17 confirms is still there before the write. */
+  readonly writes?: string;
+}
+
+/** The value `key` holds in `text`, or `undefined` for a document that will not parse. */
+function keyOf(text: string, key: string): unknown {
+  const errors: ParseError[] = [];
+  const value = readJsonc(text, errors);
+  if (errors.length > 0 || typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return (value as Record<string, unknown>)[key];
+}
+
+/**
+ * `text` with one key's edit applied, or `null` when it cannot be made at all.
+ *
+ * The narrow form is tried first and then CHECKED, because jsonc-parser 3.3.1
+ * does not always honour it: removing the LAST element of a single-line array
+ * eats the closing bracket — `{"copy": [".env", ".env.local"]}` minus index 1
+ * comes back as `{"copy": [".env""]}`. Probed; a multi-line array and any
+ * non-last index are correct. So the result is parsed and compared with the
+ * value the edit is for, and only a document that actually holds it is kept.
+ *
+ * The fallback replaces the whole key, which reflows that one array and loses
+ * comments inside it (.reviews/round-1.md F004). That is the trade this makes
+ * where the narrow form is unusable: a correct document, one array's comments
+ * lost, over a corrupt file with its comments intact.
+ */
+function applyEdit(text: string, edit: Edit, formattingOptions: FormattingOptions): string | null {
+  const holds = (candidate: string): boolean =>
+    JSON.stringify(keyOf(candidate, edit.key)) === JSON.stringify(edit.whole);
+
+  let narrow = text;
+  for (const op of edit.ops) {
+    narrow = applyEdits(narrow, modify(narrow, op.path, op.value, { formattingOptions, isArrayInsertion: op.insert }));
+  }
+  if (holds(narrow)) {
+    return narrow;
+  }
+  const wide = applyEdits(text, modify(text, [edit.key], edit.whole, { formattingOptions }));
+  return holds(wide) ? wide : null;
 }
 
 /**
  * What has to change, or `null` when the document cannot be edited safely.
  *
- * A document `parseTree` reports errors for is refused rather than repaired:
+ * A document `readJsonc` reports errors for is refused rather than repaired:
  * `modify` will happily rewrite a broken file and leave it broken, and a
- * wrong-shaped `exclude` makes it throw outright (design.md D4).
+ * wrong-shaped `exclude` makes it throw outright (design.md D4). The parse is
+ * the READER's — `providerKit.readJsonc` — so this writer and the native adapter
+ * cannot come to disagree about which documents are well-formed
+ * (.reviews/round-1.md F011).
+ *
+ * An empty or comment-only document is not one of them. `parseTree` answers
+ * `undefined` with NO errors there, which is the same answer the reader treats
+ * as a present configuration declaring nothing, so it is edited as the empty
+ * object it is (.reviews/round-1.md F010). `modify` appends the comment after
+ * the object it creates rather than keeping it above; the content survives, its
+ * position does not.
+ *
+ * Every array edit names ONE ELEMENT. Replacing an array's whole value reflows
+ * it and deletes every comment inside, including comments on elements the edit
+ * keeps — which satisfied D4's letter by nominating a span wide enough to make
+ * it vacuous (.reviews/round-1.md F004). Two consequences of the narrow form,
+ * both probed against the pinned 3.3.1 and both deliberate:
+ *
+ * - Removals are emitted in DESCENDING index order. Indices are read off the
+ *   ORIGINAL array, and removing a lower one first shifts every higher one down:
+ *   ascending `1` then `2` over `[a,b,c,d]` removes `b` and `d`.
+ * - Removing an element takes the comment that preceded the element AFTER it.
+ *   The removed element's own leading comment stays. That is the bound this
+ *   claims — comments are preserved outside the removed element's immediate
+ *   neighbourhood, not everywhere.
  */
 function planEdits(text: string, divergence: NativeConfigDivergence): Planned | null {
-  const errors: Parameters<typeof parseTree>[1] = [];
-  const tree = parseTree(text, errors, { disallowComments: false, allowTrailingComma: true, allowEmptyContent: true });
-  if (errors.length > 0 || tree === undefined) {
+  const errors: ParseError[] = [];
+  const value = readJsonc(text, errors);
+  if (errors.length > 0) {
     return null;
   }
-  const value: unknown = getNodeValue(tree);
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  // `undefined` with no errors is an empty or comment-only document.
+  if (value !== undefined && (typeof value !== "object" || value === null || Array.isArray(value))) {
     return null;
   }
-  const root = value as Record<string, unknown>;
+  const root = (value ?? {}) as Record<string, unknown>;
 
   const held: Record<string, unknown> = {};
   for (const key of WRITTEN_KEYS) {
@@ -172,43 +287,59 @@ function planEdits(text: string, divergence: NativeConfigDivergence): Planned | 
     held[key] = read;
   }
 
-  const edits: { key: string; value: unknown }[] = [];
-
-  const excluded = (held.exclude as string[] | undefined) ?? [];
-  const added = divergence.exclude.filter((p) => !excluded.includes(p));
-  if (added.length > 0) {
-    edits.push({ key: "exclude", value: [...excluded, ...added] });
-  }
+  const edits: Edit[] = [];
 
   for (const key of ["copy", "link"] as const) {
     const declared = held[key] as unknown[] | undefined;
     if (declared === undefined) {
       continue;
     }
-    const kept = declared.filter((p) => !(typeof p === "string" && divergence.drop.includes(p)));
-    if (kept.length !== declared.length) {
-      edits.push({ key, value: kept });
+    const ops: Op[] = [];
+    for (let index = declared.length - 1; index >= 0; index -= 1) {
+      const at = declared[index];
+      if (typeof at === "string" && divergence.drop.includes(at)) {
+        ops.push({ path: [key, index], value: undefined });
+      }
+    }
+    if (ops.length > 0) {
+      edits.push({
+        key,
+        ops,
+        whole: declared.filter((at) => !(typeof at === "string" && divergence.drop.includes(at))),
+      });
     }
   }
 
-  if (divergence.extends !== undefined && held.extends !== divergence.extends) {
-    edits.push({ key: "extends", value: divergence.extends });
+  const excluded = (held.exclude as string[] | undefined) ?? [];
+  const added = divergence.exclude.filter((p) => !excluded.includes(p));
+  if (added.length > 0) {
+    const whole = [...excluded, ...added];
+    const ops: Op[] =
+      held.exclude === undefined
+        ? // Nothing to preserve inside an array that is not there.
+          [{ path: ["exclude"], value: whole }]
+        : added.map((p, offset) => ({ path: ["exclude", excluded.length + offset], value: p, insert: true }) as const);
+    edits.push({ key: "exclude", ops, whole });
   }
 
-  return { edits };
-}
+  // A take changes which source is named. A document that names none gets one
+  // whenever it is about to record something else, whatever route it arrived
+  // by: an `exclude` with no base to subtract from is not one exclusion, it is
+  // every one of them (design.md D12).
+  //
+  // And only then. A form the user changed nothing on writes no file at all,
+  // even where a source is active and could be named — recording a base is not
+  // a decision anyone made (spec: a save that has nothing to record writes
+  // nothing).
+  const declaredBase = held.extends as string | undefined;
+  const namesBase = divergence.extends !== undefined && divergence.extends !== declaredBase;
+  const needed = divergence.tookSource || (declaredBase === undefined && edits.length > 0);
+  const writes = namesBase && needed ? divergence.extends : undefined;
+  if (writes !== undefined) {
+    edits.push({ key: "extends", ops: [{ path: ["extends"], value: writes }], whole: writes });
+  }
 
-/** The document a repository with no configuration of its own gets. */
-function firstDocument(divergence: NativeConfigDivergence): string | null {
-  const fresh: Record<string, unknown> = {};
-  if (divergence.extends !== undefined) {
-    fresh.extends = divergence.extends;
-  }
-  if (divergence.exclude.length > 0) {
-    fresh.exclude = [...divergence.exclude];
-  }
-  // `drop` cannot apply: a file that does not exist declares nothing inline.
-  return Object.keys(fresh).length === 0 ? null : `${JSON.stringify(fresh, null, 2)}\n`;
+  return { edits, named: declaredBase !== undefined || writes !== undefined, writes };
 }
 
 /**
@@ -219,6 +350,15 @@ function firstDocument(divergence: NativeConfigDivergence): string | null {
  * logical name for a symlink after the check cannot redirect the write — the
  * bypass that a parent-only check let through. The target itself is refused when
  * it is a symlink, which that check never covered at all (design.md D7).
+ *
+ * NOT closed here: an adversary who can rename `.vscode` between the resolve and
+ * the lock still redirects everything downstream of it, because `LockedFile`
+ * serializes an INODE while every path here names a STRING. Closing it needs
+ * descriptor-relative `openat`/`renameat` semantics, which every caller of
+ * `LockedFile` would inherit — a new invariant owner, and so its own change that
+ * this one depends on (design.md D16). What moved inside the lock below closes
+ * the ordinary races, and this comment is here so the remaining one is not read
+ * as an oversight.
  */
 export async function writeNativeConfig(
   deps: NativeConfigDeps,
@@ -237,42 +377,78 @@ export async function writeNativeConfig(
   try {
     here = await deps.realpath(dir);
   } catch (error) {
-    if (!notFound(error)) {
+    if (!isNotFound(error)) {
       return { ok: false, reason: "outside" };
     }
     // Not there yet. `LockedFile` creates it, beneath a parent already checked.
   }
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
 
-  let mode: number | undefined;
-  try {
-    const stat = await deps.lstat(target);
-    if (stat.isSymbolicLink()) {
-      // A configuration that is a link is not one this control edits: the write
-      // would land wherever it points, which is the whole question containment
-      // was asked.
-      return { ok: false, reason: "outside" };
-    }
-    mode = stat.mode & 0o777;
-  } catch (error) {
-    if (!notFound(error)) {
-      return { ok: false, reason: "unwritable" };
-    }
-  }
-
   const file = new LockedFile(target, deps.locked);
   return file.withLock<NativeConfigWrite>(
     async () => {
-      // Inside the lock, not before it. Two saves that both read first produce
-      // serialized renames and a lost update — serializing the syscall is not
-      // serializing the operation (design.md D3).
-      const text = mode === undefined ? undefined : await file.readText();
-      if (text === undefined) {
-        const fresh = firstDocument(divergence);
-        if (fresh === null) {
-          return { ok: true, wrote: false };
+      // Inside the lock, not before it — the whole read-modify-write, and that
+      // includes deciding WHAT is being written to. A symlink verdict or a mode
+      // taken outside the lock describes a file the write need not be landing
+      // on: the target can be replaced in between, and `readText` follows
+      // symlinks (design.md D3, .reviews/round-1.md F003).
+      let mode: number | undefined;
+      try {
+        const stat = await deps.lstat(target);
+        if (stat.isSymbolicLink()) {
+          // A configuration that is a link is not one this control edits: the
+          // write would land wherever it points, which is the whole question
+          // containment was asked.
+          return { ok: false, reason: "outside" };
         }
-        const staged = await file.stageReplacement(fresh, undefined);
+        mode = stat.mode & 0o777;
+      } catch (error) {
+        if (!isNotFound(error)) {
+          return { ok: false, reason: "unwritable" };
+        }
+      }
+      // The same locked observation decides the branch, so a file that appeared
+      // or vanished cannot put this on the wrong one.
+      const existing = mode === undefined ? undefined : await file.readText();
+      const planned = planEdits(existing ?? "", divergence);
+      if (planned === null) {
+        return { ok: false, reason: "malformed" };
+      }
+      // A source that supplied the offer and can no longer be named: writing the
+      // user's choice into a document that names no base records the opposite of
+      // what they chose, and a take that names nothing records nothing at all
+      // (design.md D12).
+      if (divergence.unnamedSource && !planned.named && (planned.edits.length > 0 || divergence.tookSource)) {
+        return { ok: false, reason: "unnamed" };
+      }
+      if (planned.edits.length === 0) {
+        return { ok: true, wrote: false };
+      }
+      // The offer's `present` chose this base; it never authorized it. Confirmed
+      // here, inside the lock, immediately before the write — the file can go
+      // away between the read the form was built from and this save, and the
+      // read side then answers `missingExtends` for a document we just wrote
+      // (design.md D17).
+      if (planned.writes !== undefined) {
+        try {
+          await deps.lstat(path.join(repoRoot, planned.writes));
+        } catch (error) {
+          return { ok: false, reason: isNotFound(error) ? "unnamed" : "unwritable" };
+        }
+      }
+      const formattingOptions = formattingOf(existing ?? "");
+      let next = existing ?? "";
+      for (const edit of planned.edits) {
+        const applied = applyEdit(next, edit, formattingOptions);
+        if (applied === null) {
+          // The document is fine; the edit is what could not be made. Nothing
+          // this cannot express is written half-way.
+          return { ok: false, reason: "unwritable" };
+        }
+        next = applied;
+      }
+      if (existing === undefined) {
+        const staged = await file.stageReplacement(next, undefined);
         if (staged === undefined) {
           return { ok: false, reason: "unwritable" };
         }
@@ -283,18 +459,6 @@ export async function writeNativeConfig(
         } finally {
           await staged.discard();
         }
-      }
-      const planned = planEdits(text, divergence);
-      if (planned === null) {
-        return { ok: false, reason: "malformed" };
-      }
-      if (planned.edits.length === 0) {
-        return { ok: true, wrote: false };
-      }
-      const formattingOptions = formattingOf(text);
-      let next = text;
-      for (const edit of planned.edits) {
-        next = applyEdits(next, modify(next, [edit.key], edit.value, { formattingOptions }));
       }
       return (await file.atomicReplace(next, mode)) ? { ok: true, wrote: true } : { ok: false, reason: "unwritable" };
     },

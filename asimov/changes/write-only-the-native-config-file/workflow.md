@@ -164,3 +164,18 @@ Planned at: a82ccc85
   a refusal reason and stay type-green without the exhaustive refusal Record another task leased.
   Wave 2 is now fully sequential, which is what the dependencies actually were.
 
+- Knowledge candidate: jsonc-parser 3.3.1 `modify(text, [key, i], undefined)` CORRUPTS the document when
+  `i` is the last element of a SINGLE-LINE array — `{"copy": [".env", ".env.local"]}` minus index 1 comes
+  back as `{"copy": [".env""]}`, unparseable. | Surprise: D4 chose element-granular edits precisely
+  because the narrow form was probed safe; it is safe for multi-line arrays and non-last indices only, and
+  the earlier probe used a multi-line fixture. | Evidence:
+  src/worktree/provisioning/writeNativeConfig.ts#applyEdit | Consumer: plan|debug | Action: any edit
+  planned through `modify` on an array must be checked against the value it was for before it is written.
+- 2_2 deviation, within D4's decision rather than changing it: each key's edit is applied narrowly, then
+  the result is parsed and compared with the value the edit was for; a mismatch falls back to replacing
+  that one key's whole value, and a mismatch there too refuses `unwritable`. D4's claim (bytes outside the
+  span unchanged) still holds wherever the narrow form works; where the library cannot do it, one array's
+  comments are lost in exchange for a document that parses. Witnessed both ways.
+- 2_2 seam left for 2_3: `divergenceOf` takes `tookSource` and the host passes a literal `false` until
+  2_3 wires D18's baseline comparison. Until then a save records the offer's own item changes and never a
+  bare source take.
