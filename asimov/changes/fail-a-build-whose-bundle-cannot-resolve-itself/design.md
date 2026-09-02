@@ -80,10 +80,9 @@ The fixed point runs over SYMBOLS rather than node identity:
 3. Bind parameters positionally to arguments, and propagate through identifier initializers and
    assignments, both monotonically.
 4. Worklist with reverse indexes — symbol → the assignments and argument/parameter edges that depend
-   on it — so each propagation edge is processed once rather than triggering a whole re-scan. The
-   first cut wrote a rescan loop and quoted a 0.47s artifact measurement as though it answered this;
-   that measurement shows the bundle's graph is SHALLOW, which is a fact about the input rather than
-   about the algorithm (.reviews/round-4.md F006).
+   on it — so a new fact enqueues the edges that read it rather than triggering a whole re-scan. What
+   this pass is obliged to guarantee about its own cost is § Cost, below; three rounds were spent
+   trying to discharge a stronger claim that is not true of the artifact.
 
 D2's reach narrows accordingly: after D6 it answers for the bare and absolute classes, and the
 relative class — the one that actually shipped — no longer depends on it.
@@ -98,9 +97,9 @@ Each surviving specifier is then classified:
 |---|---|---|
 | A node builtin (`node:fs`, `process`, `buffer`, …) | ok | Always present |
 | A declared `external` from `esbuild.js` (`vscode`, `node-pty`) | ok | Supplied by the host, deliberately unbundled |
-| Absolute (`/…`) | **fail** | A machine path baked into a shipped bundle names the BUILD machine |
+| Absolute (`/…`) | **warn** | A machine path baked into a shipped bundle names the BUILD machine — reported, but see § Coverage |
 | Relative (`./…`, `../…`) | **fail unless it resolves to a shipped file** | This is the shipped defect |
-| Any other bare specifier | **fail** | It should have been bundled; at runtime it resolves against a `node_modules` the VSIX does not carry |
+| Any other bare specifier | **warn** | It should have been bundled; at runtime it resolves against a `node_modules` the VSIX does not carry — reported, but see § Coverage |
 
 The externals are READ FROM `esbuild.js` rather than copied here. A second hand-maintained list is a
 list that drifts, and the drift direction is silent: an external removed from the build but left in
@@ -143,6 +142,54 @@ Warning rather than failing is the load-bearing half of this decision. An incomp
 fails builds can reject a legitimate build (.reviews/round-5.md F010: a context-insensitive union
 flags innocent bare strings) in exchange for a guarantee the gate no longer makes. As a warning the
 signal is kept, and the cost of its imprecision is a message instead of a blocked release.
+
+### Cost — a bound the artifact evidences, after round 7
+
+Rounds 4, 5 and 6 each tried to establish "each propagation edge is applied exactly once", and round 7
+measured that it is **false on the shipped artifact**: 3555 applications for 3489 distinct pairs. It
+was never true; rounds 5 and 6 asserted it on synthetic fixtures built to exhibit one topology each,
+and round 6's witness could not even see the path round 6 changed. An obligation that three rounds
+could not discharge, and that the artifact refutes, is the wrong obligation.
+
+What is actually at risk is unbounded package-time work, so that is what is bounded. Instrumented
+over `dist/extension.js` (1,908,308 bytes):
+
+| Counter | Real artifact | Synthetic mixed fanout, n=160 |
+|---|---:|---:|
+| `flows` — a fact offered to a symbol | 13,823 | 52,000 |
+| `factVisits` — a prior fact replayed | **22** | **4,121,600** |
+| `argScans` — a target scanned for an argument arrival | 52 | 25,600 |
+| total work | 13,897 | 4,199,200 |
+
+The Θ(N²)/Θ(N³) growth round 7 measured is real, and it is **187,000x removed from what the shipped
+bundle does**. Its defeater is N identical reassignments of one binding, which no bundler emits.
+
+So D2 obliges a **ceiling**, not an asymptotic shape:
+
+- Propagation counts every unit of work it performs, on every path — the argument-delivery path
+  included. Counting only the `applyCall` path is what made round 6's assertions vacuous.
+- Work above `PROPAGATION_CEILING` abandons the pass. The gate says so, loudly, in the same voice D5
+  uses for a config it cannot read. A silent skip would be the one outcome worse than the cost.
+- The ceiling is 2,000,000 work units — 144x the shipped artifact's 13,897, and about 60 ms.
+
+**Abandoning the pass cannot change a build's verdict.** After D6, the only class that FAILS is the
+relative one, and it is answered by D6's literal sweep and D7's template pass, neither of which
+propagates. Every relative specifier a require call can carry is a string literal in the bundle, so
+the sweep is a superset of what propagation contributes to that class; propagation now feeds only the
+bare and absolute WARNINGS, which § Coverage already makes no completeness claim for. Abandoning it
+therefore costs warnings the gate never promised, and never a guarantee it did.
+
+This is a bound that can be checked rather than argued: the artifact's headroom is a number, a bundle
+that trips the ceiling is a fixture, and the subsumption is a witness.
+
+### Obligation ledger
+
+| Claim | Semantics | Defeater | Witness | Disposition |
+|---|---|---|---|---|
+| Propagation work is bounded | Every run either completes under `PROPAGATION_CEILING` or abandons the pass | A path whose work the counter does not observe — round 6's `deliverArgument` was exactly this | Counter arm-checked by making `deliverArgument` do extra work and observing the count rise; a fixture above the ceiling is abandoned rather than ground through | supported |
+| Abandoning the pass cannot change a verdict | For every bundle, the set of `severity: "fails"` verdicts is identical with the pass run and with it abandoned | A relative specifier reachable only through a require call and not present as a bundle string literal | A minified-UMD fixture whose relative request arrives only through propagation, asserted present in `relativeLiterals` too; and equal failing verdicts with the pass abandoned | supported |
+| A computed relative request in a call argument is reported | Every `TemplateExpression` with a relative head in call-argument position yields a failing verdict, through any number of enclosing parentheses | `r((`./${name}`))` — round 7 F019, which yields no verdict at all today | Direct, parenthesized and UMD-parenthesized fixtures all reported; path data and tagged templates still not | refuted at HEAD, closed by task 8_1 |
+| The ceiling never fires on a real build | `dist/extension.js` stays far below the ceiling | A future dependency whose bundled shape explodes the fanout | The artifact's own work counted against the ceiling in the suite, so the headroom is asserted rather than remembered | supported |
 
 ## D6 — The relative class is swept, not analysed
 
@@ -245,6 +292,12 @@ anywhere in the artifact, so ordinary path DATA and tagged templates failed the 
 requests (.reviews/round-6.md F018). "Zero occurrences in today's artifact" is a measurement, not a
 structural bound. A template is reported only in a CALL ARGUMENT position — the only place a require
 can take one — and a tagged template is never a call argument in that sense.
+
+**Through the parentheses.** "In a call-argument position" is a fact about the call, not about the
+template's immediate parent. The first cut tested the parent directly, so one pair of parentheses —
+`r((`./${name}`))` — put a `ParenthesizedExpression` in between and the template produced no verdict
+at all (.reviews/round-7.md F019). Parentheses are syntax, not a value, exactly as `unwrap` already
+holds for a callee; the position test walks out through them before asking which call it is in.
 
 Failing rather than warning is affordable because it is not noisy: the real `dist/extension.js`
 carries **zero** relative-headed templates. If one ever appears legitimately, the fix is to make the

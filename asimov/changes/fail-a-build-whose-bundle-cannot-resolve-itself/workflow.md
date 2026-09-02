@@ -8,7 +8,7 @@
 
 - [x] Gate 1: direction approved — user chose warn-not-fail for bare/absolute; the relative class keeps the guarantee
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
@@ -37,6 +37,8 @@ Lane: light — S, one new gate script plus wiring | flags: infra
 - Specs are NO-DELTA: a build-time gate changes nothing the shipped extension does.
 - Gate 2 taken under fastlane on the standing goal, with the user away.
 - The gate was proven against the REAL artifact, not only fixtures: appending `require("./impl/format")` to `dist/extension.js` made it exit 1 naming the path it would have resolved to, and restoring the file returned it to 0. `dist/` is build output and was left byte-identical.
+- Round-7 handback replan. The premise audit is the decision: D2's edge-once obligation is not true of the shipped artifact (3555 applications for 3489 pairs) and three rounds failed to discharge it, so it is replaced by a work ceiling that abandons the pass rather than an asymptotic claim. Instrumented counters on `dist/extension.js`: flows 13,823, factVisits 22, argScans 52 — the cubic axis the chair measured is 187,000x removed from what the real bundle does.
+- Abandoning the D2 pass is safe because after D6 the failing class no longer depends on it: every relative specifier a require call can carry is a bundle string literal, so the sweep is a superset there and propagation now feeds only warnings § Coverage makes no claim for. Task 8_4 witnesses this rather than asserting it.
 Round 3 was opened by an `asm review round-start` run made to read the trajectory; no round-3 review ran. The cycle closes as superseded by the round-2 F002 handback, not by that round.
 Handback (round 2 F002): design.md D2 detects a BARE `require` identifier, and the "Known limit" section asserts the shipped defect left a direct literal call. Both are false for the artifact the gate inspects — production esbuild renames the UMD factory's `require` parameter, so the defect ships as `e("./impl/format")`. Reproduced locally with a UMD fixture under `--bundle --platform=node --minify`. D2's mechanism has to change, so this is not remediation.
 Verify gate: one unit test failed on the first run and passed on two consecutive re-runs with no intervening edit — the same infra flake seen earlier in this branch, not reproduced on a clean tree.

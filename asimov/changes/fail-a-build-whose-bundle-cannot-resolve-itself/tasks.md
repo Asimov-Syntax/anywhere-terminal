@@ -247,3 +247,48 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, build the source file and checker once in `unresolvableRequires` and pass them to the three collectors, keeping the string-taking exports as thin wrappers so the existing witnesses still drive them.
     2. Witness that the collectors agree with their wrapper forms on one bundle, so the shared parse is not a second implementation.
     3. Declare the parse counter in `scripts/bundleRequires.d.mts` so the witness reads it with a real type rather than a suppression.
+
+## 8. Round-7 handback — a cost bound the artifact evidences, and a position test that survives parentheses
+
+- [ ] 8_1 Find a computed request through the parentheses around it
+  - **Deps**: none
+  - **Refs**: design.md D7 § Through the parentheses, .reviews/round-7.md#f019
+  - **Acceptance**:
+    - Outcome: A parenthesized relative-headed template in a call argument is reported
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, have the call-argument position test walk out through enclosing parentheses before asking which call the node sits in, the way `unwrap` already does for a callee.
+    2. Witness the direct form, the parenthesized form and a parenthesized UMD-factory form all reported, and keep the round-6 negatives green so the narrowing is not undone.
+
+- [ ] 8_2 Count every unit of propagation work, on every path
+  - **Deps**: 8_1
+  - **Refs**: design.md D2 § Cost, .reviews/round-7.md#f006
+  - **Acceptance**:
+    - Outcome: The reported work rises when any propagation path does more work
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, count each fact offered to a symbol, each prior fact replayed, and each target scanned for an argument arrival, and report the total alongside the existing pair counts.
+    2. Declare the counter in `scripts/bundleRequires.d.mts`.
+    3. Arm-check the counter against the path round 6 left invisible: make the argument-delivery path do extra work, observe the total rise, and restore it. A counter that cannot see a path cannot bound it.
+    4. Witness the shipped artifact's own work against the ceiling, so the recorded headroom is asserted rather than remembered.
+
+- [ ] 8_3 Abandon the pass above the ceiling, and say so
+  - **Deps**: 8_2
+  - **Refs**: design.md D2 § Cost, .reviews/round-7.md#f006
+  - **Acceptance**:
+    - Outcome: A bundle above the ceiling is reported as an abandoned pass rather than analysed
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, stop propagation once the counted work passes the ceiling and carry that fact out with the verdicts.
+    2. In `scripts/check-bundle-requires.mjs`, report an abandoned pass in its own voice rather than folding it into the verdict list.
+    3. Witness a fixture above the ceiling abandoning rather than completing, a fixture below it completing, and the abandoned run still exiting 0 when no relative request failed.
+
+- [ ] 8_4 Prove the abandoned pass cannot change a verdict
+  - **Deps**: 8_3
+  - **Refs**: design.md D2 § Cost, design.md D6
+  - **Acceptance**:
+    - Outcome: The failing verdicts are the same with the propagation pass run and abandoned
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `src/test/invariants/bundleRequires.test.ts`, witness that a minified UMD fixture whose relative request arrives only through propagation is also found by the literal sweep, so the sweep is a superset for the failing class.
+    2. In the same file, witness that one bundle carrying a failing relative request, a bare specifier and an absolute path yields the same `severity: "fails"` verdicts whether the pass runs or is abandoned, and that only the warnings differ.
