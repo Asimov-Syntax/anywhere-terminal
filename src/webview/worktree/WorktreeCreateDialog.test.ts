@@ -1787,6 +1787,37 @@ describe("Bring over — recording the choice in the repository's own configurat
     expect(form.box("j6")?.checked).toBe(false);
   });
 
+  it("[F014] keeps the control showing sent across a trip through the repo picker", () => {
+    // The record is per repository; the button is one control shared by all of
+    // them. Moving away drops the drawn offer, moving back redraws the SAME
+    // cached one, and the redraw's `disabled = false` re-enabled a button whose
+    // handler then silently returns — the busy state saying "press me" about a
+    // save already in flight (.reviews/round-3.md F014).
+    const { host } = open({
+      repos: [
+        createDefaults({ provisioning: provisionOffer() }),
+        createDefaults({ repoId: "/other/.git", repoLabel: "other" }),
+      ],
+      onProvisionSave: () => {},
+    });
+    const save = () => host.querySelector<HTMLButtonElement>(".wt-bring-save");
+    const picker = host.querySelector<HTMLSelectElement>("#wt-repo-select");
+    if (picker === null) {
+      throw new Error("missing repo picker");
+    }
+    const pick = (id: string) => {
+      picker.value = id;
+      picker.dispatchEvent(new Event("change"));
+    };
+    save()?.click();
+    expect(save()?.disabled).toBe(true);
+
+    pick("/other/.git");
+    pick(REPO_ID);
+
+    expect(save()?.disabled).toBe(true);
+  });
+
   it("[F018] does not carry a selection across a source the user took after saving", () => {
     // A switch replaces the source. The rows the selection was taken against
     // are not the rows this offer claims to have, even where the text matches,

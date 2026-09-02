@@ -18,6 +18,7 @@ import type { ProvisionModel } from "../../types/messages";
 import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { readJsonc } from "./providerKit";
+import { FRAMEWORK_ORDER } from "./readProvisioning";
 
 /** What the selection diverges to, in the vocabulary the native file has (design.md D6). */
 export interface NativeConfigDivergence {
@@ -71,6 +72,13 @@ export interface NativeConfigDeps {
   lstat(p: string): Promise<NativeConfigStat>;
   /** Passed through to `LockedFile`, so a test can fail one syscall and nothing else. */
   readonly locked?: LockedFileDependencies;
+  /**
+   * The process's file-creation mask, injectable because a vitest worker refuses
+   * `process.umask(mask)` — so a witness for the masking can only be written by
+   * supplying the mask (.reviews/round-3.md F022, and the same constraint
+   * `applyEntries.node.test.ts` records).
+   */
+  umask?(): number;
 }
 
 /**
@@ -448,6 +456,20 @@ export async function writeNativeConfig(
       // (.reviews/round-2.md F021).
       const base = planned.writes ?? planned.declared;
       if (base !== undefined) {
+        // Membership FIRST, and asked of the read side's own list. A declared
+        // base is untrusted repository text, and probing it before establishing
+        // that it names an adapter file at all turned this confirmation into a
+        // filesystem oracle: `"extends": "../../elsewhere"` reported whether an
+        // arbitrary path outside the checkout exists (.reviews/round-3.md F025).
+        //
+        // The exact spelling, exactly as `baseFor` asks it: `../` and an
+        // absolute path match no adapter's constant and so need no containment
+        // check of their own (readProvisioning.ts `baseFor`, design.md D2).
+        // A name that is not a member is refused rather than probed — which is
+        // also what the next read would answer about it.
+        if (!FRAMEWORK_ORDER.some((adapter) => adapter.files.includes(base))) {
+          return { ok: false, reason: "unnamed" };
+        }
         try {
           await deps.lstat(path.join(repoRoot, base));
         } catch (error) {
@@ -469,8 +491,15 @@ export async function writeNativeConfig(
         // `LockedFile` opens its temporary `0o600` and skips the chmod when no
         // mode is given, so a file created through it landed at the temporary's
         // own mode — one nobody chose, and unlike every sibling in the
-        // repository. The umask narrows this (.reviews/round-2.md F022).
-        const staged = await file.stageReplacement(next, mode ?? 0o644);
+        // repository (.reviews/round-2.md F022).
+        //
+        // Masked before it is passed. `stageReplacement` opens `wx` with the
+        // mode — which the umask DOES narrow — and then chmods it exactly,
+        // which the umask does not: `0o644` under `umask 0077` produced a
+        // world-readable file where the process's own policy says `0600`
+        // (.reviews/round-3.md F022). Masking here lands the chmod on the same
+        // value the create would have produced alone.
+        const staged = await file.stageReplacement(next, mode ?? 0o644 & ~(deps.umask ?? process.umask)());
         if (staged === undefined) {
           return { ok: false, reason: "unwritable" };
         }

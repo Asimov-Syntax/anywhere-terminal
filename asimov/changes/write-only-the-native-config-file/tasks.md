@@ -155,3 +155,21 @@ genuinely parallel, so nothing here pretends to be.
     6. Cover each in `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/worktree/provisioning/writeNativeConfig.test.ts` and `src/types/messages.contract.test.ts`.
 
 **Waves**: `3_1`
+
+## Wave 4 — round 3 remediation
+
+- [x] 4_1 Refuse a base the read side would never accept, and stop toggling what should be derived — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-refusal-to-save-says-a-save-was-refused} <!-- design.md D2, D17; .reviews/round-3.md F014, F022, F023, F025 -->
+  - **Acceptance**:
+    - Outcome: an `extends` naming no adapter file is refused without the filesystem being asked about it
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: no new containment rule of its own — the writer asks the read side's adapter list, it does not grow a second copy (D2)
+  - **Plan**:
+    1. Export `FRAMEWORK_ORDER` from `src/worktree/provisioning/readProvisioning.ts` so one list serves both sides.
+    2. In `src/worktree/provisioning/writeNativeConfig.ts`, check adapter membership before the D17 probe and refuse a non-member as `unnamed` (F025).
+    3. Mask the created mode by the process umask so the exact `chmod` cannot land broader than the process's own policy (F022).
+    4. In `src/webview/worktree/WorktreeCreateDialog.ts`, derive the save button's disabled state from the repository's pending record on every redraw (F014), and evict the switched-from offer's selection when its replacement is drawn (F023).
+    5. Cover each in `src/worktree/provisioning/writeNativeConfig.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`.
+
+**Waves**: `4_1`

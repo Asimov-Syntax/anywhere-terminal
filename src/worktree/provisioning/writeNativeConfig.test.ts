@@ -583,6 +583,52 @@ describe("the base a save records against", () => {
     expect(wrote).toEqual({ ok: true, wrote: true });
     expect((await fs.lstat(target)).mode & 0o777).toBe(0o644 & ~process.umask());
   });
+
+  it("never creates one broader than the process's own policy allows", async () => {
+    // The mask is SUPPLIED, because the assertion above cannot tell the two
+    // apart on a machine whose umask is the usual `0o022` — `0o644` masked by
+    // it is `0o644` again — and a vitest worker refuses `process.umask(mask)`.
+    // `stageReplacement` chmods the mode exactly, and a chmod is not narrowed
+    // the way the create is, so an unmasked `0o644` under `umask 0o077` landed
+    // world-readable against the process's own policy (.reviews/round-3.md F022).
+    const strict: NativeConfigDeps = { ...realDeps, umask: () => 0o077 };
+
+    const wrote = await writeNativeConfig(strict, root, div({ extends: await base("orca.yaml"), tookSource: true }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect((await fs.lstat(target)).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses a base that names no adapter file without asking the filesystem about it", async () => {
+    // `extends` is untrusted repository text. Probing it before establishing
+    // that it names an adapter file at all made this confirmation a filesystem
+    // oracle: a committed `../../elsewhere` reported whether an arbitrary path
+    // outside the checkout exists. Membership is asked of the read side's own
+    // list, exactly as `baseFor` asks it (.reviews/round-3.md F025, design.md D2).
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-probe-"));
+    const reaching = path.relative(root, path.join(outside, "present.yaml"));
+    await fs.writeFile(path.join(outside, "present.yaml"), "copy:\n", "utf8");
+    await put(`{ "extends": ${JSON.stringify(reaching)}, "copy": [".env"] }\n`);
+    const before = await fs.readFile(target, "utf8");
+    const asked: string[] = [];
+    const watching: NativeConfigDeps = {
+      ...realDeps,
+      lstat: async (p) => {
+        asked.push(p);
+        return fs.lstat(p);
+      },
+    };
+
+    const wrote = await writeNativeConfig(watching, root, div({ exclude: ["dist"] }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    // Not merely refused — never probed. A refusal that still asked would leak
+    // the same bit through timing and through the `unwritable` answer a
+    // permission error would give instead.
+    expect(asked.filter((p) => p.includes(path.basename(outside)))).toEqual([]);
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+    await fs.rm(outside, { recursive: true, force: true });
+  });
 });
 
 describe("what the selection diverges to", () => {

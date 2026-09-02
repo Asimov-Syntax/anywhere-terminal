@@ -1480,7 +1480,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const saved = pendingSave.get(draft.repoId);
     if (switched !== offer.offerId) {
       pendingSwitch.delete(draft.repoId);
-      saveButton.disabled = false;
+    }
+    // The switched-FROM offer's selection, dropped the same way a save answer
+    // drops its own. Only save answers were evicting, so repeated switches left
+    // one unreachable set per superseded offer for the dialog's lifetime
+    // (.reviews/round-3.md F023).
+    if (switched !== undefined && switched !== offer.offerId) {
+      checkedByOffer.delete(switched);
     }
     // A save is answered only by an offer that is neither the one it went out
     // against nor the answer to a switch taken after it. A switch replaces the
@@ -1494,6 +1500,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // state keyed by an id nothing will name.
       checkedByOffer.delete(saved.offerId);
     }
+    // DERIVED, never toggled. The record is per repository and the button is
+    // one control shared by all of them, so a `disabled = false` on any redraw
+    // re-enabled a button whose handler then silently returned — the busy state
+    // the F014 fix exists to show, showing the wrong thing after a trip through
+    // the repo picker (.reviews/round-3.md F014).
+    saveButton.disabled = pendingSave.has(draft.repoId);
     // And only where a save can actually be made: a control whose press the
     // host would never hear is the same nothing as a control with no offer
     // behind it (.reviews/round-1.md F009).

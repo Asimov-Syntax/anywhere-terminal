@@ -208,3 +208,15 @@ Planned at: a82ccc85
   share one module-global `REPO` that `beforeEach` never resets. | Consumer: debug | Action: an
   assembly-test failure naming a test the diff cannot reach is checked against a clean-HEAD full-suite
   run before it is treated as a regression.
+- Round-3 F025 is the round-2 fix's own defect: F021 widened the D17 probe to cover a base the
+  document already declared, and that value is untrusted repository text. Probing it before asking
+  whether it names an adapter file made the confirmation a filesystem oracle. The writer now asks
+  `FRAMEWORK_ORDER` — exported from `readProvisioning.ts` so one list serves both sides rather than
+  a second copy of the rule living in the writer.
+- Round-3 F023 is fixed without a witness of its own. A superseded offer's selection set is keyed by
+  an id nothing can name again, so its retention is observable only as memory: no assertion can tell
+  the evicted state from the retained one through any surface the dialog exposes. Recorded rather
+  than covered by a test that could not fail.
+- `NativeConfigDeps` gained an injectable `umask()` because a vitest worker refuses
+  `process.umask(mask)` and the ambient `0o022` makes `0o644 & ~umask` equal `0o644` — the existing
+  mode assertion could not tell a masked write from an unmasked one.
