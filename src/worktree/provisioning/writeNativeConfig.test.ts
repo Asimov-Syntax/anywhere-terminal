@@ -11,8 +11,10 @@ import path from "node:path";
 import { applyEdits, modify } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
+import type { ProvisionEntry, ProvisionModel } from "../../types/messages";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import {
+  divergenceOf,
   type NativeConfigDeps,
   type NativeConfigDivergence,
   writeNativeConfig,
@@ -313,5 +315,99 @@ describe("saving twice does not grow the file", () => {
       copy: [".env"],
       exclude: ["node_modules"],
     });
+  });
+});
+
+describe("what the selection diverges to", () => {
+  const entry = (over: Partial<ProvisionEntry> & { id: string }): ProvisionEntry => ({
+    path: over.id,
+    mode: "copy",
+    source: "asimov/worktree.yaml",
+    ...over,
+  });
+
+  const model = (over: Partial<ProvisionModel> = {}): ProvisionModel => ({
+    entries: [],
+    setup: [],
+    ports: [],
+    providers: [],
+    excluded: [],
+    contenders: [],
+    problems: [],
+    ...over,
+  });
+
+  it("excludes an inherited entry the user cleared", () => {
+    const m = model({ entries: [entry({ id: "e1", path: "node_modules" }), entry({ id: "e2", path: ".env" })] });
+
+    expect(divergenceOf(m, new Set(["e2"]))).toEqual({ exclude: ["node_modules"], drop: [] });
+  });
+
+  it("drops an entry the native file declared itself, rather than excluding it", () => {
+    // `exclude` has no effect on inline keys (worktree-provisioning.md § 3.4),
+    // so excluding a path the native file declares records a contradiction the
+    // read side then reports as a problem.
+    const m = model({
+      entries: [entry({ id: "e1", path: ".env.local", source: NATIVE_PROVIDER_FILE })],
+    });
+
+    expect(divergenceOf(m, new Set())).toEqual({ exclude: [], drop: [".env.local"] });
+  });
+
+  it("records nothing for an entry the user left alone", () => {
+    const m = model({ entries: [entry({ id: "e1", path: ".env" })] });
+
+    expect(divergenceOf(m, new Set(["e1"]))).toEqual({ exclude: [], drop: [] });
+  });
+
+  it("takes no interest in ports, setup steps or already-excluded rows", () => {
+    // Each is out for its own reason, and design.md D6 states them: a setup
+    // step's unticked box is § 7's safety rule rather than a preference, a port
+    // has no path for `exclude` to match, and an excluded row is already
+    // recorded.
+    const m = model({
+      ports: [{ id: "p1", name: "APP", source: "asimov/worktree.yaml" }],
+      setup: [{ id: "s1", script: "pnpm i", kind: "shell", source: "asimov/worktree.yaml" }],
+      excluded: [entry({ id: "x1", path: "dist" })],
+    });
+
+    expect(divergenceOf(m, new Set())).toEqual({ exclude: [], drop: [] });
+  });
+
+  it("names the taken source's file that is actually there", () => {
+    const m = model({
+      providers: [
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [".worktreeinclude"], active: false },
+      ],
+    });
+
+    expect(divergenceOf(m, new Set(), "orca").extends).toBe(".worktreeinclude");
+  });
+
+  it("names nothing when the taken source is the one already active", () => {
+    const m = model({
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
+    });
+
+    expect(divergenceOf(m, new Set(), "asimov").extends).toBeUndefined();
+  });
+
+  it("names nothing when the taken source has no file left to name", () => {
+    // `present` can be empty on a provider that WAS detected: there when it was
+    // read, gone when presence was taken. Naming `files[0]` anyway would write
+    // an `extends` the read side reports as `missingExtends`.
+    const m = model({
+      providers: [
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [], active: false },
+      ],
+    });
+
+    expect(divergenceOf(m, new Set(), "orca").extends).toBeUndefined();
+  });
+
+  it("names nothing for a source the model never offered", () => {
+    expect(divergenceOf(model(), new Set(), "orca").extends).toBeUndefined();
   });
 });

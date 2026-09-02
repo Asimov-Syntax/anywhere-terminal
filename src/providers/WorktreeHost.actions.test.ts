@@ -3011,7 +3011,12 @@ describe("[D5] a switch is a new request with its own identity", () => {
     ports: [],
     providers: [
       { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
-      { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml", ".worktreeinclude"], active: false },
+      {
+        id: "orca",
+        files: ["orca.yaml", ".worktreeinclude"],
+        present: ["orca.yaml", ".worktreeinclude"],
+        active: false,
+      },
     ],
     excluded: [],
     contenders: [],
@@ -3026,7 +3031,12 @@ describe("[D5] a switch is a new request with its own identity", () => {
       ...OFFERED,
       entries: [{ id: "i1", path: "node_modules", mode: "link", source: "orca.yaml" }],
       providers: [
-        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml", ".worktreeinclude"], active: true },
+        {
+          id: "orca",
+          files: ["orca.yaml", ".worktreeinclude"],
+          present: ["orca.yaml", ".worktreeinclude"],
+          active: true,
+        },
         { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
       ],
     };

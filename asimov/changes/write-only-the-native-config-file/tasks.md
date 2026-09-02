@@ -30,7 +30,7 @@
     7. Add `"writeNativeConfig.ts"` to `NOT_READ_PATH` in `src/worktree/provisioning/readOnly.test.ts`.
     8. Write `src/worktree/provisioning/writeNativeConfig.test.ts` covering every ledger row in design.md § Obligation ledger, including the arming step each row names.
 
-- [ ] 1_3 Derive the divergence from the offer the host holds
+- [x] 1_3 Derive the divergence from the offer the host holds — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-choice-the-repository-s-own-configuration-can-express-is-recorded-there, choosing-a-different-source-changes-only-which-source-is-named} <!-- design.md D1, D6, D11 -->
   - **Acceptance**:

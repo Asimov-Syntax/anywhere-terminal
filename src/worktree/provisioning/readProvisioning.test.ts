@@ -52,7 +52,9 @@ describe("one source answers", () => {
     const model = await readProvisioning(fs({ asimov: ASIMOV_YAML }), ROOT);
 
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
-    expect(model.providers).toEqual([{ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true }]);
+    expect(model.providers).toEqual([
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+    ]);
   });
 
   it("reads orca alone", async () => {
@@ -95,7 +97,12 @@ describe("exactly one detected source supplies the offer", () => {
     expect(model.setup).toEqual([]);
     expect(model.providers).toEqual([
       { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
-      { id: "orca", files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], present: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE], active: false },
+      {
+        id: "orca",
+        files: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE],
+        present: [ORCA_YAML_FILE, ORCA_INCLUDE_FILE],
+        active: false,
+      },
       { id: "vscodeTasks", files: [VSCODE_TASKS_FILE], present: [VSCODE_TASKS_FILE], active: false },
     ]);
   });
@@ -165,7 +172,12 @@ describe("exactly one detected source supplies the offer", () => {
     // directory to find its providers could answer differently on two machines;
     // this asserts none is listed at all, so none can.
     expect(listed).toEqual([]);
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({
+      id: "asimov",
+      files: [ASIMOV_PROVIDER_FILE],
+      present: [ASIMOV_PROVIDER_FILE],
+      active: true,
+    });
   });
 
   it("is the order the constant declares", () => {
@@ -206,7 +218,12 @@ describe("[D3] a present source answers even when its answer is nothing", () => 
 
     expect(model.problems.map((p) => p.file)).toEqual([ASIMOV_PROVIDER_FILE]);
     expect(model.entries).toEqual([]);
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({
+      id: "asimov",
+      files: [ASIMOV_PROVIDER_FILE],
+      present: [ASIMOV_PROVIDER_FILE],
+      active: true,
+    });
   });
 });
 
@@ -226,7 +243,12 @@ describe("a preference reorders one entry, it does not replace the order", () =>
   it("falls back to the plain order for a preference that is not there", async () => {
     const model = await readProvisioning(fs(BOTH), ROOT, "vscodeTasks");
 
-    expect(model.providers[0]).toEqual({ id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true });
+    expect(model.providers[0]).toEqual({
+      id: "asimov",
+      files: [ASIMOV_PROVIDER_FILE],
+      present: [ASIMOV_PROVIDER_FILE],
+      active: true,
+    });
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
   });
 

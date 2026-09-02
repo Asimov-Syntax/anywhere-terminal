@@ -93,3 +93,9 @@ Planned at: a82ccc85
 - D9 narrowed by the same attack: `LockedFile` returns the same `undefined` for a held lock and an
   uncreatable directory, so there is one `unavailable` reason rather than a `locked` that would be
   a guess.
+- CORRECTION to 1_3's `--test-change` record, which is immutable once written. It claims `git diff -w`
+  on the three re-wrapped test files is empty. It is not: `biome format` adds a trailing comma when it
+  breaks a literal across lines, and `-w` does not ignore commas. The claim the record was making is
+  nonetheless true, and this is the check that establishes it — stripping whitespace AND commas, all
+  three files hash identically to their committed versions, so no assertion in them changed.
+

@@ -14,6 +14,7 @@
 import * as path from "node:path";
 import { applyEdits, type FormattingOptions, getNodeValue, modify, parseTree } from "jsonc-parser";
 import { LockedFile, type LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
+import type { ProvisionModel, ProvisionProvider } from "../../types/messages";
 import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 
@@ -52,6 +53,44 @@ export interface NativeConfigDeps {
   readonly locked?: LockedFileDependencies;
 }
 
+/**
+ * What the user's selection diverges to, in the vocabulary the native file has.
+ *
+ * Pure, and derived from the HOST-held model plus ids — never from anything the
+ * webview spelled (design.md D1). Which key an unticked entry lands in is
+ * decided by which file declared it: `exclude` has no effect on inline keys
+ * (worktree-provisioning.md § 3.4), so excluding a path the native file itself
+ * declares would record a contradiction rather than a preference.
+ *
+ * Ports, setup steps and already-excluded rows are deliberately untouched, each
+ * for its own reason — design.md D6.
+ */
+export function divergenceOf(
+  model: ProvisionModel,
+  kept: ReadonlySet<string>,
+  source?: ProvisionProvider["id"],
+): NativeConfigDivergence {
+  const exclude: string[] = [];
+  const drop: string[] = [];
+  for (const entry of model.entries) {
+    if (kept.has(entry.id)) {
+      continue;
+    }
+    const into = entry.source === NATIVE_PROVIDER_FILE ? drop : exclude;
+    if (!into.includes(entry.path)) {
+      into.push(entry.path);
+    }
+  }
+  // `present[0]`, never `files[0]`: `files` is what the adapter can read, and a
+  // provider detected through only the second of them would be given an
+  // `extends` naming a file that is not there. An empty `present` names
+  // nothing — the provider's file went away between the read and the probe, and
+  // there is no truthful answer to give.
+  const taken = source === undefined ? undefined : model.providers.find((p) => p.id === source);
+  const base = taken === undefined || taken.active ? undefined : taken.present[0];
+  return base === undefined ? { exclude, drop } : { exclude, drop, extends: base };
+}
+
 /** The keys this writer is allowed to touch. Nothing else is added, removed or reordered. */
 const WRITTEN_KEYS = ["extends", "exclude", "copy", "link"] as const;
 
@@ -76,7 +115,11 @@ function formattingOf(text: string): FormattingOptions {
 }
 
 /** `undefined` for a value that is absent; `null` for one whose shape this writer cannot edit. */
-function readKey(root: Record<string, unknown>, key: string, want: "array" | "string"): unknown[] | string | null | undefined {
+function readKey(
+  root: Record<string, unknown>,
+  key: string,
+  want: "array" | "string",
+): unknown[] | string | null | undefined {
   const held = root[key];
   if (held === undefined) {
     return undefined;
