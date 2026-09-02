@@ -15,13 +15,13 @@
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [x] Review done
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this child change; parent WT-012.6 owns blueprint sync
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
