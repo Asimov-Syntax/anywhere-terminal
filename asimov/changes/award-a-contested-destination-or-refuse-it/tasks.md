@@ -178,7 +178,7 @@
     2. Witness the OOB-F016 shape: a native copy entry and an inherited link entry contesting one absent destination, where the inherited entry is refused by its own material rule and the native copy is still materialized.
     3. Witness that a containment refusal still refuses the whole contest, so the narrowing did not reopen what D3 closed.
 
-- [ ] 9_3 Refuse a group that claims priority twice
+- [x] 9_3 Refuse a group that claims priority twice — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 9_2
   - **Refs**: design.md D3b, .reviews/round-6.md
   - **Acceptance**:
@@ -186,5 +186,6 @@
     - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
   - **Plan**:
     1. In `src/worktree/provisioning/providerKit.ts`, let a group record that more than one member is the repository's own rather than silently carrying no favoured member.
+    1b. In `src/types/messages.ts`, give `ProvisionContenders` the field that records it, beside `favoured`.
     2. In `src/worktree/provisioning/applyProvisioning.ts`, refuse such a group entire instead of letting it fall through to the ordinary pass.
     3. Witness two native spellings plus one inherited: nothing is written, the inherited material is not at the destination, and the refusal names all three by path and declaring file.

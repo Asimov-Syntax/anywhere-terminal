@@ -935,6 +935,16 @@ export interface ProvisionContenders {
    * honest "this needs deciding where it can be observed".
    */
   readonly favoured?: string;
+  /**
+   * Set when MORE THAN ONE member is the repository's own declaration.
+   *
+   * Absent `favoured` means two opposite things, and the apply side has to tell
+   * them apart: nothing claims priority — a favoured row the user unticked, so
+   * the members are applied as they are — or priority is claimed twice, where
+   * nothing available can choose and the group is refused entire
+   * (design.md D3b, .reviews/round-6.md OOB-F015).
+   */
+  readonly priorityClaimedTwice?: true;
 }
 
 export interface ProvisionModel {

@@ -405,6 +405,9 @@ export function contendersOf(entries: readonly ProvisionEntry[], favouredSource?
     groups.push({
       members: members.map((e) => e.id),
       ...(native.length === 1 && native[0] !== undefined ? { favoured: native[0].id } : {}),
+      // Said out loud rather than left as an absent `favoured`, which the apply
+      // side cannot tell from a favoured row the user unticked (design.md D3b).
+      ...(native.length > 1 ? { priorityClaimedTwice: true as const } : {}),
     });
   }
   return groups;

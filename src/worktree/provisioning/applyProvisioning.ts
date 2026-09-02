@@ -39,9 +39,18 @@ export interface ApplyProvisioningResult {
 
 /** A set of selected declarations that may name one destination, and the repository's own. */
 interface Contest {
-  readonly favoured: ProvisionEntry;
+  /**
+   * Absent when more than one member is the repository's own: priority is
+   * claimed twice, nothing available can choose between them, and the group is
+   * refused entire rather than left to the ordinary pass (design.md D3b).
+   */
+  readonly favoured: ProvisionEntry | undefined;
   readonly held: readonly ProvisionEntry[];
 }
+
+/** Every member of a contest, favoured first when it has one. */
+const membersOf = (contest: Contest): readonly ProvisionEntry[] =>
+  contest.favoured === undefined ? contest.held : [contest.favoured, ...contest.held];
 
 /** What the report needs to name one member: never the entry itself. */
 const memberOf = (entry: ProvisionEntry) => ({ id: entry.id, path: entry.path, source: entry.source });
@@ -52,21 +61,25 @@ const memberOf = (entry: ProvisionEntry) => ({ id: entry.id, path: entry.path, s
  * Recomputed rather than carried on the wire (design.md D1): the offer's own
  * groups answered a question about every offered row, and the user has since
  * unticked some of them. A group with no favoured member left is not a contest
- * — nothing in it claims priority — so its members are applied as they are.
+ * — nothing in it claims priority — so its members are applied as they are,
+ * UNLESS priority was claimed twice, which is the opposite state (design.md
+ * D3b).
  */
 function contestsOf(entries: readonly ProvisionEntry[]): Contest[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const contests: Contest[] = [];
   for (const group of contendersOf(entries, NATIVE_PROVIDER_FILE)) {
     const favoured = group.favoured === undefined ? undefined : byId.get(group.favoured);
-    if (favoured === undefined) {
+    if (favoured === undefined && group.priorityClaimedTwice !== true) {
       continue;
     }
     const held = group.members
-      .filter((id) => id !== favoured.id)
+      .filter((id) => id !== favoured?.id)
       .map((id) => byId.get(id))
       .filter((entry): entry is ProvisionEntry => entry !== undefined);
-    if (held.length > 0) {
+    // A group refused entire is a contest of its own members; one with a
+    // favoured row needs someone for it to be weighed against.
+    if (favoured === undefined ? held.length > 1 : held.length > 0) {
       contests.push({ favoured, held });
     }
   }
@@ -101,7 +114,7 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
 function indexByMember(contests: readonly Contest[]): Map<string, number> {
   const at = new Map<string, number>();
   for (const [index, contest] of contests.entries()) {
-    for (const member of [contest.favoured, ...contest.held]) {
+    for (const member of membersOf(contest)) {
       at.set(member.id, index);
     }
   }
@@ -110,7 +123,7 @@ function indexByMember(contests: readonly Contest[]): Map<string, number> {
 
 /** The contests as the wire carries them: membership once, per contest. */
 const wireContests = (contests: readonly Contest[]): ProvisionResultContest[] =>
-  contests.map((contest) => ({ members: [contest.favoured, ...contest.held].map(memberOf) }));
+  contests.map((contest) => ({ members: membersOf(contest).map(memberOf) }));
 
 /**
  * Every entry failed, for one reason that is nothing to do with any entry.
@@ -205,7 +218,7 @@ export async function applyProvisioning(
 
   /** Refuse every member that is still claiming, naming the whole contest. */
   const refuseContest = async (contest: Contest, why: string): Promise<void> => {
-    const members = [contest.favoured, ...contest.held];
+    const members = membersOf(contest);
     for (const member of members) {
       if (answered.has(member)) {
         continue;
@@ -220,7 +233,18 @@ export async function applyProvisioning(
   // BEFORE the ordered pass, so what it reads is what was already in the
   // worktree rather than what this apply has since written (design.md D3).
   for (const contest of contests) {
-    const members = [contest.favoured, ...contest.held];
+    if (contest.favoured === undefined) {
+      // Priority claimed twice. Declaration order inside one file is not a
+      // precedence the spec gives, and inventing one would decide a user's
+      // config silently — so nothing is written and every member is named
+      // (design.md D3b).
+      await refuseContest(
+        contest,
+        "may name this same destination, and more than one of them is the repository's own declaration",
+      );
+      continue;
+    }
+    const members = membersOf(contest);
     if (contended(await Promise.all(members.map(read)))) {
       // The whole group, not only the loser: leaving the favoured member to run
       // would merge it into a destination it did not create — `makeDirectory`
@@ -266,7 +290,7 @@ export async function applyProvisioning(
       // — a copy of `MixedCase/seed` has to create `MixedCase` — and the
       // favoured member would then merge into a destination an unrelated writer
       // owns while reporting that it claimed it (.reviews/round-1.md F001).
-      const members = [contest.favoured, ...contest.held];
+      const members = membersOf(contest);
       if (contended(await Promise.all(members.map(read)))) {
         await refuseContest(
           contest,
@@ -331,7 +355,7 @@ export async function applyProvisioning(
     // and the notice renders `path: reason`, so a reason that names only the
     // counterparty leaves the user unable to tell which config files are in
     // dispute (.reviews/round-1.md F004).
-    const claimed = answered.get(contest.favoured)?.outcome.kind;
+    const claimed = contest.favoured === undefined ? undefined : answered.get(contest.favoured)?.outcome.kind;
     const why =
       claimed === "copied" || claimed === "linked" || claimed === "degradedToCopy"
         ? "may name this same destination, and it was claimed by the repository's own declaration"

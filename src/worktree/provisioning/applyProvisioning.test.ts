@@ -600,3 +600,53 @@ describe("[OOB-F016] a member's own refusal is not an observation of the destina
     expect(fs.created).toEqual([]);
   });
 });
+
+// [OOB-F015 / D3b] `contendersOf` names a favoured member only when exactly one
+// comes from the native file, so two native spellings left the group with none
+// — and `contestsOf` dropped it on the branch reading "nothing in it claims
+// priority". The ordinary pass then ran and the INHERITED declaration's
+// material landed at the destination. Two natives is the opposite state:
+// priority is claimed twice, and nothing available can choose between them.
+describe("[OOB-F015] a group that claims priority twice is refused entire", () => {
+  const THREE = {
+    [`${MAIN}/MixedCase`]: { kind: "file", size: 11 },
+    [`${MAIN}/MIXEDCASE`]: { kind: "file", size: 22 },
+    [`${MAIN}/mixedcase`]: { kind: "file", size: 33 },
+  } as const;
+  const MEMBERS = [
+    entry("MixedCase", "copy", NATIVE, "i1"),
+    entry("MIXEDCASE", "copy", NATIVE, "i2"),
+    entry("mixedcase", "copy", INHERITED, "i3"),
+  ];
+
+  it("writes nothing, and does not hand the destination to the inherited row", async () => {
+    const { steps, fs } = await applyTo(THREE, MEMBERS);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused", "refused"]);
+    expect(fs.created).toEqual([]);
+    expect(fs.nodes.has(`${WT}/mixedcase`)).toBe(false);
+  });
+
+  it("names every member of the group, by path and declaring file", async () => {
+    const { steps, contests } = await applyTo(THREE, MEMBERS);
+
+    for (const step of steps) {
+      expect(named(contests, step)).toEqual([
+        "MixedCase (declared in .vscode/worktree.json)",
+        "MIXEDCASE (declared in .vscode/worktree.json)",
+        "mixedcase (declared in asimov/worktree.yaml)",
+      ]);
+    }
+  });
+
+  it("still applies a group where nothing at all claims priority", async () => {
+    // The branch D3b narrows was written for this state and keeps it: two
+    // inherited spellings, no native member, nothing claiming priority.
+    const { steps } = await applyTo(THREE, [
+      entry("MixedCase", "copy", INHERITED, "i1"),
+      entry("mixedcase", "copy", INHERITED, "i2"),
+    ]);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "copied"]);
+  });
+});
