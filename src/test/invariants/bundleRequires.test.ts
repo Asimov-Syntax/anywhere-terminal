@@ -597,6 +597,50 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
   });
 });
 
+// [round-7 D2 ledger] The failing class must survive the deletion of call
+// analysis. Every relative specifier a require call can carry is a string
+// literal in the bundle, so D6's sweep is a superset there — these witnesses
+// pin that, one shape per row, so the deletion in 8_4 cannot quietly lose one.
+describe("[round-7 D2] the failing class does not depend on call analysis", () => {
+  const OPEN = `$${"{"}`;
+  const failing = (bundle: string) =>
+    verdicts(bundle)
+      .filter((v) => v.severity === "fails")
+      .map((v) => v.specifier);
+
+  it("still fails the minified UMD shape this change exists for", () => {
+    const umd = `var i=(e,o)=>()=>(o||e((o={exports:{}}).exports,o),o.exports);var f=i((r,t)=>{(function(e){if(typeof t=="object"){var o=e(require,r)}})(function(e,o){var n=e("./impl/format")})});f();`;
+    expect(failing(umd)).toContain("./impl/format");
+    // The sweep is what carries it once call analysis is gone.
+    expect(relativeLiterals(umd)).toContain("./impl/format");
+  });
+
+  it("still fails a parenthesized argument", () => {
+    const bundle = `var r = require; r(("./paren-arg"));`;
+    expect(failing(bundle)).toContain("./paren-arg");
+    expect(relativeLiterals(bundle)).toContain("./paren-arg");
+  });
+
+  it("still fails a no-substitution template argument", () => {
+    const bundle = "var r = require; r(`./tpl-arg`);";
+    expect(failing(bundle)).toContain("./tpl-arg");
+    expect(relativeLiterals(bundle)).toContain("./tpl-arg");
+  });
+
+  it("still fails the concat shape that refuted the old exemption", () => {
+    const bundle = `var r = require; r("".concat("./concat-arg"));`;
+    expect(failing(bundle)).toContain("./concat-arg");
+    expect(relativeLiterals(bundle)).toContain("./concat-arg");
+  });
+
+  it("still fails a computed template argument, which the sweep cannot carry", () => {
+    // D7's own pass owns this one — it is not a literal, so the subsumption
+    // argument does not cover it and the template collector must.
+    expect(failing(`var r = require; r(\`./${OPEN}n}\`);`).join(" ")).toContain("./");
+    expect(relativeTemplates(`var r = require; r(\`./${OPEN}n}\`);`)).toEqual(["./"]);
+  });
+});
+
 // [round-7 D2] Deleting call analysis costs the absolute warning its precision:
 // it had precision only because it read require-call ARGUMENTS. A path.isAbsolute
 // sweep warns on 12 literals in the real artifact and not one is a module

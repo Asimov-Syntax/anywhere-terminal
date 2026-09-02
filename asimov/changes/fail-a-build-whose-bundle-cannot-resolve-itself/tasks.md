@@ -274,7 +274,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     3. Witness a build-root literal warned on and the exit code still 0 for a bundle carrying only that.
     4. Witness that the shapes the real artifact actually carries — a shell path, a lone separator, and a comment block opening with a slash — are NOT reported, since a sweep without that discriminator warns on twelve of them.
 
-- [ ] 8_3 Prove the failing class survives the deletion
+- [x] 8_3 Prove the failing class survives the deletion — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_2
   - **Refs**: design.md D2 § Obligation ledger, design.md D6
   - **Acceptance**:
