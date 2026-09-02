@@ -249,6 +249,19 @@ export interface WorktreeCreateDialogDeps {
    * `bindProvisioning` like any other.
    */
   onProvisionSwitch?: (request: { repoId: string; switch: number; provider: string }) => void;
+  /**
+   * Record the current selection in the repository's own configuration.
+   *
+   * Carries the host's opaque item ids, the offer that named them, and the
+   * ordering fields — no path, no key, no file text. A dep that could carry any
+   * of those would make the webview the authority on what the repository's
+   * configuration SAYS, which is the same rule `onProvisionSwitch` obeys one
+   * hop earlier (design.md D1).
+   *
+   * `switch` comes from the same sequence the switch mints, so a save and a
+   * source change order against each other rather than racing (design.md D8).
+   */
+  onProvisionSave?: (request: { repoId: string; switch: number; offerId: string; kept: readonly string[] }) => void;
   /** The forge's answer, on its own channel — it must never gate `bindRefs`. */
   bindPullRequests?: (apply: (repoId: string, offer: WorktreePullRequestOffer) => void) => void;
   /**
@@ -1163,6 +1176,47 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   bringField.append(bringBox, bringEmpty);
   shell.dialog.appendChild(bringField);
 
+  // Attached only while an offer is drawn, and removed rather than disabled
+  // when one is not: a Configure pressed before the host has answered would
+  // record the empty selection as "bring nothing over", which is a statement
+  // the user never made.
+  const saveRow = document.createElement("div");
+  saveRow.className = "wt-bring-save-row";
+  const saveButton = document.createElement("button");
+  // Explicitly a button, like the switch rows: a default-type button inside the
+  // form SUBMITS, and a create started by pressing Configure is the one thing
+  // this must never do.
+  saveButton.type = "button";
+  saveButton.className = "wt-bring-save";
+  saveButton.textContent = "Configure…";
+  // What the repository will NOT keep, said before the save rather than after
+  // it. Setup steps and ports are the two choices the configuration has no
+  // vocabulary for — § 7 forbids persisting a pre-ticked command, and an
+  // unallocated port has no path for `exclude` to match (design.md D6).
+  const saveNote = document.createElement("span");
+  saveNote.className = "wt-bring-save-note";
+  saveNote.textContent = "Setup steps and ports apply to this create only.";
+  saveRow.append(saveButton, saveNote);
+  saveButton.addEventListener("click", () => {
+    // Resolved at event time, never captured: item ids are offer-local and
+    // every offer starts at `i1`, so a handler closing over one redraw's set
+    // would write another offer's selection under a colliding id (round-2 W5).
+    if (drawnOfferId === null) {
+      return;
+    }
+    const ticked = checkedByOffer.get(drawnOfferId);
+    if (ticked === undefined) {
+      return;
+    }
+    switchSeq += 1;
+    deps.onProvisionSave?.({
+      repoId: draft.repoId,
+      switch: switchSeq,
+      offerId: drawnOfferId,
+      kept: [...ticked],
+    });
+  });
+
   /** The offer currently drawn, so an unchanged one is not redrawn. */
   let drawnOfferId: string | null = null;
   // The model behind `drawnOfferId`, so the toggle handler can restate the
@@ -1266,6 +1320,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       bringField.hidden = true;
       bringSum.textContent = "";
       bringBox.replaceChildren();
+      saveRow.remove();
       drawnOfferId = null;
       drawnModel = null;
       return;
@@ -1280,6 +1335,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     drawnOfferId = offer.offerId;
     drawnModel = offer.model;
     bringField.hidden = false;
+    bringField.appendChild(saveRow);
     let ticked = checkedByOffer.get(offer.offerId);
     if (ticked === undefined) {
       ticked = new Set(

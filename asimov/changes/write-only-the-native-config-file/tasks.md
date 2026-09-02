@@ -58,15 +58,16 @@
     6. Extend `src/providers/WorktreeHost.actions.test.ts` with the stale-offer case and both save-versus-switch interleavings.
     7. Add the new type to the exhaustive sample map in `src/providers/TerminalViewProvider.worktree.test.ts`, which pins every entry of `WORKTREE_MESSAGE_TYPES`.
 
-- [ ] 1_5 Offer the save in the create dialog and post it
+- [x] 1_5 Offer the save in the create dialog and post it — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeCreateDialog.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4
   - **Refs**: specs/worktree-panel/spec.md#{a-choice-the-repository-s-own-configuration-can-express-is-recorded-there, a-choice-that-configuration-cannot-express-is-stated-not-silently-dropped} <!-- design.md D1, D6 -->
   - **Acceptance**:
     - Outcome: pressing Configure posts the kept ids and states what the save will not keep
     - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
   - **Plan**:
-    1. Add an `onProvisionSave` dep to the dialog deps in `src/webview/worktree/WorktreeCreateDialog.ts`, shaped like `onProvisionSwitch`: ids and the offer id, never a path.
-    2. Render a `[Configure…]` control in the provisioning section that calls it with the currently ticked ids, and leave the control out when the section has no offer.
-    3. Beside the control, state that ticked setup steps and port choices apply to this create only, per design.md D6.
-    4. Supply `onProvisionSave` in `createDialogDeps` in `src/webview/worktree/WorktreeController.ts`, converting it into the opening-bound wire message the way `onProvisionSwitch` is converted.
-    5. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` and the controller's own test so the posted message is asserted, not only the injected callback.
+    1. Drop `provider` from `WorktreeProvisionSaveMessage` in `src/types/messages.ts`, from its validator and handler in `src/providers/WorktreeHost.ts`, and from `divergenceOf` in `src/worktree/provisioning/writeNativeConfig.ts`: design.md D1 enumerates what the save carries and a source is not on it, the named offer already records which provider was active, and feeding a webview-named provider into the post-write re-read would re-resolve that source instead of the file just written. Convert the affected assertions in `src/worktree/provisioning/writeNativeConfig.test.ts` to drive the same outcomes through `active`.
+    2. Add an `onProvisionSave` dep to the dialog deps in `src/webview/worktree/WorktreeCreateDialog.ts`, shaped like `onProvisionSwitch`: ids and the offer id, never a path.
+    3. Render a `[Configure…]` control in the provisioning section that calls it with the currently ticked ids, and leave the control out when the section has no offer.
+    4. Beside the control, state that ticked setup steps and port choices apply to this create only, per design.md D6.
+    5. Supply `onProvisionSave` in `createDialogDeps` in `src/webview/worktree/WorktreeController.ts`, converting it into the opening-bound wire message the way `onProvisionSwitch` is converted.
+    6. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` so the posted message is asserted, not only the injected callback.

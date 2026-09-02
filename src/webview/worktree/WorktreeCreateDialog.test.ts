@@ -1453,6 +1453,105 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
   });
 });
 
+describe("Bring over — recording the choice in the repository's own configuration", () => {
+  function withSave(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    const posted: unknown[] = [];
+    const { host, submitted } = open({
+      repos: [createDefaults({ provisioning: provisionOffer() })],
+      onProvisionSave: (request) => posted.push(request),
+      ...over,
+    });
+    const configure = host.querySelector<HTMLButtonElement>(".wt-bring-save");
+    return { host, posted, submitted, configure };
+  }
+
+  it("posts the ids left ticked and the offer that named them, and nothing else", () => {
+    const { posted, configure } = withSave();
+    configure?.click();
+
+    // The host's own opaque ids, never a path or a key: a message that could
+    // carry either would make the webview the authority on what the
+    // repository's configuration says (design.md D1). The setup step is absent
+    // because it arrives unticked, which § 7 makes the safety rule.
+    expect(posted).toEqual([{ repoId: REPO_ID, switch: 1, offerId: "provision-1", kept: ["i1", "i2", "i3", "i4"] }]);
+  });
+
+  it("posts what is ticked now, not what the offer arrived ticked", () => {
+    const { host, posted, configure } = withSave();
+    const cb = [...host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")].find((c) => c.value === "i2");
+    if (cb === undefined) {
+      throw new Error("missing i2");
+    }
+    cb.checked = false;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+    configure?.click();
+
+    expect(posted).toEqual([{ repoId: REPO_ID, switch: 1, offerId: "provision-1", kept: ["i1", "i3", "i4"] }]);
+  });
+
+  it("shares one sequence with the source switch, so the two order against each other", () => {
+    // The host takes the ceiling from this number. Two counters would let a
+    // save begun against the offer on screen finish after a later switch had
+    // published, and overwrite the choice the user actually made (design.md D8).
+    const posted: unknown[] = [];
+    const { host } = open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              providers: [
+                { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+                { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+              ],
+            }),
+          }),
+        }),
+      ],
+      onProvisionSwitch: (request) => posted.push(request),
+      onProvisionSave: (request) => posted.push(request),
+    });
+    host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+
+    expect(posted).toEqual([
+      { repoId: REPO_ID, switch: 1, provider: "orca" },
+      { repoId: REPO_ID, switch: 2, offerId: "provision-1", kept: ["i1", "i2", "i3", "i4"] },
+    ]);
+  });
+
+  it("states which of the user's choices this create keeps rather than the repository", () => {
+    // Setup steps and ports have no home in the configuration — § 7 forbids
+    // persisting a pre-ticked command, and an unallocated port has no path for
+    // `exclude` to match (design.md D6). Saying so is the requirement; dropping
+    // them silently is what it forbids.
+    const { host } = withSave();
+    const note = host.querySelector(".wt-bring-save-note")?.textContent ?? "";
+
+    expect(note).toContain("Setup steps");
+    expect(note).toContain("ports");
+    expect(note).toContain("this create only");
+  });
+
+  it("offers nothing to record when no offer has arrived", () => {
+    // Not a disabled control: the section has not been told what the repository
+    // needs, and a Configure that writes the empty selection would record that
+    // the user wants nothing brought over.
+    const { host } = open({ repos: [createDefaults()], onProvisionSave: () => {} });
+
+    expect(host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
+  });
+
+  it("never submits", () => {
+    // A default-type button inside the form submits, and a create started by
+    // pressing Configure is the one thing this must not do.
+    const { submitted, configure } = withSave();
+    configure?.click();
+
+    expect(submitted).toEqual([]);
+    expect(configure?.type).toBe("button");
+  });
+});
+
 describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () => {
   /** The form wired the way production wires it: destination AND provisioning. */
   function wired() {

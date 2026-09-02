@@ -14,7 +14,7 @@
 import * as path from "node:path";
 import { applyEdits, type FormattingOptions, getNodeValue, modify, parseTree } from "jsonc-parser";
 import { LockedFile, type LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
-import type { ProvisionModel, ProvisionProvider } from "../../types/messages";
+import type { ProvisionModel } from "../../types/messages";
 import { isResolvedPathInsideRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 
@@ -65,11 +65,7 @@ export interface NativeConfigDeps {
  * Ports, setup steps and already-excluded rows are deliberately untouched, each
  * for its own reason — design.md D6.
  */
-export function divergenceOf(
-  model: ProvisionModel,
-  kept: ReadonlySet<string>,
-  source?: ProvisionProvider["id"],
-): NativeConfigDivergence {
+export function divergenceOf(model: ProvisionModel, kept: ReadonlySet<string>): NativeConfigDivergence {
   const exclude: string[] = [];
   const drop: string[] = [];
   for (const entry of model.entries) {
@@ -83,19 +79,19 @@ export function divergenceOf(
   }
   // Which source, and then which of ITS files.
   //
-  // A switch re-reads with that provider preferred, so the source the user took
-  // is `active` in the model they are looking at — keying on "not active" would
-  // mean a save right after a switch recorded nothing at all. What makes a
-  // rewrite a no-op is the file already naming this base, and the writer's own
-  // idempotence answers that (design.md D10); it is not this function's to
-  // guess.
+  // The active one, and nothing the caller names. A switch re-reads with the
+  // taken provider preferred, so the source the user took is already `active`
+  // in the model they are looking at, and the model is the host's own — a
+  // source named separately would be a second answer to a question the offer
+  // has already answered, free to disagree with it (design.md D1).
   //
-  // With no source named, the active one is what a first write must record —
-  // `extends` names whatever detection made active. Except the native file
-  // itself: a configuration that extends its own path is self-extension, which
-  // § 3.4 excludes from what `extends` can name.
-  const taken =
-    source === undefined ? model.providers.find((p) => p.active) : model.providers.find((p) => p.id === source);
+  // What makes a rewrite a no-op is the file already naming this base, and the
+  // writer's own idempotence answers that (design.md D10); it is not this
+  // function's to guess.
+  //
+  // Except the native file itself: a configuration that extends its own path is
+  // self-extension, which § 3.4 excludes from what `extends` can name.
+  const taken = model.providers.find((p) => p.active);
   // `present[0]`, never `files[0]`: `files` is what the adapter can read, and a
   // provider detected through only the second of them would be given an
   // `extends` naming a file that is not there. An empty `present` names

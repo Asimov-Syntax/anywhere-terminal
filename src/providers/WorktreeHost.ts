@@ -1560,7 +1560,6 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       switch?: unknown;
       offerId?: unknown;
       kept?: unknown;
-      provider?: unknown;
     };
     return (
       typeof m.repoId === "string" &&
@@ -1572,8 +1571,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       typeof m.offerId === "string" &&
       m.offerId.length > 0 &&
       Array.isArray(m.kept) &&
-      m.kept.every((id) => typeof id === "string") &&
-      (m.provider === undefined || typeof m.provider === "string")
+      m.kept.every((id) => typeof id === "string")
     );
   }
 
@@ -2373,16 +2371,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         provisionSwitch.set(slot, msg.switch);
         const mine = msg.switch;
-        const taken = msg.provider;
         void options
-          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept), taken))
+          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept)))
           .then(async (written) => {
             if (disposed || !surfaces.has(surface)) {
               return;
             }
             // Re-read whatever happened: a refusal is reported ON the model, so
             // the section that shows it is the section the user is reading.
-            const model = await options.readProvisioning?.(repo.mainPath, taken);
+            // Plain precedence, with no provider preferred. The write just made
+            // the native file the thing to read, and preferring the source it
+            // extends would answer with the view from BEFORE the write.
+            const model = await options.readProvisioning?.(repo.mainPath);
             if (model === undefined || disposed || !surfaces.has(surface)) {
               return;
             }

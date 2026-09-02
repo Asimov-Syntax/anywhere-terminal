@@ -1252,8 +1252,6 @@ export interface WorktreeProvisionSaveMessage {
   offerId: string;
   /** Which of the host's own offered items the user left checked. */
   kept: readonly string[];
-  /** The source the user took, when they took one. */
-  provider?: ProvisionProvider["id"];
 }
 
 export interface WorktreeRefsRequestMessage {

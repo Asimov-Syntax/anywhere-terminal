@@ -532,6 +532,24 @@ export class WorktreeController {
             provider: request.provider as WorktreeProvisionOffer["model"]["providers"][number]["id"],
           });
         },
+        // The user's selection, named by the host's own ids against the offer
+        // that issued them. No path and no key: the host derives the file it
+        // writes and the root it writes under from its own cache, and the
+        // message's `repoId` selects a record rather than becoming a
+        // destination (design.md D1).
+        onProvisionSave: (request) => {
+          deps.postMessage({
+            type: "worktreeProvisionSave",
+            repoId: request.repoId,
+            // The opening this form was composed in, like every other request
+            // from it. A save naming a retired opening is not honoured, which
+            // is what stops a dismissed form writing.
+            opening: this.refsToken,
+            switch: request.switch,
+            offerId: request.offerId,
+            kept: request.kept,
+          });
+        },
         bindPullRequests: (apply) => {
           this.applyPullRequests = apply;
         },

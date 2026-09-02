@@ -374,27 +374,34 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set())).toEqual({ exclude: [], drop: [] });
   });
 
-  it("names the taken source's file that is actually there", () => {
+  it("names the active source's file that is actually there", () => {
+    // `present[0]`, never `files[0]`: a provider detected through only the
+    // second of its files would otherwise be given an `extends` naming a file
+    // that is not there.
     const m = model({
       providers: [
-        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
-        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [".worktreeinclude"], active: false },
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
+        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [".worktreeinclude"], active: true },
       ],
     });
 
-    expect(divergenceOf(m, new Set(), "orca").extends).toBe(".worktreeinclude");
+    expect(divergenceOf(m, new Set()).extends).toBe(".worktreeinclude");
   });
 
-  it("names the taken source even though the switch already made it active", () => {
-    // A switch re-reads with that provider preferred, so by the time Configure
-    // is pressed the source the user took IS the active one. Keying on "not
-    // active" would make the save record nothing — what makes a rewrite a no-op
-    // is the file already naming this base, which is the writer's job (D10).
+  it("names the active source rather than a detected one the user did not take", () => {
+    // A switch re-reads with the taken provider preferred, so by the time
+    // Configure is pressed the source the user took IS the active one — and a
+    // source named on the wire beside it could only ever disagree with the
+    // offer the user was looking at (D1). The one that supplied the rows is the
+    // one that gets named.
     const m = model({
-      providers: [{ id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml"], active: true }],
+      providers: [
+        { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: true },
+        { id: "vscodeTasks", files: [".vscode/tasks.json"], present: [".vscode/tasks.json"], active: false },
+      ],
     });
 
-    expect(divergenceOf(m, new Set(), "orca").extends).toBe("orca.yaml");
+    expect(divergenceOf(m, new Set()).extends).toBe("orca.yaml");
   });
 
   it("names what detection made active when the user took no source", () => {
@@ -420,21 +427,26 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set()).extends).toBeUndefined();
   });
 
-  it("names nothing when the taken source has no file left to name", () => {
+  it("names nothing when the active source has no file left to name", () => {
     // `present` can be empty on a provider that WAS detected: there when it was
     // read, gone when presence was taken. Naming `files[0]` anyway would write
     // an `extends` the read side reports as `missingExtends`.
     const m = model({
-      providers: [
-        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
-        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [], active: false },
-      ],
+      providers: [{ id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [], active: true }],
     });
 
-    expect(divergenceOf(m, new Set(), "orca").extends).toBeUndefined();
+    expect(divergenceOf(m, new Set()).extends).toBeUndefined();
   });
 
-  it("names nothing for a source the model never offered", () => {
-    expect(divergenceOf(model(), new Set(), "orca").extends).toBeUndefined();
+  it("names nothing when the model made no provider active", () => {
+    // Not the same state as "no providers": one detected source that lost is
+    // still a source, and naming it would record an `extends` for a file the
+    // offer on screen never resolved.
+    const m = model({
+      providers: [{ id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false }],
+    });
+
+    expect(divergenceOf(m, new Set()).extends).toBeUndefined();
+    expect(divergenceOf(model(), new Set()).extends).toBeUndefined();
   });
 });
