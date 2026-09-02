@@ -1,0 +1,61 @@
+name: Verify Windows Worktree Entry
+
+# Why: WT-012.14 asks whether a hand-written administrative entry attaches a
+# surviving checkout on WINDOWS. `docs/design/worktree-create.md` § 2.4 records
+# the reconstruction recipe as verified on macOS only, and every one of its four
+# files carries a path — one of them absolute — so Windows can differ on
+# separator, drive letter, case sensitivity, and what `git worktree repair`
+# normalises. WT-012.15 is built on top of that recipe, so the answer is needed
+# before it, and a platform where the recipe HALF-works is worse than one where
+# it plainly fails.
+#
+# This is not the repository adopting CI. It is one branch-scoped job that runs
+# one already-committed script and prints its answer, modelled on orca's
+# `daemon-relocation-spike.yml`, which is the same shape for the same reason.
+# Delete it once § 2.4 records the Windows RESULT block.
+#
+# Nothing here runs until someone pushes this branch. That push is deliberately
+# left to a human: it spends the repository's Actions budget.
+
+on:
+  push:
+    branches:
+      - huybuidac/create-worktree-harden
+    paths:
+      - 'scripts/verify-windows-worktree-entry.mjs'
+      - '.github/workflows/verify-windows-worktree-entry.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-windows-worktree-entry-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recipe:
+    name: reconstruction recipe on Windows
+    runs-on: windows-2022
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Reads the repository to run the spike; it never pushes.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # No install step: the script imports only `node:` builtins and builds its
+      # own throwaway repository under the OS temp directory.
+      - name: Run the spike
+        run: node scripts/verify-windows-worktree-entry.mjs
+
+      - name: Report git's own version, since the recipe is stated against one
+        if: always()
+        run: git --version
