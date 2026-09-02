@@ -1,0 +1,43 @@
+## 1. Stop the write-through, stop the foreign delete
+
+- [ ] 1_1 Stage the Cursor replacement exclusively, under an unpredictable name
+  - **Deps**: none
+  - **Refs**: specs/agent-hook-installation/spec.md#a-replacement-is-staged-where-nothing-can-be-waiting-for-it; design.md D1
+  - **Acceptance**:
+    - Outcome: A symlink waiting at the staging name is refused, not written through
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. In `src/cursor/CursorHookInstaller.ts`, add an injectable `randomBytes` dependency beside the existing injected `now`, defaulting to `node:crypto`'s.
+    2. In the same file, name the temporary in `atomicReplace` from 16 bytes of that dependency rendered as hex, replacing the `this.now()` segment, matching `lockedJsonFile.ts:120-124`.
+    3. In the same method, replace the `this.fs.writeFile(temporaryPath, ...)` call with `this.fs.open(temporaryPath, "wx", mode ?? 0o600)`, write the contents through the returned handle, `chmod` through the handle when `mode` is defined, and close it in a `finally` before the rename.
+    4. In `src/cursor/CursorHookInstaller.test.ts`, add a witness against a real temp directory that pre-places a symlink at the injected staging name pointing at a decoy file, asserts the replace fails, and asserts the decoy's contents are unchanged. Arm-check it by restoring `writeFile` and confirming the decoy IS overwritten.
+    5. In the same test file, add a witness asserting the staging name contains neither the injected clock value nor the name a second staging of the same file produced.
+
+- [ ] 1_2 Give Cursor the shared lock instead of its own
+  - **Deps**: 1_1
+  - **Refs**: specs/agent-hook-installation/spec.md#a-release-removes-only-the-lock-the-operation-still-identifies; design.md D2
+  - **Acceptance**:
+    - Outcome: Cursor leaves a lock in place when the name no longer identifies the one it took
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts src/cursor/CursorHookInstaller.runtime.test.ts
+  - **Plan**:
+    1. In `src/cursor/CursorHookInstaller.test.ts`, extend the memory double FIRST: give handles returned by `open` a `stat` returning `{ isFile, dev, ino, nlink, mode }` at bigint precision, and give `lstat` the same fields, so `LockedFile` never falls through to the real `node:fs/promises` it spreads in at `lockedJsonFile.ts:80`.
+    2. In the same test file, add a witness asserting a real temporary directory is untouched after a full install run, so a future partial double fails loudly instead of silently mixing filesystems.
+    3. In `src/cursor/CursorHookInstaller.ts`, delete the private `acquireLock` and `lockPath` methods and the inline `unlink` release inside the private `withLock`.
+    4. Rewrite that `withLock` to build a `LockedFile` on `this.options.configPath` with the installer's injected `fs`, `sleep` and `platform`, call its `withLock`, and capture the `LockRelease` in a local through the `onLockReleaseFailed` callback.
+    5. After it returns, apply the existing `lockReleaseFailed(result)` transform when that local is set, so callers keep receiving `reason: "lock-release-failed"` exactly as WT-012.22 left it.
+    6. Check the import against both `src/agentHooks/install/lockedJsonFile.ts` and `src/utils/lockedFile.ts` — peer commit `132d20ce` relocates it and is not on this branch — and record which one this branch used in workflow.md Notes.
+    7. In the same test file, add a witness substituting a stable different file at the lock name before release, asserting the substitute survives and the result carries `lock-release-failed`.
+    8. In the same test file, add a witness that schedules the substitution INSIDE the injected `lstat`'s return, so it lands between the comparison and the unlink, and assert the substitute IS unlinked. This is R2 and it stays red-by-design: name it so, and assert the current behaviour rather than a fix.
+
+- [ ] 1_3 State the four races where the code is
+  - **Deps**: 1_1, 1_2
+  - **Refs**: design.md D3; design.md D4
+  - **Acceptance**:
+    - Outcome: Section 7 names all four races, the declined syscall, and each one's remedy
+    - Verify: command bash -c 'f=docs/design/worktree-provisioning.md; for k in openat renameat R1 R2 R3 R4; do grep -q -- "$k" "$f" || { echo "missing $k"; exit 1; }; done'
+  - **Plan**:
+    1. In `docs/design/worktree-provisioning.md` § 7, add one bullet in the voice of the bullets already there, carrying the R1-R4 table from design.md D3: for each, the mechanism that leaks, its trigger, and what a user can do about it.
+    2. In the same bullet, name `openat` and `renameat` as the declined mechanism and record that both are `undefined` in this runtime, so a future Node exposing them is the reopening condition.
+    3. In the same bullet, record that `0o600` on a lock is POSIX hygiene rather than a security claim, and does not produce an owner-only ACL on Windows, citing the existing note at `src/vault/VaultCacheStore.ts:191-196`.
+    4. In `src/agentHooks/install/lockedJsonFile.ts`, extend the file header comment with one sentence pointing at that bullet for R2 and R3, which live at lines 291 and 190 of this file.
+    5. In `src/cursor/CursorHookInstaller.ts`, add one comment line at the `LockedFile` delegation pointing at the same bullet for R4, rather than restating it.
