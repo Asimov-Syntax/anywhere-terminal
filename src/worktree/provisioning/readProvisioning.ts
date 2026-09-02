@@ -9,7 +9,7 @@
 // as if it had never configured the tool it uses. One answers; the others are
 // named and one click away (design.md D3, D5).
 
-import type { ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
+import type { ProvisionEntry, ProvisionModel, ProvisionProblem, ProvisionProvider } from "../../types/messages";
 import { asimovAdapter } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { orcaAdapter } from "./orcaProvider";
@@ -113,18 +113,28 @@ async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: Pro
  * Once it resolves, the WHOLE adapter reads — both of orca's files, not the one
  * that was named. Half of orca is a model orca would not recognize.
  */
-async function baseFor(
-  deps: ProviderDeps,
-  repoRoot: string,
-  target: string,
-): Promise<{ adapter: ProviderAdapter; authorized: Authorized } | null> {
+type BaseResolution =
+  | { ok: true; adapter: ProviderAdapter; authorized: Authorized }
+  | { ok: false; why: "missing" }
+  | { ok: false; why: "unreadable"; problem: ProvisionProblem };
+
+async function baseFor(deps: ProviderDeps, repoRoot: string, target: string): Promise<BaseResolution> {
   const adapter = FRAMEWORK_ORDER.find((a) => a.files.includes(target));
   if (adapter === undefined) {
-    return null;
+    return { ok: false, why: "missing" };
   }
   const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file: target });
   if (opened.kind !== "text") {
-    return null;
+    // On the problem's REASON, not on the open's kind. Two non-`text` answers
+    // must keep the diagnosis they already have: a target resolving out of the
+    // checkout is `malformed` and is a name that was never eligible rather than
+    // a read that failed (D2), and a root failure is neither presence nor
+    // absence and belongs to the diagnostic D8 defers — reporting it against
+    // the base file's name would misattribute it besides.
+    const failed = opened.kind === "problem" && opened.at === "file" && opened.problem.reason === "unreadable";
+    return failed && opened.kind === "problem"
+      ? { ok: false, why: "unreadable", problem: opened.problem }
+      : { ok: false, why: "missing" };
   }
   // The open that passed IS the open the adapter gets.
   //
@@ -143,7 +153,7 @@ async function baseFor(
   //
   // One key, the exact name that was named. The adapter's other files still
   // open live, because D2 rule 3 wants the WHOLE adapter.
-  return { adapter, authorized: new Map([[target, opened]]) };
+  return { ok: true, adapter, authorized: new Map([[target, opened]]) };
 }
 
 /**
@@ -232,18 +242,29 @@ async function assemble(
   const draft = newDraft(NATIVE, budget);
   const target = native.extends;
   const resolved = target === undefined ? null : await baseFor(deps, repoRoot, target);
-  const base = resolved?.adapter ?? null;
+  const base = resolved?.ok === true ? resolved.adapter : null;
 
-  if (target !== undefined && resolved === null) {
-    // A path matching no framework adapter and a path whose file is not there
-    // are one problem: from the user's side both are "the thing you named is
-    // not something I can read", and splitting them would mean explaining the
-    // adapter table in an error message (design.md D2).
-    report(draft, "`extends`", problem(NATIVE, "missingExtends", `\`${target}\` is not a file this can build on.`));
+  if (target !== undefined && resolved !== null && !resolved.ok) {
+    if (resolved.why === "unreadable") {
+      // The file IS there and the read failed. Calling that missing points the
+      // user at the one repair that cannot work — adding a file that exists —
+      // while `anyFilePresent` counts the same file as present, so the section
+      // could offer the provider as switchable and call it absent at once
+      // (.reviews/round-7.md F014). The problem carried is `openProviderFile`'s
+      // own, so the reason a reader sees is the rule that actually fired.
+      report(draft, "`extends`", resolved.problem);
+    } else {
+      // A path matching no framework adapter and a path whose file is not there
+      // are one problem: from the user's side both are "the thing you named is
+      // not something I can read", and splitting them would mean explaining the
+      // adapter table in an error message (design.md D2).
+      report(draft, "`extends`", problem(NATIVE, "missingExtends", `\`${target}\` is not a file this can build on.`));
+    }
   }
   // The inline keys are offered whether or not the base resolved. An early
   // return here would discard them for a typo in one other key.
-  const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
+  const inherited =
+    resolved?.ok === true ? await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized) : null;
   const baseModel = inherited?.model ?? emptyModel();
 
   const merged = mergeEntries(baseModel.entries, native.model.entries, identityOf);

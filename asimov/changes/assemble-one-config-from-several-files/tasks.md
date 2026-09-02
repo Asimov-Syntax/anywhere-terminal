@@ -187,7 +187,7 @@
     5. Witness in `src/worktree/provisioning/vscodeTasksProvider.test.ts` that `{"__proto__": {"tasks": [...]}}` yields no setup step. Assert consumption, not reporting: that adapter has no unknown-key report at all, and giving it one is a different scope.
     6. Arm every witness by putting `parse()` back and confirming each fails.
 
-- [ ] 8_2 Say that a source was found and could not be read
+- [x] 8_2 Say that a source was found and could not be read — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: none
   - **Refs**: design.md D13, specs/worktree-panel/spec.md#a-source-that-could-not-be-read-is-not-a-source-that-is-absent
   - **Acceptance**:

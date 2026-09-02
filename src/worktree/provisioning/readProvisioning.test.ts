@@ -1047,3 +1047,55 @@ describe("[round-3 F001] the fold key is gated over the range, not over examples
     expect(broken).toEqual(["\u1e9e"]);
   });
 });
+
+describe("[round-7 F014] a source found and unreadable is not a source that is absent", () => {
+  const NATIVE_WITH_BASE = `{"extends": "${ASIMOV_PROVIDER_FILE}", "copy": [".env.local"]}`;
+
+  /** The named base is there; opening it fails for a reason that is not absence. */
+  function denied(code: string): ProviderDeps {
+    const base = fs({ native: NATIVE_WITH_BASE, asimov: ASIMOV_YAML });
+    return {
+      ...base,
+      readFile: async (p) => {
+        if (p.endsWith(ASIMOV_PROVIDER_FILE)) {
+          throw Object.assign(new Error(`${code} ${p}`), { code });
+        }
+        return base.readFile(p);
+      },
+    };
+  }
+
+  it("reports the read failure rather than a missing file", async () => {
+    // EACCES on a file that IS there says something different from "add this
+    // file", and "add this file" is the one repair that cannot work.
+    const model = await readProvisioning(denied("EACCES"), ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["unreadable"]);
+    expect(model.problems[0]?.detail).toContain("EACCES");
+    expect(model.problems.map((p) => p.reason)).not.toContain("missingExtends");
+  });
+
+  it("still offers the repository's own material", async () => {
+    const model = await readProvisioning(denied("ELOOP"), ROOT);
+
+    expect(model.entries.map((e) => e.path)).toEqual([".env.local"]);
+  });
+
+  it("leaves a target that resolves out of the checkout on `missingExtends`", async () => {
+    // NOT a read that failed — a name that was never eligible. D2 answers it,
+    // and moving it here would contradict a decision this change already made.
+    const base = fs({ native: NATIVE_WITH_BASE, asimov: ASIMOV_YAML });
+    const model = await readProvisioning(
+      { ...base, realpath: async (p) => (p.endsWith(ASIMOV_PROVIDER_FILE) ? "/elsewhere/worktree.yaml" : p) },
+      ROOT,
+    );
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["missingExtends"]);
+  });
+
+  it("leaves an absent target on `missingExtends`", async () => {
+    const model = await readProvisioning(fs({ native: NATIVE_WITH_BASE }), ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["missingExtends"]);
+  });
+});
