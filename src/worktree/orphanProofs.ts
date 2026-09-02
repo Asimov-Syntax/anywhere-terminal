@@ -178,24 +178,24 @@ async function mergeProof(subject: OrphanProofSubject, deps: OrphanProofDeps): P
     // branch as "merged into itself" would offer to delete it (§ 5 rule 4).
     return { outcome: base === branch ? "notApplicable" : "unproven" };
   }
-  const result = await deps.git(["merge-base", "--is-ancestor", branch, base], subject.path);
-  if (result.timedOut) {
-    return { outcome: "unproven" };
-  }
-  // Exactly two codes carry meaning: 0 is merged and 1 is not. Everything else
-  // is an error — git exits 128 for a ref it cannot resolve — and reading an
-  // error as "not merged" states a fact nobody established (design.md D5).
-  if (result.code !== 0) {
-    return { outcome: result.code === 1 ? "failed" : "unproven" };
-  }
-  // Only a PASSED proof records evidence, and only a COMPLETE pair counts: a
-  // guard built from half of one would verify a ref and wave the other through.
+  // Resolve the pair BEFORE asking about ancestry. Testing mutable names and
+  // resolving them afterwards can issue evidence for commits Git never compared.
   const [branchOid, baseOid] = await Promise.all([
     revParse(branch, subject.path, deps.git),
     revParse(base, subject.path, deps.git),
   ]);
   if (branchOid === undefined || baseOid === undefined) {
     return { outcome: "unproven" };
+  }
+  const result = await deps.git(["merge-base", "--is-ancestor", branchOid, baseOid], subject.path);
+  if (result.timedOut) {
+    return { outcome: "unproven" };
+  }
+  // Exactly two codes carry meaning: 0 is merged and 1 is not. Everything else
+  // is an error, and reading an error as "not merged" states a fact nobody
+  // established (design.md D5).
+  if (result.code !== 0) {
+    return { outcome: result.code === 1 ? "failed" : "unproven" };
   }
   return { outcome: "passed", evidence: { branch, branchOid, base, baseOid } };
 }

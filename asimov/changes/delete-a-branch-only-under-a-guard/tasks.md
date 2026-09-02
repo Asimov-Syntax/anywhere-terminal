@@ -139,3 +139,28 @@
     4. Fail closed on OID-form bisect origins rather than guessing Git's unique abbreviation.
     5. In `src/worktree/deleteBranch.test.ts`, add a real-Git symbolic-ref regression plus causal witnesses for dot entries, dangling applying symlinks, final-read ordering, SHA-256 width, equal-count path mismatch, and main-worktree holder state.
     6. Match Git's detached-rebase and full-ref bisect forms, preserve meaningful whitespace in command-output paths, and witness the separate-common-git-dir case with real Git.
+
+## 5. Review fixes — bind consent and tell the truth
+
+- [x] 5_1 Bind the proof and opt-in to the exact issued pair — verified: pnpm exec vitest run 'src/worktree/orphanProofs.test.ts' 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 1_1, 4_3
+  - **Refs**: design.md D1, D10; .reviews/round-1.md F001, F002
+  - **Acceptance**:
+    - Outcome: Deletion can use only the exact ancestry-tested OID pair and only the opt-in echoed from that same issued report
+    - Verify: command pnpm exec vitest run 'src/worktree/orphanProofs.test.ts' 'src/worktree/worktreeMutationService.test.ts'
+  - **Plan**:
+    1. In `src/worktree/orphanProofs.ts` and `src/worktree/orphanProofs.test.ts`, resolve both local ref OIDs before the ancestry command, test those immutable OIDs, and issue only that tested pair.
+    2. In `src/worktree/worktreeMutationService.ts` and `src/worktree/worktreeMutationService.test.ts`, require the nested fingerprint plus every echoed branch name, default name, and OID to match the redeemed report before invoking the guarded delete.
+    3. Preserve successful removal on any mismatch, return a separate refused branch outcome, and causally witness two same-risk reports whose proof evidence differs.
+
+- [ ] 5_2 Bound the final guard and keep its confirmation and result truthful
+  - **Deps**: 4_1, 4_5
+  - **Refs**: design.md D5, D7; .reviews/round-1.md F004, F006, F007
+  - **Acceptance**:
+    - Outcome: Guard completion is bounded and every confirmation and refusal describes the branch action truthfully
+    - Verify: command pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' 'src/webview/worktree/WorktreeRemoveDialog.test.ts' 'src/webview/worktree/WorktreeView.test.ts'
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeRemoveDialog.ts` and `src/webview/worktree/WorktreeRemoveDialog.test.ts`, make the branch-kept consequence explicitly conditional on leaving the separate deletion option unchecked.
+    2. In `src/worktree/deleteBranch.ts` and `src/worktree/deleteBranch.test.ts`, put one injected deadline around the complete holder scan; expiry returns `holders-unavailable`, cancels the timer, and cannot later reach the transaction.
+    3. In `src/worktree/deleteBranch.ts` and `src/worktree/deleteBranch.test.ts`, classify a failed transaction as `refs-moved` only when bounded post-failure reads establish changed OIDs; otherwise use the generic guard-unavailable refusal.
+    4. In `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeView.test.ts`, word the generic refusal as inability to complete the branch guard rather than a specific holder or movement claim.

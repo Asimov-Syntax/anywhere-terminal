@@ -29,6 +29,10 @@ const DELETE_BRANCH: BranchDeleteRequest = {
   fingerprint: "branch-fp",
 };
 
+function deleteBranchRequest(fingerprint: string, over: Partial<BranchDeleteRequest> = {}): BranchDeleteRequest {
+  return { ...DELETE_BRANCH, fingerprint, ...over };
+}
+
 function ok(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
 }
@@ -442,9 +446,9 @@ describe("a mutation reaches git through the coordinator", () => {
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
 
-    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+    await h.service.removeWorktree(target, fingerprint, deleteBranchRequest(fingerprint));
 
-    expect(deleteBranch).toHaveBeenCalledWith("/repo", DELETE_BRANCH);
+    expect(deleteBranch).toHaveBeenCalledWith("/repo", deleteBranchRequest(fingerprint));
     expect(h.outcomes[1]).toMatchObject({
       kind: "ok",
       verb: "remove",
@@ -461,7 +465,7 @@ describe("a mutation reaches git through the coordinator", () => {
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
 
-    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+    await h.service.removeWorktree(target, fingerprint, deleteBranchRequest(fingerprint));
 
     expect(h.outcomes[1]).toMatchObject({
       kind: "ok",
@@ -479,7 +483,7 @@ describe("a mutation reaches git through the coordinator", () => {
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
 
-    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+    await h.service.removeWorktree(target, fingerprint, deleteBranchRequest(fingerprint));
 
     expect(h.outcomes[1]).toMatchObject({
       kind: "ok",
@@ -499,10 +503,72 @@ describe("a mutation reaches git through the coordinator", () => {
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
 
-    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+    await h.service.removeWorktree(target, fingerprint, deleteBranchRequest(fingerprint));
 
     expect(deleteBranch).not.toHaveBeenCalled();
     expect(h.outcomes[1]).toMatchObject({
+      kind: "ok",
+      verb: "remove",
+      branchDelete: { kind: "refused", reason: "holders-unavailable" },
+    });
+  });
+
+  it.each([
+    ["fingerprint", { fingerprint: "another-report" }],
+    ["branch name", { branch: "other-feature" }],
+    ["branch OID", { expectedBranchOid: "8".repeat(40) }],
+    ["default name", { defaultBranch: "trunk" }],
+    ["default OID", { expectedDefaultOid: "7".repeat(40) }],
+  ] as const)("refuses a branch opt-in whose %s does not match the redeemed report", async (_field, mismatch) => {
+    const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: "feature" }));
+    const h = harness({ deleteBranch, assessRemoval: provenAssessRemoval });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+
+    await h.service.removeWorktree(target, fingerprint, deleteBranchRequest(fingerprint, mismatch));
+
+    expect(deleteBranch).not.toHaveBeenCalled();
+    expect(h.outcomes[1]).toMatchObject({
+      kind: "ok",
+      verb: "remove",
+      branchDelete: { kind: "refused", reason: "holders-unavailable" },
+    });
+  });
+
+  it("does not let an older surface's opt-in act on a newer same-risk report", async () => {
+    const first = mergeEvidenceFor(DELETE_BRANCH);
+    const second = { ...first, branch: "other-feature", branchOid: "8".repeat(40) };
+    let assessments = 0;
+    const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: second.branch }));
+    const h = harness({
+      deleteBranch,
+      assessRemoval: async () => {
+        const mergeEvidence = assessments++ === 0 ? first : second;
+        return {
+          kind: "confirmable" as const,
+          evidence: evidence({
+            proofs: {
+              lockAged: "unproven" as const,
+              ownerGone: "unproven" as const,
+              branchMerged: "passed" as const,
+              mergeEvidence,
+            },
+          }),
+        };
+      },
+    });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const firstFingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+    await h.service.removeWorktree(target, undefined);
+    const secondFingerprint = (h.outcomes[1] as { fingerprint: string }).fingerprint;
+    expect(secondFingerprint).toBe(firstFingerprint);
+
+    await h.service.removeWorktree(target, firstFingerprint, deleteBranchRequest(firstFingerprint));
+
+    expect(deleteBranch).not.toHaveBeenCalled();
+    expect(h.outcomes[2]).toMatchObject({
       kind: "ok",
       verb: "remove",
       branchDelete: { kind: "refused", reason: "holders-unavailable" },
@@ -539,9 +605,9 @@ describe("a mutation reaches git through the coordinator", () => {
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
 
-    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+    await h.service.removeWorktree(target, fingerprint, deleteBranchRequest(fingerprint));
 
-    expect(deleteBranch).toHaveBeenCalledWith("/repo", DELETE_BRANCH);
+    expect(deleteBranch).toHaveBeenCalledWith("/repo", deleteBranchRequest(fingerprint));
     expect(deleteBranch).not.toHaveBeenCalledWith(
       "/repo",
       expect.objectContaining({ expectedBranchOid: moved.branchOid }),
@@ -557,7 +623,7 @@ describe("a mutation reaches git through the coordinator", () => {
     const target = { repoId: REPO, worktreeId: RAW_ID };
     await failed.service.removeWorktree(target, undefined);
     const failedFingerprint = (failed.outcomes[0] as { fingerprint: string }).fingerprint;
-    await failed.service.removeWorktree(target, failedFingerprint, DELETE_BRANCH);
+    await failed.service.removeWorktree(target, failedFingerprint, deleteBranchRequest(failedFingerprint));
 
     const unrequested = harness({ deleteBranch });
     await unrequested.service.removeWorktree(target, undefined);

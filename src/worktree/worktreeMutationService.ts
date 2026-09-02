@@ -656,11 +656,18 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           // assessment and never from the caller's own claim — that is the
           // exact substitution the guard exists to prevent (design.md D10).
           const mergeEvidence = redemption.approved.proofs.mergeEvidence;
-          if (mergeEvidence === undefined) {
-            // Nothing was proven to guard a delete with. Forwarding the
-            // caller's own claimed OIDs here would be exactly the
-            // substitution D10 exists to prevent, so the binding is never
-            // invoked with them.
+          if (
+            mergeEvidence === undefined ||
+            deleteBranchRequest.fingerprint !== fingerprint ||
+            deleteBranchRequest.branch !== mergeEvidence.branch ||
+            deleteBranchRequest.expectedBranchOid !== mergeEvidence.branchOid ||
+            deleteBranchRequest.defaultBranch !== mergeEvidence.base ||
+            deleteBranchRequest.expectedDefaultOid !== mergeEvidence.baseOid
+          ) {
+            // The opt-in authorizes only the offer echoed from THIS report.
+            // Another report can replace the stored evidence while retaining
+            // the same removal-risk fingerprint, so every field is part of the
+            // consent binding even though none is trusted as Git evidence.
             return { ...removal, branchDelete: { kind: "refused", reason: "holders-unavailable" } };
           }
           const guardedRequest: BranchDeleteRequest = {
@@ -668,7 +675,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             expectedBranchOid: mergeEvidence.branchOid,
             defaultBranch: mergeEvidence.base,
             expectedDefaultOid: mergeEvidence.baseOid,
-            fingerprint: deleteBranchRequest.fingerprint,
+            fingerprint,
           };
           const branchDelete = await (
             deps.deleteBranch?.(t.repoPath, guardedRequest) ??
