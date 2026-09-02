@@ -54,16 +54,17 @@
 
 ## 3. The control
 
-- [ ] 3_1 Offer the control only where the proof is present, and off
-  - **Deps**: 2_2
+- [x] 3_1 Offer the control only where the proof is present, and off — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeRemoveDialog.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 2_2, 4_1
   - **Refs**: design.md D1; specs/worktree-panel/spec.md#deleting-the-branch-is-a-separate-opt-in-offered-only-on-a-proven-merge
   - **Acceptance**:
     - Outcome: The control appears only with merge evidence, starts off, and the typed confirmation never enables it
     - Verify: unit src/webview/worktree/WorktreeRemoveDialog.test.ts
   - **Plan**:
-    1. In `src/webview/worktree/WorktreeRemoveDialog.ts`, render the opt-in only when the assessment carries merge evidence, defaulting to unchecked, naming the branch it would delete.
+    1. In `src/webview/worktree/worktreeViewTypes.ts` and `src/webview/worktree/WorktreeRemoveDialog.ts`, carry the report's optional branch-delete offer into the dialog and render the opt-in only when it is present, defaulting to unchecked and naming the branch.
     2. Keep it independent of the typed confirmation control: typing the confirmation changes nothing about this checkbox's state.
-    3. Send `deleteBranch` on the remove request only when it is ticked.
+    3. In `src/webview/worktree/WorktreeView.ts` and `src/webview/worktree/WorktreeController.ts`, carry the optional dialog value into the posted `worktreeRemove` request only when it is ticked.
+    4. In `src/webview/worktree/WorktreeRemoveDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`, witness both the unchecked omission and checked end-to-end request.
 
 - [ ] 3_2 Wire the binding at the host
   - **Deps**: 3_1, 4_3, 4_5
@@ -78,7 +79,7 @@
 
 ## 4. Oracle attack — close the refuted rows
 
-- [ ] 4_1 Carry the branch outcome to the user
+- [x] 4_1 Carry the branch outcome to the user — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 2_2
   - **Refs**: design.md D5; specs/worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal
   - **Acceptance**:
@@ -87,8 +88,9 @@
   - **Plan**:
     1. In `src/types/messages.ts`, add an optional branch outcome to the successful removal result, naming which guard refused.
     2. In `src/extension.ts`, carry it through `toResultMessage` beside `openFailed` rather than dropping it.
+    2a. In `src/webview/worktree/worktreeViewTypes.ts` and `src/webview/worktree/WorktreeController.ts`, carry the same field through the action-result layer rather than letting the running extension drop it before rendering.
     3. In `src/webview/worktree/WorktreeView.ts`, render it in the removal notice so "Remove done." is never the whole story when a branch delete was asked for and did not happen.
-    4. Witness each refusal reason reaching the rendered notice.
+    4. Witness each refusal reason reaching the rendered notice through the real controller mapping.
 
 - [x] 4_2 Assemble the evidence where the payload is actually built — verified: pnpm exec vitest run 'src/extension.worktreeMutations.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_2
@@ -100,7 +102,7 @@
     1. In `src/extension.ts`, add the merge evidence to the assessment payload mapper that today emits only `checks` and `contained`.
     2. Witness the mapper itself, not a constructed payload, so a green unit test cannot coexist with a control that never appears.
 
-- [ ] 4_3 Return the issued evidence from redemption
+- [x] 4_3 Return the issued evidence from redemption — verified: pnpm exec vitest run 'src/worktree/worktreeFingerprint.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 2_2, 4_2
   - **Refs**: design.md D10
   - **Acceptance**:
@@ -108,8 +110,8 @@
     - Verify: unit src/worktree/worktreeFingerprint.test.ts
   - **Plan**:
     1. In `src/worktree/worktreeFingerprint.ts`, have `redeem` return the evidence issued with the fingerprint alongside the answer it already returns.
-    2. In `src/worktree/worktreeMutationService.ts`, take the guard's OIDs from that returned evidence and use the fresh assessment only to refuse.
-    3. Witness that a branch which moved between issue and redemption is refused rather than deleted at its new OID.
+    2. In `src/worktree/worktreeMutationService.ts`, take the guard's OIDs from that returned evidence and use the fresh assessment only to refuse; if the issued evidence has no passed merge proof, report the branch action as unavailable rather than trusting the caller request.
+    3. In `src/worktree/worktreeFingerprint.test.ts` and `src/worktree/worktreeMutationService.test.ts`, witness that a branch which moved between issue and redemption reaches the binding with the issued OIDs, and that missing issued merge evidence never passes caller OIDs through.
 
 - [x] 4_4 Read every holder git registers, and refuse on doubt — verified: pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1

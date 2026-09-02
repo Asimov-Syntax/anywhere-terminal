@@ -4,6 +4,7 @@
 // (one confirmation naming every blocker) and § 12 (refused outright).
 
 import { afterEach, describe, expect, it } from "vitest";
+import type { BranchDeleteRequest } from "../../types/messages";
 import { isRemoveRefused, openWorktreeRemoveDialog } from "./WorktreeRemoveDialog";
 import { agentRow, confirmableBlocker, refusedBlocker, worktree } from "./worktreeFixtures";
 import { CONFIRMATION_CEILING_MS } from "./worktreeFormat";
@@ -64,6 +65,7 @@ function open(
   const host = document.createElement("div");
   document.body.appendChild(host);
   const confirmed: (string | null)[] = [];
+  const deleteBranchRequests: (BranchDeleteRequest | undefined)[] = [];
   const shown: string[] = [];
   openWorktreeRemoveDialog(host, {
     info: over.info ?? SPIKE,
@@ -71,10 +73,13 @@ function open(
     agentRows: over.agentRows,
     degradedSources: over.degradedSources ?? [],
     now: over.now,
-    onConfirm: (fingerprint) => confirmed.push(fingerprint),
+    onConfirm: (fingerprint, deleteBranch) => {
+      confirmed.push(fingerprint);
+      deleteBranchRequests.push(deleteBranch);
+    },
     onShowAgent: (row) => shown.push(row.rowId),
   });
-  return { host, confirmed, shown };
+  return { host, confirmed, deleteBranchRequests, shown };
 }
 
 const NESTED = [{ worktreeId: "/repo-wt/spike/inner", displayPath: "/repo-wt/spike/inner" }];
@@ -801,5 +806,87 @@ describe("[2_3] the confirmation carries only the authority its report was hande
 
     expect(host.querySelector("#wt-confirm-name"), "a notApplicable risk demanded a typed confirmation").toBeNull();
     expect(host.querySelector("button.wt-btn--danger")?.textContent).toBe("Remove");
+  });
+});
+
+describe("[3_1] the branch-delete opt-in (design.md D1)", () => {
+  const BRANCH_DELETE = {
+    branch: "spike/hooks",
+    branchOid: "a".repeat(40),
+    defaultBranch: "main",
+    defaultOid: "b".repeat(40),
+  };
+
+  const WITH_OFFER = { ...confirmableBlocker, branchDelete: BRANCH_DELETE };
+  const checkbox = (host: HTMLElement) => host.querySelector<HTMLInputElement>("#wt-delete-branch");
+
+  it("offers nothing when the assessment carries no branch-delete evidence", () => {
+    const { host } = open(confirmableBlocker);
+    expect(checkbox(host)).toBeNull();
+  });
+
+  it("offers the control, off by default, naming the branch, when evidence is present", () => {
+    const { host } = open(WITH_OFFER);
+    const input = checkbox(host);
+    expect(input).not.toBeNull();
+    expect(input?.checked).toBe(false);
+    expect(host.querySelector(".wt-delete-branch")?.textContent).toContain("spike/hooks");
+  });
+
+  it("stays independent of the typed confirmation: typing it leaves the checkbox untouched", () => {
+    const { host } = open(WITH_OFFER);
+    const field = host.querySelector<HTMLInputElement>("#wt-confirm-name");
+    expect(field, "this report earns the typed confirmation too").not.toBeNull();
+    if (field !== null) {
+      field.value = SPIKE.branch ?? "";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    expect(checkbox(host)?.checked).toBe(false);
+  });
+
+  it("stays independent of the typed confirmation: checking it leaves the confirm button gated", () => {
+    const { host } = open(WITH_OFFER);
+    const input = checkbox(host);
+    if (input !== null) {
+      input.checked = true;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    expect(host.querySelector<HTMLButtonElement>(".wt-btn--danger")?.disabled).toBe(true);
+  });
+
+  it("sends no deleteBranch when the box is left unchecked", () => {
+    const { host, confirmed, deleteBranchRequests } = open(WITH_OFFER);
+    const field = host.querySelector<HTMLInputElement>("#wt-confirm-name");
+    if (field !== null) {
+      field.value = SPIKE.branch ?? "";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    host.querySelector<HTMLButtonElement>(".wt-btn--danger")?.click();
+    expect(confirmed).toEqual([WITH_OFFER.fingerprint]);
+    expect(deleteBranchRequests).toEqual([undefined]);
+  });
+
+  it("sends deleteBranch, echoing the offer's names and OIDs, only when the box is checked", () => {
+    const { host, deleteBranchRequests } = open(WITH_OFFER);
+    const field = host.querySelector<HTMLInputElement>("#wt-confirm-name");
+    if (field !== null) {
+      field.value = SPIKE.branch ?? "";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    const input = checkbox(host);
+    if (input !== null) {
+      input.checked = true;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    host.querySelector<HTMLButtonElement>(".wt-btn--danger")?.click();
+    expect(deleteBranchRequests).toEqual([
+      {
+        branch: BRANCH_DELETE.branch,
+        expectedBranchOid: BRANCH_DELETE.branchOid,
+        defaultBranch: BRANCH_DELETE.defaultBranch,
+        expectedDefaultOid: BRANCH_DELETE.defaultOid,
+        fingerprint: WITH_OFFER.fingerprint,
+      },
+    ]);
   });
 });

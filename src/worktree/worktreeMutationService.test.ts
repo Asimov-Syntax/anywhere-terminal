@@ -33,6 +33,16 @@ function ok(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
 }
 
+/** The merge evidence a proven merge would carry for `DELETE_BRANCH`'s pair. */
+function mergeEvidenceFor(req: BranchDeleteRequest) {
+  return {
+    branch: req.branch,
+    branchOid: req.expectedBranchOid,
+    base: req.defaultBranch,
+    baseOid: req.expectedDefaultOid,
+  };
+}
+
 function evidence(over: Partial<RemovalEvidence> = {}): RemovalEvidence {
   return {
     dirtyPaths: [],
@@ -412,9 +422,22 @@ describe("a mutation reaches git through the coordinator", () => {
     expect(h.argv[0]).toEqual(["worktree", "remove", RAW_PATH]);
   });
 
+  /** A merge proven, at the exact pair `DELETE_BRANCH` claims — issued at the ask. */
+  const provenAssessRemoval = async () => ({
+    kind: "confirmable" as const,
+    evidence: evidence({
+      proofs: {
+        lockAged: "unproven" as const,
+        ownerGone: "unproven" as const,
+        branchMerged: "passed" as const,
+        mergeEvidence: mergeEvidenceFor(DELETE_BRANCH),
+      },
+    }),
+  });
+
   it("runs the opted-in branch action only after a successful removal", async () => {
     const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: "feature" }));
-    const h = harness({ deleteBranch });
+    const h = harness({ deleteBranch, assessRemoval: provenAssessRemoval });
     const target = { repoId: REPO, worktreeId: RAW_ID };
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
@@ -432,6 +455,7 @@ describe("a mutation reaches git through the coordinator", () => {
   it("reports a refused branch action without changing the successful removal", async () => {
     const h = harness({
       deleteBranch: async () => ({ kind: "refused", reason: "refs-moved" }),
+      assessRemoval: provenAssessRemoval,
     });
     const target = { repoId: REPO, worktreeId: RAW_ID };
     await h.service.removeWorktree(target, undefined);
@@ -447,7 +471,10 @@ describe("a mutation reaches git through the coordinator", () => {
   });
 
   it("keeps the removal successful when the branch binding rejects", async () => {
-    const h = harness({ deleteBranch: async () => Promise.reject(new Error("unavailable")) });
+    const h = harness({
+      deleteBranch: async () => Promise.reject(new Error("unavailable")),
+      assessRemoval: provenAssessRemoval,
+    });
     const target = { repoId: REPO, worktreeId: RAW_ID };
     await h.service.removeWorktree(target, undefined);
     const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
@@ -459,6 +486,66 @@ describe("a mutation reaches git through the coordinator", () => {
       verb: "remove",
       branchDelete: { kind: "refused", reason: "holders-unavailable" },
     });
+  });
+
+  it("refuses the branch action without invoking the binding when nothing proved the merge", async () => {
+    // D10: an opt-in whose issued evidence never carried merge evidence has no
+    // proven OIDs to guard a delete with. Forwarding the caller's own claimed
+    // `DELETE_BRANCH` OIDs here would be the exact substitution the guard
+    // exists to prevent, so the binding must never see them.
+    const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: "feature" }));
+    const h = harness({ deleteBranch });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+
+    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+
+    expect(deleteBranch).not.toHaveBeenCalled();
+    expect(h.outcomes[1]).toMatchObject({
+      kind: "ok",
+      verb: "remove",
+      branchDelete: { kind: "refused", reason: "holders-unavailable" },
+    });
+  });
+
+  it("guards the branch delete with the OIDs issued at the ask, not ones read fresh at redemption", async () => {
+    // The branch moved between the ask (issue) and the confirm (redeem). The
+    // binding must still see the OID the user was shown, never the fresh one
+    // — the exact case design.md D10 exists to close.
+    const issued = mergeEvidenceFor(DELETE_BRANCH);
+    const moved = { ...issued, branchOid: "9".repeat(40) };
+    let asked = false;
+    const deleteBranch = vi.fn(async () => ({ kind: "deleted" as const, branch: "feature" }));
+    const h = harness({
+      deleteBranch,
+      assessRemoval: async () => {
+        const mergeEvidence = asked ? moved : issued;
+        asked = true;
+        return {
+          kind: "confirmable" as const,
+          evidence: evidence({
+            proofs: {
+              lockAged: "unproven" as const,
+              ownerGone: "unproven" as const,
+              branchMerged: "passed" as const,
+              mergeEvidence,
+            },
+          }),
+        };
+      },
+    });
+    const target = { repoId: REPO, worktreeId: RAW_ID };
+    await h.service.removeWorktree(target, undefined);
+    const fingerprint = (h.outcomes[0] as { fingerprint: string }).fingerprint;
+
+    await h.service.removeWorktree(target, fingerprint, DELETE_BRANCH);
+
+    expect(deleteBranch).toHaveBeenCalledWith("/repo", DELETE_BRANCH);
+    expect(deleteBranch).not.toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ expectedBranchOid: moved.branchOid }),
+    );
   });
 
   it("attempts no branch action when removal fails or the opt-in is absent", async () => {

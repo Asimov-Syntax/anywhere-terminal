@@ -2395,6 +2395,53 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
   });
 
+  it("names a branch the removal also deleted", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "remove",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          orphanedLabel: "worktree-panel",
+          branchDelete: { kind: "deleted", branch: "worktree-panel" },
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    expect(notice?.textContent ?? "").toContain("Remove done.");
+    expect(notice?.textContent ?? "").toContain("The branch worktree-panel was also deleted.");
+  });
+
+  it.each([
+    ["branch-in-use", "It is checked out in another worktree."],
+    ["default-branch", "It is the default branch."],
+    ["holders-unavailable", "Its status could not be checked."],
+    ["refs-moved", "It moved since it was checked."],
+  ] as const)("says the removal succeeded but the branch delete was refused: %s", (reason, text) => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "remove",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          orphanedLabel: "worktree-panel",
+          branchDelete: { kind: "refused", reason },
+        },
+      ],
+    });
+    const notice = view.element.querySelector(".wt-notice");
+    // "Remove done." is not the whole story: the removal succeeded and the
+    // branch it was asked to also delete did not, said in the same notice.
+    expect(notice?.textContent ?? "").toContain("Remove done.");
+    expect(notice?.textContent ?? "").toContain("The branch was not deleted.");
+    expect(notice?.textContent ?? "").toContain(text);
+    expect(notice?.className).toContain("wt-notice--warn");
+  });
+
   it("[round-4 F026] does not call a skipped entry brought over", () => {
     // `skipped` means the destination was already there — this apply wrote
     // nothing, and "1 of 1 brought over" says the opposite.

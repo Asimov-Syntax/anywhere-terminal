@@ -11,6 +11,7 @@
 // derivations in worktreeFormat.ts, and this class holds only the state the DOM
 // cannot — collapse sets, the focused row, the query, and the render guard.
 
+import type { BranchDeleteRequest } from "../../types/messages";
 import { attachTooltipDelegate } from "../ui/Tooltip";
 import { WorktreeContextMenu, type WorktreeMenuActions } from "./WorktreeContextMenu";
 import { openWorktreeCreateDialog, type WorktreeCreateDialogDeps } from "./WorktreeCreateDialog";
@@ -166,8 +167,11 @@ export interface WorktreeViewDeps {
    * The user answered the report. `fingerprint` is what that report carried and
    * nothing more: null means it authorized no force, and the caller sends the
    * ordinary removal (design.md D7).
+   *
+   * `deleteBranch` is present only when the dialog's opt-in checkbox was
+   * ticked — its absence is how "removal only" travels (design.md D1).
    */
-  onForceRemove?: (info: WorktreeInfo, fingerprint: string) => void;
+  onForceRemove?: (info: WorktreeInfo, fingerprint: string, deleteBranch?: BranchDeleteRequest) => void;
   /**
    * Ask again for an action whose risk could not be READ. Offered only there:
    * a failure already has its answer, and an unclear outcome has state to
@@ -382,7 +386,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests)}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -683,9 +687,9 @@ export class WorktreeView {
     this.closeDialog = openWorktreeRemoveDialog(this.deps.host, {
       ...args,
       now: this.now(),
-      onConfirm: (fingerprint) => {
+      onConfirm: (fingerprint, deleteBranch) => {
         this.closeDialog = null;
-        this.deps.onForceRemove?.(args.info, fingerprint);
+        this.deps.onForceRemove?.(args.info, fingerprint, deleteBranch);
       },
       onCancel: () => {
         this.closeDialog = null;
@@ -1523,16 +1527,25 @@ export class WorktreeView {
       return renderNotice({
         // A create that succeeded while some of its material did not arrive is
         // still a success and still needs saying — the same rule the launch
-        // failure above follows (round-4 W7).
-        tone: result.openFailed === undefined && brought?.tone !== "warn" ? "neutral" : "warn",
+        // failure above follows (round-4 W7). A refused branch delete is the
+        // same shape: the removal still succeeded, but "done" alone would
+        // hide that the opt-in did not go through.
+        tone:
+          result.openFailed === undefined && result.branchDelete?.kind !== "refused" && brought?.tone !== "warn"
+            ? "neutral"
+            : "warn",
         live: "status",
         title: `${titleForAction(result.action)} done.`,
         body: withAbout(
-          [result.openFailed === undefined ? undefined : "It could not be opened afterwards.", brought?.body]
+          [
+            result.openFailed === undefined ? undefined : "It could not be opened afterwards.",
+            branchDeleteLine(result.branchDelete),
+            brought?.body,
+          ]
             .filter((line) => line !== undefined)
             .join(" ") || undefined,
         ),
-        reason: result.openFailed ?? brought?.reason,
+        reason: result.openFailed ?? branchDeleteReason(result.branchDelete) ?? brought?.reason,
         onDismiss: dismiss,
       });
     }
@@ -1768,6 +1781,33 @@ export class WorktreeView {
       return;
     }
     this.focusRow(this.parentOf(rows, index));
+  }
+}
+
+/** What the notice says happened to the opted-in branch, apart from the removal itself. */
+function branchDeleteLine(outcome: WorktreeActionResult["branchDelete"]): string | undefined {
+  if (outcome === undefined) {
+    return undefined;
+  }
+  return outcome.kind === "deleted" ? `The branch ${outcome.branch} was also deleted.` : "The branch was not deleted.";
+}
+
+/** Which guard refused the branch delete, in the user's terms — never a bare "refused". */
+function branchDeleteReason(outcome: WorktreeActionResult["branchDelete"]): string | undefined {
+  if (outcome === undefined || outcome.kind !== "refused") {
+    return undefined;
+  }
+  switch (outcome.reason) {
+    case "branch-in-use":
+      return "It is checked out in another worktree.";
+    case "default-branch":
+      return "It is the default branch.";
+    case "holders-unavailable":
+      return "Its status could not be checked.";
+    case "refs-moved":
+      return "It moved since it was checked.";
+    default:
+      return undefined;
   }
 }
 

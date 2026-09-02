@@ -592,13 +592,13 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             };
           }
 
-          const verdict = fingerprints.redeem(
+          const redemption = fingerprints.redeem(
             { worktreeId: target.worktreeId },
             fingerprint,
             assessment.evidence,
             deps.now(),
           );
-          if (verdict === "reprompt") {
+          if (redemption.kind === "reprompt") {
             return {
               kind: "error",
               verb: "remove",
@@ -651,8 +651,27 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           if (removal.kind !== "ok" || deleteBranchRequest === undefined) {
             return removal;
           }
+          // The transaction's OIDs come from what was ISSUED with the
+          // fingerprint (`redemption.approved`), never from a fresh
+          // assessment and never from the caller's own claim — that is the
+          // exact substitution the guard exists to prevent (design.md D10).
+          const mergeEvidence = redemption.approved.proofs.mergeEvidence;
+          if (mergeEvidence === undefined) {
+            // Nothing was proven to guard a delete with. Forwarding the
+            // caller's own claimed OIDs here would be exactly the
+            // substitution D10 exists to prevent, so the binding is never
+            // invoked with them.
+            return { ...removal, branchDelete: { kind: "refused", reason: "holders-unavailable" } };
+          }
+          const guardedRequest: BranchDeleteRequest = {
+            branch: mergeEvidence.branch,
+            expectedBranchOid: mergeEvidence.branchOid,
+            defaultBranch: mergeEvidence.base,
+            expectedDefaultOid: mergeEvidence.baseOid,
+            fingerprint: deleteBranchRequest.fingerprint,
+          };
           const branchDelete = await (
-            deps.deleteBranch?.(t.repoPath, deleteBranchRequest) ??
+            deps.deleteBranch?.(t.repoPath, guardedRequest) ??
             Promise.resolve({ kind: "refused" as const, reason: "holders-unavailable" as const })
           ).catch(() => ({
             kind: "refused" as const,

@@ -569,8 +569,13 @@ export class WorktreeController {
         this.actionResults = this.actionResults.filter((r) => r !== result);
         this.push();
       },
-      onForceRemove: (info, fingerprint) => {
-        deps.postMessage({ type: "worktreeRemove", worktreeId: info.id, fingerprint });
+      onForceRemove: (info, fingerprint, deleteBranch) => {
+        deps.postMessage({
+          type: "worktreeRemove",
+          worktreeId: info.id,
+          fingerprint,
+          ...(deleteBranch === undefined ? {} : { deleteBranch }),
+        });
       },
       onPrune: (repoId) => this.confirmPrune(repoId),
       // Only `unavailable` reaches here — the read failed, so asking again is
@@ -1731,6 +1736,7 @@ function toActionResult(msg: WorktreeMutationResultMessage): WorktreeActionResul
         ...scope,
         outcome: "ok",
         ...(msg.result.openFailed === undefined ? {} : { openFailed: msg.result.openFailed }),
+        ...(msg.result.branchDelete === undefined ? {} : { branchDelete: msg.result.branchDelete }),
       };
     case "indeterminate":
       return { action: msg.verb, ...scope, outcome: "indeterminate", observed: msg.result.observed };

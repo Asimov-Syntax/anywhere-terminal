@@ -233,7 +233,13 @@ function toResultMessage(outcome: MutationOutcome): WorktreeMutationResultMessag
     case "ok":
       return {
         ...head,
-        result: { kind: "ok", ...(outcome.openFailed === undefined ? {} : { openFailed: outcome.openFailed }) },
+        result: {
+          kind: "ok",
+          ...(outcome.openFailed === undefined ? {} : { openFailed: outcome.openFailed }),
+          // The optional branch outcome rides beside `openFailed` rather than
+          // dropping it — a refused branch delete is not the removal failing.
+          ...(outcome.branchDelete === undefined ? {} : { branchDelete: outcome.branchDelete }),
+        },
       };
     case "indeterminate":
       return { ...head, result: { kind: "indeterminate", observed: outcome.observed } };

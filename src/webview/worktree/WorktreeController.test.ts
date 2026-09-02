@@ -2739,10 +2739,31 @@ describe("what a mutation did comes back to the panel", () => {
     expect(h.posts).toEqual([]);
   });
 
+  function forceRemoveDeps(h: ReturnType<typeof ready>) {
+    return (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            onForceRemove(
+              i: { id: string },
+              fp: string,
+              deleteBranch?: {
+                branch: string;
+                expectedBranchOid: string;
+                defaultBranch: string;
+                expectedDefaultOid: string;
+                fingerprint: string;
+              },
+            ): void;
+          };
+        };
+      }
+    ).view;
+  }
+
   it("requests removal with the fingerprint the user was actually shown", () => {
     const h = ready();
-    const view = (h.controller as unknown as { view: { deps: { onForceRemove(i: { id: string }, fp: string): void } } })
-      .view;
+    const view = forceRemoveDeps(h);
     view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9");
 
     expect(h.posts).toEqual([
@@ -2750,6 +2771,46 @@ describe("what a mutation did comes back to the panel", () => {
         type: "worktreeRemove",
         worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
         fingerprint: "fp-9",
+      },
+    ]);
+  });
+
+  it("[3_1] omits deleteBranch from the posted removal when the dialog's opt-in was left unchecked", () => {
+    // The dialog answers `undefined` when its checkbox was never ticked
+    // (WorktreeRemoveDialog.ts), and that omission has to survive the
+    // controller unchanged — a field present-but-empty would still read as
+    // an opt-in on the wire (spec: deleting the branch is a separate opt-in).
+    const h = ready();
+    const view = forceRemoveDeps(h);
+    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9", undefined);
+
+    expect(h.posts).toEqual([
+      {
+        type: "worktreeRemove",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        fingerprint: "fp-9",
+      },
+    ]);
+  });
+
+  it("[3_1] carries the exact deleteBranch payload the dialog echoed back", () => {
+    const h = ready();
+    const view = forceRemoveDeps(h);
+    const deleteBranch = {
+      branch: "spike/hooks",
+      expectedBranchOid: "a".repeat(40),
+      defaultBranch: "main",
+      expectedDefaultOid: "b".repeat(40),
+      fingerprint: "fp-9",
+    };
+    view.deps.onForceRemove({ id: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator" }, "fp-9", deleteBranch);
+
+    expect(h.posts).toEqual([
+      {
+        type: "worktreeRemove",
+        worktreeId: "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator",
+        fingerprint: "fp-9",
+        deleteBranch,
       },
     ]);
   });

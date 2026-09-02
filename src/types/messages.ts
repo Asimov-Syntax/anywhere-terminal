@@ -1034,6 +1034,21 @@ export interface BranchDeleteRequest {
 }
 
 /**
+ * The opted-in branch delete's own outcome, riding the removal's result
+ * rather than replacing it — a failed branch delete never fails the removal
+ * (design.md D5, worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal).
+ *
+ * A named guard on refusal, never a bare boolean: the notice states WHICH
+ * check declined rather than only that the branch survived.
+ */
+export type WorktreeBranchDeleteOutcome =
+  | { readonly kind: "deleted"; readonly branch: string }
+  | {
+      readonly kind: "refused";
+      readonly reason: "branch-in-use" | "default-branch" | "holders-unavailable" | "refs-moved";
+    };
+
+/**
  * WebView → Extension: create a worktree at a path the host will re-validate.
  *
  * The launch fields are required exactly when `openAfter` is `"agent"` and
@@ -2397,7 +2412,7 @@ export interface WorktreeMutationResultMessage {
   /** The row the notice attaches to. Absent for the repo-scoped verbs. */
   worktreeId?: string;
   result:
-    | { kind: "ok"; openFailed?: string }
+    | { kind: "ok"; openFailed?: string; branchDelete?: WorktreeBranchDeleteOutcome }
     | { kind: "error"; message: string }
     | { kind: "indeterminate"; observed: string }
     | { kind: "unavailable"; unreadable: readonly string[] }

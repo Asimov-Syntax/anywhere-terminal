@@ -19,6 +19,7 @@ export type { WorktreeRowActivation } from "../../settings/SettingsReader";
 // The create request's own shapes. The dialog builds them and the host consumes
 // them unflattened, so both sides read one declaration.
 import type {
+  BranchDeleteOffer,
   DestinationDisposition,
   ProvisionModel,
   ProvisionResultContest,
@@ -26,10 +27,13 @@ import type {
   PullRequestOffer,
   RemovalCheck,
   ResolvedMode,
+  WorktreeBranchDeleteOutcome,
 } from "../../types/messages";
 import type { WorktreeRef } from "../../worktree/repoRefs";
 
 export type {
+  BranchDeleteOffer,
+  BranchDeleteRequest,
   DestinationDisposition,
   ProvisionEntry,
   ProvisionModel,
@@ -41,6 +45,7 @@ export type {
   RemovalCheckClass,
   RemovalCheckOutcome,
   WorktreeAfterCreate,
+  WorktreeBranchDeleteOutcome,
   WorktreeCreateMode,
 } from "../../types/messages";
 export type {
@@ -81,6 +86,11 @@ export interface WorktreeRemoveReport {
    */
   fingerprint: string | null;
   checks: readonly RemovalCheck[];
+  /**
+   * Present only when the merge proof passed; its PRESENCE is what gates the
+   * branch-delete opt-in in `WorktreeRemoveDialog.ts` (design.md D1).
+   */
+  branchDelete?: BranchDeleteOffer;
   /**
    * Worktrees registered INSIDE this one. Refused, never confirmable: git's
    * `remove --force` treats a nested registered worktree as ordinary untracked
@@ -138,6 +148,12 @@ export interface WorktreeActionResult {
   canonicalId?: string;
   /** The action succeeded; what it was asked to do next did not. */
   openFailed?: string;
+  /**
+   * The opted-in branch delete's own outcome, riding the removal's own
+   * result rather than replacing it — a refused branch delete never turns a
+   * successful removal into a failure (design.md D5).
+   */
+  branchDelete?: WorktreeBranchDeleteOutcome;
   /**
    * What provisioning did, on the create's OWN notice.
    *

@@ -14,6 +14,7 @@
 //    dialog names the agent instead and offers to show it. A disabled confirm would
 //    imply some other input could enable it.
 
+import type { BranchDeleteRequest } from "../../types/messages";
 import { countOf, failed, isRefusedByChecks } from "../../worktree/removalChecks";
 import { ICON_TERMINAL } from "../vault/icons";
 import { dialogTitle, openDialogShell, textButton } from "./worktreeDialogShell";
@@ -30,6 +31,12 @@ import type {
 
 export interface WorktreeRemoveDialogDeps {
   info: WorktreeInfo;
+  /**
+   * `branchDelete` rides the same report the checks do: its PRESENCE is what
+   * gates the opt-in (design.md D1), and this file adds no other test for
+   * whether the merge was proven — the host already decided that by putting
+   * the offer on, or leaving it off, the wire.
+   */
   report: WorktreeRemoveReport;
   /** Rows in this worktree; the refusal names the busy ones. */
   agentRows?: WorktreeAgentRow[];
@@ -46,8 +53,12 @@ export interface WorktreeRemoveDialogDeps {
    * removal has nothing to force past, and the caller sends the ordinary
    * unforced request. That is the whole of what stops the dialog from becoming
    * a way to manufacture deletion authority (design.md D7).
+   *
+   * `deleteBranch` is present only when the opt-in checkbox was ticked; its
+   * absence is how "removal only" travels (spec: deleting the branch is a
+   * separate opt-in, offered only on a proven merge).
    */
-  onConfirm: (fingerprint: string) => void;
+  onConfirm: (fingerprint: string, deleteBranch?: BranchDeleteRequest) => void;
   /** Reveal the agent that blocks the removal. */
   onShowAgent?: (row: WorktreeAgentRow) => void;
   onCancel?: () => void;
@@ -558,9 +569,53 @@ export function openWorktreeRemoveDialog(root: HTMLElement, deps: WorktreeRemove
     return shell.dispose;
   }
   const typed = confirmationFor(checks) === "typed";
+
+  // The opt-in is a separate control from the typed confirmation above it —
+  // neither reads the other's state. It exists at all only because the report
+  // carries `branchDelete`; there is no other test for "was the merge proven"
+  // in this file (design.md D1, D4).
+  const branchDelete = deps.report.branchDelete;
+  let deleteBranchCheckbox: HTMLInputElement | null = null;
+  if (branchDelete !== undefined) {
+    const label = document.createElement("label");
+    label.className = "wt-delete-branch";
+    label.htmlFor = "wt-delete-branch";
+    const checkbox = document.createElement("input");
+    checkbox.id = "wt-delete-branch";
+    checkbox.type = "checkbox";
+    // Off by default (spec: "it is off"): a merged branch is not the same
+    // question as removing its worktree, and this control answers only for
+    // itself.
+    checkbox.checked = false;
+    const branchName = document.createElement("b");
+    branchName.textContent = branchDelete.branch;
+    label.append(
+      checkbox,
+      document.createTextNode(" Also delete the branch "),
+      branchName,
+      document.createTextNode("."),
+    );
+    shell.dialog.append(label);
+    deleteBranchCheckbox = checkbox;
+  }
+
   const confirm = textButton(typed ? "Force remove" : "Remove", "danger", () => {
+    // The opt-in is sent only when it is ticked (spec: "Removing the worktree
+    // SHALL NOT imply deleting the branch"). Echoing the offer's own names and
+    // OIDs back is what lets the guard verify against what the user was shown,
+    // not a fresh assessment (design.md D8, D10).
+    const deleteBranchRequest: BranchDeleteRequest | undefined =
+      deleteBranchCheckbox?.checked && branchDelete !== undefined
+        ? {
+            branch: branchDelete.branch,
+            expectedBranchOid: branchDelete.branchOid,
+            defaultBranch: branchDelete.defaultBranch,
+            expectedDefaultOid: branchDelete.defaultOid,
+            fingerprint,
+          }
+        : undefined;
     // Re-send exactly the report authority the user answered.
-    deps.onConfirm(fingerprint);
+    deps.onConfirm(fingerprint, deleteBranchRequest);
     shell.dispose();
   });
   if (typed) {
