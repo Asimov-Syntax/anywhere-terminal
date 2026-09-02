@@ -217,7 +217,7 @@
     1. In `src/worktree/provisioning/applyProvisioning.ts`, answer the members the gate refused for what they are before the contended reading decides the group, so a refusal that observed nothing cannot be overwritten by one that did.
     2. Witness the REASON on that member's step, not only its outcome kind, in a contest where a sibling reads non-absent, and pin the step order too — the reorder is observable through the key the webview compares provisioning state by.
 
-- [ ] 10_5 Witness the favoured member refused by its own rule
+- [x] 10_5 Witness the favoured member refused by its own rule — verified: pnpm exec vitest run 'src/worktree/provisioning/applyProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 10_4
   - **Refs**: design.md D3a, .reviews/round-7.md
   - **Acceptance**:

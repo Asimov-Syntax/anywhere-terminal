@@ -626,6 +626,64 @@ describe("[OOB-F016] a member's own refusal is not an observation of the destina
   });
 });
 
+describe("[round-7 F017] the favoured member is refused before any reading (D4 row 3)", () => {
+  const DEPS = {
+    ...MATERIAL,
+    [`${MAIN}/node_modules`]: { kind: "dir" },
+    [`${MAIN}/node_modules/pkg`]: { kind: "file", size: 7 },
+  } as const;
+
+  it("refuses every member by its own rule, and writes nothing", async () => {
+    // Both declarations say link, and node_modules is never linked — so the
+    // favoured member never claims and the group is settled entirely by rules
+    // that opened nothing. Row 3 is reached with no reading behind it.
+    const { steps, contests, fs } = await applyTo(DEPS, [
+      entry(".env", "copy", NATIVE, "u1"),
+      entry("node_modules", "link", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    expect(fs.nodes.has(`${WT}/node_modules`)).toBe(false);
+    // The uncontested copy runs FIRST in the ordered pass, so its landing
+    // after both refusals is what says the group was settled in the pre-pass.
+    expect(steps.map((s) => [s.id, s.outcome.kind])).toEqual([
+      ["i1", "refused"],
+      ["i2", "refused"],
+      ["u1", "copied"],
+    ]);
+    for (const id of ["i1", "i2"]) {
+      const refused = steps.find((s) => s.id === id);
+      expect(refused?.outcome).toMatchObject({ reason: expect.stringContaining("node_modules is never linked") });
+      expect(named(contests, refused)).toEqual([
+        "node_modules (declared in .vscode/worktree.json)",
+        "node_modules (declared in asimov/worktree.yaml)",
+      ]);
+    }
+  });
+
+  it("refuses a held member the gate would have admitted, naming the contest", async () => {
+    // The favoured member is refused for what it is; the held one is perfectly
+    // admissible and still gets nothing, because D4 row 3 does not hand a
+    // destination to the inherited declaration when the repository's own
+    // failed to claim it.
+    const { steps, contests, fs } = await applyTo(DEPS, [
+      entry("node_modules", "link", NATIVE, "i1"),
+      entry("node_modules", "copy", INHERITED, "i2"),
+    ]);
+
+    expect(fs.created).toEqual([]);
+    expect(steps.map((s) => [s.id, s.outcome.kind])).toEqual([
+      ["i1", "refused"],
+      ["i2", "refused"],
+    ]);
+    expect(steps[0]?.outcome).toMatchObject({ reason: expect.stringContaining("node_modules is never linked") });
+    expect(named(contests, steps[1])).toEqual([
+      "node_modules (declared in .vscode/worktree.json)",
+      "node_modules (declared in asimov/worktree.yaml)",
+    ]);
+  });
+});
+
 // [OOB-F015 / D3b] `contendersOf` names a favoured member only when exactly one
 // comes from the native file, so two native spellings left the group with none
 // — and `contestsOf` dropped it on the branch reading "nothing in it claims
