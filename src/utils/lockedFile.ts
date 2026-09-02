@@ -27,16 +27,106 @@ export interface LockedFileDependencies {
   platform?: Platform;
 }
 
+export interface LockDeadline {
+  readonly elapsed: Promise<void>;
+  readonly expired: boolean;
+  cancel(): void;
+}
+
+export interface WriteGate {
+  readonly open: boolean;
+  guard<T>(step: () => Promise<T>): Promise<T>;
+}
+
+export type LockedOutcome<T> =
+  | { readonly kind: "done"; readonly value: T }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "timedOut"; readonly retainedLockPath?: string };
+
 export type StagedCommit = "create" | "replace";
 
 export interface StagedReplacement {
   readonly path: string;
-  commit(kind: StagedCommit): Promise<boolean>;
-  discard(): Promise<void>;
+  commit(kind: StagedCommit, gate?: WriteGate): Promise<boolean>;
+  discard(gate?: WriteGate): Promise<boolean>;
+  abandon(): Promise<void>;
 }
 
 export const LOCK_WAIT_MS = 25;
 export const LOCK_MAX_WAIT_MS = 1_000;
+
+class GateClosed extends Error {}
+
+class MutationGate implements WriteGate {
+  private latchedOpen = true;
+  private inFlight = 0;
+  private dirty_ = false;
+
+  public constructor(private readonly deadline: LockDeadline) {
+    void deadline.elapsed.then(() => {
+      this.latchedOpen = false;
+      if (this.inFlight > 0) {
+        this.dirty_ = true;
+      }
+    });
+  }
+
+  public get open(): boolean {
+    return this.latchedOpen && !this.deadline.expired;
+  }
+
+  public get dirty(): boolean {
+    return this.dirty_;
+  }
+
+  public async guard<T>(step: () => Promise<T>): Promise<T> {
+    return this.run(step);
+  }
+
+  public async run<T>(step: () => Promise<T>, onLate?: (value: T) => Promise<void> | void): Promise<T> {
+    if (!this.open) {
+      this.latchedOpen = false;
+      throw new GateClosed();
+    }
+    this.inFlight += 1;
+    let timedOut = false;
+    let settled = false;
+    const running = Promise.resolve().then(step);
+    void running.then(
+      async (value) => {
+        settled = true;
+        this.inFlight -= 1;
+        if (timedOut) {
+          await Promise.resolve(onLate?.(value)).catch(() => undefined);
+        }
+      },
+      () => {
+        settled = true;
+        this.inFlight -= 1;
+      },
+    );
+    const expired = new Promise<never>((_, reject) => {
+      void this.deadline.elapsed.then(() => {
+        if (settled) {
+          return;
+        }
+        timedOut = true;
+        this.latchedOpen = false;
+        this.dirty_ = true;
+        reject(new GateClosed());
+      });
+    });
+    return Promise.race([running, expired]);
+  }
+}
+
+function mutationGate(gate: WriteGate | undefined): MutationGate | undefined {
+  return gate instanceof MutationGate ? gate : undefined;
+}
+
+async function guarded<T>(gate: WriteGate | undefined, step: () => Promise<T>): Promise<T> {
+  return gate === undefined ? step() : gate.guard(step);
+}
 
 export class LockedFile {
   private readonly fs: LockedFileSystem;
@@ -60,35 +150,96 @@ export class LockedFile {
     return `${this.path}.anywhere-terminal.lock`;
   }
 
-  /**
-   * Runs `work` while holding an exclusively-created sibling lock. The owned
-   * handle stays open until release, and release removes the pathname only if
-   * it still names the inode this operation created.
-   */
   public async withLock<T>(
     work: () => Promise<T>,
     lockUnavailable: T,
     failed: T,
     onLockReleaseFailed?: (lockPath: string) => void,
-  ): Promise<T> {
-    const lock = await this.acquireLock(this.lockPath);
-    if (!lock) {
-      return lockUnavailable;
+  ): Promise<T>;
+  public async withLock<T>(
+    deadline: LockDeadline,
+    work: (gate: WriteGate) => Promise<T>,
+    failed: T,
+    onLockReleaseFailed?: (lockPath: string) => void,
+  ): Promise<LockedOutcome<T>>;
+  public async withLock<T>(
+    deadlineOrWork: LockDeadline | (() => Promise<T>),
+    workOrUnavailable: ((gate: WriteGate) => Promise<T>) | T,
+    failed: T,
+    onLockReleaseFailed?: (lockPath: string) => void,
+  ): Promise<T | LockedOutcome<T>> {
+    if (typeof deadlineOrWork === "function") {
+      const lock = await this.acquireLock(this.lockPath);
+      if (!lock) {
+        return workOrUnavailable as T;
+      }
+      let result: T;
+      try {
+        result = await deadlineOrWork();
+      } catch {
+        result = failed;
+      }
+      if (!(await this.releaseLock(this.lockPath, lock))) {
+        onLockReleaseFailed?.(this.lockPath);
+      }
+      return result;
     }
-    let result: T;
-    try {
-      result = await work();
-    } catch {
-      result = failed;
+
+    const deadline = deadlineOrWork;
+    const work = workOrUnavailable as (gate: WriteGate) => Promise<T>;
+    const gate = new MutationGate(deadline);
+    const acquisition = await this.acquireLockBeforeDeadline(this.lockPath, deadline, gate);
+    if (acquisition.kind !== "acquired") {
+      return acquisition.kind === "unavailable"
+        ? { kind: "unavailable" }
+        : {
+            kind: "timedOut",
+            ...(acquisition.retained ? { retainedLockPath: this.lockPath } : {}),
+          };
     }
-    if (!(await this.releaseLock(this.lockPath, lock))) {
+    const lock = acquisition.handle;
+    if (!gate.open) {
+      void this.releaseLock(this.lockPath, lock).then((released) => {
+        if (!released) {
+          onLockReleaseFailed?.(this.lockPath);
+        }
+      });
+      return { kind: "timedOut" };
+    }
+    const running = Promise.resolve()
+      .then(() => work(gate))
+      .then(
+        (value) => ({ kind: "value" as const, value }),
+        () => ({ kind: "value" as const, value: failed }),
+      );
+    const settled = await Promise.race([running, deadline.elapsed.then(() => ({ kind: "timeout" as const }))]);
+    if (settled.kind === "timeout") {
+      if (gate.dirty) {
+        void lock.close().catch(() => undefined);
+        return { kind: "timedOut", retainedLockPath: this.lockPath };
+      }
+      void this.releaseLock(this.lockPath, lock).then((released) => {
+        if (!released) {
+          onLockReleaseFailed?.(this.lockPath);
+        }
+      });
+      return { kind: "timedOut" };
+    }
+
+    const release = this.releaseLock(this.lockPath, lock);
+    const released = await Promise.race([release, deadline.elapsed.then(() => undefined)]);
+    if (released !== true) {
       onLockReleaseFailed?.(this.lockPath);
     }
-    return result;
+    return { kind: "done", value: settled.value };
   }
 
   /** Creates and fills an unpredictable exclusive sibling temporary. */
-  public async stageReplacement(contents: string, mode: number | undefined): Promise<StagedReplacement | undefined> {
+  public async stageReplacement(
+    contents: string,
+    mode: number | undefined,
+    gate?: WriteGate,
+  ): Promise<StagedReplacement | undefined> {
     const path = this.platform === "win32" ? win32 : posix;
     const temporaryPath = path.join(
       path.dirname(this.path),
@@ -98,12 +249,12 @@ export class LockedFile {
     let ownedIdentity: FileIdentity | undefined;
     let live = false;
 
-    const ownsTemporaryPath = async (): Promise<boolean> => {
+    const ownsTemporaryPath = async (checkGate?: WriteGate): Promise<boolean> => {
       if (!live || !ownedIdentity) {
         return false;
       }
       try {
-        const current = await this.fs.lstat(temporaryPath);
+        const current = await guarded(checkGate, () => this.fs.lstat(temporaryPath));
         return !current.isSymbolicLink() && current.isFile() && sameFileIdentity(ownedIdentity, current);
       } catch {
         return false;
@@ -115,33 +266,58 @@ export class LockedFile {
       handle = undefined;
     };
 
-    const discard = async () => {
-      if (!live) {
-        return;
-      }
-      if (await ownsTemporaryPath()) {
-        await this.fs.unlink(temporaryPath).catch(() => undefined);
-      }
+    const abandon = async () => {
       live = false;
       await closeHandle();
     };
 
-    try {
-      await this.fs.mkdir(path.dirname(this.path), { recursive: true });
-      handle = await this.fs.open(temporaryPath, "wx", mode ?? 0o600);
-      live = true;
-      await handle.writeFile(contents, { encoding: "utf8" });
-      if (mode !== undefined) {
-        await handle.chmod(mode);
+    const discard = async (discardGate?: WriteGate): Promise<boolean> => {
+      if (!live) {
+        await closeHandle();
+        return true;
       }
-      const opened = await handle.stat();
+      if (!(await ownsTemporaryPath(discardGate))) {
+        await abandon();
+        return false;
+      }
+      try {
+        await guarded(discardGate, () => this.fs.unlink(temporaryPath));
+        live = false;
+        await closeHandle();
+        return true;
+      } catch (error) {
+        if (isNotFound(error)) {
+          live = false;
+          await closeHandle();
+          return true;
+        }
+        await abandon();
+        return false;
+      }
+    };
+
+    try {
+      await guarded(gate, () => this.fs.mkdir(path.dirname(this.path), { recursive: true }));
+      const internal = mutationGate(gate);
+      handle = internal
+        ? await internal.run(
+            () => this.fs.open(temporaryPath, "wx", mode ?? 0o600),
+            (late) => late.close().catch(() => undefined),
+          )
+        : await guarded(gate, () => this.fs.open(temporaryPath, "wx", mode ?? 0o600));
+      live = true;
+      await guarded(gate, () => handle!.writeFile(contents, { encoding: "utf8" }));
+      if (mode !== undefined) {
+        await guarded(gate, () => handle!.chmod(mode));
+      }
+      const opened = await guarded(gate, () => handle!.stat());
       ownedIdentity = fileIdentityOf(opened);
       if (!opened.isFile() || ownedIdentity === undefined) {
-        await discard();
+        await discard(gate);
         return undefined;
       }
     } catch {
-      if (live && !ownedIdentity) {
+      if (live && !ownedIdentity && gate?.open !== false) {
         try {
           const opened = await handle?.stat();
           if (opened) {
@@ -151,32 +327,26 @@ export class LockedFile {
           // No identity means no pathname is authorized for cleanup.
         }
       }
-      await discard();
+      if (gate?.open === false) {
+        await abandon();
+      } else {
+        await discard(gate);
+      }
       return undefined;
     }
 
     return {
       path: temporaryPath,
-      commit: async (kind) => {
-        if (!(await ownsTemporaryPath())) {
+      commit: async (kind, commitGate) => {
+        if (!(await ownsTemporaryPath(commitGate))) {
           return false;
         }
         try {
           if (kind === "create") {
-            await this.fs.link(temporaryPath, this.path);
-            try {
-              await this.fs.unlink(temporaryPath);
-              live = false;
-              await closeHandle();
-            } catch (error) {
-              if (isNotFound(error)) {
-                live = false;
-                await closeHandle();
-              }
-            }
+            await guarded(commitGate, () => this.fs.link(temporaryPath, this.path));
             return true;
           }
-          await this.replace(temporaryPath, this.path);
+          await guarded(commitGate, () => this.replace(temporaryPath, this.path));
           live = false;
           await closeHandle();
           return true;
@@ -185,17 +355,18 @@ export class LockedFile {
         }
       },
       discard,
+      abandon,
     };
   }
 
-  public async atomicReplace(contents: string, mode: number | undefined): Promise<boolean> {
-    const staged = await this.stageReplacement(contents, mode);
+  public async atomicReplace(contents: string, mode: number | undefined, gate?: WriteGate): Promise<boolean> {
+    const staged = await this.stageReplacement(contents, mode, gate);
     if (!staged) {
       return false;
     }
-    const committed = await staged.commit("replace");
+    const committed = await staged.commit("replace", gate);
     if (!committed) {
-      await staged.discard();
+      await staged.discard(gate);
     }
     return committed;
   }
@@ -210,6 +381,58 @@ export class LockedFile {
       }
       throw error;
     }
+  }
+
+  private async acquireLockBeforeDeadline(
+    lockPath: string,
+    deadline: LockDeadline,
+    gate: MutationGate,
+  ): Promise<
+    | { readonly kind: "acquired"; readonly handle: FileHandle }
+    | { readonly kind: "unavailable" }
+    | { readonly kind: "timedOut"; readonly retained: boolean }
+  > {
+    const parent = (this.platform === "win32" ? win32 : posix).dirname(this.path);
+    const creatingParent = this.fs.mkdir(parent, { recursive: true });
+    const parentResult = await Promise.race([
+      creatingParent.then(
+        () => "done" as const,
+        () => "failed" as const,
+      ),
+      deadline.elapsed.then(() => "timeout" as const),
+    ]);
+    if (parentResult !== "done") {
+      void creatingParent.catch(() => undefined);
+      return parentResult === "timeout" ? { kind: "timedOut", retained: false } : { kind: "unavailable" };
+    }
+
+    const attempts = Math.ceil(LOCK_MAX_WAIT_MS / LOCK_WAIT_MS);
+    for (let attempt = 0; attempt <= attempts; attempt += 1) {
+      if (!gate.open) {
+        return { kind: "timedOut", retained: gate.dirty };
+      }
+      try {
+        const handle = await gate.run(
+          () => this.fs.open(lockPath, "wx"),
+          (late) => late.close().catch(() => undefined),
+        );
+        return { kind: "acquired", handle };
+      } catch (error) {
+        if (error instanceof GateClosed) {
+          return { kind: "timedOut", retained: gate.dirty };
+        }
+        if (!isAlreadyExists(error)) {
+          return { kind: "unavailable" };
+        }
+        const sleeping = this.sleep(LOCK_WAIT_MS);
+        const slept = await Promise.race([sleeping.then(() => true), deadline.elapsed.then(() => false)]);
+        if (!slept || deadline.expired) {
+          void sleeping.catch(() => undefined);
+          return { kind: "timedOut", retained: false };
+        }
+      }
+    }
+    return { kind: "unavailable" };
   }
 
   private async acquireLock(lockPath: string): Promise<FileHandle | undefined> {

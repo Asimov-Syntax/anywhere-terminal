@@ -4,7 +4,7 @@ The shared acquisition/write gate precedes both consumers. Repository-local excl
 
 ## 1. Deadline-aware locked mutation
 
-- [ ] 1_1 Add a latched acquisition and mutation gate to LockedFile
+- [x] 1_1 Add a latched acquisition and mutation gate to LockedFile — verified: pnpm exec vitest run 'src/utils/lockedFile.test.ts' 'src/agentHooks/install/lockedJsonFile.test.ts' 'src/worktree/gitExclude.test.ts' 'src/worktree/worktreePorts.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/retained-lock-primitive-recorded.log 2>&1 exit 0
   - **Deps**: none
   - **Refs**: design.md D1, design.md D2, design.md D3, design.md D5, design.md D6
   - **Acceptance**:
