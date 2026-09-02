@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ExtensionToWebViewMessage,
   ProvisionModel,
+  ProvisionProvider,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentMessage,
 } from "../types/messages";
@@ -24,6 +25,7 @@ import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandR
 import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
+import { MAX_MODEL_ROWS } from "../worktree/provisioning/providerKit";
 import type { NativeConfigDivergence, NativeConfigWrite } from "../worktree/provisioning/writeNativeConfig";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
@@ -3605,6 +3607,226 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
     expect(last.model.problems.map((p) => p.file)).toEqual([".vscode/worktree.json"]);
     expect(last.model.entries.map((e) => e.path)).toEqual([".env", "node_modules"]);
+    h.dispose();
+  });
+
+  it("says a save did not happen, not that a file could not be read", async () => {
+    // Every other reason on the wire describes a READ going wrong, and a held
+    // lock is not one — the file read perfectly well a moment earlier
+    // (design.md D13).
+    const h = await opened({ write: async () => ({ ok: false, reason: "unavailable" }) });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.map((p) => p.reason)).toEqual(["unsaved"]);
+    h.dispose();
+  });
+
+  it("keeps `malformed` for the one refusal that IS about the file", async () => {
+    const h = await opened({ write: async () => ({ ok: false, reason: "malformed" }) });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.map((p) => p.reason)).toEqual(["malformed"]);
+    h.dispose();
+  });
+
+  it("writes nothing for a save carrying a key this wire does not have", async () => {
+    // `onlyKeys` is the single enforcement point for "ids and ordering, and
+    // nothing else". An admitted-but-unchecked slot is where a later reader
+    // picks up unvalidated webview text (.reviews/round-1.md F012).
+    const h = await opened();
+    const offerId = liveOffer(h.view);
+
+    h.host.handleMessage(h.view, { ...save({ offerId }), provider: "orca" } as never);
+    await settle();
+
+    expect(h.seen).toEqual([]);
+    // Without the extra key, the same save writes.
+    h.host.handleMessage(h.view, save({ offerId, switch: 2 }));
+    await settle();
+    expect(h.seen).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("writes nothing for a kept list longer than any model it could name", async () => {
+    const h = await opened();
+    const offerId = liveOffer(h.view);
+
+    h.host.handleMessage(
+      h.view,
+      save({ offerId, kept: Array.from({ length: MAX_MODEL_ROWS + 1 }, (_, i) => `i${i}`) }),
+    );
+    await settle();
+
+    expect(h.seen).toEqual([]);
+    h.host.handleMessage(
+      h.view,
+      save({ offerId, switch: 2, kept: Array.from({ length: MAX_MODEL_ROWS }, () => "i1") }),
+    );
+    await settle();
+    expect(h.seen).toHaveLength(1);
+    h.dispose();
+  });
+});
+
+describe("[D18] whether a source was taken is the host's own answer", () => {
+  const ASIMOV: ProvisionModel = {
+    entries: [{ id: "i1", path: ".env", mode: "copy", source: "asimov/worktree.yaml" }],
+    setup: [],
+    ports: [],
+    providers: [
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+    ],
+    excluded: [],
+    contenders: [],
+    problems: [],
+  };
+  const ORCA: ProvisionModel = {
+    ...ASIMOV,
+    providers: [
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
+      { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: true },
+    ],
+  };
+
+  function offersIn(view: { posts: unknown[] }) {
+    return (view.posts as ExtensionToWebViewMessage[]).filter((p) => p.type === "worktreeProvisionOffer");
+  }
+  const liveOffer = (view: { posts: unknown[] }): string => (offersIn(view).at(-1) as { offerId: string }).offerId;
+
+  async function opened() {
+    const seen: NativeConfigDivergence[] = [];
+    const h = await builtHost(undefined, false, {
+      readProvisioning: (async (_main: string, prefer?: string) => (prefer === "orca" ? ORCA : ASIMOV)) as never,
+      writeNativeConfig: (async (_main: string, divergence: NativeConfigDivergence) => {
+        seen.push(divergence);
+        return { ok: true, wrote: true };
+      }) as never,
+    });
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    return { ...h, seen };
+  }
+
+  const take = (provider: ProvisionProvider["id"], sequence: number) => ({
+    type: "worktreeProvisionSwitch" as const,
+    repoId: REPO,
+    opening: 1,
+    switch: sequence,
+    provider,
+  });
+  const save = (over: Record<string, unknown> = {}) => ({
+    type: "worktreeProvisionSave" as const,
+    repoId: REPO,
+    opening: 1,
+    switch: 9,
+    offerId: "",
+    kept: ["i1"],
+    ...over,
+  });
+
+  it("tells the writer no source was taken when the form ends where it opened", async () => {
+    const h = await opened();
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    expect(h.seen.at(0)?.tookSource).toBe(false);
+    h.dispose();
+  });
+
+  it("tells the writer a source was taken when the opening ends on a different one", async () => {
+    const h = await opened();
+    h.host.handleMessage(h.view, take("orca", 2));
+    await settle();
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    expect(h.seen.at(0)?.tookSource).toBe(true);
+    h.dispose();
+  });
+
+  it("reads a source taken and given back as no source change at all", async () => {
+    // NET intent, which is what a sticky per-redraw flag could not express:
+    // Asimov to Orca and back is a form that ends where it began, and writing
+    // an `extends` for it would record a choice the user withdrew (design.md
+    // D18).
+    const h = await opened();
+    h.host.handleMessage(h.view, take("orca", 2));
+    await settle();
+    h.host.handleMessage(h.view, take("asimov", 3));
+    await settle();
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    expect(h.seen.at(0)?.tookSource).toBe(false);
+    h.dispose();
+  });
+
+  it("re-offers a form holding an id the host no longer knows", async () => {
+    // D1 says an unknown, expired or foreign id writes nothing AND re-offers.
+    // Only the first half shipped, so the button looked inert
+    // (.reviews/round-1.md F007).
+    const h = await opened();
+    const before = offersIn(h.view).length;
+
+    h.host.handleMessage(h.view, save({ offerId: "not-an-offer" }));
+    await settle();
+
+    expect(h.seen).toEqual([]);
+    expect(offersIn(h.view)).toHaveLength(before + 1);
+    // And the id that refresh carried is one the form can save against.
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 10 }));
+    await settle();
+    expect(h.seen).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("offers nothing back for a repository the host does not know", async () => {
+    // No form state to refresh: answering with a read would be inventing one.
+    const h = await opened();
+    const before = offersIn(h.view).length;
+
+    h.host.handleMessage(h.view, save({ repoId: "/elsewhere/.git", offerId: "not-an-offer" }));
+    await settle();
+
+    expect(offersIn(h.view)).toHaveLength(before);
+    h.dispose();
+  });
+
+  it("answers a form whose replacement offer never reached it", async () => {
+    // The store re-mints on every issue, so a delivery that throws leaves the
+    // form holding an id the host has already evicted. What keeps that from
+    // being a stuck form is the refresh above, not the delivery
+    // (design.md D19).
+    const h = await opened();
+    const held = liveOffer(h.view);
+    const posts = h.view.post.bind(h.view);
+    let dropped = 0;
+    h.view.post = (m: ExtensionToWebViewMessage) => {
+      if (m.type === "worktreeProvisionOffer" && dropped === 0) {
+        dropped += 1;
+        throw new Error("the webview went away");
+      }
+      posts(m);
+    };
+    h.host.handleMessage(h.view, take("orca", 2));
+    await settle();
+    expect(dropped).toBe(1);
+    const before = offersIn(h.view).length;
+
+    h.host.handleMessage(h.view, save({ offerId: held }));
+    await settle();
+
+    expect(offersIn(h.view)).toHaveLength(before + 1);
     h.dispose();
   });
 });

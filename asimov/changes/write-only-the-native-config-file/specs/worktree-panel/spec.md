@@ -90,3 +90,57 @@ every other declaration in that file as it was.
 WHERE a save and a source change are both in flight for one form, the extension SHALL leave the
 form describing the later of the two choices, and SHALL publish nothing into a form that has since
 closed.
+
+### Requirement: A refusal to save says a save was refused
+
+WHERE a save is refused for any reason other than the configuration's own content, the extension
+SHALL report it as a save that did not happen, and SHALL NOT report it as a failure to read a file
+it read successfully.
+
+#### Scenario: The configuration is held by another window
+
+- **WHEN** a save is refused because the file is locked elsewhere
+- **THEN** the form states that the configuration was not saved
+- **AND** the form does not state that the configuration could not be read
+
+#### Scenario: The configuration itself is at fault
+
+- **WHEN** a save is refused because the configuration does not parse
+- **THEN** the form states that the configuration could not be edited, which is a statement about
+  the file rather than about the save
+
+### Requirement: A save that has nothing to record writes nothing
+
+WHERE the user has changed nothing the configuration can express and has not chosen a different
+source, the extension SHALL leave the repository's configuration exactly as it found it, creating
+no file.
+
+#### Scenario: Configure pressed on an untouched form
+
+- **WHEN** a save is made with every offered item still as it arrived and no source taken
+- **THEN** no configuration file is created
+- **AND** the repository has nothing new to commit
+
+#### Scenario: A source taken and nothing else changed
+
+- **WHEN** a save is made after choosing a different source, with every offered item unchanged
+- **THEN** the configuration records that source and nothing else
+
+### Requirement: No save is offered against a source change still in progress
+
+WHERE the user has chosen a different source and the extension has not yet answered with what that
+source declares, the extension SHALL NOT offer to record the selection, and SHALL offer it again
+once the answer arrives.
+
+#### Scenario: Saving between choosing a source and seeing it
+
+- **WHEN** a different source is chosen
+- **THEN** the control that records the selection is not offered
+- **AND** it is offered again when the new selection is shown
+- **AND** the source change is never abandoned in favour of the save
+
+#### Scenario: The chosen source cannot be read
+
+- **WHEN** a different source is chosen and reading it fails
+- **THEN** the failure is reported
+- **AND** the control that records the selection is offered again

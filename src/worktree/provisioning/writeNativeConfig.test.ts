@@ -8,11 +8,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { applyEdits, modify } from "jsonc-parser";
+import { parse as parseJsonc } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
 import type { ProvisionEntry, ProvisionModel } from "../../types/messages";
-import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
+import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
+import { newBudget } from "./providerKit";
 import {
   divergenceOf,
   type NativeConfigDeps,
@@ -25,7 +26,7 @@ let target: string;
 
 const realDeps: NativeConfigDeps = { realpath: (p) => fs.realpath(p), lstat: (p) => fs.lstat(p) };
 
-const nothing: NativeConfigDivergence = { exclude: [], drop: [] };
+const nothing: NativeConfigDivergence = { exclude: [], drop: [], unnamedSource: false, tookSource: false };
 const div = (over: Partial<NativeConfigDivergence> = {}): NativeConfigDivergence => ({
   ...nothing,
   ...over,
@@ -40,6 +41,14 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
+
+/** A file for `extends` to name. D17 confirms it exists before the write. */
+async function base(name: string): Promise<string> {
+  const at = path.join(root, name);
+  await fs.mkdir(path.dirname(at), { recursive: true });
+  await fs.writeFile(at, "copy:\n  - .env\n", "utf8");
+  return name;
+}
 
 async function put(text: string, mode?: number): Promise<void> {
   await fs.writeFile(target, text, "utf8");
@@ -149,21 +158,113 @@ describe("a file another tool defined keeps its bytes", () => {
 });
 
 describe("what the edit is allowed to disturb", () => {
-  it("changes no byte outside the spans jsonc-parser itself returns", async () => {
-    const original = `{\r\n\t// keep me\r\n\t"copy": [".env"],\r\n\t"exclude": ["dist"]\r\n}\r\n`;
-    await put(original);
+  // A comment on BOTH neighbours of the element that goes, one inside the array
+  // that grows, and one on a key nothing touches. The assertions below are
+  // stated in the user's own content rather than in `modify`'s return, so an
+  // implementation cannot discharge them by nominating a span wide enough to
+  // make the property vacuous (.reviews/round-1.md F004, F005).
+  const commented = [
+    "{",
+    "  // the whole file",
+    '  "copy": [',
+    "    // keep a",
+    '    ".env",',
+    "    // the one that goes",
+    '    ".env.local",',
+    "    // follows the one that goes",
+    '    ".config"',
+    "  ],",
+    '  "exclude": [',
+    "    // already excluded",
+    '    "dist"',
+    "  ]",
+    "}",
+    "",
+  ].join("\n");
 
-    await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"] }));
+  it("keeps the comments on the parts it did not change", async () => {
+    await put(commented);
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"], drop: [".env.local"] }));
     const after = await fs.readFile(target, "utf8");
 
-    // The spans come from `modify` directly, not from the implementation: an
-    // implementation that nominated a whole-file span would make this vacuous.
-    const edits = modify(original, ["exclude"], ["dist", "node_modules"], {
-      formattingOptions: { tabSize: 1, insertSpaces: false, eol: "\r\n" },
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(after).toContain("// the whole file");
+    expect(after).toContain("// keep a");
+    expect(after).toContain("// already excluded");
+    expect(parseJsonc(after)).toEqual({
+      copy: [".env", ".config"],
+      exclude: ["dist", "node_modules"],
     });
-    expect(after).toBe(applyEdits(original, edits));
-    // And the comment, which lives outside every edit span, is still there.
-    expect(after).toContain("// keep me");
+  });
+
+  it("takes, with a removed element, the comment on the element after it", async () => {
+    // The bound, asserted rather than hoped for: jsonc-parser's removal span
+    // runs to the start of the following element, so the comment introducing
+    // THAT element goes with it while the removed element's own comment stays.
+    // Preservation is bounded to the removed element's neighbourhood, and this
+    // fails if that ever stops being true.
+    await put(commented);
+
+    await writeNativeConfig(realDeps, root, div({ drop: [".env.local"] }));
+    const after = await fs.readFile(target, "utf8");
+
+    expect(after).toContain("// the one that goes");
+    expect(after).not.toContain("// follows the one that goes");
+  });
+
+  it("removes every element asked for when several go from one array", async () => {
+    // Indices are read off the ORIGINAL array, so they have to be applied from
+    // the back: removing a lower one first shifts every higher one down and the
+    // second removal takes the wrong element — ascending `1` then `2` over
+    // `[a,b,c,d]` removes `b` and `d` (design.md D4). The check on each edit
+    // catches the wrong VALUE either way, so what ordering buys is the comment:
+    // a failed narrow edit falls back to replacing the whole array, and the
+    // array's comments go with it.
+    await put(`{\n  "copy": [\n    // keep a\n    "a",\n    "b",\n    "c",\n    "d"\n  ]\n}\n`);
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ drop: ["b", "c"] }));
+    const after = await fs.readFile(target, "utf8");
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(parseJsonc(after)).toEqual({ copy: ["a", "d"] });
+    expect(after).toContain("// keep a");
+  });
+
+  it("never writes a document its own edit corrupted", async () => {
+    // Probed on the pinned 3.3.1: removing the LAST element of a single-line
+    // array eats the closing bracket — `[".env", ".env.local"]` minus index 1
+    // comes back as `[".env""]`. The narrow edit is checked and the wide form
+    // takes over, so what lands parses and holds the value asked for.
+    await put(`{ "copy": [".env", ".env.local"], "exclude": ["dist"] }\n`);
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ drop: [".env.local"] }));
+    const after = await fs.readFile(target, "utf8");
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(JSON.parse(after)).toEqual({ copy: [".env"], exclude: ["dist"] });
+  });
+
+  it("edits an empty configuration rather than refusing it", async () => {
+    // `parseTree("")` answers `undefined` with NO errors, and the read side
+    // treats the same file as a present configuration declaring nothing. A
+    // writer calling it malformed would leave an ordinary file unconfigurable
+    // (.reviews/round-1.md F010).
+    await put("");
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"], extends: await base("orca.yaml") }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(JSON.parse(await fs.readFile(target, "utf8"))).toEqual({ exclude: ["dist"], extends: "orca.yaml" });
+  });
+
+  it("keeps the content of a configuration that is only a comment", async () => {
+    await put("// mine\n");
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"], extends: await base("orca.yaml") }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(await fs.readFile(target, "utf8")).toContain("// mine");
   });
 
   it("keeps the file's permissions", async () => {
@@ -233,7 +334,7 @@ describe("a save that fails leaves the file as it was", () => {
     const wrote = await writeNativeConfig(
       { ...realDeps, locked: { fs: { link: async () => Promise.reject(new Error("EPERM")) } } },
       root,
-      div({ extends: "asimov/worktree.yaml" }),
+      div({ extends: await base("asimov/worktree.yaml"), tookSource: true }),
     );
 
     expect(wrote).toEqual({ ok: false, reason: "unwritable" });
@@ -253,6 +354,60 @@ describe("a save that fails leaves the file as it was", () => {
 
     expect(wrote).toEqual({ ok: false, reason: "unavailable" });
     expect(await fs.readFile(target, "utf8")).toBe(original);
+  });
+});
+
+describe("what the lock covers", () => {
+  it("takes the target's identity and mode inside the lock, not before it", async () => {
+    // `readText` follows symlinks, so a symlink verdict taken before the lock
+    // describes a file the write need not be landing on. The order is the
+    // property: everything the write depends on is observed under the lock
+    // (.reviews/round-1.md F003).
+    await put(`{ "copy": [".env"] }\n`, 0o644);
+    const order: string[] = [];
+    const deps: NativeConfigDeps = {
+      realpath: (p) => fs.realpath(p),
+      lstat: async (p) => {
+        order.push(`lstat ${path.basename(p)}`);
+        return fs.lstat(p);
+      },
+      locked: {
+        fs: {
+          open: (async (p: string, ...rest: unknown[]) => {
+            order.push(`open ${path.basename(p)}`);
+            return fs.open(p, ...(rest as []));
+          }) as never,
+        },
+      },
+    };
+
+    const wrote = await writeNativeConfig(deps, root, div({ exclude: ["node_modules"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    const lock = order.indexOf(`open ${path.basename(target)}.anywhere-terminal.lock`);
+    const identity = order.indexOf(`lstat ${path.basename(target)}`);
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(identity).toBeGreaterThan(lock);
+  });
+});
+
+describe("what the native reader makes of what was written", () => {
+  it("reads back the source it named and the exclusion it recorded", async () => {
+    // The witness that was missing: nothing round-tripped a written document
+    // through the REAL reader, which is what turns "the bytes look right" into
+    // "the configuration means what the user chose" (.reviews/round-1.md F002).
+    const named = await base("orca.yaml");
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"], extends: named }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    const read = await nativeAdapter.read(
+      { readFile: (p) => fs.readFile(p, "utf8"), readdir: (p) => fs.readdir(p) },
+      root,
+      newBudget(),
+    );
+    expect(read?.extends).toBe("orca.yaml");
+    expect(read?.exclude).toEqual(["node_modules"]);
   });
 });
 
@@ -276,10 +431,24 @@ describe("two saves do not lose one another's work", () => {
 
 describe("a repository with no configuration of its own", () => {
   it("writes one naming the source it builds on", async () => {
-    const wrote = await writeNativeConfig(realDeps, root, div({ extends: ".worktreeinclude" }));
+    const wrote = await writeNativeConfig(
+      realDeps,
+      root,
+      div({ extends: await base(".worktreeinclude"), tookSource: true }),
+    );
 
     expect(wrote).toEqual({ ok: true, wrote: true });
     expect(JSON.parse(await fs.readFile(target, "utf8"))).toEqual({ extends: ".worktreeinclude" });
+  });
+
+  it("names the source an exclusion has to subtract from, even with no source taken", async () => {
+    // Without it the next read picks the native adapter, finds no base, and
+    // contributes NO inherited entry: the one path the user removed becomes
+    // every path removed (design.md D12).
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"], extends: await base("orca.yaml") }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(JSON.parse(await fs.readFile(target, "utf8"))).toEqual({ exclude: ["dist"], extends: "orca.yaml" });
   });
 
   it("writes nothing when there is nothing to record", async () => {
@@ -289,10 +458,38 @@ describe("a repository with no configuration of its own", () => {
     await expect(fs.lstat(target)).rejects.toThrow();
   });
 
+  it("creates no file for an untouched form, even where a source could be named", async () => {
+    // A base is not a decision anyone made: pressing Configure and changing
+    // nothing leaves the repository with nothing new to commit.
+    const wrote = await writeNativeConfig(realDeps, root, div({ extends: await base("orca.yaml") }));
+
+    expect(wrote).toEqual({ ok: true, wrote: false });
+    await expect(fs.lstat(target)).rejects.toThrow();
+  });
+
+  it("refuses when the source it would name is gone by the time the save runs", async () => {
+    // The offer's `present` chose the candidate; it never authorized it. The
+    // file can go between the read the form was built from and this save, and
+    // the read side then answers `missingExtends` for what we just wrote
+    // (design.md D17).
+    const wrote = await writeNativeConfig(realDeps, root, div({ extends: "orca.yaml", tookSource: true }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    await expect(fs.lstat(target)).rejects.toThrow();
+  });
+
+  it("refuses when the active source has no file left to name at all", async () => {
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["dist"], unnamedSource: true }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    await expect(fs.lstat(target)).rejects.toThrow();
+  });
+
   it("creates the configuration directory when it is not there", async () => {
+    const named = await base("orca.yaml");
     await fs.rm(path.join(root, ".vscode"), { recursive: true, force: true });
 
-    const wrote = await writeNativeConfig(realDeps, root, div({ extends: "orca.yaml" }));
+    const wrote = await writeNativeConfig(realDeps, root, div({ extends: named, tookSource: true }));
 
     expect(wrote).toEqual({ ok: true, wrote: true });
     expect(JSON.parse(await fs.readFile(target, "utf8"))).toEqual({ extends: "orca.yaml" });
@@ -340,7 +537,12 @@ describe("what the selection diverges to", () => {
   it("excludes an inherited entry the user cleared", () => {
     const m = model({ entries: [entry({ id: "e1", path: "node_modules" }), entry({ id: "e2", path: ".env" })] });
 
-    expect(divergenceOf(m, new Set(["e2"]))).toEqual({ exclude: ["node_modules"], drop: [] });
+    expect(divergenceOf(m, new Set(["e2"]), false)).toEqual({
+      exclude: ["node_modules"],
+      drop: [],
+      unnamedSource: false,
+      tookSource: false,
+    });
   });
 
   it("drops an entry the native file declared itself, rather than excluding it", () => {
@@ -351,13 +553,23 @@ describe("what the selection diverges to", () => {
       entries: [entry({ id: "e1", path: ".env.local", source: NATIVE_PROVIDER_FILE })],
     });
 
-    expect(divergenceOf(m, new Set())).toEqual({ exclude: [], drop: [".env.local"] });
+    expect(divergenceOf(m, new Set(), false)).toEqual({
+      exclude: [],
+      drop: [".env.local"],
+      unnamedSource: false,
+      tookSource: false,
+    });
   });
 
   it("records nothing for an entry the user left alone", () => {
     const m = model({ entries: [entry({ id: "e1", path: ".env" })] });
 
-    expect(divergenceOf(m, new Set(["e1"]))).toEqual({ exclude: [], drop: [] });
+    expect(divergenceOf(m, new Set(["e1"]), false)).toEqual({
+      exclude: [],
+      drop: [],
+      unnamedSource: false,
+      tookSource: false,
+    });
   });
 
   it("takes no interest in ports, setup steps or already-excluded rows", () => {
@@ -371,7 +583,12 @@ describe("what the selection diverges to", () => {
       excluded: [entry({ id: "x1", path: "dist" })],
     });
 
-    expect(divergenceOf(m, new Set())).toEqual({ exclude: [], drop: [] });
+    expect(divergenceOf(m, new Set(), false)).toEqual({
+      exclude: [],
+      drop: [],
+      unnamedSource: false,
+      tookSource: false,
+    });
   });
 
   it("names the active source's file that is actually there", () => {
@@ -385,7 +602,7 @@ describe("what the selection diverges to", () => {
       ],
     });
 
-    expect(divergenceOf(m, new Set()).extends).toBe(".worktreeinclude");
+    expect(divergenceOf(m, new Set(), false).extends).toBe(".worktreeinclude");
   });
 
   it("names the active source rather than a detected one the user did not take", () => {
@@ -401,7 +618,7 @@ describe("what the selection diverges to", () => {
       ],
     });
 
-    expect(divergenceOf(m, new Set()).extends).toBe("orca.yaml");
+    expect(divergenceOf(m, new Set(), false).extends).toBe("orca.yaml");
   });
 
   it("names what detection made active when the user took no source", () => {
@@ -411,7 +628,7 @@ describe("what the selection diverges to", () => {
       providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
     });
 
-    expect(divergenceOf(m, new Set()).extends).toBe("asimov/worktree.yaml");
+    expect(divergenceOf(m, new Set(), false).extends).toBe("asimov/worktree.yaml");
   });
 
   it("never names the native file itself, which would be self-extension", () => {
@@ -424,7 +641,7 @@ describe("what the selection diverges to", () => {
       ],
     });
 
-    expect(divergenceOf(m, new Set()).extends).toBeUndefined();
+    expect(divergenceOf(m, new Set(), false).extends).toBeUndefined();
   });
 
   it("names nothing when the active source has no file left to name", () => {
@@ -435,7 +652,27 @@ describe("what the selection diverges to", () => {
       providers: [{ id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: [], active: true }],
     });
 
-    expect(divergenceOf(m, new Set()).extends).toBeUndefined();
+    expect(divergenceOf(m, new Set(), false).extends).toBeUndefined();
+    // And says so, rather than leaving the writer to re-derive it: this is the
+    // function that looked for the source and could not name one (design.md
+    // D12). A save against it is refused, not written without a base.
+    expect(divergenceOf(m, new Set(), false).unnamedSource).toBe(true);
+  });
+
+  it("reports a source that is merely inactive as named, not as unnameable", () => {
+    // Nothing was lost — nothing was active. Refusing here would refuse every
+    // save in a repository with no detected source at all.
+    const m = model({
+      providers: [{ id: "orca", files: ["orca.yaml"], present: [], active: false }],
+    });
+
+    expect(divergenceOf(m, new Set(), false).unnamedSource).toBe(false);
+    expect(divergenceOf(model(), new Set(), true)).toEqual({
+      exclude: [],
+      drop: [],
+      unnamedSource: false,
+      tookSource: true,
+    });
   });
 
   it("names nothing when the model made no provider active", () => {
@@ -446,7 +683,7 @@ describe("what the selection diverges to", () => {
       providers: [{ id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false }],
     });
 
-    expect(divergenceOf(m, new Set()).extends).toBeUndefined();
-    expect(divergenceOf(model(), new Set()).extends).toBeUndefined();
+    expect(divergenceOf(m, new Set(), false).extends).toBeUndefined();
+    expect(divergenceOf(model(), new Set(), false).extends).toBeUndefined();
   });
 });

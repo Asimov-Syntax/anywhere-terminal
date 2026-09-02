@@ -55,6 +55,7 @@ import type {
 import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
 import { NATIVE_PROVIDER_FILE } from "../worktree/provisioning/nativeProvider";
 import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
+import { MAX_MODEL_ROWS } from "../worktree/provisioning/providerKit";
 import {
   divergenceOf,
   type NativeConfigDivergence,
@@ -147,11 +148,13 @@ export interface WorktreeSurface {
 /**
  * A save that did not happen, said on the model the section is already showing.
  *
- * The four refusals map onto the two problem reasons the wire has, rather than
- * widening it: `malformed` is the file's own state, and everything else is "the
- * write could not be made". Create stays enabled either way — a configuration
- * that could not be saved is not a reason to refuse to make a worktree
- * (worktree-provisioning.md § 9, design.md D9).
+ * The refusals map onto two problem reasons: `malformed` is the file's own
+ * state, the one refusal that IS a statement about its content, and everything
+ * else is `unsaved` — the write could not be made, said in the vocabulary of
+ * writing rather than as a failure to read a file that read fine (design.md
+ * D9, D13). Create stays enabled either way — a configuration that could not be
+ * saved is not a reason to refuse to make a worktree
+ * (worktree-provisioning.md § 9).
  */
 function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): ProvisionModel {
   const detail: Record<NativeConfigRefusal, string> = {
@@ -159,6 +162,7 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
     outside: "It does not resolve inside this repository.",
     malformed: "It could not be edited without rewriting parts this did not change.",
     unwritable: "The replacement could not be put in place.",
+    unnamed: "The source it builds on was no longer there.",
   };
   return {
     ...model,
@@ -166,7 +170,7 @@ function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): Provis
       ...model.problems,
       {
         file: NATIVE_PROVIDER_FILE,
-        reason: reason === "malformed" ? "malformed" : "unreadable",
+        reason: reason === "malformed" ? "malformed" : "unsaved",
         detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
       },
     ],
@@ -770,6 +774,20 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * the sweep bounds the map, and the key states the invariant.
    */
   const provisionSwitch = new Map<string, number>();
+  /**
+   * The source each opening STARTED on, keyed like `provisionSwitch`.
+   *
+   * "Did the user take a different source" is answered here and never on the
+   * wire: a form-minted boolean is forgeable in both directions, and it is not a
+   * form-only fact anyway — the host admits every switch itself. Comparing the
+   * baseline with the source active at save time also answers it for NET intent,
+   * so a form that went to another source and came back is what it looks like:
+   * unchanged (design.md D18).
+   *
+   * The empty string is "no source was active", which is a baseline like any
+   * other — a repository that had none and now has one took a source.
+   */
+  const provisionBaseline = new Map<string, string>();
   const retireOpening = (key: string): void => {
     liveOpening.delete(key);
     const reading = `${key} `;
@@ -781,6 +799,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     for (const slot of [...provisionSwitch.keys()]) {
       if (slot.startsWith(reading)) {
         provisionSwitch.delete(slot);
+      }
+    }
+    for (const slot of [...provisionBaseline.keys()]) {
+      if (slot.startsWith(reading)) {
+        provisionBaseline.delete(slot);
       }
     }
     offers.forgetSurface(key);
@@ -1609,7 +1632,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (
       typeof msg !== "object" ||
       msg === null ||
-      !onlyKeys(msg, ["type", "repoId", "opening", "switch", "offerId", "kept", "provider"])
+      !onlyKeys(msg, ["type", "repoId", "opening", "switch", "offerId", "kept"])
     ) {
       return false;
     }
@@ -1630,6 +1653,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       typeof m.offerId === "string" &&
       m.offerId.length > 0 &&
       Array.isArray(m.kept) &&
+      // Bounded, though the ids are host-minted and every one of them is checked
+      // against the offer: an oversized array costs work rather than authority,
+      // and this is the one array in the pair that had no bound at all
+      // (.reviews/round-1.md F016).
+      m.kept.length <= MAX_MODEL_ROWS &&
       m.kept.every((id) => typeof id === "string")
     );
   }
@@ -2391,7 +2419,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             // the superseded offer would name the model the user is no longer
             // looking at.
             const offer = offers.issue(offerKey, previewed);
-            surface.post({
+            deliver(surface, {
               type: "worktreeProvisionOffer",
               repoId: msg.repoId,
               opening: msg.opening,
@@ -2426,11 +2454,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           return;
         }
         const offerKey = { surface: key, repoId: msg.repoId };
-        // The model the user was LOOKING at, resolved by the host. An unknown,
-        // expired or foreign id writes nothing — the same defined outcome a
-        // submission gets (design.md D1).
-        const shown = offers.lookup(offerKey, msg.offerId);
-        if (shown === undefined || options.readProvisioning === undefined || options.writeNativeConfig === undefined) {
+        if (options.readProvisioning === undefined || options.writeNativeConfig === undefined) {
           return;
         }
         // `msg.repoId` selects a record; it never becomes a destination. The
@@ -2440,6 +2464,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (repo === undefined) {
           return;
         }
+        // The model the user was LOOKING at, resolved by the host. An unknown,
+        // expired or foreign id writes nothing (design.md D1).
+        const shown = offers.lookup(offerKey, msg.offerId);
         // THE SAME slot the switch uses, so the two order against each other.
         // Taken synchronously, before the write starts, so a later switch
         // raises the ceiling immediately and this save can never find itself
@@ -2450,8 +2477,58 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         provisionSwitch.set(slot, msg.switch);
         const mine = msg.switch;
+        const publish = async (model: ProvisionModel): Promise<void> => {
+          // Checked AGAIN, after whatever this save did. A save is slower than a
+          // switch and this is the window D8 exists for.
+          if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
+            return;
+          }
+          const previewed = await previewProvisioning(repo, model);
+          if (
+            disposed ||
+            !surfaces.has(surface) ||
+            provisionSwitch.get(slot) !== mine ||
+            liveOpening.get(key) !== msg.opening
+          ) {
+            return;
+          }
+          const offer = offers.issue(offerKey, previewed);
+          deliver(surface, {
+            type: "worktreeProvisionOffer",
+            repoId: msg.repoId,
+            opening: msg.opening,
+            offerId: offer.offerId,
+            model: offer.model,
+          });
+        };
+        if (shown === undefined) {
+          // D1 says an unknown, expired or foreign id writes nothing AND
+          // re-offers; only the first half was implemented, so a form holding a
+          // stale id got no correction and a button that looked inert.
+          //
+          // Here and not for a repository the host does not know or a reader it
+          // does not have: those have no form state to refresh, and answering
+          // them with a read would be inventing one (.reviews/round-1.md F007).
+          void options
+            .readProvisioning(repo.mainPath)
+            .then((model) => {
+              if (disposed || !surfaces.has(surface)) {
+                return;
+              }
+              return publish(model);
+            })
+            .catch(() => {});
+          return;
+        }
+        // Whether this opening took a different source, derived from the
+        // baseline the first offer recorded — never asserted by the form
+        // (design.md D18). No baseline means no first offer was ever delivered
+        // for this opening, and a take cannot be shown from nothing.
+        const started = provisionBaseline.get(slot);
+        const active = shown.providers.find((p) => p.active)?.id ?? "";
+        const tookSource = started !== undefined && started !== active;
         void options
-          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept)))
+          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept), tookSource))
           .then(async (written) => {
             if (disposed || !surfaces.has(surface)) {
               return;
@@ -2465,19 +2542,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             if (model === undefined || disposed || !surfaces.has(surface)) {
               return;
             }
-            // Checked AGAIN, after the write and the read. A save is slower
-            // than a switch and this is the window D8 exists for.
-            if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
-              return;
-            }
-            const offer = offers.issue(offerKey, written.ok ? model : refusedSave(model, written.reason));
-            surface.post({
-              type: "worktreeProvisionOffer",
-              repoId: msg.repoId,
-              opening: msg.opening,
-              offerId: offer.offerId,
-              model: offer.model,
-            });
+            await publish(written.ok ? model : refusedSave(model, written.reason));
           })
           // A save that throws leaves the form exactly as it was, and the
           // ceiling is NOT released — for the reason the switch records above.
@@ -2611,6 +2676,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               if (provisionReading.get(reading) !== mine || liveOpening.get(key) !== mine) {
                 return;
               }
+              // The source this opening starts on, recorded once, from the first
+              // offer it is given. A later offer is a source the user chose or a
+              // save's own re-read, and neither is where the form began
+              // (design.md D18).
+              const start = `${key} ${msg.repoId} ${msg.opening}`;
+              if (!provisionBaseline.has(start)) {
+                provisionBaseline.set(start, model.providers.find((p) => p.active)?.id ?? "");
+              }
               const previewed = await previewProvisioning(repo, model);
               if (
                 disposed ||
@@ -2621,7 +2694,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                 return;
               }
               const offer = offers.issue(offerKey, previewed);
-              surface.post({
+              deliver(surface, {
                 type: "worktreeProvisionOffer",
                 repoId: msg.repoId,
                 opening: msg.opening,
@@ -3377,11 +3450,28 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (!state.visible || !state.displayed || !surface.isReady()) {
       return false;
     }
+    return deliver(surface, message);
+  }
+
+  /**
+   * Post to one surface, containing a throw rather than abandoning the caller
+   * mid-way.
+   *
+   * The delivery gate is deliberately NOT here: a broadcast skips a surface that
+   * cannot receive a push, but an answer to a form the user has open is not a
+   * push, and applying the gate to it would drop the reply the form is waiting
+   * for. `postTo` adds the gate for the broadcast case (design.md D19).
+   *
+   * A dropped offer is not stranded: the offer store has already re-minted the
+   * id, so the form's next save names an id the host no longer knows and is
+   * answered with a fresh offer.
+   */
+  function deliver(surface: WorktreeSurface, message: ExtensionToWebViewMessage): boolean {
     try {
       surface.post(message);
       return true;
     } catch (err) {
-      console.warn(`${LOG_PREFIX} surface post threw — continuing broadcast`, err);
+      console.warn(`${LOG_PREFIX} surface post threw — continuing`, err);
       return false;
     }
   }

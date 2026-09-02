@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -140,4 +140,53 @@ Planned at: a82ccc85
   switch handler, `present` filled at every construction site, complete message registration across
   all four lists, no webview string reaching a filesystem destination, permission preservation. The
   blockers are in the seams between those, not in them.
+- Plan attack 2 refuted SEVEN ledger rows and the wave shape. Three refutations share one root:
+  `LockedFile` serializes an inode while every other operation names a string, so a rename-plus-symlink
+  at the resolved spelling redirects the lock, the temporary, the read and the commit — and `withLock`
+  creates the lock BEFORE its callback, so no re-assertion inside it helps. `/dev/fd/<dirfd>/child` is
+  not usable on this host. That needs `openat`/`mkdirat`/`renameat` anchored to a directory descriptor.
+- FOLLOW-UP OWED, needs a PLAN task I did not create: a change owning descriptor-anchored file writing
+  for every `LockedFile` caller, which this change should then depend on. D16 scopes the adversarial
+  parent-swap race OUT of WT-012.5 rather than claiming a close this module cannot implement, which is
+  what makes wave 2 buildable now. I did not add the PLAN task myself — PLAN.md structure is the
+  blueprint's to own and I have permission only for my own task's Status row.
+- I told the user mid-session that injecting `mkdir` through `LockedFileDependencies` made D7
+  implementable. It does not: the lock file is created before the callback, and a second swap remains
+  possible before `readFile`/`link`/`rename`. Corrected to the user and superseded by D16.
+- D4 narrowed on evidence rather than restated: insertion preserves interior comments, deletion does
+  not — deleting index 1 of `/* A */ "a", /* B */ "b", /* C */ "c"` yields `/* B */ "c"`, taking a KEPT
+  element's comment. And removals must be applied in DESCENDING index order; my own probe showed
+  ascending original indices `1` then `2` over `[a,b,c,d]` removing `b` and `d`.
+- D14's `took` was withdrawn entirely, not fixed. A webview boolean is forgeable both ways, the host
+  already admits every switch so it can derive the fact itself, and sticky-across-redraws is wrong for
+  net intent. D18 derives it from the opening's baseline instead, and nothing new goes on the wire.
+- Wave shape refuted too: 2_4 changed whether 2_1's refusal branch was reachable, and 2_1 could not add
+  a refusal reason and stay type-green without the exhaustive refusal Record another task leased.
+  Wave 2 is now fully sequential, which is what the dependencies actually were.
 
+- Knowledge candidate: jsonc-parser 3.3.1 `modify(text, [key, i], undefined)` CORRUPTS the document when
+  `i` is the last element of a SINGLE-LINE array — `{"copy": [".env", ".env.local"]}` minus index 1 comes
+  back as `{"copy": [".env""]}`, unparseable. | Surprise: D4 chose element-granular edits precisely
+  because the narrow form was probed safe; it is safe for multi-line arrays and non-last indices only, and
+  the earlier probe used a multi-line fixture. | Evidence:
+  src/worktree/provisioning/writeNativeConfig.ts#applyEdit | Consumer: plan|debug | Action: any edit
+  planned through `modify` on an array must be checked against the value it was for before it is written.
+- 2_2 deviation, within D4's decision rather than changing it: each key's edit is applied narrowly, then
+  the result is parsed and compared with the value the edit was for; a mismatch falls back to replacing
+  that one key's whole value, and a mismatch there too refuses `unwritable`. D4's claim (bytes outside the
+  span unchanged) still holds wherever the narrow form works; where the library cannot do it, one array's
+  comments are lost in exchange for a document that parses. Witnessed both ways.
+- 2_2 seam left for 2_3: `divergenceOf` takes `tookSource` and the host passes a literal `false` until
+  2_3 wires D18's baseline comparison. Until then a save records the offer's own item changes and never a
+  bare source take.
+- 2_3, stated rather than claimed: routing the three provisioning offer posts through the guarded
+  `deliver` has NO behavioural witness of its own today, because nothing runs after the post at any of
+  those sites — a throw was already contained by each chain's `.catch`. What D19's invariant actually
+  rests on is the recovery: the offer store re-mints on every issue, so a dropped delivery leaves the
+  form holding an evicted id, and F007's refresh is what answers it. That composition is the test.
+- 2_3 step 6, already satisfied: `TerminalViewProvider.worktree.test.ts` has carried the
+  `worktreeProvisionSave` wire sample without `provider` since 1_5, so this task added no sample.
+- 2_4 steps 2 and 6, already satisfied and so not re-done: the form never sent a source-change flag —
+  D14's `took` was refuted at plan time and never implemented — so `WorktreeController.ts` needed no
+  change and its test no addition. The take-then-configure interleaving is witnessed in
+  `WorktreeCreateDialog.test.ts`, where the control lives.

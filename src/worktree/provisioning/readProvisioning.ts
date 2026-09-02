@@ -10,6 +10,7 @@
 // named and one click away (design.md D3, D5).
 
 import type { ProvisionEntry, ProvisionModel, ProvisionProblem, ProvisionProvider } from "../../types/messages";
+import { type PreparedRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import { asimovAdapter } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { orcaAdapter } from "./orcaProvider";
@@ -22,6 +23,7 @@ import {
   identityOf,
   newBudget,
   newDraft,
+  type OpenedProviderFile,
   openProviderFile,
   type ProviderAdapter,
   type ProviderBudget,
@@ -79,19 +81,60 @@ function ordered(prefer: ProvisionProvider["id"] | undefined): readonly Provider
 }
 
 /**
+ * One pass's opens, so no provider file is opened twice to answer one read.
+ *
+ * `openProviderFile` answers an already-authorized file from this map instead
+ * of re-opening it, but it does not populate the map — the caller decides what
+ * an authorization covers. Detection and presence are one pass over one tree,
+ * so they share one.
+ */
+type Opens = Map<string, OpenedProviderFile>;
+
+/**
+ * Open a provider file once per pass, against a root resolved once per pass.
+ *
+ * Without the prepared root every probe re-ran `prepareResolvedRoot`, which is
+ * a `realpath` plus an `lstat` per file, for an answer that cannot change
+ * inside one read. Without the map, detection's probe and presence's probe
+ * opened the same file twice (round-1 F017).
+ */
+async function openOnce(
+  deps: ProviderDeps,
+  repoRoot: string,
+  ctx: ProviderContext,
+  root: PreparedRoot | null,
+  opens: Opens,
+): Promise<OpenedProviderFile> {
+  const opened = await openProviderFile(deps, repoRoot, ctx, root ?? undefined, opens as Authorized);
+  if (!opens.has(ctx.file)) {
+    opens.set(ctx.file, opened);
+  }
+  return opened;
+}
+
+/** Present is present whatever the file then yields, so refused and unreadable both count (design.md D3). */
+function counts(opened: OpenedProviderFile): boolean {
+  return opened.kind === "text" || (opened.kind === "problem" && opened.at === "file");
+}
+
+/**
  * Is this source here at all?
  *
  * Asked instead of `read` once a source has already won, because a losing
  * adapter's rows are discarded and the work to build them is not free: an orca
  * glob over a large directory would spend the shared scan account on a section
- * nobody is shown. Present is present whatever the file then yields, so a file
- * that is refused or unreadable counts too (design.md D3).
+ * nobody is shown.
  */
-async function filesPresent(deps: ProviderDeps, repoRoot: string, adapter: ProviderAdapter): Promise<string[]> {
+async function filesPresent(
+  deps: ProviderDeps,
+  repoRoot: string,
+  adapter: ProviderAdapter,
+  root: PreparedRoot | null,
+  opens: Opens,
+): Promise<string[]> {
   const found: string[] = [];
   for (const file of adapter.files) {
-    const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file });
-    if (opened.kind === "text" || (opened.kind === "problem" && opened.at === "file")) {
+    if (counts(await openOnce(deps, repoRoot, { id: adapter.id, file }, root, opens))) {
       found.push(file);
     }
   }
@@ -99,10 +142,15 @@ async function filesPresent(deps: ProviderDeps, repoRoot: string, adapter: Provi
 }
 
 /** Does any of this adapter's files exist? Stops at the first one, so it opens no more than it must. */
-async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: ProviderAdapter): Promise<boolean> {
+async function anyFilePresent(
+  deps: ProviderDeps,
+  repoRoot: string,
+  adapter: ProviderAdapter,
+  root: PreparedRoot | null,
+  opens: Opens,
+): Promise<boolean> {
   for (const file of adapter.files) {
-    const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file });
-    if (opened.kind === "text" || (opened.kind === "problem" && opened.at === "file")) {
+    if (counts(await openOnce(deps, repoRoot, { id: adapter.id, file }, root, opens))) {
       return true;
     }
   }
@@ -124,18 +172,27 @@ async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: Pro
  * file was there when it was read and gone when it was probed. That is the
  * truthful answer for the question `present` is asked — a file that is no
  * longer there is not one `extends` can name — and a consumer must handle it.
+ *
+ * `present` is a CANDIDATE, never an authorization. It says a file was there at
+ * this moment, and sharing one pass's opens (F017) widens the gap between that
+ * moment and any later use of it. Anything that writes a name taken from here
+ * confirms the file again at the point of writing — design.md D17, after a plan
+ * attack deleted a base between the offer and the save and watched the write
+ * record an `extends` the next read reported as `missingExtends`.
  */
 async function publish(
   deps: ProviderDeps,
   repoRoot: string,
   detected: readonly { adapter: ProviderAdapter; active: boolean }[],
+  root: PreparedRoot | null,
+  opens: Opens,
 ): Promise<ProvisionProvider[]> {
   const published: ProvisionProvider[] = [];
   for (const { adapter, active } of detected) {
     published.push({
       id: adapter.id,
       files: [...adapter.files],
-      present: await filesPresent(deps, repoRoot, adapter),
+      present: await filesPresent(deps, repoRoot, adapter, root, opens),
       active,
     });
   }
@@ -356,6 +413,10 @@ export async function readProvisioning(
   prefer?: ProvisionProvider["id"],
 ): Promise<ProvisionModel> {
   const budget = newBudget();
+  // Once per read. Every probe below resolved it again for an answer that
+  // cannot change inside one pass (round-1 F017).
+  const root = await prepareResolvedRoot(repoRoot, { realpath: deps.realpath, lstat: deps.lstat });
+  const opens: Opens = new Map();
   const adapters = ordered(prefer);
   let chosen: { adapter: ProviderAdapter; answer: AdapterRead } | null = null;
   const detected: { adapter: ProviderAdapter; active: boolean }[] = [];
@@ -377,7 +438,7 @@ export async function readProvisioning(
     // This gate short-circuits at the first file it finds, which is what keeps
     // it from opening a file the assembly has not read yet. The per-file list
     // `present` needs is taken later, by `publish`.
-    if (await anyFilePresent(deps, repoRoot, adapter)) {
+    if (await anyFilePresent(deps, repoRoot, adapter, root, opens)) {
       detected.push({ adapter, active: false });
     }
   }
@@ -400,11 +461,11 @@ export async function readProvisioning(
     // so the section that needed the relation most — one file declaring two
     // foldable spellings — was the one branch that never computed it
     // (round-1 F002).
-    return { ...chosen.answer.model, providers: await publish(deps, repoRoot, detected) };
+    return { ...chosen.answer.model, providers: await publish(deps, repoRoot, detected, root, opens) };
   }
 
   const { model, base } = await assemble(deps, repoRoot, budget, chosen.answer);
-  const providers = await publish(deps, repoRoot, detected);
+  const providers = await publish(deps, repoRoot, detected, root, opens);
   return {
     ...model,
     // `active: false` is what makes a row offer to switch, and offering to
