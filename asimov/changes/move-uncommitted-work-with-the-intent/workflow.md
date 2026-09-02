@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -36,3 +36,4 @@ Gate 1 choices: ship truthful indeterminate reporting; on 2026-09-02 the user se
 Accepted risk: another process can transiently substitute source bytes/components/`.git` or destination between path-based observations and restore them before the next check; execution-time named-path work is authorized, observable drift becomes indeterminate. Owner: worktree subsystem. Reactivate on transactional/typed Git APIs, cross-platform handle-relative Node APIs, or an observed substitution incident.
 Verify lint: Biome 2.4.5 reported 3 pre-existing format errors in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, and `src/cursor/CursorHookInstaller.test.ts`; this change does not touch them, while all migration-owned files pass check mode.
 Review handback: round 1 is superseded by the accepted best-effort ABA replan; D2/D4/D6/D8 and tasks 3_1–3_2 cover all five findings, including a usable-path-safe 1 MiB gitfile cap.
+Verify test: the first exact full-unit run exited 1 amid the known assembly lane instability; an immediate exact rerun passed 288 files / 7250 tests.
