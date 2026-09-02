@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 1: direction approved — ship an indeterminate failure contract
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,5 +31,6 @@
 
 Blueprint: docs/PLAN.md task WT-012.10
 Lane: light
-Planned at: 02c5af09
-Blocked: the create-path hook this task needs sits beside WT-012.6's `applyPorts` binding in src/worktree/worktreeMutationService.ts, added on the unmerged peer branch huybuidac/creat-worktree-2 (72d44151). Design is complete through D7; the build waits for that merge. See design.md D7.
+Planned at: eb1cca45
+Gate 1 choice: ship `migrateChanges` with truthful indeterminate failure reporting; the user explicitly accepted that source restoration and single-report ownership cannot be guaranteed by the current Git API.
+Accepted risk: another process can change source bytes or `.git` after the final host recheck and before VS Code stashes; execution-time work is authorized, observable drift becomes indeterminate. Owner: worktree subsystem. Reactivate on a transactional/typed `vscode.git` API or an observed source-substitution incident.

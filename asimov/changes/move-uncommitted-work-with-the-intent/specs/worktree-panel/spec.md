@@ -2,78 +2,112 @@
 
 ## ADDED Requirements
 
-### Requirement: The create form offers to move uncommitted work only when there is work to move
+### Requirement: A move offer requires an identified source worktree
 
-WHERE the worktree the user is creating from has at least one uncommitted change and the editor's
-git integration can perform the move, the create form SHALL offer to move that work into the new
-worktree, and SHALL state how many changes would move. WHERE either condition does not hold, the
-form SHALL NOT offer it.
-
-The count SHALL be the number of distinct paths that are staged, changed in the working tree, or
-untracked; a path in more than one of those SHALL be counted once.
+WHERE a create action came from a specific worktree row, that source has work the host can count
+completely, and the editor can migrate it, the form SHALL offer to move the work. A create opened
+without a unique source row, or against an unavailable source or integration, SHALL NOT offer it.
 
 #### Scenario: There is work to move
 
-- **WHEN** the source worktree has uncommitted changes and the integration can move them
-- **THEN** the form offers to move them and states how many changes that is
+- **WHEN** a worktree row opens create and that worktree has movable changes
+- **THEN** the form offers to move them
+
+#### Scenario: The create has no source row
+
+- **WHEN** the create form was opened from a repository-level or toolbar action
+- **THEN** no move option is offered
+
+#### Scenario: Nothing can be offered
+
+- **WHEN** the source has no changes, has an unresolved merge, cannot be read completely, or migration is unavailable
+- **THEN** the form does not offer to move anything and create remains available
+
+### Requirement: The move offer states one complete distinct-path count
+
+The offer SHALL state the number of distinct movable paths Git reports as staged, changed in the
+working tree, or untracked. A path in more than one state and a renamed path SHALL each count once;
+a changed path set SHALL withdraw the earlier consent.
 
 #### Scenario: A path is both staged and edited
 
 - **WHEN** one path is staged and also changed in the working tree
 - **THEN** the form states it as one change
 
-#### Scenario: Nothing to move
+#### Scenario: The count changes after consent
 
-- **WHEN** the source worktree has no staged, working-tree, or untracked changes
-- **THEN** the form does not offer to move anything
+- **WHEN** the user selected the move at one count and the host observes a changed snapshot before execution
+- **THEN** no worktree is created and the earlier selection authorizes no move
 
-#### Scenario: The editor cannot perform the move
+### Requirement: Move consent applies to execution-time source work
 
-- **WHEN** the running editor's git integration does not provide change migration
-- **THEN** the form does not offer to move anything, and the create is otherwise unaffected
+The row SHALL identify its number as the current snapshot and SHALL state that Git moves the source's
+uncommitted work present when the operation runs. A change after the final host check MAY enter the
+Git operation; observable divergence SHALL make the result indeterminate.
 
-### Requirement: The work moves between the create and the provisioning
+#### Scenario: Work changes after the final check
 
-WHEN the user asked for the work to be moved, the extension SHALL move it after git reports the
-worktree was created and before it materializes any provisioning entry, so that a setup command
-runs against the moved work. Untracked work SHALL move with the rest.
+- **WHEN** another process changes the source after the host's final snapshot and before Git stashes it
+- **THEN** the operation may include that work and any observed mismatch is reported as indeterminate
+
+### Requirement: The work moves between a new checkout and every later step
+
+For a fresh, detached, or reused-branch create, migration SHALL run after git creates the checkout and
+before any authorization, materialization, allocation, opening, or launch in it. Reattach and adopt
+SHALL NOT offer or perform migration because they act on surviving directories.
 
 #### Scenario: A setup command sees the moved work
 
-- **WHEN** a create carries both the move and provisioning entries
-- **THEN** the move completes before the first provisioning entry is materialized
+- **WHEN** a create carries both migration and provisioning entries
+- **THEN** migration completes before the first provisioning entry is materialized
+
+#### Scenario: The move is uncertain
+
+- **WHEN** the integration does not establish that the work moved
+- **THEN** no provisioning or after-create action runs in the created checkout
 
 #### Scenario: Untracked files move too
 
 - **WHEN** the moved work includes a file git is not tracking
-- **THEN** that file moves with the rest rather than staying behind
+- **THEN** the integration is asked to include that file with the rest
 
-### Requirement: A move that fails leaves the worktree standing and the work where it was
+#### Scenario: A surviving checkout is repaired
 
-WHERE the move fails, the extension SHALL report the failure as a failure of the move, SHALL NOT
-report it as a failed create, SHALL NOT remove the created worktree, and SHALL leave the work in the
-worktree it came from.
+- **WHEN** the create mode is reattach or adopt
+- **THEN** no move option is offered and no migration is attempted
 
-WHERE the editor's git integration has already reported the failure to the user itself, the
-extension SHALL NOT report it a second time.
+### Requirement: Migration uncertainty does not undo a successful create
 
-#### Scenario: The move fails
+WHERE migration is not established, the extension SHALL keep and report the created worktree rather
+than reporting a failed create or rolling it back. No later create step SHALL run.
 
-- **WHEN** the move fails after the worktree was created
-- **THEN** the create is still reported as having succeeded, the worktree remains, and the failure
-  is reported as the move's
+#### Scenario: The move rejects
 
-#### Scenario: The integration reported it already
+- **WHEN** the migration promise rejects after the worktree was created
+- **THEN** the create remains successful and later steps do not run
 
-- **WHEN** the move stops for a reason the git integration has already told the user about
-- **THEN** the extension does not report a second message for the same event
+### Requirement: An uncertain migration report claims only proven state
 
-### Requirement: Declining to move leaves both worktrees untouched
+The report SHALL call migration potentially partial, direct inspection of both worktrees and Git
+stashes, and SHALL NOT claim source restoration or single-location ownership. Because the integration
+exposes no report-ownership signal, the contract SHALL NOT promise exactly one report.
 
-WHERE the user does not ask for the work to be moved, the extension SHALL NOT move it, and the
-source worktree's changes SHALL remain exactly as they were.
+#### Scenario: The integration resolves without moving everything
+
+- **WHEN** the migration promise resolves but the source still reports uncommitted work
+- **THEN** the notice makes no claim about where every change now resides
+
+#### Scenario: The integration already warned
+
+- **WHEN** the integration warns and then rejects during its own recovery
+- **THEN** the extension may also report uncertainty rather than suppressing an unclassified rejection
+
+### Requirement: Declining to move performs no migration
+
+WHERE the user does not select the move offer, the extension SHALL NOT invoke migration and the source
+worktree's changes SHALL remain untouched by this option.
 
 #### Scenario: The offer is declined
 
-- **WHEN** the user creates a worktree without asking for the work to move
-- **THEN** no migration is attempted and the source worktree's changes are unchanged
+- **WHEN** the user creates a worktree without selecting the move
+- **THEN** no migration is attempted

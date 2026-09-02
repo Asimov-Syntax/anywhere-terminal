@@ -1,158 +1,198 @@
 # Design: move-uncommitted-work-with-the-intent
 
-Blueprint: docs/PLAN.md task WT-012.10. Design ref: docs/design/worktree-create.md § 6.
+Blueprint: docs/PLAN.md task WT-012.10. Design ref: docs/design/worktree-create.md § 4, § 6.
 
 ## Context
 
-Offer to move the current worktree's uncommitted changes into the newly created one, between git
-success and provisioning, so a setup command sees the moved work. The wire contract already
-reserves the field (`docs/design/worktree-rpc.md` § `worktreeCreate` → `migrateChanges?: boolean`);
-it exists in neither `src/types/` nor `src/webview/` yet.
+Offer to move one explicitly identified worktree's uncommitted changes into a newly created checkout,
+after git succeeds and before provisioning or launch. The mechanism remains the built-in Git
+extension's `Repository.migrateChanges`; this change does not reproduce its stash/apply operation.
 
-The PLAN row calls this "a call and a conditional row, not a reimplementation". That is right, and
-the whole design problem is in what the call does NOT tell us.
+The plan attack disproved the original unconditional failure guarantee. In VS Code 1.130 the API
+returns only `void`, creates the source stash before entering its recovery `try`, and may reject after
+showing a conflict warning when restoring the source also fails. It exposes neither the stash identity
+nor a typed "already reported" outcome. At Gate 1 the user chose the indeterminate contract: keep
+`migrateChanges`, preserve the created worktree, stop later steps, and report that source and
+destination may need inspection instead of claiming restoration or single-report ownership.
 
-## What the Git extension actually provides — read, not assumed
+## D1 — Use the Git extension call exactly
 
-`@types/vscode` does not cover the Git extension, and `src/providers/git.ts` vendors only the
-members this repo already consumes. So the contract below was read out of the shipped bundle,
-`/Applications/Visual Studio Code.app/Contents/Resources/app/extensions/git/dist/main.js`
-(VS Code 1.130.0), not inferred from the doc:
+The call is made on the destination repository with the source worktree path:
 
-- It is on the public API wrapper, delegating to the model, beside `createWorktree`/`deleteWorktree`.
-- It is called **on the DESTINATION repository, with the SOURCE root path**. The extension's own
-  command does `destination.migrateChanges(source.root,
-  { confirmation: true, deleteFromSource: true, untracked: true })`.
-- Its own modal calls the operation IRREVERSIBLE.
+```ts
+await destination.migrateChanges(sourcePath, {
+  confirmation: false,
+  deleteFromSource: true,
+  untracked: true,
+});
+```
 
-### D1 — The call shape
+The unchecked form row supplies consent, so `confirmation` is false. `deleteFromSource` makes this a
+move rather than a copy, and `untracked` includes new files.
 
-`{ confirmation: false, deleteFromSource: true, untracked: true }`.
+`src/providers/git.ts` vendors optional `Repository.migrateChanges` and `API.openRepository` with the
+upstream signatures. They stay optional because `engines.vscode` starts at 1.105 while the behavior
+was verified in 1.130. An editor without either method gets no offer and creates normally.
 
-- `confirmation: false` — the dialog's row IS the consent. A second modal for a choice made two
-  seconds ago is the double-prompt the row exists to replace. This moves an obligation onto the row
-  (D5): the extension's modal is where the user would have met the word IRREVERSIBLE, so the row has
-  to carry that weight itself instead of reading like a convenience toggle.
-- `deleteFromSource: true` — the task is *move*. With it the destination pops the stash; without it
-  the destination applies and the source pops, i.e. a copy. The PLAN row says moves.
-- `untracked: true` — it is passed straight to `createStash(name, includeUntracked)`. Without it a
-  new-but-unstaged file stays behind, which is a silent partial move: the worst outcome available.
+A second Gate 1 choice accepted the API's final TOCTOU boundary: the host rechecks source identity and
+snapshot immediately before calling, but cannot prevent another process changing bytes or `.git`
+before the Git extension creates its stash. The row authorizes the source work present when Git runs;
+the displayed count is a current snapshot, not an atomic write-set guarantee. Observable drift makes
+the result indeterminate.
 
-### D2 — What the call can and cannot tell us
+## D2 — Failure is indeterminate; success needs correlated evidence
 
-`migrateChanges` returns `void` and reports several outcomes itself. This is the fact the whole
-design has to be built around, so it is enumerated rather than summarized:
+The Git extension can resolve `void` after success, overlap refusal, or handled conflict. A zero source
+count alone does not prove which occurred because another actor can commit or discard the source while
+the API runs.
 
-| Condition | What it does | Caller sees |
-|---|---|---|
-| Source repository not known to the extension | `showWarningMessage`, return | nothing |
-| Source has no index/working-tree/untracked changes | `showInformationMessage`, return | nothing |
-| A path changed in BOTH worktrees | modal `showErrorMessage` listing ≤5, return | nothing |
-| `confirmation` modal dismissed | return | nothing |
-| Stash apply hits `StashConflict` | warns, offers "Show Changes", pops the stash back on the source, return | nothing |
-| Any other git failure | pops the stash back on the source, **rethrows** | the throw |
+The host therefore retains an exact source snapshot, not only its displayed count. The snapshot holds
+each porcelain record's current and original path plus the current filesystem state of every affected
+path: absent, or a bounded hash over kind, mode, symlink target or file bytes. A rename keeps both path
+names even though the form counts the record once. Immediately before the API call the source snapshot
+must still match and the destination must be clean.
 
-Four of those six are eliminated rather than handled:
+After a resolved call, `moved` requires an empty source status and a destination snapshot equal to the
+issued source snapshot's expected working-tree state, with no unmerged record. Thus a no-move API exit
+followed by unrelated path-name changes is not success; another actor reproducing the same bytes, modes,
+links and absences has already established the observable destination state the user asked for.
 
-1. **Source not known** — checked before the row is offered (D3); it is the repository whose panel
-   the user is acting from.
-2. **No changes** — checked before the row is offered; that IS the row's condition (D5).
-3. **Both-worktrees overlap** — *unreachable here*. The overlap set is computed against the
-   DESTINATION's working-tree and untracked groups, and the destination is a worktree git created
-   seconds ago and nothing has written into yet. It is empty precisely **because** the move is
-   sequenced before provisioning (D6) — the ordering the acceptance demands for one reason turns out
-   to be what makes this refusal impossible for another.
-4. **Confirmation dismissed** — we pass `confirmation: false` (D1).
+Every other resolved state, every rejection, every failed read, and every changed pre-call snapshot is
+`indeterminate`. The correlated snapshot proves the observable result, not which internal API exit
+produced it.
 
-That leaves two, and both satisfy the acceptance clause "a failed move is reported with the worktree
-standing and the changes left where they were":
+Indeterminate keeps the created worktree, runs no later step, and directs the user to inspect source,
+destination, and Git stashes. It does not say the work was restored, did not move, or exists in only
+one place. The Git extension may already have warned; its API cannot reveal that fact, so the accepted
+contract does not promise exactly one report.
 
-- **Rethrow** — we catch it and report the failure ourselves. The create is not rolled back;
-  `worktree-create.md` § 6 already rules that a failed step after a successful create is reported as
-  exactly that. The extension has already popped the stash back on the source, so the changes are
-  where they were.
-- **StashConflict** — the extension reports it, with a better affordance than we could offer
-  ("Show Changes" into the SCM view), and pops the source's stash back. We stay silent: reporting on
-  top of it would be a second message for one event, and ours would be guessing.
+## D3 — Bind a cryptographic offer to source incarnation and snapshot
 
-**Residual, and it is real**: in the conflict case the source's changes are restored AND the
-destination is left holding conflict markers, with the extension's `isWorktreeMigrating` flag set.
-"The changes left where they were" holds; "and nowhere else" does not. This is the extension's own
-semantics and cannot be prevented by a caller — a stash made at the source's HEAD can always
-conflict when applied at the destination's, and a create onto a different branch is the normal case.
-Raised at Gate 2 rather than absorbed here.
+A repository id is not a source worktree id. `openCreateFor(info)` retains the clicked
+`WorktreeInfo.id`; repository-level and toolbar doors have no unique source and offer no migration row.
+Switching the form to another repository also removes the row rather than substituting a checkout.
 
-### D3 — The destination has to be a repository the extension knows
+A cache generation is not an incarnation: every forced observation advances it, including the rebuild
+a queued create must perform. Instead, the source probe captures the existing `AuthorizedDirectory`
+component identities plus the `.git` entry's no-follow identity. A remove-and-recreate or registration
+replacement changes one of those identities even when path, branch, commit and changed files repeat.
+The same evidence is rechecked at host redemption and after the mutation queue's forced rebuild.
 
-The call is a method ON the destination repository object, so `API.repositories` must contain it.
-A worktree created seconds ago has not necessarily been scanned yet — this is a race, not a
-formality, and losing it throws `is not a function`-adjacent failures after the worktree exists.
+The opening request carries `sourceWorktreeId` only where one exists. The offer retains
+`{ sourceWorktreeId, sourceEvidence, snapshot }` and sends only `{ offerId, count }` to the form. The
+row says "currently N" and that Git moves the uncommitted work present when it runs; it never presents
+N as an atomic write-set lock.
 
-Wait for it, bounded: subscribe to `onDidOpenRepository`, resolve on the first repository whose
-`rootUri` resolves to the created path, and race that against `afterDelay` from
-`src/worktree/deadline.ts` (WT-011.11 — reused, not rewritten). The deadline elapsing is a
-reportable failure of the move, not of the create.
+`offerId` is a cryptographically random bearer token, generated with `randomUUID` in production and an
+injected deterministic source in tests. `WorktreeSurface.post` cannot acknowledge delivery, so an
+unguessable token is what makes a dropped message unredeemable. Predictable offer-store counters are
+not reused.
 
-Path comparison uses `isPathInside`/the resolved-path helpers, never a hand-rolled string compare —
-`src/utils/pathBoundary.ts` is the only definition of containment in `src/`.
+A checked submit quotes the token; unchecked sends no migration field. Redemption requires the same
+surface, opening, repository, source id, still-authorized source evidence, and freshly read snapshot.
+The internal create request carries that evidence and snapshot through the mutation queue for the final
+best-effort recheck. Retirement forgets the offer. A replacement token resets the checkbox when drift
+is observed before execution; D1's row wording states that Git moves execution-time work, so the
+uncloseable interval after that recheck is not described as atomic snapshot authority.
 
-### D4 — Feature detection, because the floor is not the verified version
+## D4 — Count Git's complete movable porcelain set
 
-`package.json` declares `engines.vscode: ^1.105.0`; the API was verified in **1.130.0** and has NOT
-been verified in 1.105. The worktree API family is recent. So: `typeof
-repository.migrateChanges === "function"` before offering the row. This is not defensive noise — on
-a version without it the failure lands AFTER the worktree exists, which is the one place this
-subsystem tries never to fail. Absent ⇒ the row is not offered and nothing else changes.
+Git-extension resource arrays are capped by `git.statusLimit`, while `migrateChanges` stashes beyond
+that cap. Use the shared `GitCommandRunner` against the source worktree:
 
-`src/providers/git.ts` gains `migrateChanges?` on `Repository`, optional for exactly this reason,
-plus the `MigrateChangesOptions` shape. Consumers keep taking `Pick<API, …>` as `repoRoots.ts` does.
+```text
+git status --porcelain=v2 -z --untracked-files=all
+```
 
-### D5 — The row
+Parse strict records. Ordinary and untracked records count once. A rename or copy also counts once but
+retains both its current and original path in the authorization signature, so `a → c` cannot be
+replaced by `b → c` under the same displayed count. Ignored records do not appear. Any unmerged record
+makes the source ineligible because the selected API's no-change check ignores its merge group and
+ordinary stash cannot migrate an unresolved merge.
 
-Offered only when all of: the source repository is known, it has ≥1 change to move, the destination
-API is present (D4). It states how many, and says the work leaves this worktree — the source is
-emptied, and after D1 the extension will not say so itself.
+Complete each record with the current filesystem state of every affected path. Stream file bytes into
+a hash; hash symlink targets and kind/mode markers; record absence explicitly. One shared 10-second,
+512 MiB snapshot budget bounds status plus filesystem reads. A timeout, malformed/overflowed status,
+unreadable path, budget overflow, or unmerged record yields no offer. The same snapshot function runs
+at offer, submit, immediately before the API call, and after it. The form displays the record count;
+no Git-extension status array enters it.
 
-The count is **distinct paths** across index, working-tree and untracked. The extension's own
-overlap computation concatenates the three groups without deduping, so a file both staged and
-edited appears twice in its array; a user-facing "N changes" that counts that file twice is simply
-wrong. Distinct paths is what the user can go and look at.
+## D5 — Actively open the exact source and destination
 
-### D6 — Ordering
+Production reuses the Git API already activated by `GitDecorationProvider`; the provider exposes the
+current API read-only instead of a second owner activating `vscode.git`.
 
-After git reports the create succeeded, before provisioning. Named by the acceptance, required by
-§ 6 so a setup command sees the moved work, and load-bearing for D2.3.
+Offer calculation actively calls `API.openRepository(Uri.file(sourcePath))` under a concrete 10-second
+`afterDelay` deadline and requires the returned repository to expose `migrateChanges`. Thus the exact
+source is callable before the row appears; capability is never inferred from an unrelated repository.
+
+After git creates the destination, open source and destination under one fresh 10-second deadline and
+use the returned objects directly. This opens ordinary siblings outside the workspace and avoids a
+folded string search choosing a similarly named Windows path. Null, absent method, rejection, timeout,
+or synchronous expiry is indeterminate. Late completion cannot reach `migrateChanges` after expiry.
+The Git API remains owned by VS Code; disposing our accessor does not dispose a captured API object.
+
+## D6 — Only new checkouts migrate, with nested destinations excluded first
+
+Offer and admit migration only for `fresh`, `fresh-detached`, and `reuse`. `reattach` and `adopt` act on
+surviving directories and cannot carry a migration offer.
+
+A create root may sit inside the source checkout. In that case `git worktree add` makes the new
+directory appear as untracked source work until the existing `info/exclude` rule is written. It must
+also be excluded before `migrateChanges(untracked: true)` so the API cannot try to stash its own
+destination. Therefore the sequence is:
+
+```text
+git worktree add
+  → maintain info/exclude when the destination is inside the source
+  → open source + destination repositories
+  → require authorized source snapshot and clean destination
+  → migrateChanges
+  → verify empty source + exact non-conflicted destination snapshot
+  → authorize directories
+  → materialize entries
+  → allocate ports
+  → afterCreate
+```
+
+If exclusion fails, the immediate source snapshot detects the new destination and returns
+indeterminate without calling the API. For outside destinations there is no exclusion write. Any
+indeterminate migration returns from the successful-create arm before provisioning or launch.
+
+## D7 — Carry the outcome on the successful create
+
+`MutationServiceDeps` gains an optional migration binding receiving source path, destination path,
+source identity evidence, and the issued snapshot. It returns `moved` or `indeterminate`; it never
+throws past the successful-create arm.
+A move-only create normalizes the created worktree id so its notice attaches after tree refresh.
+
+`MutationOutcome`, `WorktreeMutationResultMessage`, and `WorktreeActionResult` carry optional
+`migrationIndeterminate`. The notice stays a successful create, takes warning tone, states that later
+steps did not run, and shows the bounded reason plus inspection instruction. The reason participates
+in the render signature and coexists with existing post-create fields.
+
+## Accepted risk
+
+The user explicitly accepted that `migrateChanges` has no expected-snapshot parameter: another process
+can change source bytes or `.git` after the final recheck and before the Git extension creates its
+stash. The option authorizes execution-time uncommitted work at the named source path; post-verification
+reports observable divergence as indeterminate but cannot prevent the already-started move. Owner:
+worktree subsystem. Reactivate when `vscode.git` exposes a transactional expected-state input or typed
+result, or if source substitution is observed in practice.
 
 ## Obligation ledger
 
 | Claim | Semantics | Defeater | Witness/check | Disposition |
 |---|---|---|---|---|
-| The row appears only when work can actually move | Offered ⇔ source known ∧ ≥1 change ∧ `migrateChanges` present | Offering where the API is absent, or where the extension would report "no changes" | Unit witnesses per change-group combination + an absent-API fixture | supported |
-| The stated count is the work that moves | "N changes" = distinct paths over index ∪ workingTree ∪ untracked | Counting one group only, or double-counting a staged-and-edited file | Witness with a path in two groups asserting N=1 | supported |
-| Untracked work is not left behind | `untracked: true` reaches `createStash` | Omitting it — a silent partial move | Witness asserts the option passed | supported |
-| The move lands after git success and before provisioning | Call order | Provisioning racing it | Call-order witness on the host path | supported |
-| A failed move leaves the worktree standing | No rollback of a successful create | Reporting a migration failure as a create failure | The create result is already independent (§ 6) | supported |
-| A failed move is reported | The user learns it did not happen | D2: four of six outcomes return silently | Each of the four is eliminated (D2.1–4), not handled; the two that remain are a throw we report and a conflict the extension reports | supported — narrowed; see the residual in D2 |
-| The destination is callable when we call it | It is in `API.repositories` | Calling before the extension has scanned it | Bounded wait witness: resolves on the event, fails on the deadline | supported |
-| Declining leaves both worktrees untouched | Field absent from the submit ⇒ never called | A default-true field | Optional field, defaults to absent | supported |
-| The overlap refusal cannot fire | Destination working-tree ∪ untracked = ∅ at call time | Provisioning having run first | Guaranteed by D6; witnessed by the call-order test | supported |
-
-## D7 — The sequencing seam already exists, on a branch that has not landed
-
-The ordering D6 requires is inside `createWorktreeMutationService`, not in `extension.ts`. Its
-`applyProvision` binding is the nearest hook, and it is the WRONG one: it fires only when
-`wanted.length > 0` (`src/worktree/worktreeMutationService.ts:943`), so a user who asks to move work
-while selecting no provisioning entries would be silently ignored — the one failure this task's
-acceptance names outright.
-
-The correct hook is a new optional binding beside `applyProvision`. That shape is not invented here:
-the WT-012.6 peer branch (`huybuidac/creat-worktree-2`, commit `72d44151`) has already added
-`applyPorts?(input): Promise<…>` to `MutationServiceDeps` and invoked it on the create path, and
-`migrateChanges` is the same shape with different cargo. Following it is reuse; adding a second,
-differently-shaped hook to the same function would be the duplication the parallel-session brief
-forbids.
-
-**So this change is BLOCKED on that branch landing**, not on a design question. Both hooks live in
-the same interface block and the same create arm of one function; writing mine first guarantees a
-conflict in a branch whose review has already recorded its final blockers. Everything above is
-settled and does not change when it lands — only the insertion point does.
+| The row and final recheck name one source | Offer binds source id, authorized directory components, `.git` identity/content, and resolved admin target through the queued rebuild | Remove/recreate, in-place `.git` rewrite, or admin replacement before the call | Directory, `.git` content, target and admin-identity substitution witnesses at redemption and final recheck | supported |
+| The row appears only for callable source work | Exact source `openRepository` returns a repository with `migrateChanges`, and a bounded snapshot is positive and movable | Capability inferred from another repo; empty, failed, overflowed, unreadable, or unmerged source | Exact-source open plus every ineligible snapshot witness | supported |
+| The stated count is a truthful current snapshot | Displayed N is the issued record count; observed pre-call drift refuses before API entry | Same count with different path, rename origin, mode, link target, or bytes before the call | Replacement witnesses for every dimension plus wording that says "currently" and execution-time work | supported |
+| Untracked work is included | `untracked: true` reaches the API call | Omitting it leaves new files | Exact-options witness | supported |
+| The exact destination receives the call before expiry | The object returned by `openRepository(Uri.file(destination))` is called under 10 s | Passive discovery, path folding, null/rejected/late open | Out-of-workspace and deadline witnesses | supported |
+| Proven movement is correlated at both worktrees | Empty source plus destination path-state snapshot equal to the issued source outcome and no unmerged record | API refusal followed by source cleanup, destination conflict, or same-name different-content write | Post-state matrix varying bytes, mode, links, absence, paths and unmerged state independently | supported |
+| Migration applies only to new checkouts | Only fresh, fresh-detached and reuse redeem | Reattach/adopt entering a surviving directory | Form and host witnesses for every mode | supported |
+| Nested destination cannot enter the moved set | Existing exclusion is attempted before pre-call status and API call | Recount before exclusion or calling after failed exclusion | Nested-root order and failed-exclusion drift witnesses | supported |
+| Uncertain migration runs no later step | Indeterminate returns before authorization, entries, ports and afterCreate | Catch and continue | Rejection, resolved mismatch, failed read and set-drift witnesses | supported |
+| Uncertainty is reported truthfully | Notice says potentially partial and names inspection; no restoration or single-location claim | "Not moved", "restored", or ordinary create-error wording | View and forbidden-phrase assertions | supported |
+| Undelivered, retired, or replayed consent cannot enter the API | Random token binds surface, opening, repo and final pre-call evidence; post-recheck mutation is the accepted residual | Guessable id, dropped post, token reuse, or substitution detectable before API entry | Deterministic-random and pre-call substitution witnesses; no claim beyond the final recheck | supported |
+| Declining performs no migration | Unchecked row serializes no token and binding is not called | Default-true or false-valued field | Dialog, controller, host and mutation absence witnesses | supported |
