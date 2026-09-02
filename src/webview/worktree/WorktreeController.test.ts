@@ -2420,6 +2420,73 @@ describe("what a mutation did comes back to the panel", () => {
     });
   });
 
+  it("merges a setup-only retry update without dropping material, ports, or contest membership", () => {
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator";
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" }, contest: 0 }],
+      ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5184 } }],
+      contests: [{ members: [{ id: "i1", path: ".env", source: "asimov/worktree.yaml" }] }],
+      setup: [
+        { id: "s1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "failed", reason: "exit 1" } },
+      ],
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      setup: [{ id: "s1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "ok" } }],
+      setupOutputId: "output-2",
+    });
+
+    expect(results(h)[0]).toMatchObject({
+      provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" }, contest: 0 }],
+      ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5184 } }],
+      provisionContests: [{ members: [{ id: "i1", path: ".env", source: "asimov/worktree.yaml" }] }],
+      setup: [{ id: "s1", outcome: { kind: "ok" } }],
+      setupOutputId: "output-2",
+    });
+    expect(results(h)[0]?.setupRetryId).toBeUndefined();
+  });
+
+  it("posts only opaque setup output and retry actions", () => {
+    const h = ready();
+    const deps = (h.controller as unknown as {
+      view: {
+        deps: {
+          onRetrySetup(result: WorktreeActionResult): void;
+          onViewSetupOutput(result: WorktreeActionResult): void;
+        };
+      };
+    }).view.deps;
+    h.posts.length = 0;
+    const result: WorktreeActionResult = {
+      action: "create",
+      worktreeId: "/wt/feature",
+      outcome: "ok",
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    };
+
+    deps.onViewSetupOutput(result);
+    deps.onRetrySetup(result);
+
+    expect(h.posts).toEqual([
+      { type: "worktreeSetupViewOutput", outputId: "output-1" },
+      { type: "worktreeSetupRetry", worktreeId: "/wt/feature", retryId: "retry-1" },
+    ]);
+  });
+
   it("[round-5 F017] gives the notice its row back once the rebuild carries it", () => {
     // The round-4 fix keyed dedupe on the canonical identity and left the move
     // one-way: `rescope` drops `worktreeId` and then returns immediately for

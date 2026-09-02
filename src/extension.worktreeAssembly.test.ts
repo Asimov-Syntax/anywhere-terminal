@@ -1577,11 +1577,7 @@ describe("the invariants that span the host and the webview", () => {
     [...document.querySelectorAll<HTMLButtonElement>("button")]
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
-    await settleUntil(
-      () => document.querySelectorAll(".wt-notice").length > 0,
-      "the create to report something back to the panel",
-    );
-    await settle();
+    await settleUntil(() => provisionResults.length > 0, "the create's provisioning result");
 
     // The file and port claim actually arrived, through the production bindings.
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
@@ -1652,10 +1648,9 @@ describe("the invariants that span the host and the webview", () => {
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
     await settleUntil(
-      () => document.querySelectorAll(".wt-notice").length > 0,
-      "the create to report something back to the panel",
+      () => [...document.querySelectorAll(".wt-notice")].some((notice) => (notice.textContent ?? "").includes("Create done.")),
+      "the create result",
     );
-    await settle();
 
     const created = [...document.querySelectorAll(".wt-notice")].filter((n) =>
       (n.textContent ?? "").includes("Create done."),
@@ -2406,7 +2401,10 @@ describe("the invariants that span the host and the webview", () => {
 
     // Blocked on the dirty file only — an agent that is idle blocks nothing.
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(
+      () => [...document.querySelectorAll<HTMLElement>("button")].some((b) => /force remove/i.test(b.textContent ?? "")),
+      "the blocked removal to offer Force remove",
+    );
     const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
       /force remove/i.test(b.textContent ?? ""),
     );

@@ -25,6 +25,7 @@ import type {
   ProvisionPortResult,
   ProvisionPortWarning,
   ProvisionResultContest,
+  ProvisionSetupResult,
   ProvisionStepResult,
   PullRequestOffer,
   RemovalCheck,
@@ -174,6 +175,10 @@ export interface WorktreeActionResult {
    * N² (`carry-a-contest-membership-once`).
    */
   provisionContests?: readonly ProvisionResultContest[];
+  setup?: readonly ProvisionSetupResult[];
+  setupOutputId?: string;
+  setupRetryId?: string;
+  manifestWarning?: string;
 }
 
 /**

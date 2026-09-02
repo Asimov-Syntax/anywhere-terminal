@@ -605,6 +605,16 @@ export class WorktreeController {
           this.askRemoval(result.worktreeId);
         }
       },
+      onRetrySetup: (result) => {
+        if (result.worktreeId !== undefined && result.setupRetryId !== undefined) {
+          deps.postMessage({ type: "worktreeSetupRetry", worktreeId: result.worktreeId, retryId: result.setupRetryId });
+        }
+      },
+      onViewSetupOutput: (result) => {
+        if (result.setupOutputId !== undefined) {
+          deps.postMessage({ type: "worktreeSetupViewOutput", outputId: result.setupOutputId });
+        }
+      },
       // Any dialog opening retires the outstanding assess: what the user is
       // looking at now is the answer to a newer question, and the view's own
       // blocked-notice opener is why this cannot be a controller-local guard
@@ -1403,10 +1413,14 @@ export class WorktreeController {
     );
     this.showActionResult({
       ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
-      provisioned: msg.steps,
-      ports: msg.ports,
+      ...(msg.steps === undefined ? {} : { provisioned: msg.steps }),
+      ...(msg.ports === undefined ? {} : { ports: msg.ports }),
       ...(msg.portWarnings === undefined ? {} : { portWarnings: msg.portWarnings }),
-      provisionContests: msg.contests,
+      ...(msg.contests === undefined ? {} : { provisionContests: msg.contests }),
+      setup: msg.setup,
+      setupOutputId: msg.setupOutputId,
+      setupRetryId: msg.setupRetryId,
+      manifestWarning: msg.manifestWarning,
     });
   }
 

@@ -4,7 +4,13 @@
 // against the target the id names AFTER the rebuild.
 
 import { describe, expect, it, vi } from "vitest";
-import type { BranchDeleteRequest, ProvisionStepResult } from "../types/messages";
+import type {
+  BranchDeleteRequest,
+  ProvisionSetupResult,
+  ProvisionSetupStep,
+  ProvisionStepResult,
+  WorktreeProvisionResultMessage,
+} from "../types/messages";
 import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import type { ClearDebrisDeps } from "./clearDebris";
 import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
@@ -94,6 +100,8 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     }),
   };
   const outcomes: unknown[] = [];
+  const provisioningOutcomes: WorktreeProvisionResultMessage[] = [];
+  let retrySequence = 0;
   const deps: MutationServiceDeps = {
     runner,
     forceRebuild: async () => {
@@ -120,6 +128,14 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
       normalize: async (raw) => raw,
     },
     report: (outcome) => outcomes.push(outcome),
+    reportProvisioning: (outcome) => provisioningOutcomes.push(outcome),
+    runSetup: async (input) => ({
+      succeeded: true,
+      steps: input.steps.map((step) => ({ ...step, outcome: { kind: "ok" as const } })),
+      outputId: "setup-output",
+    }),
+    writeProvisionManifest: async () => ({}),
+    newSetupRetryId: () => `retry-${++retrySequence}`,
     afterCreate: async () => {},
     gitExcludeDirFor: () => null,
     addToGitExclude: async () => {},
@@ -130,7 +146,14 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
   // `deps.runner`, not the local one: an override in `over` replaces it, and
   // returning the shadowed original made every assertion on a test's own runner
   // read an object nothing had called.
-  return { service: createWorktreeMutationService(deps), order, argv, outcomes, runner: deps.runner };
+  return {
+    service: createWorktreeMutationService(deps),
+    order,
+    argv,
+    outcomes,
+    provisioningOutcomes,
+    runner: deps.runner,
+  };
 }
 
 describe("a mutation reaches git through the coordinator", () => {
@@ -2090,6 +2113,10 @@ describe("provisioning rides the create without ever costing it", () => {
     { id: "p1", name: "APP", source: "asimov/worktree.yaml", port: 5183 },
     { id: "p2", name: "DB", source: "asimov/worktree.yaml", port: 5432 },
   ];
+  const setup: readonly ProvisionSetupStep[] = [
+    { id: "s1", source: "asimov/worktree.yaml", kind: "shell", script: "pnpm install" },
+    { id: "s2", source: "asimov/worktree.yaml", kind: "shell", script: "pnpm build" },
+  ];
   const create = (over: Record<string, unknown> = {}) => ({
     repoId: REPO,
     path: "/repo/wt/new",
@@ -2360,6 +2387,273 @@ describe("provisioning rides the create without ever costing it", () => {
     expect(outcome?.kind).toBe("ok");
     expect(outcome?.provision?.path).toBe("/repo/wt/new");
     expect(outcome?.worktreeId).toBe("/repo/wt/new");
+  });
+
+  it("authorizes only the created directory and reports a normalized row id for setup-only selection", async () => {
+    const authorize = vi.fn(async (candidate: string) => authorization(candidate));
+    const h = harness({ authorizeDirectory: authorize, normalizeWorktreeId: async () => "/normalized/feat" });
+
+    await h.service.createWorktree(create({ setup }));
+
+    expect(authorize.mock.calls.map(([candidate]) => candidate)).toEqual(["/repo/wt/new"]);
+    expect(okOutcome(h)?.worktreeId).toBe("/normalized/feat");
+    expect(okOutcome(h)?.provision).toMatchObject({ setup: expect.any(Array), steps: [], ports: [] });
+  });
+
+  it("runs setup after files and authoritative ports and writes one manifest", async () => {
+    const seen: string[] = [];
+    const setupRun = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["runSetup"]>>[0]) => {
+      seen.push("setup");
+      expect(input.ports).toEqual({ APP: 5184, DB: 5432 });
+      expect(input.branch).toBe("feat");
+      expect(input.asimovEnvironment).toBe(true);
+      return {
+        succeeded: true,
+        steps: input.steps.map((step) => ({ ...step, outcome: { kind: "ok" as const } })),
+        outputId: "output-1",
+      };
+    });
+    const manifest = vi.fn<NonNullable<MutationServiceDeps["writeProvisionManifest"]>>(async () => ({}));
+    const h = harness({
+      normalizeWorktreeId: async () => "/normalized/feat",
+      applyProvision: async () => {
+        seen.push("files");
+        return [{ id: "i1", path: ".env", outcome: { kind: "copied" as const } }];
+      },
+      applyPorts: async () => {
+        seen.push("ports");
+        return {
+          ports: [
+            { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated" as const, port: 5184 } },
+            { id: "p2", name: "DB", preview: 5432, outcome: { kind: "reused" as const, port: 5432 } },
+          ],
+          warnings: [],
+        };
+      },
+      runSetup: setupRun,
+      writeProvisionManifest: async (...args) => {
+        seen.push("manifest");
+        return manifest(...args);
+      },
+    });
+
+    await h.service.createWorktree(create({ provision: entries.slice(0, 1), ports, setup, asimovEnvironment: true }));
+
+    expect(seen).toEqual(["files", "ports", "setup", "manifest"]);
+    expect(setupRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoId: REPO,
+        mainPath: "/repo",
+        worktreeId: "/normalized/feat",
+        worktreePath: "/repo/wt/new",
+        steps: setup,
+        authorization: authorization("/repo/wt/new"),
+      }),
+      undefined,
+    );
+    expect(manifest).toHaveBeenCalledWith(
+      "/repo/wt/new",
+      [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      expect.any(Array),
+      expect.arrayContaining([expect.objectContaining({ id: "s1", outcome: { kind: "ok" } })]),
+    );
+    expect(okOutcome(h)?.worktreeId).toBe("/normalized/feat");
+  });
+
+  it("starts an ungated agent after setup starts without waiting for setup to finish", async () => {
+    const seen: string[] = [];
+    let release!: () => void;
+    let setupStarted!: () => void;
+    let agentStarted!: () => void;
+    const setupDone = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const setupBegan = new Promise<void>((resolve) => {
+      setupStarted = resolve;
+    });
+    const agentBegan = new Promise<void>((resolve) => {
+      agentStarted = resolve;
+    });
+    const h = harness({
+      runSetup: async (input) => {
+        seen.push("setup");
+        setupStarted();
+        await setupDone;
+        return {
+          succeeded: true,
+          steps: input.steps.map((step) => ({ ...step, outcome: { kind: "ok" as const } })),
+        };
+      },
+      afterCreate: async () => {
+        seen.push("agent");
+        agentStarted();
+      },
+    });
+
+    const pending = h.service.createWorktree(
+      create({ setup, afterCreate: { kind: "agent", agent: "claude", waitForSetup: false } }),
+    );
+    await Promise.all([setupBegan, agentBegan]);
+    expect(seen).toEqual(["setup", "agent"]);
+    release();
+    await pending;
+  });
+
+  it("holds a gated agent until every setup step succeeds", async () => {
+    const seen: string[] = [];
+    let release!: () => void;
+    let setupStarted!: () => void;
+    const setupDone = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const setupBegan = new Promise<void>((resolve) => {
+      setupStarted = resolve;
+    });
+    const h = harness({
+      runSetup: async (input) => {
+        seen.push("setup");
+        setupStarted();
+        await setupDone;
+        return {
+          succeeded: true,
+          steps: input.steps.map((step) => ({ ...step, outcome: { kind: "ok" as const } })),
+        };
+      },
+      afterCreate: async () => {
+        seen.push("agent");
+      },
+    });
+
+    const pending = h.service.createWorktree(
+      create({ setup, afterCreate: { kind: "agent", agent: "claude", waitForSetup: true } }),
+    );
+    await setupBegan;
+    expect(seen).toEqual(["setup"]);
+    release();
+    await pending;
+    expect(seen).toEqual(["setup", "agent"]);
+  });
+
+  it("keeps the create standing and starts no gated agent when setup fails", async () => {
+    const failed: ProvisionSetupResult[] = [
+      { ...setup[0]!, outcome: { kind: "failed", reason: "exited with code 1" } },
+      { ...setup[1]!, outcome: { kind: "skipped", reason: "previous setup step failed" } },
+    ];
+    const afterCreate = vi.fn(async () => undefined);
+    const h = harness({
+      normalizeWorktreeId: async () => "/normalized/feat",
+      resolve: () => target({ worktreePath: "/repo/wt/new", incarnation: "created-1" }),
+      runSetup: async () => ({ succeeded: false, steps: failed, outputId: "output-1" }),
+      afterCreate,
+    });
+
+    await h.service.createWorktree(
+      create({ setup, afterCreate: { kind: "agent", agent: "claude", waitForSetup: true } }),
+    );
+
+    expect(afterCreate).not.toHaveBeenCalled();
+    expect(okOutcome(h)?.kind).toBe("ok");
+    expect(okOutcome(h)?.provision).toMatchObject({
+      setup: failed,
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+  });
+
+  it("retries setup only, rotates a failed token, and emits no second create result", async () => {
+    const applyProvision = vi.fn(async () => [{ id: "i1", path: ".env", outcome: { kind: "copied" as const } }]);
+    const applyPorts = vi.fn(async () => ({
+      ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated" as const, port: 5184 } }],
+      warnings: [],
+    }));
+    const runSetup = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["runSetup"]>>[0]) => ({
+      succeeded: false,
+      steps: input.steps.map((step, index) =>
+        index === 0
+          ? { ...step, outcome: { kind: "failed" as const, reason: "still failing" } }
+          : { ...step, outcome: { kind: "skipped" as const, reason: "previous setup step failed" } },
+      ),
+      outputId: `output-${runSetup.mock.calls.length}`,
+    }));
+    const manifest = vi.fn<NonNullable<MutationServiceDeps["writeProvisionManifest"]>>(async () => ({}));
+    const h = harness({
+      normalizeWorktreeId: async () => "/normalized/feat",
+      resolve: () => target({ worktreePath: "/repo/wt/new", incarnation: "created-1" }),
+      applyProvision,
+      applyPorts,
+      runSetup,
+      writeProvisionManifest: manifest,
+    });
+
+    await h.service.createWorktree(create({ provision: entries.slice(0, 1), ports: ports.slice(0, 1), setup }));
+    await h.service.retrySetup({ repoId: REPO, worktreeId: "/normalized/feat" }, "retry-1");
+    await h.service.retrySetup({ repoId: REPO, worktreeId: "/normalized/feat" }, "retry-1");
+
+    expect(applyProvision).toHaveBeenCalledOnce();
+    expect(applyPorts).toHaveBeenCalledOnce();
+    expect(runSetup).toHaveBeenCalledTimes(2);
+    expect(h.outcomes).toHaveLength(1);
+    expect(h.provisioningOutcomes).toEqual([
+      expect.objectContaining({
+        type: "worktreeProvisionResult",
+        worktreeId: "/normalized/feat",
+        setup: expect.any(Array),
+        setupOutputId: "output-2",
+        setupRetryId: "retry-2",
+      }),
+    ]);
+    expect(h.provisioningOutcomes[0]).not.toHaveProperty("steps");
+    expect(h.provisioningOutcomes[0]).not.toHaveProperty("ports");
+    expect(manifest).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses retry after the row's worktree incarnation changes", async () => {
+    let incarnation = "created-1";
+    const runSetup = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["runSetup"]>>[0]) => ({
+      succeeded: false,
+      steps: input.steps.map((step) => ({ ...step, outcome: { kind: "failed" as const, reason: "failed" } })),
+    }));
+    const h = harness({
+      normalizeWorktreeId: async () => "/normalized/feat",
+      resolve: () => target({ worktreePath: "/repo/wt/new", incarnation }),
+      runSetup,
+    });
+    await h.service.createWorktree(create({ setup }));
+    incarnation = "replacement-2";
+
+    await h.service.retrySetup({ repoId: REPO, worktreeId: "/normalized/feat" }, "retry-1");
+
+    expect(runSetup).toHaveBeenCalledOnce();
+    expect(h.provisioningOutcomes).toEqual([]);
+  });
+
+  it("evicts retry authority when reconciliation no longer sees the row", async () => {
+    const runSetup = vi.fn(async (input: Parameters<NonNullable<MutationServiceDeps["runSetup"]>>[0]) => ({
+      succeeded: false,
+      steps: input.steps.map((step) => ({ ...step, outcome: { kind: "failed" as const, reason: "failed" } })),
+    }));
+    const h = harness({
+      normalizeWorktreeId: async () => "/normalized/feat",
+      resolve: () => target({ worktreePath: "/repo/wt/new", incarnation: "created-1" }),
+      runSetup,
+    });
+    await h.service.createWorktree(create({ setup }));
+    h.service.reconcileFingerprints([]);
+
+    await h.service.retrySetup({ repoId: REPO, worktreeId: "/normalized/feat" }, "retry-1");
+
+    expect(runSetup).toHaveBeenCalledOnce();
+  });
+
+  it("reports a manifest warning without changing create or setup success", async () => {
+    const h = harness({
+      writeProvisionManifest: async () => ({ warning: "manifest unavailable" }),
+    });
+
+    await h.service.createWorktree(create({ setup }));
+
+    expect(okOutcome(h)?.kind).toBe("ok");
+    expect(okOutcome(h)?.provision).toMatchObject({ manifestWarning: "manifest unavailable" });
   });
 
   it("does not provision a repair, which brings nothing over", async () => {

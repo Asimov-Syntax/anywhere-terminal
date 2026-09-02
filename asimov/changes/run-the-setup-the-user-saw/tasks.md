@@ -61,7 +61,7 @@
     2. Render one unchecked wait control in `src/webview/worktree/WorktreeCreateDialog.ts` beside agent controls; keep it visible only for agent launch and disabled whenever the current offer selection contains no setup id.
     3. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` for default-off, selected-step enablement, deselection, offer replacement, non-agent visibility, and submit; extend `src/webview/worktree/WorktreeController.test.ts` for the carried boolean.
 
-- [ ] 3_3 Sequence initial setup and setup-only retry in the mutation service
+- [x] 3_3 Sequence initial setup and setup-only retry in the mutation service — verified: bun test 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1, 2_2, 3_1
   - **Refs**: specs/worktree-panel/spec.md#{only-setup-the-user-selected-runs, setup-failure-leaves-the-successful-create-standing, agent-startup-honours-the-setup-wait-choice} <!-- design.md D3, D4, D5 -->
   - **Acceptance**:
@@ -76,17 +76,18 @@
 
 ## 4. Surface and assemble the result
 
-- [ ] 4_1 Render setup output and retry on the created worktree row
+- [x] 4_1 Render setup output and retry on the created worktree row — verified: pnpm exec vitest run src/webview/worktree/WorktreeView.test.ts src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 3_1, 3_2
   - **Refs**: specs/worktree-panel/spec.md#setup-failure-leaves-the-successful-create-standing <!-- design.md D6 -->
   - **Acceptance**:
     - Outcome: a failed setup row offers working output and setup-only retry actions until superseded
-    - Verify: unit src/webview/worktree/WorktreeView.test.ts
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeView.test.ts src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
     1. Extend `WorktreeActionResult` in `src/webview/worktree/worktreeViewTypes.ts` with setup outcomes and opaque output and retry ids.
     2. Merge setup fields from `worktreeProvisionResult` and post opaque action messages in `src/webview/worktree/WorktreeController.ts`; preserve existing material, ports, and contests when a setup-only retry update omits them.
     3. Render success, failed and skipped counts, manifest warning, `View output`, and `Retry setup` in `src/webview/worktree/WorktreeView.ts`, attaching the notice to the created row and removing retry after success.
     4. Cover message merging and replacement and action posting in `src/webview/worktree/WorktreeController.test.ts`; cover failure, warning, actions, retry success, and row rescoping in `src/webview/worktree/WorktreeView.test.ts`.
+    5. In `src/extension.worktreeAssembly.test.ts`, wait for the provisioning result itself instead of an unrelated notice plus a fixed event-loop pump.
 
 - [ ] 4_2 Assemble the production runner, manifest, retry, and reporting path
   - **Deps**: 3_3, 4_1
