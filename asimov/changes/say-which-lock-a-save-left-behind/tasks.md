@@ -44,19 +44,21 @@
     6. Arm-check by folding `locked` back into the all-`unsaved` answer and by moving delivery inside the reread's success path.
   - **Boundary**: `media/webview.js` is a build artifact and untracked — do not edit it
 
-- [ ] 2_1 Stop naming a lock in the installer's warning, on every arm
+- [x] 2_1 Stop naming a lock in the installer's warning, on every arm — verified: pnpm exec vitest run src/agentHooks/install/ClaudeHookInstaller.test.ts src/agentHooks/AgentHookController.test.ts src/cursor/CursorHookInstaller.test.ts && pnpm run check-types && pnpm exec biome check src/agentHooks/install/ClaudeHookInstaller.ts src/agentHooks/AgentHookController.ts src/cursor/CursorHookInstaller.ts src/utils/fileIdentity.ts && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: specs/worktree-panel/spec.md#no-lock-is-offered-to-the-user-as-a-file-to-delete; design.md D1, D2, D6; .reviews/round-1.md F001, F003
   - **Acceptance**:
     - Outcome: no warning names a lock pathname, on any release arm
-    - Verify: command pnpm exec vitest run src/agentHooks/install/ClaudeHookInstaller.test.ts src/agentHooks/AgentHookController.test.ts
+    - Verify: command pnpm exec vitest run src/agentHooks/install/ClaudeHookInstaller.test.ts src/agentHooks/AgentHookController.test.ts src/cursor/CursorHookInstaller.test.ts
   - **Plan**:
-    1. `ClaudeHookInstaller.ts:107` — drop `locked.lockPath` from the `lock-unavailable` failure's `affected`, keeping the configuration path. This process never held that lock.
-    2. `:109-113` — the `stuck` arm stops pushing `lockPath` into `unresolved`. `unreleased` alone already drives the outcome, so `unresolved` gains nothing from this callback and the local array goes with it.
-    3. Adopt `sameIdentity` from `src/utils/fileIdentity.ts` at `:377-379` (F003). Do NOT convert the installer's existing stat captures to `{ bigint: true }` — that is separate ownership work and would widen this task.
-    4. Witness each arm: a `lock-unavailable` outcome, and a `stuck` release, neither carrying the lock path; and `AgentHookController.formatWarning` still firing on a mismatch while naming no path.
-    5. Arm-check by putting each path back and confirming the witness fails.
-  - **Boundary**: no `{ bigint: true }` conversion of the installer's pre-existing stat captures
+    1. In `src/agentHooks/install/ClaudeHookInstaller.ts`, at line 107 — drop `locked.lockPath` from the `lock-unavailable` failure's `affected`, keeping the configuration path. This process never held that lock.
+    2. `src/agentHooks/install/ClaudeHookInstaller.ts:109-113` — the `stuck` arm stops pushing `lockPath` into `unresolved`. `unreleased` alone already drives the outcome, so `unresolved` gains nothing from this callback and the local array goes with it.
+    3. Adopt `sameIdentity` from `src/utils/fileIdentity.ts` at `src/agentHooks/install/ClaudeHookInstaller.ts:377-379` (F003). Do NOT convert the installer's existing stat captures to `{ bigint: true }` — that is separate ownership work and would widen this task.
+    4. Witness each arm in `src/agentHooks/install/ClaudeHookInstaller.test.ts` and `src/agentHooks/AgentHookController.test.ts`: a `lock-unavailable` outcome, and a `stuck` release, neither carrying the lock path; and `AgentHookController.formatWarning` still firing on a mismatch while naming no path.
+    5. The invariant has a SECOND boundary the review did not list, found by grepping for the shape rather than the quoted line: `src/cursor/CursorHookInstaller.ts` puts the lock path into `unresolved` on its release-failure arms (`:178`, `:237`) and into `unresolvedConfigPaths(true)` for `lock-unavailable` (`:243`), reaching the same `formatWarning`. Close it there too — `appendUnresolved` loses its only caller.
+    6. `unresolved` was doing DOUBLE DUTY — a user-facing path list AND the internal "something is unresolved" signal — so emptying it silently disarms three consumers. In `src/agentHooks/AgentHookController.ts` a lock-release failure then reaches `{ success: true, reason: "" }`, so no warning fires at all (`:239`, `:266`), and uninstall GRANTS the authority D5/D9 says to withhold; in `src/cursor/CursorHookInstaller.ts:117` the Windows install path reads it as a clean cleanup and reports `unsupported-platform` over a stuck lock. Make the residue signal the REASON, keeping the path check as an OR so no existing behaviour moves.
+    7. Arm-check by putting each path back and confirming the witness fails, and by emptying `unresolved` WITHOUT the reason arm to confirm the warning-still-fires witness catches it.
+  - **Boundary**: no `{ bigint: true }` conversion of either installer's pre-existing stat captures; the authority RULE stated in D5 and D9 is unchanged — only the signal it reads
 
 - [ ] 2_2 Say what the save actually did, on a panel that has contents
   - **Deps**: 2_1
@@ -65,10 +67,10 @@
     - Outcome: each of the three writer outcomes gets its own summary on a model that carries contents
     - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts
   - **Plan**:
-    1. `src/types/messages.ts` — split `ProvisionProblem` into the discriminated union in design.md D4; the `locked` member REQUIRES `writeOutcome`. Replace the `locked` comment that claims the file was written.
-    2. `src/providers/WorktreeHost.ts:2531` — stop collapsing with `written.ok && written.wrote`; pass the writer's own three-way answer into `leftLocked`.
-    3. `src/webview/worktree/WorktreeCreateDialog.ts` — move the save-outcome check AHEAD of the content-count return at `:723-725`, which is what hid the summary. Use D4's exact strings.
-    4. `src/types/messages.contract.test.ts` — the outcome-less locked object must now FAIL to compile; assert that rather than its key count at `:327`.
-    5. Witness every row of D4's summary table on a POPULATED model, plus refusal precedence and the failed reread from 1_3.
+    1. In `src/types/messages.ts` — split `ProvisionProblem` into the discriminated union in design.md D4; the `locked` member REQUIRES `writeOutcome`. Replace the `locked` comment that claims the file was written.
+    2. In `src/providers/WorktreeHost.ts`, at line 2531 — stop collapsing with `written.ok && written.wrote`; pass the writer's own three-way answer into `leftLocked`.
+    3. In `src/webview/worktree/WorktreeCreateDialog.ts` — move the save-outcome check AHEAD of the content-count return at `src/webview/worktree/WorktreeCreateDialog.ts:723-725`, which is what hid the summary. Use D4's exact strings.
+    4. In `src/types/messages.contract.test.ts` — the outcome-less locked object must now FAIL to compile; assert that rather than its key count at `:327`.
+    5. Witness every row of D4's summary table on a POPULATED model in `src/webview/worktree/WorktreeCreateDialog.test.ts`, plus refusal precedence and the failed reread from 1_3 in `src/providers/WorktreeHost.actions.test.ts`.
     6. Arm-check by restoring the early return and by collapsing the three outcomes back to a boolean.
   - **Boundary**: `media/webview.js` is a build artifact and untracked — do not edit it

@@ -375,7 +375,7 @@ describe("CursorHookInstaller", () => {
     await expect(installer.install()).resolves.toMatchObject({
       installed: false,
       reason: "lock-unavailable",
-      unresolved: [paths.configPath, join(paths.storagePath, "cursor-hook-observer.sh"), lockPath],
+      unresolved: [paths.configPath, join(paths.storagePath, "cursor-hook-observer.sh")],
     });
     expect(await readFile(paths.configPath, "utf8")).toBe(original);
     expect(await readFile(lockPath, "utf8")).toBe("owner still live");
@@ -411,7 +411,7 @@ describe("CursorHookInstaller", () => {
     await expect(second.install()).resolves.toMatchObject({
       installed: false,
       reason: "lock-unavailable",
-      unresolved: [paths.configPath, join(paths.storagePath, "cursor-hook-observer.sh"), lockPath],
+      unresolved: [paths.configPath, join(paths.storagePath, "cursor-hook-observer.sh")],
     });
     expect(await readFile(paths.configPath, "utf8")).toBe(original);
 
@@ -446,8 +446,8 @@ describe("CursorHookInstaller", () => {
       const result = await installer[operation]();
       expect(result).toEqual(
         operation === "install"
-          ? { installed: true, reason: "lock-release-failed", unresolved: [lockPath] }
-          : { removed: true, reason: "lock-release-failed", unresolved: [lockPath] },
+          ? { installed: true, reason: "lock-release-failed" }
+          : { removed: true, reason: "lock-release-failed" },
       );
       expect(await readFile(lockPath, "utf8")).toBe("");
     },
@@ -600,7 +600,7 @@ describe("CursorHookInstaller", () => {
     await expect(installer.install()).resolves.toEqual({
       installed: false,
       reason: "lock-unavailable",
-      unresolved: [paths.configPath, wrapperPath, lockPath],
+      unresolved: [paths.configPath, wrapperPath],
     });
     expect(files.get(wrapperPath)).toBe("legacy");
   });
@@ -688,8 +688,8 @@ describe("CursorHookInstaller", () => {
 
       await expect(installer[operation]()).resolves.toEqual(
         operation === "install"
-          ? { installed: false, reason: "lock-release-failed", unresolved: [lockPath] }
-          : { removed: true, reason: "lock-release-failed", unresolved: [lockPath] },
+          ? { installed: false, reason: "lock-release-failed" }
+          : { removed: true, reason: "lock-release-failed" },
       );
       expect(files.has(wrapperPath)).toBe(false);
       expect(files.has(lockPath)).toBe(true);

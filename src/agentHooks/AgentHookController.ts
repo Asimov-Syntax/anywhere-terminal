@@ -214,7 +214,7 @@ export class AgentHookController {
       // A committed install still warns separately when cleanup left residue
       // behind (D9); a failed install or a removal carrying unresolved paths
       // both already report through `success: false`.
-      if (!outcome.success || (outcome.unresolved && outcome.unresolved.length > 0)) {
+      if (!outcome.success || leftResidue(outcome)) {
         this.options.onWarning?.(agent, enabled ? "install" : "uninstall", formatWarning(outcome));
       }
       return outcome;
@@ -236,7 +236,7 @@ export class AgentHookController {
       // Installed config plus cleanup warning still grants authority; the
       // warning is emitted separately by the caller (D9).
       const unresolved = result.unresolved;
-      return unresolved && unresolved.length > 0
+      return leftResidue(result)
         ? {
             success: true,
             reason: result.reason ?? "lock-release-failed",
@@ -263,7 +263,7 @@ export class AgentHookController {
       // Any removal result carrying unresolved paths remains unsuccessful at
       // the controller boundary, even though the config write committed (D5, D9).
       const unresolved = result.unresolved;
-      return unresolved && unresolved.length > 0
+      return leftResidue(result)
         ? {
             success: false,
             reason: result.reason ?? "lock-release-failed",
@@ -353,6 +353,32 @@ export class AgentHookController {
     this.options.setContributor(undefined);
     this.attached = false;
   }
+}
+
+/**
+ * Whether a COMMITTED operation still left something behind.
+ *
+ * The reason, not the path list. `unresolved` used to answer both questions, and
+ * once the installers stopped naming locks they could not vouch for it started
+ * answering only one — a stuck release arrived here as an empty list, which read
+ * as a clean run and dropped both the warning D2 promises and the authority D5
+ * and D9 withhold. The path check stays as the other arm so nothing that already
+ * reported residue stops reporting it.
+ *
+ * `not-installed` and `unsupported-platform` are ordinary answers rather than
+ * residue, and `""` is how a clean reconciliation spells "nothing to say"; the
+ * callers above have already dealt with them.
+ */
+function leftResidue(result: { reason?: string; unresolved?: readonly string[] }): boolean {
+  if ((result.unresolved?.length ?? 0) > 0) {
+    return true;
+  }
+  return (
+    result.reason !== undefined &&
+    result.reason !== "" &&
+    result.reason !== "not-installed" &&
+    result.reason !== "unsupported-platform"
+  );
 }
 
 function formatWarning(outcome: HookReconciliationOutcome): string {

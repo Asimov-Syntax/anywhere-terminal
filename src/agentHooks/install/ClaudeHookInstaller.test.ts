@@ -233,7 +233,11 @@ describe("ClaudeHookInstaller", () => {
     expect(contents.match(/"command": "true"/g) ?? []).toHaveLength(CLAUDE_HOOK_EVENTS.length);
   });
 
-  it("does not reclaim a live lock or mutate its document", async () => {
+  // The lock is NOT named. This process never acquired it, so of every name in
+  // this file it is the one we have least standing to vouch for — and by the time
+  // a person reads the warning it may bind to a lock someone else is holding
+  // (spec: "The lock was never acquired at all").
+  it("does not reclaim a live lock, mutate its document, or name it", async () => {
     const { directory, path } = await fixture();
     const lock = `${path}.anywhere-terminal.lock`;
     await writeFile(path, "{}\n");
@@ -245,13 +249,17 @@ describe("ClaudeHookInstaller", () => {
     await expect(installer.install()).resolves.toEqual({
       installed: false,
       reason: "lock-unavailable",
-      affected: [path, lock],
+      affected: [path],
     });
     expect(await readFile(path, "utf8")).toBe("{}\n");
     expect(await readFile(lock, "utf8")).toBe("held");
   });
 
-  it("preserves mode atomically and reports lock-release residue after a commit", async () => {
+  // `stuck` is the one arm where the name DID identify our lock at the moment the
+  // unlink failed. It is still not offered: the ledger row records that `released`
+  // and `stuck` are claims about a moment rather than proofs, and the user acts
+  // minutes later. The warning still fires — `lock-release-failed` is the report.
+  it("preserves mode atomically and reports lock-release residue without naming it", async () => {
     const { directory, path } = await fixture();
     await writeFile(path, "{}\n");
     await chmod(path, 0o640);
@@ -271,7 +279,7 @@ describe("ClaudeHookInstaller", () => {
       installed: true,
       reason: "lock-release-failed",
       affected: [path],
-      unresolved: [`${path}.anywhere-terminal.lock`],
+      unresolved: [],
     });
     expect((await stat(path)).mode & 0o777).toBe(0o640);
   });

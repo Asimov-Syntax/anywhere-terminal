@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix } from "node:path";
+import { type FileIdentity, sameIdentity } from "../../utils/fileIdentity";
 import type { HookInstallOutcome, HookRemoveOutcome } from "../AgentHookController";
 import {
   type ClaudeConfigLocation,
@@ -34,7 +35,7 @@ export interface ClaudeHookInstallerDependencies {
 
 type FileSystem = LockedFileSystem;
 
-type Identity = { dev: number | bigint; ino: number | bigint };
+type Identity = FileIdentity;
 type ComponentIdentity = Identity & { path: string };
 type FinalIdentity = { kind: "missing" } | ({ kind: "file" } & Identity);
 interface PathAuthorization {
@@ -94,7 +95,6 @@ export class ClaudeHookInstaller {
     // `AgentHookController.formatWarning` joins these straight into the user's
     // warning, and a name that now identifies another writer's live lock must
     // never arrive there (design.md D1, D2).
-    const unresolved: string[] = [];
     let unreleased = false;
     const outcome = await locked.withLock<OperationOutcome>(
       async () => {
@@ -104,13 +104,17 @@ export class ClaudeHookInstaller {
         }
         return this.reconcile(path, operation, authorization);
       },
-      this.failure(operation, "lock-unavailable", path, [path, locked.lockPath]),
+      // The configuration file, and NOT `locked.lockPath`. A lock this process
+      // failed to acquire is the one name it has least standing to vouch for,
+      // and the warning is read long after the name could have been rebound.
+      this.failure(operation, "lock-unavailable", path),
       this.failure(operation, "write-failed", path),
-      (lockPath, release) => {
+      // Only THAT a release did not resolve, never which file. `stuck` is the one
+      // arm whose name identified our lock at the moment the unlink failed, and
+      // it is still not offered: that is a claim about a moment, not a proof, and
+      // the user acts on it minutes later (design.md D1, D3).
+      () => {
         unreleased = true;
-        if (release === "stuck") {
-          unresolved.push(lockPath);
-        }
       },
     );
     if (!unreleased) {
@@ -123,7 +127,7 @@ export class ClaudeHookInstaller {
       ...outcome,
       reason: committedOrAbsent ? "lock-release-failed" : outcome.reason,
       affected: uniquePaths([...(outcome.affected ?? []), path]),
-      unresolved: uniquePaths([...(outcome.unresolved ?? []), ...unresolved]),
+      unresolved: uniquePaths(outcome.unresolved ?? []),
     };
   }
 
@@ -372,10 +376,6 @@ function parentComponents(path: string): string[] {
     result.push(current);
   }
   return result;
-}
-
-function sameIdentity(left: Identity, right: Identity): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function uniquePaths(paths: readonly string[]): string[] {

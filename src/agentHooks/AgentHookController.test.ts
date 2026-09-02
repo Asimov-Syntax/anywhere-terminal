@@ -183,6 +183,41 @@ describe("AgentHookController", () => {
     });
   });
 
+  // The residue signal must NOT be the path list. Task 2_1 stopped naming locks,
+  // so a stuck release now carries `unresolved: []` — and if the controller reads
+  // only the list, the warning D2 promises would never fire and uninstall would
+  // grant the very authority D5/D9 withholds. Both arms, with no path anywhere.
+  it("still warns about a lock-release failure that names no path", async () => {
+    const { controller, onWarning } = controllerDeps({
+      initialEnabled: true,
+      install: async () => ({
+        installed: true,
+        reason: "lock-release-failed",
+        affected: ["/tmp/settings.json"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(onWarning).toHaveBeenCalledWith("cursor", "install", "lock-release-failed: /tmp/settings.json");
+  });
+
+  it("still withholds authority when a removal leaves a lock it will not name (D5, D9)", async () => {
+    const { controller, onWarning, runtime } = controllerDeps({
+      initialEnabled: false,
+      uninstall: async () => ({
+        removed: true,
+        reason: "lock-release-failed",
+        affected: ["/tmp/settings.json"],
+      }),
+    });
+
+    await controller.start();
+
+    expect(runtime.setAgentEnabled).not.toHaveBeenCalledWith("cursor", true);
+    expect(onWarning).toHaveBeenCalledWith("cursor", "uninstall", "lock-release-failed: /tmp/settings.json");
+  });
+
   it("withholds authority when removal commits but leaves an unresolved lock path (D5, D9)", async () => {
     const { controller, onWarning, runtime } = controllerDeps({
       initialEnabled: false,

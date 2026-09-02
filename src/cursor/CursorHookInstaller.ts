@@ -114,7 +114,12 @@ export class CursorHookInstaller {
       if (cleanup.reason === "not-installed") {
         return { installed: false, reason: "unsupported-platform" };
       }
-      const clean = !cleanup.unresolved || cleanup.unresolved.length === 0;
+      // The reason as well as the list. Once a stuck release stopped naming its
+      // lock, an empty `unresolved` no longer meant the cleanup resolved — it
+      // read as clean and reported `unsupported-platform` over a lock still in
+      // the way, which is the one thing the user needed to hear.
+      const clean =
+        (!cleanup.unresolved || cleanup.unresolved.length === 0) && cleanup.reason !== "lock-release-failed";
       if (clean && cleanup.removed) {
         return { installed: false, reason: "unsupported-platform" };
       }
@@ -169,14 +174,14 @@ export class CursorHookInstaller {
       {
         installed: false,
         reason: "lock-unavailable",
-        unresolved: this.unresolvedConfigPaths(true),
+        unresolved: this.unresolvedConfigPaths(),
       },
       { installed: false, reason: "write-failed", unresolved: this.unresolvedConfigPaths() },
-      (result, lockPath) => ({
-        ...result,
-        reason: "lock-release-failed",
-        unresolved: appendUnresolved(result.unresolved, lockPath),
-      }),
+      // The reason alone. A lock pathname is never handed to the user: the name is
+      // reboundable and the warning is read long after the release failed, so
+      // acting on it can delete a live lock (say-which-lock-a-save-left-behind
+      // design.md D1, and the spec's "in the panel or in any warning").
+      (result) => ({ ...result, reason: "lock-release-failed" }),
     );
   }
 
@@ -228,19 +233,25 @@ export class CursorHookInstaller {
       {
         removed: false,
         reason: "lock-unavailable",
-        unresolved: this.unresolvedConfigPaths(true),
+        unresolved: this.unresolvedConfigPaths(),
       },
       { removed: false, reason: "write-failed", unresolved: this.unresolvedConfigPaths() },
-      (result, lockPath) => ({
-        ...result,
-        reason: "lock-release-failed",
-        unresolved: appendUnresolved(result.unresolved, lockPath),
-      }),
+      // The reason alone. A lock pathname is never handed to the user: the name is
+      // reboundable and the warning is read long after the release failed, so
+      // acting on it can delete a live lock (say-which-lock-a-save-left-behind
+      // design.md D1, and the spec's "in the panel or in any warning").
+      (result) => ({ ...result, reason: "lock-release-failed" }),
     );
   }
 
-  private unresolvedConfigPaths(includeLock = false): readonly string[] {
-    return [this.options.configPath, this.wrapperPath(), ...(includeLock ? [this.lockPath()] : [])];
+  /**
+   * The user's own files, and never the lock. A lock this process failed to
+   * acquire is the one name it has least standing to vouch for — it belongs to
+   * whoever is holding it, and by the time the warning is read it may belong to
+   * someone else again.
+   */
+  private unresolvedConfigPaths(): readonly string[] {
+    return [this.options.configPath, this.wrapperPath()];
   }
 
   private async removeLegacyWrapper(): Promise<"removed" | "missing" | "failed"> {
@@ -256,7 +267,7 @@ export class CursorHookInstaller {
     work: () => Promise<T>,
     lockUnavailable: T,
     writeFailed: T,
-    lockReleaseFailed: (result: T, lockPath: string) => T,
+    lockReleaseFailed: (result: T) => T,
   ): Promise<T> {
     const lockPath = this.lockPath();
     if (!(await this.acquireLock(lockPath))) {
@@ -272,7 +283,7 @@ export class CursorHookInstaller {
       await this.fs.unlink(lockPath);
     } catch (error) {
       if (!isNotFound(error)) {
-        return lockReleaseFailed(result, lockPath);
+        return lockReleaseFailed(result);
       }
     }
     return result;
@@ -412,10 +423,6 @@ function ownedEntry(command: string): JsonObject {
 
 function hasCommandReference(hooks: Record<string, JsonObject[]>, command: string): boolean {
   return Object.values(hooks).some((entries) => entries.some((entry) => entry.command === command));
-}
-
-function appendUnresolved(paths: readonly string[] | undefined, path: string): readonly string[] {
-  return paths?.includes(path) ? paths : [...(paths ?? []), path];
 }
 
 function isOwnedEntry(entry: JsonObject, commands: readonly string[]): boolean {
