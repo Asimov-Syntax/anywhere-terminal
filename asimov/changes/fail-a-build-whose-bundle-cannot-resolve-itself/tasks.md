@@ -207,7 +207,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     1. In `scripts/bundleRequires.mjs`, have `classify` decide relative-versus-bare through the same predicate discovery uses, rather than its own `startsWith(".")` test.
     2. Witness a dot-prefixed bare name reported with warning severity and a zero exit, and witness that the four relative spellings still fail.
 
-- [ ] 7_2 Resolve a Win32 spelling by its spelling, not by the build host
+- [x] 7_2 Resolve a Win32 spelling by its spelling, not by the build host — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 7_1
   - **Refs**: design.md D6, .reviews/round-6.md#f017
   - **Acceptance**:

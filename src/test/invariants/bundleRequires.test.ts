@@ -615,3 +615,27 @@ describe("[round-6 F016] one predicate decides the class", () => {
     }
   });
 });
+
+// [round-6 F017] A Win32-spelled specifier was handed to the host's own
+// resolver, so on POSIX `.\lib\thing.js` became one filename containing
+// backslashes and could never resolve. The spelling picks the flavour, never
+// the build host (design.md D6).
+const WIN32_SPELLING = ".\\lib\\thing.js";
+
+describe("[round-6 F017] a Win32 spelling resolves by its spelling", () => {
+  it("resolves against the file it names beside the bundle", () => {
+    const bundle = `var r = require; r(${JSON.stringify(WIN32_SPELLING)});`;
+    expect(verdicts(bundle, files("/repo/dist/lib/thing.js"))).toEqual([]);
+  });
+
+  it("still fails when that file is not there", () => {
+    const bundle = `var r = require; r(${JSON.stringify(WIN32_SPELLING)});`;
+    expect(one(bundle)).toMatchObject({ severity: "fails", ok: false });
+    expect(one(bundle).why).toContain("/repo/dist/lib/thing.js");
+  });
+
+  it("still refuses a Win32-spelled traversal out of the artifact", () => {
+    const bundle = `var r = require; r(${JSON.stringify("..\\..\\etc\\passwd")});`;
+    expect(one(bundle, () => true).why).toContain("outside the packaged");
+  });
+});

@@ -555,8 +555,23 @@ function resolveManifest(target, root, { exists, isDirectory, readFile }) {
   return { ok: false, why: `main "${main}" names ${entry}, which the packaged extension does not carry` };
 }
 
+/** The Win32 spellings among the relative prefixes. */
+const WIN32_PREFIXES = RELATIVE_PREFIXES.filter((prefix) => prefix.includes("\\"));
+
+/**
+ * A relative request in the one flavour the resolver reads.
+ *
+ * The spelling picks the flavour, never the build host: `.\\lib\\thing.js` is a
+ * Win32 path wherever this gate runs, and handing it to a POSIX resolver made
+ * it one filename with backslashes in it, so it could never resolve
+ * (.reviews/round-6.md F017, design.md D6).
+ */
+function posixSpelling(specifier) {
+  return WIN32_PREFIXES.some((prefix) => specifier.startsWith(prefix)) ? specifier.replaceAll("\\", "/") : specifier;
+}
+
 function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) {
-  const target = path.resolve(resolvesFrom, specifier);
+  const target = path.resolve(resolvesFrom, posixSpelling(specifier));
   const root = path.resolve(resolvesFrom);
   const inside = target === root || target.startsWith(root + path.sep);
   if (!inside) {
