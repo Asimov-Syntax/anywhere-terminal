@@ -398,6 +398,29 @@ export function relativeLiterals(bundleSource) {
   return [...seen];
 }
 
+/**
+ * Every relative-headed template in the bundle, as its head text.
+ *
+ * A template whose head starts with a relative prefix is provably a relative
+ * request whatever its substitutions evaluate to, but what it resolves to is
+ * not knowable without running the program — so it is reported rather than
+ * resolved (design.md D7). The bare-prefix limit does NOT apply here: a head of
+ * exactly `./` is the dangerous case, not path data.
+ */
+export function relativeTemplates(bundleSource) {
+  const seen = new Set();
+  walk(parse(bundleSource, "bundle.js"), (node) => {
+    if (!ts.isTemplateExpression(node)) {
+      return;
+    }
+    const head = node.head.text;
+    if (RELATIVE_PREFIXES.some((prefix) => head.startsWith(prefix))) {
+      seen.add(head);
+    }
+  });
+  return [...seen];
+}
+
 /** Every distinct specifier the bundle still requires, in first-seen order. */
 export function requiredSpecifiers(bundleSource) {
   const { checker, root } = checkerFor(bundleSource);
@@ -636,9 +659,19 @@ export function unresolvableRequires(bundleSource, { esbuildSource, outfile, res
   // class soundly, and call detection owns bare and absolute specifiers, which
   // cannot be swept because every string would be a candidate (design.md D6).
   const candidates = new Set([...requiredSpecifiers(bundleSource), ...relativeLiterals(bundleSource)]);
-  return [...candidates]
+  const resolved = [...candidates]
     .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory, readFile }))
     .filter((verdict) => !verdict.ok);
+  // A relative request the gate cannot resolve is still a relative request
+  // (design.md D7). It fails rather than warns because the real artifact
+  // carries none, so the rule cannot reject a build that works today.
+  const computed = relativeTemplates(bundleSource).map((head) => ({
+    specifier: `${head}\${...}`,
+    ok: false,
+    severity: "fails",
+    why: "relative request built at runtime — the gate cannot resolve what it will name",
+  }));
+  return [...resolved, ...computed];
 }
 
 /** Read the two files the gate needs. Separate so tests never touch the disk. */

@@ -184,7 +184,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     2. Expose a count of edge applications from the propagation, so the invariant is observable rather than inferred.
     3. Witness the count equal to the edge count on the fanout topology round 5's F006 measured. A wall-clock budget is NOT the witness: the existing timing assertion passed while the fanout was still quadratic, so timing cannot tell the two apart.
 
-- [ ] 6_5 Report a relative request the gate cannot resolve
+- [x] 6_5 Report a relative request the gate cannot resolve — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_4
   - **Refs**: design.md D7
   - **Acceptance**:

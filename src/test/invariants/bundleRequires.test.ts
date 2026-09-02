@@ -408,9 +408,7 @@ describe("[round-5 F013] a prefixed literal is swept from any position", () => {
   const swept = (bundle: string) => verdicts(bundle).map((v) => v.specifier);
 
   it("reports a genuine request sharing a bundle with an unrelated prefix test", () => {
-    expect(swept(`var isUp = (p) => p.startsWith("../"); var r = require; r("./gone");`)).toContain(
-      "./gone",
-    );
+    expect(swept(`var isUp = (p) => p.startsWith("../"); var r = require; r("./gone");`)).toContain("./gone");
   });
 
   it("reports a literal a string method carries into require", () => {
@@ -418,15 +416,11 @@ describe("[round-5 F013] a prefixed literal is swept from any position", () => {
   });
 
   it("reports one an object method carries, where a name-based exemption would not", () => {
-    expect(swept(`var box = { startsWith: (s) => require(s) }; box.startsWith("./gone");`)).toContain(
-      "./gone",
-    );
+    expect(swept(`var box = { startsWith: (s) => require(s) }; box.startsWith("./gone");`)).toContain("./gone");
   });
 
   it("leaves the real artifact's own prefix test alone", () => {
-    expect(
-      swept('var f = (rel) => rel === ".." || rel.startsWith("../") || rel.startsWith("..\\");'),
-    ).toEqual([]);
+    expect(swept('var f = (rel) => rel === ".." || rel.startsWith("../") || rel.startsWith("..\\");')).toEqual([]);
   });
 });
 
@@ -560,5 +554,42 @@ describe("[round-5 F006] each propagation edge is applied once", () => {
 
   it("still finds the specifier every callable requires", () => {
     expect(requiredSpecifiers(fanout(50))).toContain("./x49");
+  });
+});
+
+// [round-5 D7] PLAN acceptance says "a relative `require`", not "a relative
+// literal". esbuild preserves `r(`./${name}`)` when the loader reaches the
+// factory as a parameter — the exact UMD shape this change exists to catch —
+// and a TemplateExpression is invisible to both the sweep and call detection.
+describe("[round-5 D7] a relative request the gate cannot resolve is reported", () => {
+  const swept = (bundle: string) => verdicts(bundle).map((v) => v.specifier);
+
+  // The opening delimiter is assembled rather than written: spelled out in a
+  // plain string it trips noTemplateCurlyInString, and in a template literal it
+  // trips noUnusedTemplateLiteral. The fixtures are bundle SOURCE, so they have
+  // to carry a real one.
+  const OPEN = `$${"{"}`;
+  const posix = `var r = require; r(\`./${OPEN}name}\`);`;
+  const viaFactory = `(function (factory) { factory(require) })(function (e) { e(\`../${OPEN}n}\`); });`;
+  const bare = `var r = require; r(\`lodash/${OPEN}name}\`);`;
+
+  it("reports a template whose head is a relative prefix", () => {
+    expect(swept(posix).join(" ")).toContain("./");
+  });
+
+  it("reports it through a factory parameter, where call detection cannot follow", () => {
+    expect(swept(viaFactory).join(" ")).toContain("../");
+  });
+
+  it("fails the build rather than warning", () => {
+    expect(verdicts(posix)[0]).toMatchObject({ severity: "fails" });
+  });
+
+  it("does not report a template with a non-relative head", () => {
+    expect(verdicts(bare)).toEqual([]);
+  });
+
+  it("does not report a template with no substitution, which is already a literal", () => {
+    expect(verdicts("var msg = `./plain`;", files("/repo/dist/plain"))).toEqual([]);
   });
 });
