@@ -37,7 +37,7 @@ describe("runSetup", () => {
     const first = child(0);
     const second = child(0);
     const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
-    const terminal = { open: vi.fn(async () => true), attach: vi.fn(), close: vi.fn() };
+    const terminal = { open: vi.fn(async () => true), attach: vi.fn(), detach: vi.fn(), close: vi.fn() };
     const stillAuthorized = vi.fn(async () => true);
 
     const result = await runSetup(
@@ -78,6 +78,8 @@ describe("runSetup", () => {
       }),
     });
     expect(terminal.attach).toHaveBeenCalledWith(first);
+    expect(terminal.detach).toHaveBeenNthCalledWith(1, first);
+    expect(terminal.detach).toHaveBeenNthCalledWith(2, second);
     expect(stillAuthorized).toHaveBeenCalledTimes(2);
     expect(result).toEqual({
       succeeded: true,

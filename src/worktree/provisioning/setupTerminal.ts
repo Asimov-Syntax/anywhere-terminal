@@ -2,6 +2,9 @@ import * as vscode from "vscode";
 import type { Pty } from "../../pty/PtyManager";
 
 const TRANSCRIPT_LIMIT = 1024 * 1024;
+const MAX_TRANSCRIPT_CHUNKS = 256;
+const LIVE_FLUSH_CHARS = 64 * 1024;
+const LIVE_FLUSH_MS = 8;
 
 interface EmitterLike {
   readonly event: vscode.Event<string>;
@@ -43,8 +46,15 @@ export class SetupTerminal {
   private closed = false;
   private openPromise: Promise<boolean> | undefined;
   private resolveOpen: ((opened: boolean) => void) | undefined;
-  private tail = "";
+  private tailChunks: Buffer[] = [];
+  private tailHead = 0;
+  private tailBytes = 0;
+  private liveChunks: string[] = [];
+  private liveChars = 0;
+  private liveFlush: ReturnType<typeof setTimeout> | undefined;
+  private replayTerminal: TerminalLike | undefined;
   private retainedOutput: { id: string; origin: string } | undefined;
+  private disposed = false;
 
   constructor(dependencies: SetupTerminalDependencies = {}) {
     this.createTerminal =
@@ -57,6 +67,9 @@ export class SetupTerminal {
 
   /** Show the terminal and wait until VS Code accepts output. */
   open(): Promise<boolean> {
+    if (this.disposed) {
+      return Promise.resolve(false);
+    }
     if (this.openPromise) {
       return this.openPromise;
     }
@@ -83,10 +96,18 @@ export class SetupTerminal {
 
   /** Attach the runner's current child. It is not observed until the terminal is open. */
   attach(child: Pty): void {
-    this.childData?.dispose();
-    this.childData = undefined;
+    this.detach(this.child);
     this.child = child;
     this.connectChild();
+  }
+
+  detach(child: Pty | undefined): void {
+    if (child === undefined || this.child !== child) {
+      return;
+    }
+    this.childData?.dispose();
+    this.childData = undefined;
+    this.child = undefined;
   }
 
   onClose(listener: () => void): { dispose(): void } {
@@ -108,16 +129,20 @@ export class SetupTerminal {
 
   /** Reveal live output or recreate a read-only terminal from the bounded tail. */
   reveal(outputId: string, origin: string): boolean {
-    if (this.retainedOutput?.id !== outputId || this.retainedOutput.origin !== origin) {
+    if (this.disposed || this.retainedOutput?.id !== outputId || this.retainedOutput.origin !== origin) {
       return false;
     }
     if (!this.closed && this.terminal) {
       this.terminal.show(true);
       return true;
     }
-    const transcript = this.tail;
+    if (this.replayTerminal) {
+      this.replayTerminal.show(true);
+      return true;
+    }
+    const transcript = this.transcript();
     const emitter = this.createEmitter();
-    const terminal = this.createTerminal({
+    this.replayTerminal = this.createTerminal({
       name: `${this.name} output`,
       pty: {
         onDidWrite: emitter.event,
@@ -129,12 +154,12 @@ export class SetupTerminal {
         close: () => emitter.dispose(),
       },
     });
-    terminal.show(true);
+    this.replayTerminal.show(true);
     return true;
   }
 
   transcript(): string {
-    return this.tail;
+    return Buffer.concat(this.tailChunks.slice(this.tailHead), this.tailBytes).toString("utf8");
   }
 
   private writerForLiveTerminal(): EmitterLike {
@@ -150,22 +175,91 @@ export class SetupTerminal {
     }
     this.childData = this.child.onData((data) => {
       this.append(data);
-      this.writer?.fire(data);
+      this.queueLiveWrite(data);
     });
   }
 
   private append(data: string): void {
-    const bytes = Buffer.from(this.tail + data);
-    if (bytes.length <= TRANSCRIPT_LIMIT) {
-      this.tail = this.tail + data;
+    let chunk: Buffer = Buffer.from(data);
+    if (chunk.length >= TRANSCRIPT_LIMIT) {
+      chunk = utf8Tail(chunk, TRANSCRIPT_LIMIT);
+      this.tailChunks = [chunk];
+      this.tailHead = 0;
+      this.tailBytes = chunk.length;
       return;
     }
-    let start = bytes.length - TRANSCRIPT_LIMIT;
-    // Do not turn a multi-byte character split at the tail boundary into U+FFFD.
-    while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) {
-      start += 1;
+    this.tailChunks.push(chunk);
+    this.tailBytes += chunk.length;
+    this.evictTranscript();
+    if (this.tailChunks.length - this.tailHead > MAX_TRANSCRIPT_CHUNKS) {
+      this.tailChunks = [Buffer.concat(this.tailChunks.slice(this.tailHead), this.tailBytes)];
+      this.tailHead = 0;
     }
-    this.tail = bytes.subarray(start).toString("utf8");
+  }
+
+  private evictTranscript(): void {
+    let excess = this.tailBytes - TRANSCRIPT_LIMIT;
+    while (excess > 0 && this.tailHead < this.tailChunks.length) {
+      const oldest = this.tailChunks[this.tailHead];
+      if (oldest.length <= excess) {
+        this.tailHead += 1;
+        this.tailBytes -= oldest.length;
+        excess -= oldest.length;
+        continue;
+      }
+      const retained = utf8Tail(oldest, oldest.length - excess);
+      this.tailChunks[this.tailHead] = retained;
+      this.tailBytes -= oldest.length - retained.length;
+      excess = 0;
+    }
+    if (this.tailHead >= MAX_TRANSCRIPT_CHUNKS) {
+      this.tailChunks = this.tailChunks.slice(this.tailHead);
+      this.tailHead = 0;
+    }
+  }
+
+  private queueLiveWrite(data: string): void {
+    this.liveChunks.push(data);
+    this.liveChars += data.length;
+    if (this.liveChars >= LIVE_FLUSH_CHARS) {
+      this.flushLiveWrites();
+      return;
+    }
+    this.liveFlush ??= setTimeout(() => this.flushLiveWrites(), LIVE_FLUSH_MS);
+  }
+
+  private flushLiveWrites(): void {
+    if (this.liveFlush !== undefined) {
+      clearTimeout(this.liveFlush);
+      this.liveFlush = undefined;
+    }
+    if (this.liveChars === 0 || this.closed || this.disposed) {
+      this.liveChunks = [];
+      this.liveChars = 0;
+      return;
+    }
+    const output = this.liveChunks.join("");
+    this.liveChunks = [];
+    this.liveChars = 0;
+    for (let start = 0; start < output.length; start += LIVE_FLUSH_CHARS) {
+      this.writer?.fire(output.slice(start, start + LIVE_FLUSH_CHARS));
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.close();
+    this.terminal?.dispose();
+    this.terminal = undefined;
+    this.replayTerminal?.dispose();
+    this.replayTerminal = undefined;
+    this.retainedOutput = undefined;
+    this.tailChunks = [];
+    this.tailHead = 0;
+    this.tailBytes = 0;
   }
 
   private close(): void {
@@ -174,13 +268,34 @@ export class SetupTerminal {
     }
     this.closed = true;
     this.resolveOpen?.(false);
-    this.child?.kill();
-    this.childData?.dispose();
-    this.childData = undefined;
+    const child = this.child;
+    if (child !== undefined) {
+      try {
+        child.kill();
+      } catch {
+        // The child may already have exited; close still releases every owner.
+      }
+      this.detach(child);
+    }
+    if (this.liveFlush !== undefined) {
+      clearTimeout(this.liveFlush);
+      this.liveFlush = undefined;
+    }
+    this.liveChunks = [];
+    this.liveChars = 0;
     for (const listener of this.closeListeners) {
       listener();
     }
     this.closeListeners.clear();
     this.writer?.dispose();
+    this.writer = undefined;
   }
+}
+
+function utf8Tail(bytes: Buffer, limit: number): Buffer {
+  let start = Math.max(0, bytes.length - limit);
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) {
+    start += 1;
+  }
+  return bytes.subarray(start);
 }

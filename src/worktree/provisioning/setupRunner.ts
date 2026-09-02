@@ -28,6 +28,8 @@ export interface SetupRunTerminal {
   open(): Promise<boolean>;
   /** Starts forwarding one child to the terminal. */
   attach(child: Pty): void;
+  /** Stops forwarding the named child without closing retained output. */
+  detach?(child: Pty): void;
   /** Called when VS Code closes the pseudoterminal. */
   onClose?(listener: () => void): { dispose(): void };
 }
@@ -136,21 +138,25 @@ async function runStep(
   }
 
   dependencies.terminal.attach(child);
-  const settled = await waitForExit(child, dependencies.cancellation);
-  if (settled.kind === "exit" && settled.exitCode === 0 && settled.signal === undefined) {
-    return { ok: true, reason: "", result: ok(step) };
+  try {
+    const settled = await waitForExit(child, dependencies.cancellation);
+    if (settled.kind === "exit" && settled.exitCode === 0 && settled.signal === undefined) {
+      return { ok: true, reason: "", result: ok(step) };
+    }
+    let reason: string;
+    if (settled.kind === "timeout") {
+      reason = "setup deadline exceeded";
+    } else if (settled.kind === "closed") {
+      reason = "setup terminal was closed";
+    } else if (settled.signal !== undefined) {
+      reason = `terminated by signal ${settled.signal}`;
+    } else {
+      reason = `exited with code ${settled.exitCode}`;
+    }
+    return { ok: false, reason, result: failed(step, reason) };
+  } finally {
+    dependencies.terminal.detach?.(child);
   }
-  let reason: string;
-  if (settled.kind === "timeout") {
-    reason = "setup deadline exceeded";
-  } else if (settled.kind === "closed") {
-    reason = "setup terminal was closed";
-  } else if (settled.signal !== undefined) {
-    reason = `terminated by signal ${settled.signal}`;
-  } else {
-    reason = `exited with code ${settled.exitCode}`;
-  }
-  return { ok: false, reason, result: failed(step, reason) };
 }
 
 function commandFor(
@@ -307,7 +313,9 @@ function waitForExit(child: Pty, cancellation: SetupCancellation): Promise<Proce
       return;
     }
     stopSubscription = cancellation.onStop((reason) => {
-      safeKill(child);
+      if (reason === "setup deadline exceeded") {
+        safeKill(child);
+      }
       settle({ kind: reason === "setup deadline exceeded" ? "timeout" : "closed" });
     });
     if (settled) {

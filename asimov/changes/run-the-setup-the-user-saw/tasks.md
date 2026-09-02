@@ -131,7 +131,7 @@
     2. In `src/worktree/provisioning/setupRunner.ts`, overlay host variables after ports, create one deadline and close cancellation state, race authorization against it, recheck immediately before spawn, and make kill plus settlement exception-safe.
     3. Extend `src/worktree/provisioning/setupRunner.test.ts` with collision, hanging authorization, close-before-spawn, deadline, and throwing-kill witnesses.
 
-- [ ] 5_2 Bound and dispose setup terminal resources
+- [x] 5_2 Bound and dispose setup terminal resources — verified: pnpm exec vitest run src/worktree/provisioning/setupRunner.test.ts src/worktree/provisioning/setupTerminal.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 5_1
   - **Refs**: design.md D2 <!-- review round 1 F003, F006, F009, F010 -->
   - **Acceptance**:
