@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
@@ -49,7 +49,13 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
         throw Object.assign(new Error("exists"), { code: "EEXIST" });
       }
       files.set(path, "");
-      return { close: async () => undefined };
+      return {
+        close: async () => undefined,
+        writeFile: async (contents: string) => {
+          files.set(path, contents);
+        },
+        chmod: async () => undefined,
+      };
     }),
     readFile: vi.fn(async (path: string) => {
       const contents = files.get(path);
@@ -489,11 +495,18 @@ describe("CursorHookInstaller", () => {
       version: 1,
       hooks: { sessionStart: [{ command: legacyCommand, timeout: 2 }] },
     });
-    const installer = new CursorHookInstaller(paths, { fs: memoryFs, now: () => 123 });
+    const installer = new CursorHookInstaller(paths, {
+      fs: memoryFs,
+      now: () => 123,
+      randomBytes: () => Buffer.alloc(16, 0xcd),
+    });
 
     expect((await installer.uninstall()).removed).toBe(true);
+    // The clock no longer names it — an attacker who knows the time knows the
+    // name, and `writeFile` followed a symlink placed there (design.md D1). What
+    // this test still owns is that the temporary is a SIBLING with a win32 path.
     expect(replacements).toEqual([
-      ["C:\\Users\\alice\\.cursor\\.hooks.json.123.tmp", "C:\\Users\\alice\\.cursor\\hooks.json"],
+      [`C:\\Users\\alice\\.cursor\\.hooks.json.${"cd".repeat(16)}.tmp`, "C:\\Users\\alice\\.cursor\\hooks.json"],
     ]);
   });
 
@@ -511,16 +524,19 @@ describe("CursorHookInstaller", () => {
     expect(await readFile(paths.configPath, "utf8")).toBe(original);
   });
 
-  it("reports wrapper creation failure without changing hooks.json", async () => {
+  it("reports a failed staging write without changing hooks.json", async () => {
     const paths = await fixture();
     const original = JSON.stringify({ version: 1, hooks: {} });
     await writeFile(paths.configPath, original);
     const installer = new CursorHookInstaller(paths, {
       fs: {
-        writeFile: async () => {
-          throw new Error("permission denied");
+        open: async (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+          if (String(path).endsWith(".tmp")) {
+            throw new Error("permission denied");
+          }
+          return (open as (...a: never[]) => ReturnType<typeof open>)(path as never, ...(rest as never[]));
         },
-      },
+      } as CursorHookInstallerDependencies["fs"],
     });
 
     await expect(installer.install()).resolves.toMatchObject({ installed: false, reason: "write-failed" });
@@ -928,5 +944,53 @@ describe("CursorHookInstaller", () => {
         child.once("close", (code) => (code === 0 ? resolve() : reject(new Error(`shell -n exited ${code}`))));
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+// The staging name and the call that creates it, against a REAL filesystem —
+// a memory double models neither "writeFile follows the symlink at this name"
+// nor "wx refuses it", and modelling them badly is how this witness would pass
+// over the defect it exists to catch (design.md D1).
+describe("where a replacement is staged", () => {
+  const stagedAt = (directory: string) => join(directory, `.hooks.json.${"ab".repeat(16)}.tmp`);
+
+  /** Fixes the staging name so a test can be waiting at it, as an attacker who guessed would be. */
+  const fixedName: CursorHookInstallerDependencies = {
+    now: () => 1_756_800_000_000,
+    randomBytes: () => Buffer.alloc(16, 0xab),
+  };
+
+  it("refuses a symlink waiting at the staging name rather than writing through it", async () => {
+    const options = await fixture();
+    await writeFile(options.configPath, `${JSON.stringify({ version: 1, hooks: {} })}\n`, "utf8");
+    const decoy = join(options.storagePath, "..", "decoy.txt");
+    await writeFile(decoy, "ORIGINAL\n", "utf8");
+    await symlink(decoy, stagedAt(join(options.configPath, "..")));
+
+    const result = await new CursorHookInstaller(options, fixedName).install();
+
+    expect(result.installed).toBe(false);
+    expect(await readFile(decoy, "utf8")).toBe("ORIGINAL\n");
+  });
+
+  it("names the staging file from neither the clock nor a previous staging", async () => {
+    const options = await fixture();
+    await writeFile(options.configPath, `${JSON.stringify({ version: 1, hooks: {} })}\n`, "utf8");
+    const seen: string[] = [];
+    const capture: CursorHookInstallerDependencies = {
+      now: () => 1_756_800_000_000,
+      rename: async (from, to) => {
+        seen.push(from);
+        await rename(from, to);
+      },
+    };
+
+    await new CursorHookInstaller(options, capture).install();
+    await writeFile(options.configPath, `${JSON.stringify({ version: 1, hooks: {} })}\n`, "utf8");
+    await new CursorHookInstaller(options, capture).install();
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toContain("1756800000000");
+    expect(seen[0]).not.toBe(seen[1]);
   });
 });

@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import type { FileHandle } from "node:fs/promises";
 import { chmod, lstat, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { posixShellQuote } from "../utils/posixShellQuote";
@@ -38,6 +40,8 @@ export interface CursorHookInstallerOptions {
 export interface CursorHookInstallerDependencies {
   fs?: Partial<FileSystem>;
   now?: () => number;
+  /** Injectable so a test can be waiting at the staging name, as a guesser would be. */
+  randomBytes?: (size: number) => Uint8Array;
   sleep?: (milliseconds: number) => Promise<void>;
   beforeReplace?: () => Promise<void>;
   rename?: (oldPath: string, newPath: string) => Promise<void>;
@@ -77,6 +81,7 @@ const MAX_RECONCILE_ATTEMPTS = 3;
 export class CursorHookInstaller {
   private readonly fs: FileSystem;
   private readonly now: () => number;
+  private readonly createRandomBytes: (size: number) => Uint8Array;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly replace: (oldPath: string, newPath: string) => Promise<void>;
   private readonly beforeReplace: () => Promise<void>;
@@ -98,6 +103,7 @@ export class CursorHookInstaller {
       ...dependencies.fs,
     };
     this.now = dependencies.now ?? Date.now;
+    this.createRandomBytes = dependencies.randomBytes ?? randomBytes;
     this.sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.replace = dependencies.rename ?? this.fs.rename;
     this.beforeReplace = dependencies.beforeReplace ?? (async () => undefined);
@@ -380,16 +386,34 @@ export class CursorHookInstaller {
     const path = this.platform === "win32" ? win32 : posix;
     const temporaryPath = path.join(
       path.dirname(this.options.configPath),
-      `.${path.basename(this.options.configPath) || "hooks.json"}.${this.now()}.tmp`,
+      `.${path.basename(this.options.configPath) || "hooks.json"}.${Buffer.from(this.createRandomBytes(16)).toString("hex")}.tmp`,
     );
+
+    // `wx` is O_CREAT|O_EXCL, so an object already at this name is refused
+    // instead of opened. `writeFile` opened O_WRONLY|O_CREAT|O_TRUNC and FOLLOWED
+    // a symlink there — and the name was the clock, so anyone who could guess it
+    // got a write into a file of their choosing (design.md D1).
+    let handle: FileHandle;
     try {
-      await this.fs.writeFile(temporaryPath, contents, { encoding: "utf8", mode: mode ?? 0o600 });
+      handle = await this.fs.open(temporaryPath, "wx", mode ?? 0o600);
+    } catch {
+      // Nothing of ours exists at that name, so there is nothing to clean up —
+      // and removing whatever IS there would destroy an object we did not create.
+      return false;
+    }
+
+    try {
+      await handle.writeFile(contents, { encoding: "utf8" });
+      // Through the handle, not the pathname: the create won it, and a chmod by
+      // name would hand the window back.
       if (mode !== undefined) {
-        await this.fs.chmod(temporaryPath, mode);
+        await handle.chmod(mode);
       }
+      await handle.close();
       await this.replace(temporaryPath, this.options.configPath);
       return true;
     } catch {
+      await handle.close().catch(() => undefined);
       await this.fs.unlink(temporaryPath).catch(() => undefined);
       return false;
     }

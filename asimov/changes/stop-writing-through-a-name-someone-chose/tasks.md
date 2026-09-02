@@ -1,6 +1,6 @@
 ## 1. Stop the write-through, stop the foreign delete
 
-- [ ] 1_1 Stage the Cursor replacement exclusively, under an unpredictable name
+- [x] 1_1 Stage the Cursor replacement exclusively, under an unpredictable name — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/agent-hook-installation/spec.md#a-replacement-is-staged-where-nothing-can-be-waiting-for-it; design.md D1
   - **Acceptance**:
