@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this child change
 
 ## Archive
 
@@ -36,4 +36,5 @@ Planned at: 702555af
 - Depends on `freeze-the-first-observed-worktree-before-writing`; the port publication tail consumes both directory authority and the mutation gate, so builds are serial.
 - Reference check: cmux and t3code confirm staged atomic writes, ownership records, kill-and-wait child boundaries, and generation checks, but neither deadlines rename/link while proving no late mutation after release; the retained-lock gate is therefore the smallest safe construction.
 - Plan attack: Oracle Opus challenged the artifacts through three correction passes; all 9 obligation rows finish `supported` or `n/a`, with no refuted or unresolved row.
-- Verify gate: type check and 6,693 tests pass; lint's three clean-tree errors are pre-existing formatting failures in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, and `src/cursor/CursorHookInstaller.test.ts`, outside this change.
+- Verify gate: type check and 6,700 tests pass; lint's three clean-tree errors are pre-existing formatting failures in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, and `src/cursor/CursorHookInstaller.test.ts`, outside this change.
+- Review cycle 1 closed APPROVE in round 2 after F001-F005 were fixed across the deadline, cleanup, preview-authority, and retained-lock reporting boundaries.
