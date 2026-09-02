@@ -77,6 +77,7 @@ import { applyProvisioning, failEveryEntry } from "./worktree/provisioning/apply
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
+import { writeNativeConfig } from "./worktree/provisioning/writeNativeConfig";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { branchDeleteOfferFor, checksFor } from "./worktree/removalChecks";
 import { readPullRequests } from "./worktree/repoPullRequests";
@@ -879,6 +880,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
     readProvisioning: (mainWorktree, prefer) => readProvisioning(createProvisioningDeps(), mainWorktree, prefer),
+    // And the same reason again for the save: without this the Configure
+    // control is inert in the shipped extension while every module test passes
+    // against its own fake.
+    writeNativeConfig: (mainWorktree, divergence) =>
+      writeNativeConfig({ realpath: (p) => fsp.realpath(p), lstat: (p) => fsp.lstat(p) }, mainWorktree, divergence),
     // Same reason as the offer above: without this the create form never
     // receives a branch list and the combobox is a plain text field in the
     // shipped extension, with every module test green against its own fake.

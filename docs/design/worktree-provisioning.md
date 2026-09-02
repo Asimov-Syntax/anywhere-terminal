@@ -119,8 +119,13 @@ export interface ProvisionModel {
 export interface ProvisionContenders {
   /** Entry ids in one connected component of the folding key — two or more. */
   readonly members: readonly string[];
-  /** The repository's own declaration, when exactly one member is it. */
-  readonly favoured?: string;
+  /**
+   * The members the repository's own file declared, in `members` order.
+   *
+   * Reported, not adjudicated: how many of them the SELECTION still holds is
+   * what decides the group, and only the side holding a selection can ask.
+   */
+  readonly natives: readonly string[];
 }
 
 export interface ProvisionProvider {
@@ -257,6 +262,15 @@ Unknown top-level keys produce a `unknownKey` problem and are otherwise ignored.
 never rejected wholesale for one bad key — a typo should cost the user that one line, not the
 whole configuration.
 
+The members are read from the file's **parse tree**, never from a parsed value object. A parsed
+value cannot answer what the file actually declared: a `"__proto__"` member lands on the
+prototype, where ordinary lookup consumes it as `extends`, `exclude` or an inline key while key
+enumeration cannot see it — so the one shape that most needs reporting is the one shape that
+reports nothing. Reading the tree makes every member a real member: it is either read or reported,
+and no key can supply a value invisibly. A member whose value failed to parse has no value node at
+all, so the read guards for it rather than assuming every member has one; the file still recovers
+around it.
+
 ## 4. Detection, merge, and provenance
 
 ### 4.0 The model the user saw is the model that runs
@@ -308,6 +322,15 @@ When `.vscode/worktree.json` declares `extends`:
 
 1. Start with the extended provider's model.
 2. Append the native file's inline entries.
+
+   The assembled model is in that order, but it is **built** native-first: the scan and row
+   accounts (§ 7) are consumed as entries are appended, so starting with the inherited model
+   spends the budget on inherited rows and can starve the native file's own entries at the cap —
+   defeating the very rule that makes the native entry win. Building native-first and assembling
+   in the order above satisfies both. This is a change in output, not a wash: a native glob that
+   consumes the scan account leaves an inherited glob refused where base-first would have matched
+   it. That is the intent — the repository's own file outranks what it inherits — so problem order
+   is chosen deliberately rather than falling out of build order.
 3. Dedupe by **identity**: the declared path normalized lexically — separators, `.` and `..`
    segments, a trailing slash — and nothing else. Two declarations merge only when their
    identities are exactly equal, and then **the native entry wins**, including its `mode` — this
@@ -345,9 +368,23 @@ whose apply order decides which `mode` lands.
 
 So they are neither merged nor discarded. Both stay offered, each with the spelling and `source`
 its own file wrote, and the model carries a **contender group** naming them — a connected
-component over the folding key, not a pair, since three spellings can collide. When one member is
-the repository's own declaration, the group records it as `favoured`: the row the merge rule would
-have awarded the destination to.
+component over the folding key, not a pair, since three spellings can collide. The group records
+which of its members the repository's own file declared, as `natives`. It records no winner: a
+group is decided by how many of those the user's SELECTION still holds, and the offer has no
+selection to ask about.
+
+That count is the whole rule, and both sides run it over `natives` intersected with the selection:
+
+| Selected repository declarations | Outcome |
+|---|---|
+| exactly one | it is favoured and materialized; every other member is refused, naming the contest |
+| none | nothing claims priority, so the selected members are applied in their ordinary place |
+| more than one | the group is **refused entire** — nothing available can choose between two of the repository's own declarations, and picking one would decide a user's config silently |
+
+Carrying a winner instead of the count is what made the dialog and the apply disagree three times
+over: a winner computed once against the full offer goes stale the moment the user unticks a row.
+So the dialog offers a doubly-declared group SELECTED and says every member will be refused —
+unticking it on the user's behalf would read back as "none", which is the state that APPLIES.
 
 The folding key is per path segment: NFKC, lowercase, the Win32 trailing-dot/space and `::$DATA`
 fold, then **uppercase, then NFKC again**. Uppercase last is load-bearing — it is what performs the
@@ -357,7 +394,10 @@ advisory, so grouping two rows that a volume would keep apart costs a marker, wh
 costs a declaration.
 
 The relation is filled at the one point every model is assembled, so a model read directly from an
-adapter carries it exactly as an assembled one does.
+adapter carries it exactly as an assembled one does — and it is filled **after** the merge and the
+exclusions, over the entries that survived them. Grouping earlier would let a row the merge
+deduped or `exclude` removed hold a destination slot it will never be applied to, refusing a
+member that has no live rival.
 
 ## 5. Applying the model — see worktree-apply.md
 
@@ -421,6 +461,8 @@ additive rather than a snapshot that freezes today's framework config.
 | No provider file at all | Empty model. The section still renders and says the worktree will have no `.env` or `node_modules` — silence is what ships a broken worktree |
 | Provider file present but malformed | `problems[]` entry; the section names the file and offers to open it. **Create stays enabled** — a broken provisioning config is not a reason to refuse to make a worktree |
 | `extends` names a file that does not exist | `missingExtends` problem; the inline keys still apply |
+| `extends` names a file that is there and cannot be read | The read's own problem is reported, naming `extends` — a permission error or an unreadable encoding is a different fact from absence, and reporting it as `missingExtends` sends the user looking for a file that is sitting right there. Absence, a containment refusal, and a root that could not be read keep their existing classifications; only the unreadable-file reason splits off |
+| A `"__proto__"` member in a JSONC provider file | A reported unknown key, never a source of values (§ 3.4) |
 | `extends` names a file outside the repo | Refused under § 7 |
 | Two providers detected | First supplies the base; the other is offered, never hidden (§ 4.1) |
 | Glob matches nothing | Contributes nothing; not a problem |
@@ -430,6 +472,7 @@ additive rather than a snapshot that freezes today's framework config.
 | Area | Cases |
 |---|---|
 | Adapters | Each provider's mapping; JSONC comments and trailing commas; block scalar splitting; `#` comments in `.worktreeinclude`; unknown keys produce a problem without discarding the file; a `tasks.json` entry becomes a `shell` step carrying its command, and one containing `${...}` is recorded `unsubstituted` and offered unchecked |
+| Parse-tree reading | A `__proto__` member holding `extends`, `exclude` and an inline key changes no entry and is reported as a key; a member whose value does not parse still recovers the rest of the file |
 | Merge | Additive append; dedupe keeps the native entry and its mode; `exclude` moves an entry and keeps its original source; `exclude` on an inline path reports; setup steps never dedupe or reorder |
 | Provenance | Every entry in every merged model has a non-empty `source`; a glob's expansions all carry the glob's source |
 | Detection | Order; first-hit-wins; a second provider is recorded inactive rather than merged |

@@ -1288,7 +1288,12 @@ describe("a path the repository removed is shown as deliberate", () => {
 });
 
 describe("[D5] a source that did not win stays visible and selectable", () => {
-  const ORCA = { id: "orca" as const, files: ["orca.yaml", ".worktreeinclude"], active: false };
+  const ORCA = {
+    id: "orca" as const,
+    files: ["orca.yaml", ".worktreeinclude"],
+    present: ["orca.yaml", ".worktreeinclude"],
+    active: false,
+  };
 
   function withProviders(providers: ProvisionModel["providers"], onProvisionSwitch?: (r: unknown) => void) {
     return open({
@@ -1298,7 +1303,10 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
   }
 
   it("draws one row per inactive source, naming every file it reads", () => {
-    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA]);
+    const { host } = withProviders([
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      ORCA,
+    ]);
 
     const rows = host.querySelectorAll(".wt-bring-switch");
     expect(rows).toHaveLength(1);
@@ -1308,7 +1316,9 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
   });
 
   it("draws none for the source that supplied the offer", () => {
-    const { host } = withProviders([{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }]);
+    const { host } = withProviders([
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+    ]);
 
     expect(host.querySelectorAll(".wt-bring-switch")).toHaveLength(0);
   });
@@ -1317,9 +1327,9 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
     const taken: unknown[] = [];
     const { host } = withProviders(
       [
-        { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
         ORCA,
-        { id: "vscodeTasks", files: [".vscode/tasks.json"], active: false },
+        { id: "vscodeTasks", files: [".vscode/tasks.json"], present: [".vscode/tasks.json"], active: false },
       ],
       (r) => taken.push(r),
     );
@@ -1342,7 +1352,10 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
         createDefaults({
           provisioning: provisionOffer({
             model: provisionModel({
-              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+              providers: [
+                { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+                ORCA,
+              ],
             }),
           }),
         }),
@@ -1363,7 +1376,10 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
         createDefaults({
           provisioning: provisionOffer({
             model: provisionModel({
-              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+              providers: [
+                { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+                ORCA,
+              ],
             }),
           }),
         }),
@@ -1376,8 +1392,13 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
       offerId: "provision-2",
       model: provisionModel({
         providers: [
-          { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: true },
-          { id: "asimov", files: ["asimov/worktree.yaml"], active: false },
+          {
+            id: "orca",
+            files: ["orca.yaml", ".worktreeinclude"],
+            present: ["orca.yaml", ".worktreeinclude"],
+            active: true,
+          },
+          { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
         ],
       }),
     });
@@ -1397,7 +1418,10 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
               ports: [],
               setup: [],
               problems: [],
-              providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }, ORCA],
+              providers: [
+                { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+                ORCA,
+              ],
             }),
           }),
         }),
@@ -1412,9 +1436,9 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
 
   it("gives the buttons accessible names that differ", () => {
     const { host } = withProviders([
-      { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
       ORCA,
-      { id: "vscodeTasks", files: [".vscode/tasks.json"], active: false },
+      { id: "vscodeTasks", files: [".vscode/tasks.json"], present: [".vscode/tasks.json"], active: false },
     ]);
     const buttons = [...host.querySelectorAll<HTMLButtonElement>(".wt-bring-switch-take")];
     const names = buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
@@ -1426,6 +1450,105 @@ describe("[D5] a source that did not win stays visible and selectable", () => {
     expect(new Set(names).size).toBe(2);
     expect(names[0]).toContain("orca.yaml");
     expect(names[1]).toContain(".vscode/tasks.json");
+  });
+});
+
+describe("Bring over — recording the choice in the repository's own configuration", () => {
+  function withSave(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    const posted: unknown[] = [];
+    const { host, submitted } = open({
+      repos: [createDefaults({ provisioning: provisionOffer() })],
+      onProvisionSave: (request) => posted.push(request),
+      ...over,
+    });
+    const configure = host.querySelector<HTMLButtonElement>(".wt-bring-save");
+    return { host, posted, submitted, configure };
+  }
+
+  it("posts the ids left ticked and the offer that named them, and nothing else", () => {
+    const { posted, configure } = withSave();
+    configure?.click();
+
+    // The host's own opaque ids, never a path or a key: a message that could
+    // carry either would make the webview the authority on what the
+    // repository's configuration says (design.md D1). The setup step is absent
+    // because it arrives unticked, which § 7 makes the safety rule.
+    expect(posted).toEqual([{ repoId: REPO_ID, switch: 1, offerId: "provision-1", kept: ["i1", "i2", "i3", "i4"] }]);
+  });
+
+  it("posts what is ticked now, not what the offer arrived ticked", () => {
+    const { host, posted, configure } = withSave();
+    const cb = [...host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")].find((c) => c.value === "i2");
+    if (cb === undefined) {
+      throw new Error("missing i2");
+    }
+    cb.checked = false;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+    configure?.click();
+
+    expect(posted).toEqual([{ repoId: REPO_ID, switch: 1, offerId: "provision-1", kept: ["i1", "i3", "i4"] }]);
+  });
+
+  it("shares one sequence with the source switch, so the two order against each other", () => {
+    // The host takes the ceiling from this number. Two counters would let a
+    // save begun against the offer on screen finish after a later switch had
+    // published, and overwrite the choice the user actually made (design.md D8).
+    const posted: unknown[] = [];
+    const { host } = open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              providers: [
+                { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+                { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+              ],
+            }),
+          }),
+        }),
+      ],
+      onProvisionSwitch: (request) => posted.push(request),
+      onProvisionSave: (request) => posted.push(request),
+    });
+    host.querySelector<HTMLButtonElement>(".wt-bring-switch-take")?.click();
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+
+    expect(posted).toEqual([
+      { repoId: REPO_ID, switch: 1, provider: "orca" },
+      { repoId: REPO_ID, switch: 2, offerId: "provision-1", kept: ["i1", "i2", "i3", "i4"] },
+    ]);
+  });
+
+  it("states which of the user's choices this create keeps rather than the repository", () => {
+    // Setup steps and ports have no home in the configuration — § 7 forbids
+    // persisting a pre-ticked command, and an unallocated port has no path for
+    // `exclude` to match (design.md D6). Saying so is the requirement; dropping
+    // them silently is what it forbids.
+    const { host } = withSave();
+    const note = host.querySelector(".wt-bring-save-note")?.textContent ?? "";
+
+    expect(note).toContain("Setup steps");
+    expect(note).toContain("ports");
+    expect(note).toContain("this create only");
+  });
+
+  it("offers nothing to record when no offer has arrived", () => {
+    // Not a disabled control: the section has not been told what the repository
+    // needs, and a Configure that writes the empty selection would record that
+    // the user wants nothing brought over.
+    const { host } = open({ repos: [createDefaults()], onProvisionSave: () => {} });
+
+    expect(host.querySelectorAll(".wt-bring-save")).toHaveLength(0);
+  });
+
+  it("never submits", () => {
+    // A default-type button inside the form submits, and a create started by
+    // pressing Configure is the one thing this must not do.
+    const { submitted, configure } = withSave();
+    configure?.click();
+
+    expect(submitted).toEqual([]);
+    expect(configure?.type).toBe("button");
   });
 });
 
@@ -3461,7 +3584,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
               entries: [...PAIR],
               ports: [],
               setup: [],
-              contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+              contenders: [{ members: ["i1", "i2"], natives: ["i1"] }],
               ...over,
             }),
           }),
@@ -3496,7 +3619,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
   it("leaves both ticked when no member is the repository's own", () => {
     // Nothing decides between them, and unticking either would pick a winner
     // the apply itself does not.
-    const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
+    const { host } = withPair({ contenders: [{ members: ["i1", "i2"], natives: [] }] });
     const boxes = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
 
     expect(boxes.map((b) => b.checked)).toEqual([true, true]);
@@ -3529,7 +3652,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
   it("names every partner of a three-spelling group, not just one", () => {
     const { host } = withPair({
       entries: [...PAIR, { id: "i3", path: "MIXEDCASE", mode: "copy", source: "orca.yaml" }],
-      contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
+      contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1"] }],
     });
     const first = host.querySelector(".wt-brow-note")?.textContent;
 
@@ -3611,7 +3734,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
   });
 
   it("counts both members when neither is favoured", () => {
-    const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
+    const { host } = withPair({ contenders: [{ members: ["i1", "i2"], natives: [] }] });
 
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked · 2 spellings may be one file");
   });
@@ -3621,7 +3744,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     // fixture already existed; the summary was never asserted against it.
     const { host } = withPair({
       entries: [...PAIR, { id: "i3", path: "MIXEDCASE", mode: "copy", source: "orca.yaml" }],
-      contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
+      contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1"] }],
     });
 
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 3 spellings may be one file");
@@ -3635,8 +3758,8 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
         { id: "i4", path: "other", mode: "copy", source: "orca.yaml" },
       ],
       contenders: [
-        { members: ["i1", "i2"], favoured: "i1" },
-        { members: ["i3", "i4"], favoured: "i3" },
+        { members: ["i1", "i2"], natives: ["i1"] },
+        { members: ["i3", "i4"], natives: ["i3"] },
       ],
     });
 
@@ -3668,5 +3791,171 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     q<HTMLButtonElement>(".wt-btn--primary").click();
 
     expect(submitted[0]?.provision?.itemIds).toEqual(["i1", "i2"]);
+  });
+});
+
+describe("[round-7 F017] a group the repository declares more than once", () => {
+  const TRIO = [
+    { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i2", path: "mixedcase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i3", path: "MiXeDcAsE", mode: "link", source: "orca.yaml" },
+  ] as const;
+
+  function withTrio() {
+    return open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              entries: [...TRIO],
+              ports: [],
+              setup: [],
+              contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1", "i2"] }],
+            }),
+          }),
+        }),
+      ],
+    });
+  }
+
+  /** Every note the section is currently SHOWING, in row order. */
+  const shown = (host: HTMLElement): readonly string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>(".wt-brow-yield, .wt-brow-contested"))
+      .filter((n) => !n.hidden)
+      .map((n) => n.textContent ?? "");
+
+  const sum = (host: HTMLElement): string | null | undefined => host.querySelector(".wt-bring-sum")?.textContent;
+
+  const boxes = (q: ReturnType<typeof withTrio>["q"]) =>
+    Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+
+  const CONTESTED =
+    "refused while MixedCase and mixedcase are both selected — the repository declares this destination more than once";
+
+  it("offers all three SELECTED, each saying the create will refuse it", () => {
+    // Not unticked, which is what the first draft of D3c offered. An
+    // all-unticked group is not a fixed point of this dialog's own predicate:
+    // at zero selected repository declarations nothing claims priority, so
+    // ticking only the inherited row would COPY it while every row still said
+    // nothing would be brought over — F007 a fourth time.
+    const { host } = withTrio();
+    const cbs = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+
+    expect(cbs.map((b) => b.value)).toEqual(["i1", "i2", "i3"]);
+    expect(cbs.map((b) => b.checked)).toEqual([true, true, true]);
+    expect(shown(host)).toEqual([CONTESTED, CONTESTED, CONTESTED]);
+    expect(sum(host)).toBe("3 spellings may be one file");
+  });
+
+  it("counts the one that is left when the user unselects a second declaration", () => {
+    // Exactly one repository declaration selected is the state the apply can
+    // settle: it is favoured, and the inherited row yields to it.
+    const { host, q } = withTrio();
+    boxes(q)[1]?.click();
+
+    expect(shown(host)).toEqual(["refused while MixedCase is selected"]);
+    expect(sum(host)).toBe("1 copied · 3 spellings may be one file");
+  });
+
+  it("puts every refusal back when the second declaration is selected again", () => {
+    const { host, q } = withTrio();
+    boxes(q)[1]?.click();
+    boxes(q)[1]?.click();
+
+    expect(shown(host)).toEqual([CONTESTED, CONTESTED, CONTESTED]);
+    expect(sum(host)).toBe("3 spellings may be one file");
+  });
+
+  it("counts the inherited declaration once it is the only one left", () => {
+    // The state that falsified the first draft of this plan. Nothing claims
+    // priority, so the apply materializes the inherited row — and no note may
+    // still be saying it will be refused.
+    const { host, q, submitted } = withTrio();
+    boxes(q)[0]?.click();
+    boxes(q)[1]?.click();
+
+    expect(shown(host)).toEqual([]);
+    expect(sum(host)).toBe("1 linked · 3 spellings may be one file");
+
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision?.itemIds).toEqual(["i3"]);
+  });
+});
+
+describe("[round-8 F018/F019] a note names the declarations that are actually keeping the row refused", () => {
+  const QUARTET = [
+    { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i2", path: "mixedcase", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i3", path: "MIXEDCASE", mode: "copy", source: ".vscode/worktree.json" },
+    { id: "i4", path: "MiXeDcAsE", mode: "link", source: "orca.yaml" },
+  ] as const;
+
+  function withQuartet() {
+    return open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({
+              entries: [...QUARTET],
+              ports: [],
+              setup: [],
+              contenders: [{ members: ["i1", "i2", "i3", "i4"], natives: ["i1", "i2", "i3"] }],
+            }),
+          }),
+        }),
+      ],
+    });
+  }
+
+  const shownNotes = (host: HTMLElement): readonly string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>(".wt-brow-yield, .wt-brow-contested"))
+      .filter((n) => !n.hidden)
+      .map((n) => n.textContent ?? "");
+
+  it("names all three while all three are selected", () => {
+    const { host } = withQuartet();
+
+    expect(shownNotes(host)).toEqual(
+      Array(4).fill(
+        "refused while MixedCase, mixedcase and MIXEDCASE are all selected — the repository declares this destination more than once",
+      ),
+    );
+  });
+
+  it("names only the two still selected once the third is unticked", () => {
+    // Visibility needs two, so the note survives the third being unticked —
+    // and a note that goes on naming MIXEDCASE describes a selection that has
+    // lapsed. The refusal is still right; the explanation was not.
+    const { host, q } = withQuartet();
+    Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"))[2]?.click();
+
+    expect(shownNotes(host)).toEqual(
+      Array(4).fill(
+        "refused while MixedCase and mixedcase are both selected — the repository declares this destination more than once",
+      ),
+    );
+  });
+
+  it("gives the inherited row ONE yielding note, not one per repository declaration", () => {
+    // `MAX_MODEL_ROWS` is 200 and a group is every entry sharing one fold key,
+    // so one note per candidate is quadratic in a checked-in file's own rows.
+    const { host } = withQuartet();
+    const rows = Array.from(host.querySelectorAll<HTMLElement>(".wt-brow"));
+    const inherited = rows[3];
+
+    expect(inherited?.querySelectorAll(".wt-brow-yield")).toHaveLength(1);
+    expect(host.querySelectorAll(".wt-brow-yield")).toHaveLength(1);
+  });
+
+  it("still yields to whichever declaration is left alone", () => {
+    const { host, q } = withQuartet();
+    const boxes = Array.from(q<HTMLElement>(".wt-bring").querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
+    boxes[0]?.click();
+    boxes[1]?.click();
+
+    expect(shownNotes(host)).toEqual(["refused while MIXEDCASE is selected"]);
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 4 spellings may be one file");
   });
 });

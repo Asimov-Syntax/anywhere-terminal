@@ -1,9 +1,13 @@
 // Types for the build gate in `bundleRequires.mjs`, so the suite that drives it
 // gets real types rather than a suppression.
 
+/** `fails` ends the build; `warns` is reported without affecting the exit code. */
+export type Severity = "none" | "warns" | "fails";
+
 export interface Verdict {
   readonly specifier: string;
   readonly ok: boolean;
+  readonly severity: Severity;
   readonly why: string;
 }
 
@@ -24,9 +28,15 @@ export interface BundleDeps {
   readonly readFile?: (p: string) => string;
 }
 
-export declare const NOT_SPECIFIERS: ReadonlySet<string>;
+export declare const RELATIVE_PREFIXES: readonly string[];
+export function isRelativeRequest(text: string): boolean;
+/** How many ASTs the module has built, so the one-parse claim is observable. */
+export function parseCount(): number;
+export function exitCodeFor(verdicts: readonly Verdict[]): number;
 export function relativeLiterals(bundleSource: string): string[];
-export function requiredSpecifiers(bundleSource: string): string[];
+/** Absolute literals that name the build machine, per design.md D2. */
+export function buildMachineLiterals(bundleSource: string, resolvesFrom: string): string[];
+export function relativeTemplates(bundleSource: string): string[];
 export function declaredExternals(esbuildSource: string, outfile: string): Set<string>;
 export function classify(specifier: string, deps: ResolveDeps): Verdict;
 export function unresolvableRequires(bundleSource: string, deps: BundleDeps): Verdict[];

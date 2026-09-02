@@ -906,6 +906,25 @@ export interface ProvisionProvider {
    * D8). A row's `source` still names ONE file: that is a different question.
    */
   readonly files: readonly string[];
+  /**
+   * The subset of `files` that is actually there, in read order.
+   *
+   * `files` is what the adapter DECLARES it can read; this is what was found.
+   * The two differ wherever a provider is optional over several files — orca is
+   * one provider over two — and a consumer that must name one existing file
+   * cannot get it from `files`: writing `files[0]` as `extends` in a repository
+   * carrying only the other one names a file that is not there, which the read
+   * side then reports as `missingExtends`
+   * (worktree-provisioning.md § 6, design.md D11).
+   *
+   * Presence, not readability: a file that is there and denied still counts,
+   * because it is one `extends` can name without producing `missingExtends`.
+   *
+   * Can be EMPTY on a provider that was nonetheless detected — the file was
+   * there when it was read and gone when presence was taken. A consumer that
+   * needs a name has none, which is the truthful answer rather than a stale one.
+   */
+  readonly present: readonly string[];
   /** True for the provider whose model the native file extended or detection chose. */
   readonly active: boolean;
 }
@@ -929,12 +948,17 @@ export interface ProvisionContenders {
   /** Two or more entry ids from the same model. */
   readonly members: readonly string[];
   /**
-   * The member the merge rule favours, present only when exactly one of them is
-   * the repository's own declaration. Two native members, or none, leave this
-   * absent rather than picking one — a fabricated winner is worse than an
-   * honest "this needs deciding where it can be observed".
+   * The members the repository's own file declared, in `members` order.
+   *
+   * Which members are the repository's own, rather than a pre-computed winner:
+   * a winner is decided against the whole offer and goes stale the moment the
+   * user unticks a row, so both the dialog and the apply answer from this list
+   * against the selection in front of them (design.md D3c) — more than one is
+   * refused entire, exactly one is favoured, none claims priority. The three
+   * states are ranges of one list's length, so no pair of fields can contradict
+   * each other.
    */
-  readonly favoured?: string;
+  readonly natives: readonly string[];
 }
 
 export interface ProvisionModel {
@@ -1215,6 +1239,36 @@ export interface WorktreeProvisionSwitchMessage {
  * as the user types, and shipping it per keystroke answers a question nobody
  * asked again (offer-every-ref-in-one-box/design.md D1).
  */
+/**
+ * WebView → Extension: record what the user has chosen in the repository's own
+ * provisioning configuration (worktree-provisioning.md § 6).
+ *
+ * Ids and ordering, and nothing else. No path, no key and no file text: the
+ * host resolves `offerId` against the model it issued and computes every value
+ * it writes. A webview that could supply the path to exclude would be the
+ * authority on what the repository's configuration says, which is § 4.0's rule
+ * for what EXECUTES applied one hop later (design.md D1).
+ *
+ * `repoId` selects a record in the host's own cache; it never becomes a
+ * destination, even though it is spelled like a path.
+ *
+ * `switch` comes from the SAME sequence `worktreeProvisionSwitch` mints, so a
+ * save and a source change order against each other. Without one shared
+ * sequence, a save begun against the offer on screen can finish after a later
+ * switch has published and overwrite the choice the user actually made
+ * (design.md D8).
+ */
+export interface WorktreeProvisionSaveMessage {
+  type: "worktreeProvisionSave";
+  repoId: string;
+  opening: number;
+  switch: number;
+  /** From `worktreeProvisionOffer`. Names the model the user was looking at. */
+  offerId: string;
+  /** Which of the host's own offered items the user left checked. */
+  kept: readonly string[];
+}
+
 export interface WorktreeRefsRequestMessage {
   type: "requestWorktreeRefs";
   repoId: string;
@@ -1596,6 +1650,7 @@ export type WebViewToExtensionMessage =
   | WorktreeCreateDefaultsRequestMessage
   | WorktreeCreateClosedMessage
   | WorktreeProvisionSwitchMessage
+  | WorktreeProvisionSaveMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
   | WorktreeAuthorizeDebrisMessage
@@ -1635,6 +1690,7 @@ export const WORKTREE_MESSAGE_TYPES = [
   "requestWorktreeCreateDefaults",
   "worktreeCreateClosed",
   "worktreeProvisionSwitch",
+  "worktreeProvisionSave",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
   "worktreeAuthorizeDebris",

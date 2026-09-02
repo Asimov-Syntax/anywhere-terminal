@@ -9,7 +9,7 @@
 // as if it had never configured the tool it uses. One answers; the others are
 // named and one click away (design.md D3, D5).
 
-import type { ProvisionEntry, ProvisionModel, ProvisionProvider } from "../../types/messages";
+import type { ProvisionEntry, ProvisionModel, ProvisionProblem, ProvisionProvider } from "../../types/messages";
 import { asimovAdapter } from "./asimovProvider";
 import { NATIVE_PROVIDER_FILE, nativeAdapter } from "./nativeProvider";
 import { orcaAdapter } from "./orcaProvider";
@@ -87,6 +87,18 @@ function ordered(prefer: ProvisionProvider["id"] | undefined): readonly Provider
  * nobody is shown. Present is present whatever the file then yields, so a file
  * that is refused or unreadable counts too (design.md D3).
  */
+async function filesPresent(deps: ProviderDeps, repoRoot: string, adapter: ProviderAdapter): Promise<string[]> {
+  const found: string[] = [];
+  for (const file of adapter.files) {
+    const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file });
+    if (opened.kind === "text" || (opened.kind === "problem" && opened.at === "file")) {
+      found.push(file);
+    }
+  }
+  return found;
+}
+
+/** Does any of this adapter's files exist? Stops at the first one, so it opens no more than it must. */
 async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: ProviderAdapter): Promise<boolean> {
   for (const file of adapter.files) {
     const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file });
@@ -95,6 +107,39 @@ async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: Pro
     }
   }
   return false;
+}
+
+/**
+ * Fill `present` for every adapter detection kept, in detection order.
+ *
+ * Runs AFTER the model is assembled, and that ordering is load-bearing rather
+ * than tidy. Probing presence is an OPEN, and `openProviderFile` authorizes the
+ * bytes it returns — so a probe that runs before the assembly consumes the read
+ * the assembly was going to authorize. A `.worktreeinclude` that goes away
+ * between two opens then loses its rows to a sibling the user never named,
+ * which is the defect round-1 F002 exists to prevent. Probing last cannot take
+ * a read from anything.
+ *
+ * `present` can therefore come back EMPTY for a provider that was detected: the
+ * file was there when it was read and gone when it was probed. That is the
+ * truthful answer for the question `present` is asked — a file that is no
+ * longer there is not one `extends` can name — and a consumer must handle it.
+ */
+async function publish(
+  deps: ProviderDeps,
+  repoRoot: string,
+  detected: readonly { adapter: ProviderAdapter; active: boolean }[],
+): Promise<ProvisionProvider[]> {
+  const published: ProvisionProvider[] = [];
+  for (const { adapter, active } of detected) {
+    published.push({
+      id: adapter.id,
+      files: [...adapter.files],
+      present: await filesPresent(deps, repoRoot, adapter),
+      active,
+    });
+  }
+  return published;
 }
 
 /**
@@ -113,18 +158,28 @@ async function anyFilePresent(deps: ProviderDeps, repoRoot: string, adapter: Pro
  * Once it resolves, the WHOLE adapter reads — both of orca's files, not the one
  * that was named. Half of orca is a model orca would not recognize.
  */
-async function baseFor(
-  deps: ProviderDeps,
-  repoRoot: string,
-  target: string,
-): Promise<{ adapter: ProviderAdapter; authorized: Authorized } | null> {
+type BaseResolution =
+  | { ok: true; adapter: ProviderAdapter; authorized: Authorized }
+  | { ok: false; why: "missing" }
+  | { ok: false; why: "unreadable"; problem: ProvisionProblem };
+
+async function baseFor(deps: ProviderDeps, repoRoot: string, target: string): Promise<BaseResolution> {
   const adapter = FRAMEWORK_ORDER.find((a) => a.files.includes(target));
   if (adapter === undefined) {
-    return null;
+    return { ok: false, why: "missing" };
   }
   const opened = await openProviderFile(deps, repoRoot, { id: adapter.id, file: target });
   if (opened.kind !== "text") {
-    return null;
+    // On the problem's REASON, not on the open's kind. Two non-`text` answers
+    // must keep the diagnosis they already have: a target resolving out of the
+    // checkout is `malformed` and is a name that was never eligible rather than
+    // a read that failed (D2), and a root failure is neither presence nor
+    // absence and belongs to the diagnostic D8 defers — reporting it against
+    // the base file's name would misattribute it besides.
+    const failed = opened.kind === "problem" && opened.at === "file" && opened.problem.reason === "unreadable";
+    return failed && opened.kind === "problem"
+      ? { ok: false, why: "unreadable", problem: opened.problem }
+      : { ok: false, why: "missing" };
   }
   // The open that passed IS the open the adapter gets.
   //
@@ -143,7 +198,7 @@ async function baseFor(
   //
   // One key, the exact name that was named. The adapter's other files still
   // open live, because D2 rule 3 wants the WHOLE adapter.
-  return { adapter, authorized: new Map([[target, opened]]) };
+  return { ok: true, adapter, authorized: new Map([[target, opened]]) };
 }
 
 /**
@@ -232,18 +287,29 @@ async function assemble(
   const draft = newDraft(NATIVE, budget);
   const target = native.extends;
   const resolved = target === undefined ? null : await baseFor(deps, repoRoot, target);
-  const base = resolved?.adapter ?? null;
+  const base = resolved?.ok === true ? resolved.adapter : null;
 
-  if (target !== undefined && resolved === null) {
-    // A path matching no framework adapter and a path whose file is not there
-    // are one problem: from the user's side both are "the thing you named is
-    // not something I can read", and splitting them would mean explaining the
-    // adapter table in an error message (design.md D2).
-    report(draft, "`extends`", problem(NATIVE, "missingExtends", `\`${target}\` is not a file this can build on.`));
+  if (target !== undefined && resolved !== null && !resolved.ok) {
+    if (resolved.why === "unreadable") {
+      // The file IS there and the read failed. Calling that missing points the
+      // user at the one repair that cannot work — adding a file that exists —
+      // while `anyFilePresent` counts the same file as present, so the section
+      // could offer the provider as switchable and call it absent at once
+      // (.reviews/round-7.md F014). The problem carried is `openProviderFile`'s
+      // own, so the reason a reader sees is the rule that actually fired.
+      report(draft, "`extends`", resolved.problem);
+    } else {
+      // A path matching no framework adapter and a path whose file is not there
+      // are one problem: from the user's side both are "the thing you named is
+      // not something I can read", and splitting them would mean explaining the
+      // adapter table in an error message (design.md D2).
+      report(draft, "`extends`", problem(NATIVE, "missingExtends", `\`${target}\` is not a file this can build on.`));
+    }
   }
   // The inline keys are offered whether or not the base resolved. An early
   // return here would discard them for a typo in one other key.
-  const inherited = resolved === null ? null : await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized);
+  const inherited =
+    resolved?.ok === true ? await resolved.adapter.read(deps, repoRoot, budget, resolved.authorized) : null;
   const baseModel = inherited?.model ?? emptyModel();
 
   const merged = mergeEntries(baseModel.entries, native.model.entries, identityOf);
@@ -292,7 +358,7 @@ export async function readProvisioning(
   const budget = newBudget();
   const adapters = ordered(prefer);
   let chosen: { adapter: ProviderAdapter; answer: AdapterRead } | null = null;
-  const providers: ProvisionProvider[] = [];
+  const detected: { adapter: ProviderAdapter; active: boolean }[] = [];
 
   for (const adapter of adapters) {
     if (chosen === null) {
@@ -302,13 +368,17 @@ export async function readProvisioning(
         continue;
       }
       chosen = { adapter, answer };
-      providers.push({ id: adapter.id, files: [...adapter.files], active: true });
+      detected.push({ adapter, active: true });
       continue;
     }
     // Detected and not chosen: named, so the section can offer to switch to it,
     // and contributing no row unless the winner asked to build on it.
+    //
+    // This gate short-circuits at the first file it finds, which is what keeps
+    // it from opening a file the assembly has not read yet. The per-file list
+    // `present` needs is taken later, by `publish`.
     if (await anyFilePresent(deps, repoRoot, adapter)) {
-      providers.push({ id: adapter.id, files: [...adapter.files], active: false });
+      detected.push({ adapter, active: false });
     }
   }
 
@@ -330,10 +400,11 @@ export async function readProvisioning(
     // so the section that needed the relation most — one file declaring two
     // foldable spellings — was the one branch that never computed it
     // (round-1 F002).
-    return { ...chosen.answer.model, providers };
+    return { ...chosen.answer.model, providers: await publish(deps, repoRoot, detected) };
   }
 
   const { model, base } = await assemble(deps, repoRoot, budget, chosen.answer);
+  const providers = await publish(deps, repoRoot, detected);
   return {
     ...model,
     // `active: false` is what makes a row offer to switch, and offering to

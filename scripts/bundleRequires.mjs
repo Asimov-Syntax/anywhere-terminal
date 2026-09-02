@@ -23,7 +23,23 @@ import ts from "typescript";
 
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
 
-const parse = (source, name) => ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+let parsesBuilt = 0;
+
+const parse = (source, name) => {
+  parsesBuilt += 1;
+  return ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+};
+
+/**
+ * How many ASTs this module has built, so the one-parse claim is observable.
+ *
+ * Each collector used to parse the artifact for itself: a 1 MB bundle paid
+ * three constructions and three walks per run, and the two relative-prefix
+ * conditions could drift apart (.reviews/round-6.md F015).
+ */
+export function parseCount() {
+  return parsesBuilt;
+}
 
 function walk(node, visit) {
   visit(node);
@@ -39,280 +55,51 @@ function unwrap(node) {
   return cur;
 }
 
-const isFunction = (node) => node !== undefined && (ts.isFunctionExpression(node) || ts.isArrowFunction(node));
-
 /**
- * A checker over one in-memory bundle.
+ * Whether `node` sits where a module request can be passed.
  *
- * Lexical identity is the binder's job, not this file's. Three rounds of
- * hand-rolled resolution each missed a spelling that ships — a text scan, then
- * an identifier match, then a scope walk that could not see a function
- * declaration, could not follow an assignment, and could not tell an ambient
- * `require` from a local binding of the same name. `typescript` already answers
- * all three correctly and is already the dependency this file parses with.
+ * The position is a fact about the CALL, not about the immediate parent:
+ * `r((`./${name}`))` put a ParenthesizedExpression in between and the request
+ * produced no verdict at all (.reviews/round-7.md F019). Parentheses are syntax,
+ * so climb out of them first — the same thing `unwrap` does descending.
  *
- * `noResolve`/`noLib` keep it to the one file: nothing here needs types, only
- * bindings.
+ * `parent.arguments` is then checked by IDENTITY rather than by parent kind: a
+ * tagged template's own template is a child of a call-like node too, and
+ * `` `./${x}`() `` is a call whose EXPRESSION is the template, which kind alone
+ * would call an argument.
  */
-function checkerFor(bundleSource) {
-  const name = "/bundle.js";
-  const file = parse(bundleSource, name);
-  const host = {
-    getSourceFile: (requested) => (requested === name ? file : undefined),
-    getDefaultLibFileName: () => "lib.d.ts",
-    writeFile: () => {},
-    getCurrentDirectory: () => "/",
-    getDirectories: () => [],
-    getCanonicalFileName: (f) => f,
-    useCaseSensitiveFileNames: () => true,
-    getNewLine: () => "\n",
-    fileExists: (f) => f === name,
-    readFile: (f) => (f === name ? bundleSource : undefined),
-  };
-  const program = ts.createProgram([name], { allowJs: true, noResolve: true, noLib: true, types: [] }, host);
-  return { checker: program.getTypeChecker(), root: program.getSourceFile(name) ?? file };
+function isCallArgument(node) {
+  let cur = node;
+  let parent = cur.parent;
+  while (parent !== undefined && ts.isParenthesizedExpression(parent)) {
+    cur = parent;
+    parent = cur.parent;
+  }
+  if (parent === undefined || !(ts.isCallExpression(parent) || ts.isNewExpression(parent))) {
+    return false;
+  }
+  return (parent.arguments ?? []).some((argument) => unwrap(argument) === node);
 }
 
+/** The relative prefixes Node accepts, POSIX and Win32 (design.md D6). */
+export const RELATIVE_PREFIXES = ["./", "../", ".\\", "..\\"];
+
 /**
- * Which symbols hold `require`, resolved by the binder rather than by spelling.
+ * The six strings that are exactly a relative prefix and nothing more.
  *
- * The gate reads a `--production` bundle, and minification renames parameters,
- * so the shipped defect is a call on a renamed binding and `require` itself is
- * often only an argument (.reviews/round-2.md F002). Taint therefore flows over
- * SYMBOLS: from a call argument to a parameter, and from an initializer or
- * assignment to the name it binds (.reviews/round-3.md F005). Function
- * declarations are callable targets too (F004). Monotone, so it terminates.
+ * Legal requests, but in a bundle they are overwhelmingly path DATA: 95
+ * occurrences on the real artifact and never one as a specifier. Excluded by
+ * VALUE because that is a property of these six strings, not of where they sit
+ * — the position-based exemption drafted here instead was refuted, since
+ * `require("".concat("./x"))` puts a real specifier in a String method's
+ * argument (design.md D6).
  */
-function requireBindings(root, checker) {
-  const symbolOf = (identifier) => checker.getSymbolAtLocation(identifier);
+const BARE_PREFIXES = new Set([".", "..", ...RELATIVE_PREFIXES]);
 
-  /**
-   * Ambient exactly: a symbol the bundle never declares. This replaces the
-   * spelling seed, which tainted any binding named `require` and so rejected a
-   * legitimate local callback of that name (.reviews/round-3.md F007).
-   */
-  const isAmbientRequire = (identifier) => {
-    if (identifier.text !== "require") {
-      return false;
-    }
-    const symbol = symbolOf(identifier);
-    return symbol === undefined || symbol.declarations === undefined || symbol.declarations.length === 0;
-  };
-
-  const tainted = new Set();
-  const holds = new Map();
-  const calls = [];
-  const assignments = [];
-
-  walk(root, (node) => {
-    if (ts.isCallExpression(node)) {
-      calls.push(node);
-    }
-    if (ts.isFunctionDeclaration(node) && node.name !== undefined) {
-      const symbol = symbolOf(node.name);
-      if (symbol !== undefined) {
-        holds.set(symbol, new Set([node]));
-      }
-    }
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
-      assignments.push([node.name, node.initializer]);
-    }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      const left = unwrap(node.left);
-      if (left !== undefined && ts.isIdentifier(left)) {
-        assignments.push([left, node.right]);
-      }
-    }
-  });
-
-  const hold = (symbol, fn) => {
-    const held = holds.get(symbol);
-    if (held === undefined) {
-      holds.set(symbol, new Set([fn]));
-      return true;
-    }
-    if (held.has(fn)) {
-      return false;
-    }
-    held.add(fn);
-    return true;
-  };
-
-  const taint = (symbol) => {
-    if (symbol === undefined || tainted.has(symbol)) {
-      return false;
-    }
-    tainted.add(symbol);
-    return true;
-  };
-
-  const valueOf = (node) => {
-    const value = unwrap(node);
-    if (value === undefined) {
-      return undefined;
-    }
-    if (isFunction(value)) {
-      return { fn: value };
-    }
-    if (ts.isIdentifier(value)) {
-      return { via: symbolOf(value), ambient: isAmbientRequire(value) };
-    }
-    return undefined;
-  };
-
-  const flow = (target, source) => {
-    if (target === undefined || source === undefined) {
-      return false;
-    }
-    if (source.fn !== undefined) {
-      return hold(target, source.fn);
-    }
-    let grew = false;
-    if (source.ambient === true) {
-      grew = taint(target) || grew;
-    }
-    if (source.via !== undefined) {
-      if (tainted.has(source.via)) {
-        grew = taint(target) || grew;
-      }
-      for (const fn of holds.get(source.via) ?? []) {
-        grew = hold(target, fn) || grew;
-      }
-    }
-    return grew;
-  };
-
-  const targetsOf = (call) => {
-    const callee = unwrap(call.expression);
-    if (callee === undefined) {
-      return [];
-    }
-    if (isFunction(callee)) {
-      return [callee];
-    }
-    if (!ts.isIdentifier(callee)) {
-      return [];
-    }
-    const symbol = symbolOf(callee);
-    return symbol === undefined ? [] : [...(holds.get(symbol) ?? [])];
-  };
-
-  // Reverse indexes: symbol → the edges that READ it. A new fact enqueues only
-  // those, instead of re-walking every assignment and every call (round-4 F006).
-  // The rescan loop cost edges x facts — a 2000-link reverse chain took ~2s.
-  /** symbol → assignment edges whose source reads it. */
-  const readsInAssignment = new Map();
-  /** symbol → calls whose callee is it, so new callables revisit them. */
-  const calledAs = new Map();
-  /** symbol → call edges passing it as an argument. */
-  const passedAs = new Map();
-
-  const under = (index, key, value) => {
-    if (key === undefined) {
-      return;
-    }
-    const at = index.get(key);
-    if (at === undefined) {
-      index.set(key, [value]);
-      return;
-    }
-    at.push(value);
-  };
-
-  for (const edge of assignments) {
-    const source = valueOf(edge[1]);
-    under(readsInAssignment, source?.via, edge);
-  }
-  for (const call of calls) {
-    const callee = unwrap(call.expression);
-    if (callee !== undefined && ts.isIdentifier(callee)) {
-      under(calledAs, symbolOf(callee), call);
-    }
-    for (const argument of call.arguments) {
-      const value = unwrap(argument);
-      if (value !== undefined && ts.isIdentifier(value)) {
-        under(passedAs, symbolOf(value), call);
-      }
-    }
-  }
-
-  const applyCall = (call) => {
-    let grew = false;
-    for (const target of targetsOf(call)) {
-      target.parameters.forEach((parameter, position) => {
-        if (ts.isIdentifier(parameter.name)) {
-          grew = flow(symbolOf(parameter.name), valueOf(call.arguments[position])) || grew;
-        }
-      });
-    }
-    return grew;
-  };
-
-  const queue = [...assignments.map((edge) => ({ assignment: edge })), ...calls.map((call) => ({ call }))];
-  const enqueue = (symbol) => {
-    for (const edge of readsInAssignment.get(symbol) ?? []) {
-      queue.push({ assignment: edge });
-    }
-    for (const call of calledAs.get(symbol) ?? []) {
-      queue.push({ call });
-    }
-    for (const call of passedAs.get(symbol) ?? []) {
-      queue.push({ call });
-    }
-  };
-
-  while (queue.length > 0) {
-    const work = queue.pop();
-    if (work.assignment !== undefined) {
-      const [name, initializer] = work.assignment;
-      const symbol = symbolOf(name);
-      if (flow(symbol, valueOf(initializer))) {
-        enqueue(symbol);
-      }
-      continue;
-    }
-    if (applyCall(work.call)) {
-      for (const parameter of targetsOf(work.call).flatMap((t) => t.parameters)) {
-        if (ts.isIdentifier(parameter.name)) {
-          enqueue(symbolOf(parameter.name));
-        }
-      }
-    }
-  }
-
-  return (identifier) => isAmbientRequire(identifier) || tainted.has(symbolOf(identifier));
+/** Whether a decoded string is a relative request with something after the prefix. */
+export function isRelativeRequest(text) {
+  return RELATIVE_PREFIXES.some((prefix) => text.startsWith(prefix)) && !BARE_PREFIXES.has(text);
 }
-
-/**
- * The specifier a call requires — never `x.require(...)`, never a computed
- * argument, and never text that merely looks like one.
- */
-function requireLiteral(node, isTainted) {
-  if (!ts.isCallExpression(node) || node.arguments.length !== 1) {
-    return undefined;
-  }
-  // `ts.isIdentifier` is what rejects `loader.require`: a property access is a
-  // PropertyAccessExpression, not an Identifier.
-  const callee = unwrap(node.expression);
-  if (!ts.isIdentifier(callee) || !isTainted(callee)) {
-    return undefined;
-  }
-  const arg = unwrap(node.arguments[0]);
-  return ts.isStringLiteralLike(arg) ? arg.text : undefined;
-}
-
-/**
- * Literals that look relative but are not module specifiers.
- *
- * The sweep is sound and imprecise (design.md D6), so this is where imprecision
- * is paid for — explicitly, one reviewed entry at a time, rather than by
- * weakening the rule. It is not a place to silence a real finding.
- */
-export const NOT_SPECIFIERS = new Set([
-  // `t.startsWith("../")` — a path-prefix test in the workspace path helpers.
-  // The only relative literal the production bundle carries.
-  "../",
-]);
 
 /**
  * Every distinct relative string literal in the bundle, in first-seen order.
@@ -323,28 +110,84 @@ export const NOT_SPECIFIERS = new Set([
  * so the literal is the one thing no spelling can hide (design.md D6).
  */
 export function relativeLiterals(bundleSource) {
+  return literalsIn(parse(bundleSource, "bundle.js"));
+}
+
+function literalsIn(root) {
   const seen = new Set();
-  walk(parse(bundleSource, "bundle.js"), (node) => {
+  walk(root, (node) => {
     if (!ts.isStringLiteralLike(node)) {
       return;
     }
     const text = node.text;
-    if ((text.startsWith("./") || text.startsWith("../")) && !NOT_SPECIFIERS.has(text)) {
+    if (isRelativeRequest(text)) {
       seen.add(text);
     }
   });
   return [...seen];
 }
 
-/** Every distinct specifier the bundle still requires, in first-seen order. */
-export function requiredSpecifiers(bundleSource) {
-  const { checker, root } = checkerFor(bundleSource);
-  const isTainted = requireBindings(root, checker);
+/**
+ * Every relative-headed template in the bundle, as its head text.
+ *
+ * A template whose head starts with a relative prefix is provably a relative
+ * request whatever its substitutions evaluate to, but what it resolves to is
+ * not knowable without running the program — so it is reported rather than
+ * resolved (design.md D7). The bare-prefix limit does NOT apply here: a head of
+ * exactly `./` is the dangerous case, not path data.
+ *
+ * Reported only in a CALL-ARGUMENT position. A relative-headed template is
+ * overwhelmingly path data — a URL, a CSS `url()`, a message — and only an
+ * argument can be a module request; a tagged template is its tag's input, not a
+ * call's (.reviews/round-6.md F018).
+ */
+export function relativeTemplates(bundleSource) {
+  return templatesIn(parse(bundleSource, "bundle.js"));
+}
+
+function templatesIn(root) {
   const seen = new Set();
   walk(root, (node) => {
-    const specifier = requireLiteral(node, isTainted);
-    if (specifier !== undefined) {
-      seen.add(specifier);
+    if (!ts.isTemplateExpression(node) || !isCallArgument(node)) {
+      return;
+    }
+    const head = node.head.text;
+    if (RELATIVE_PREFIXES.some((prefix) => head.startsWith(prefix))) {
+      seen.add(head);
+    }
+  });
+  return [...seen];
+}
+
+/**
+ * Every absolute literal in the bundle that names the BUILD MACHINE.
+ *
+ * Not every absolute literal. Call analysis gave this class its precision by
+ * reading require-call ARGUMENTS, and a literal sweep has none: 12 distinct
+ * literals in the real artifact pass `path.isAbsolute` and not one is a module
+ * request — `/bin/zsh`, `/bin/bash`, `/`, and CSS blocks that open `/*`. So the
+ * predicate is the one D2's wording always named, a path under the build root
+ * (design.md D2). An absolute path from elsewhere on the builder is a stated
+ * limit: the gate can only attribute paths it can locate.
+ */
+export function buildMachineLiterals(bundleSource, resolvesFrom) {
+  return machinePathsIn(parse(bundleSource, "bundle.js"), resolvesFrom);
+}
+
+function machinePathsIn(root, resolvesFrom) {
+  const buildRoot = buildRootFrom(resolvesFrom);
+  const seen = new Set();
+  walk(root, (node) => {
+    if (!ts.isStringLiteralLike(node)) {
+      return;
+    }
+    const text = node.text;
+    // Resolved before it is judged: a literal that walks out of the build root
+    // through `..` is not under it, and one that walks back in is
+    // (.reviews/round-8.md F024). Case and cross-flavour spellings stay open —
+    // deciding those needs the build host's own folding rules.
+    if (path.isAbsolute(text) && isWithinRoot(path.resolve(text), buildRoot)) {
+      seen.add(text);
     }
   });
   return [...seen];
@@ -456,7 +299,7 @@ function resolveManifest(target, root, { exists, isDirectory, readFile }) {
     return { ok: false, why: `resolves to ${target}, whose package.json declares no main and which has no index` };
   }
   const entry = path.resolve(target, main);
-  if (entry !== root && !entry.startsWith(root + path.sep)) {
+  if (!isWithinRoot(entry, root)) {
     return { ok: false, why: `main "${main}" resolves to ${entry}, which is outside the packaged ${path.basename(root)}/` };
   }
   const file = (p) => exists(p) && !isDirectory(p);
@@ -470,10 +313,49 @@ function resolveManifest(target, root, { exists, isDirectory, readFile }) {
   return { ok: false, why: `main "${main}" names ${entry}, which the packaged extension does not carry` };
 }
 
+/**
+ * Is `candidate` `root` itself, or something under it?
+ *
+ * One definition for all three callers. `src/utils/pathBoundary.ts` is the
+ * repository's only definition for `src/`; this is a plain `.mjs` build script
+ * that cannot import from it, so the rule lives here once instead of three
+ * times (.reviews/round-8.md F022).
+ */
+function isWithinRoot(candidate, root) {
+  return candidate === root || candidate.startsWith(root + path.sep);
+}
+
+/**
+ * The directory the build ran in, derived from where the artifact sits.
+ *
+ * `resolvesFrom` is the ARTIFACT directory — where a relative request resolves
+ * against. Its parent is the checkout, which is what an absolute literal has to
+ * name for the bundle to be carrying a path off the build machine. The two are
+ * different roots and each now has its own name (.reviews/round-8.md F022).
+ */
+function buildRootFrom(resolvesFrom) {
+  return path.dirname(path.resolve(resolvesFrom));
+}
+
+/** The Win32 spellings among the relative prefixes. */
+const WIN32_PREFIXES = RELATIVE_PREFIXES.filter((prefix) => prefix.includes("\\"));
+
+/**
+ * A relative request in the one flavour the resolver reads.
+ *
+ * The spelling picks the flavour, never the build host: `.\\lib\\thing.js` is a
+ * Win32 path wherever this gate runs, and handing it to a POSIX resolver made
+ * it one filename with backslashes in it, so it could never resolve
+ * (.reviews/round-6.md F017, design.md D6).
+ */
+function posixSpelling(specifier) {
+  return WIN32_PREFIXES.some((prefix) => specifier.startsWith(prefix)) ? specifier.replaceAll("\\", "/") : specifier;
+}
+
 function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) {
-  const target = path.resolve(resolvesFrom, specifier);
+  const target = path.resolve(resolvesFrom, posixSpelling(specifier));
   const root = path.resolve(resolvesFrom);
-  const inside = target === root || target.startsWith(root + path.sep);
+  const inside = isWithinRoot(target, root);
   if (!inside) {
     return { ok: false, why: `resolves to ${target}, which is outside the packaged ${path.basename(root)}/` };
   }
@@ -508,6 +390,18 @@ function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile
 }
 
 /** Classify one specifier. */
+/**
+ * The exit code the gate reports for a set of verdicts.
+ *
+ * Only the relative class fails a build. Bare and absolute requests are
+ * reported without a coverage claim, so they warn (design.md D2 § Coverage).
+ * Lives here rather than in the CLI so the exit rule itself is testable —
+ * importing the CLI would run the gate.
+ */
+export function exitCodeFor(verdicts) {
+  return verdicts.some((verdict) => verdict.severity === "fails") ? 1 : 0;
+}
+
 export function classify(specifier, {
   externals,
   resolvesFrom,
@@ -516,22 +410,37 @@ export function classify(specifier, {
   readFile = defaultReadFile,
 }) {
   if (BUILTINS.has(specifier)) {
-    return { specifier, ok: true, why: "node builtin" };
+    return { specifier, ok: true, severity: "none", why: "node builtin" };
+  }
+  // BEFORE the externals list. esbuild matches an `external` entry verbatim, so
+  // a relative entry there would silence the one class that fails a build —
+  // and an externalized relative path still has to resolve beside the bundle at
+  // runtime, which is the activation failure this gate exists to catch. D2's
+  // classification table states no exemption for it (.reviews/round-8.md F023).
+  //
+  // One predicate decides the class for detection and severity alike
+  // (.reviews/round-6.md F016).
+  if (isRelativeRequest(specifier)) {
+    const shipped = resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile });
+    return { specifier, severity: shipped.ok ? "none" : "fails", ...shipped };
   }
   if (externals.has(specifier)) {
-    return { specifier, ok: true, why: "declared external" };
+    return { specifier, ok: true, severity: "none", why: "declared external" };
   }
   if (path.isAbsolute(specifier)) {
     // A machine path baked into a shipped bundle is wrong even when it exists
     // on the builder — it names the build machine, not the user's.
-    return { specifier, ok: false, why: "absolute path baked into the bundle — it names the build machine" };
-  }
-  if (specifier.startsWith(".")) {
-    return { specifier, ...resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) };
+    return {
+      specifier,
+      ok: false,
+      severity: "warns",
+      why: "absolute path baked into the bundle — it names the build machine",
+    };
   }
   return {
     specifier,
     ok: false,
+    severity: "warns",
     why: "bare specifier that was never bundled and is not a declared external",
   };
 }
@@ -551,13 +460,27 @@ function defaultIsDirectory(p) {
 /** Every specifier the packaged extension could not satisfy. */
 export function unresolvableRequires(bundleSource, { esbuildSource, outfile, resolvesFrom, exists, isDirectory, readFile }) {
   const externals = declaredExternals(esbuildSource, outfile);
-  // Two questions, neither subsuming the other: the sweep owns the relative
-  // class soundly, and call detection owns bare and absolute specifiers, which
-  // cannot be swept because every string would be a candidate (design.md D6).
-  const candidates = new Set([...requiredSpecifiers(bundleSource), ...relativeLiterals(bundleSource)]);
-  return [...candidates]
+  // Call detection is gone (design.md D2, after round 7): it answered only the
+  // bare and absolute classes, it could not bound its own cost across four
+  // attempts, and the class that FAILS a build never depended on it — every
+  // relative specifier a call can carry is a string literal the sweep visits.
+  // One AST serves every collector; the wrappers above stay as thin
+  // string-taking forms so the witnesses can still drive each one alone.
+  const root = parse(bundleSource, "bundle.js");
+  const candidates = new Set([...literalsIn(root), ...machinePathsIn(root, resolvesFrom)]);
+  const resolved = [...candidates]
     .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory, readFile }))
     .filter((verdict) => !verdict.ok);
+  // A relative request the gate cannot resolve is still a relative request
+  // (design.md D7). It fails rather than warns because the real artifact
+  // carries none, so the rule cannot reject a build that works today.
+  const computed = templatesIn(root).map((head) => ({
+    specifier: `${head}\${...}`,
+    ok: false,
+    severity: "fails",
+    why: "relative request built at runtime — the gate cannot resolve what it will name",
+  }));
+  return [...resolved, ...computed];
 }
 
 /** Read the two files the gate needs. Separate so tests never touch the disk. */

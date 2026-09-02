@@ -27,6 +27,7 @@ import type {
   WorktreeCreateMode,
   WorktreeMutationResultMessage,
   WorktreeProvisionResultMessage,
+  WorktreeProvisionSaveMessage,
   WorktreeProvisionSwitchMessage,
   WorktreeRemoveAssessmentMessage,
   WorktreeSubscriptionLevel,
@@ -51,7 +52,14 @@ import type {
   WorktreePresence,
 } from "../worktree/presenceTypes";
 import { ACTIVITY_EVIDENCE } from "../worktree/presenceTypes";
+import { NATIVE_PROVIDER_FILE } from "../worktree/provisioning/nativeProvider";
 import { createProvisionOfferStore } from "../worktree/provisioning/offerStore";
+import {
+  divergenceOf,
+  type NativeConfigDivergence,
+  type NativeConfigRefusal,
+  type NativeConfigWrite,
+} from "../worktree/provisioning/writeNativeConfig";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRequests";
@@ -133,6 +141,35 @@ export interface WorktreeSurface {
    * turned that into argv; the surface only spawns it.
    */
   launchAgent?(options: CreateSessionOptions): Promise<void>;
+}
+
+/**
+ * A save that did not happen, said on the model the section is already showing.
+ *
+ * The four refusals map onto the two problem reasons the wire has, rather than
+ * widening it: `malformed` is the file's own state, and everything else is "the
+ * write could not be made". Create stays enabled either way — a configuration
+ * that could not be saved is not a reason to refuse to make a worktree
+ * (worktree-provisioning.md § 9, design.md D9).
+ */
+function refusedSave(model: ProvisionModel, reason: NativeConfigRefusal): ProvisionModel {
+  const detail: Record<NativeConfigRefusal, string> = {
+    unavailable: "Another process is holding it, or the folder could not be created.",
+    outside: "It does not resolve inside this repository.",
+    malformed: "It could not be edited without rewriting parts this did not change.",
+    unwritable: "The replacement could not be put in place.",
+  };
+  return {
+    ...model,
+    problems: [
+      ...model.problems,
+      {
+        file: NATIVE_PROVIDER_FILE,
+        reason: reason === "malformed" ? "malformed" : "unreadable",
+        detail: `\`${NATIVE_PROVIDER_FILE}\` was not saved. ${detail[reason]}`,
+      },
+    ],
+  };
 }
 
 export interface WorktreeHostOptions {
@@ -243,6 +280,15 @@ export interface WorktreeHostOptions {
    * checkout that declares it, not to the worktree being made from it.
    */
   readProvisioning?(mainWorktree: string, prefer?: ProvisionProvider["id"]): Promise<ProvisionModel>;
+  /**
+   * Record the user's choice in the repository's OWN provisioning file, and in
+   * no other (worktree-provisioning.md § 6). Absent on every surface but the
+   * real extension entry point, and the form simply offers no save.
+   *
+   * Takes the same main-worktree path `readProvisioning` does, and a divergence
+   * the host derived — never a path, key or text the webview sent.
+   */
+  writeNativeConfig?(mainWorktree: string, divergence: NativeConfigDivergence): Promise<NativeConfigWrite>;
   /**
    * Enumerate a repository's local branches. Absent — every surface but the
    * real extension entry point — and the create form gets no list, exactly as
@@ -1531,6 +1577,35 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     );
   }
 
+  function isKnownSave(msg: unknown): msg is WorktreeProvisionSaveMessage {
+    if (
+      typeof msg !== "object" ||
+      msg === null ||
+      !onlyKeys(msg, ["type", "repoId", "opening", "switch", "offerId", "kept", "provider"])
+    ) {
+      return false;
+    }
+    const m = msg as {
+      repoId?: unknown;
+      opening?: unknown;
+      switch?: unknown;
+      offerId?: unknown;
+      kept?: unknown;
+    };
+    return (
+      typeof m.repoId === "string" &&
+      m.repoId.length > 0 &&
+      namedOpening(m.opening) &&
+      typeof m.switch === "number" &&
+      Number.isInteger(m.switch) &&
+      m.switch > 0 &&
+      typeof m.offerId === "string" &&
+      m.offerId.length > 0 &&
+      Array.isArray(m.kept) &&
+      m.kept.every((id) => typeof id === "string")
+    );
+  }
+
   function isKnownDisposition(disposition: unknown): disposition is DestinationDisposition {
     if (typeof disposition !== "object" || disposition === null) {
       return false;
@@ -2296,6 +2371,76 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // `switch` strictly increasing, so a retry already outranks whatever
           // is held here. The map is swept by `retireOpening`, which is what
           // bounds it (.reviews/round-1.md F001).
+          .catch(() => {});
+        return;
+      }
+      case "worktreeProvisionSave": {
+        if (!isKnownSave(msg)) {
+          return;
+        }
+        const key = surfaceKey(surface);
+        // A retired or never-seen opening has no authority to spend, exactly as
+        // for a switch: nothing is written and nothing is published for a form
+        // the user has closed.
+        if (liveOpening.get(key) !== msg.opening) {
+          return;
+        }
+        const offerKey = { surface: key, repoId: msg.repoId };
+        // The model the user was LOOKING at, resolved by the host. An unknown,
+        // expired or foreign id writes nothing — the same defined outcome a
+        // submission gets (design.md D1).
+        const shown = offers.lookup(offerKey, msg.offerId);
+        if (shown === undefined || options.readProvisioning === undefined || options.writeNativeConfig === undefined) {
+          return;
+        }
+        // `msg.repoId` selects a record; it never becomes a destination. The
+        // root the write is given is the host's own, which is what keeps a path
+        // the webview spelled out of the file.
+        const repo = cache.read().repos.find((r) => r.repoId === msg.repoId);
+        if (repo === undefined) {
+          return;
+        }
+        // THE SAME slot the switch uses, so the two order against each other.
+        // Taken synchronously, before the write starts, so a later switch
+        // raises the ceiling immediately and this save can never find itself
+        // still highest when it lands (design.md D8).
+        const slot = `${key} ${msg.repoId} ${msg.opening}`;
+        if (msg.switch <= (provisionSwitch.get(slot) ?? 0)) {
+          return;
+        }
+        provisionSwitch.set(slot, msg.switch);
+        const mine = msg.switch;
+        void options
+          .writeNativeConfig(repo.mainPath, divergenceOf(shown, new Set(msg.kept)))
+          .then(async (written) => {
+            if (disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // Re-read whatever happened: a refusal is reported ON the model, so
+            // the section that shows it is the section the user is reading.
+            // Plain precedence, with no provider preferred. The write just made
+            // the native file the thing to read, and preferring the source it
+            // extends would answer with the view from BEFORE the write.
+            const model = await options.readProvisioning?.(repo.mainPath);
+            if (model === undefined || disposed || !surfaces.has(surface)) {
+              return;
+            }
+            // Checked AGAIN, after the write and the read. A save is slower
+            // than a switch and this is the window D8 exists for.
+            if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
+              return;
+            }
+            const offer = offers.issue(offerKey, written.ok ? model : refusedSave(model, written.reason));
+            surface.post({
+              type: "worktreeProvisionOffer",
+              repoId: msg.repoId,
+              opening: msg.opening,
+              offerId: offer.offerId,
+              model: offer.model,
+            });
+          })
+          // A save that throws leaves the form exactly as it was, and the
+          // ceiling is NOT released — for the reason the switch records above.
           .catch(() => {});
         return;
       }
@@ -3421,6 +3566,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "requestWorktreeCreateDefaults":
       case "worktreeCreateClosed":
       case "worktreeProvisionSwitch":
+      case "worktreeProvisionSave":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
       case "worktreeAuthorizeDebris":

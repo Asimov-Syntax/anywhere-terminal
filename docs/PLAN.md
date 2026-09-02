@@ -500,7 +500,7 @@ nothing to provision.
 | **Labels** | infra |
 | **Notes** | Written after an activation failure that no suite could have caught. A dependency whose package `main` is a UMD bundle calls its factory with `require` as a parameter and the factory then requires a relative path; the bundler cannot follow a require reached through a parameter, so the call survives into the output and resolves against the output directory at runtime. The whole test suite stayed green because the test runner resolves the dependency's ESM entry and never loads the bundle at all — so the gate has to read the built artifact, not the source. The immediate instance was fixed by aliasing that dependency to its ESM build; this task is the tripwire that would have caught it, and it must fail on the artifact rather than assert against a list of known-bad package names |
 | **Acceptance** | A build whose output holds a relative `require` that will not resolve at runtime fails the build; the check reads the built artifact rather than the sources; a deliberately reintroduced instance is caught, so the check is not vacuous; node builtins and the editor host module are not reported |
-| **Status** | todo |
+| **Status** | done |
 
 
 ---
@@ -610,7 +610,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | new-api-contract |
 | **Notes** | The other half of the split that WT-012.17 records, and the half that can actually observe the destination: git creates the worktree before provisioning runs, so the folding rule that decides the answer is a property of a directory that does not exist while the offer is being drawn. Two mechanisms here are already refuted. Reading `EEXIST` as the collision signal fails four ways — `makeDirectory` returns `written` for a directory that was already there and the second walk merges into it, `EEXIST` cannot tell a rival declaration from material `git worktree add` checked out, a native claimant that fails before claiming leaves no `EEXIST` at all, and the global copy-before-link sort is a prerequisite rule rather than a precedence one. Adopting orca's behaviour also fails: it dedupes exact strings and is first-write-wins, which is not provenance-wins. What is reusable is its no-clobber shape and the exclusive primitives already here — `copyFileNoFollow` opens the destination `O_CREAT \| O_EXCL` and links are one `symlink` call. Two states this task MUST settle with a `D#`, both found by attacking WT-012.17's plan rather than by review: a directory destination that already exists returns `written` and the walk MERGES the loser's children in, so for directory entries ordering alone never yields native-wins; and `Copying SHALL happen before linking` is an ACCEPTED requirement (`asimov/specs/worktree-panel/spec.md:1810-1815`), which a native link claiming its slot ahead of an inherited copy violates outright — two hard requirements over one state, so write both as predicates over one model and either show a construction satisfying both or name the one that yields. Also unowned so far: an unchecked favoured member must neither claim nor block a selected inherited one, and a copied symlink can become a self-loop when a case-sensitive source lands on a case-insensitive destination. Follow-up, deliberately NOT assumed by this task: a twin-create probe inside a private directory under the real destination parent would test two NAMES by creating them rather than testing object identity, which is the one thing the six refuted mechanisms never did — it needs a stated filesystem-support contract and an owner for the artifact a crash leaves behind, and provisioning currently deletes nothing |
 | **Acceptance** | When a native and an inherited entry claim one destination slot, the material and the `mode` the worktree ends up with are the native entry's; a directory this apply created is distinguished from one that was already there, and an existing destination stops the lower-priority walk instead of merging into it; a collision the apply cannot causally attribute — the destination pre-existed, the native claimant failed before claiming it, or another process created the name concurrently — is reported as a refused pair naming both declarations and is never resolved in favour of the inherited entry; provisioning still deletes nothing |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.4] One Configuration Assembled From Several Files
 
@@ -624,7 +624,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | new-api-contract, user-visible-ui |
 | **Notes** | The merge rule is the contract the UI's per-row badge depends on, so it is what breaks quietly if provenance is dropped anywhere in the pipeline. Four problem reasons are distinct on purpose — a missing `extends` target is not an unreadable file, and the difference decides whether the inline keys still apply |
 | **Acceptance** | A native file extending a provider produces one list whose entries each name their own origin; an inline entry sharing a path with an inherited one wins including its mode; an excluded path is shown as deliberate rather than missing and is not counted in the row total; setup steps from two sources are neither deduped nor reordered; a malformed file, an unknown key, and a missing `extends` target each report distinctly and none of them discards the rest of the file; a missing `extends` target still applies the native file's own inline keys; Create stays enabled through every one of these states |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.5] Configure Writes Our File and Only Ours
 
@@ -638,7 +638,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | The only task in the phase that writes a config file, sequenced last among the read tasks for that reason. Switching the active provider is also a write to this file — it rewrites `extends`, never the other framework's file |
 | **Acceptance** | Changing an inherited entry produces an inline entry or an exclude rather than an edit to the provider's file; a provider file is byte-identical after any operation this control offers; a first write points `extends` at whatever detection made active rather than freezing today's resolved list; an existing native file keeps its formatting and comments; switching the active provider rewrites only `extends` |
-| **Status** | todo |
+| **Status** | in_progress |
 
 ### [WT-012.6] Ports Are Allocated and Named Before They Collide
 

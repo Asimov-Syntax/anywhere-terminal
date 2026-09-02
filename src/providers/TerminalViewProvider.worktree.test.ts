@@ -404,6 +404,14 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
     switch: 1,
     provider: "orca",
   },
+  worktreeProvisionSave: {
+    type: "worktreeProvisionSave",
+    repoId: "/repo/.git",
+    opening: 1,
+    switch: 1,
+    offerId: "o1",
+    kept: ["i1"],
+  },
   requestWorktreeRefs: { type: "requestWorktreeRefs", repoId: "/repo/.git", token: 1 },
   worktreeCreateProbe: { type: "worktreeCreateProbe", repoId: "/repo/.git", token: 1, query: "feat" },
   worktreeAuthorizeDebris: {

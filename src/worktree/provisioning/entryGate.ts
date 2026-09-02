@@ -43,7 +43,15 @@ export interface EntryGateRoots {
 
 export type EntryVerdict =
   | { readonly ok: true; readonly source: string; readonly destination: string }
-  | { readonly ok: false; readonly reason: string };
+  /**
+   * `observedDestination` says whether this refusal was reached AFTER the gate
+   * read the filesystem. A name rule and a material rule are decided lexically,
+   * so they establish nothing about the destination — only the containment
+   * check does (design.md D3a). Without the distinction one member's own rule
+   * proves a shared destination occupied and refuses an admissible member
+   * beside it (.reviews/round-6.md OOB-F016).
+   */
+  | { readonly ok: false; readonly reason: string; readonly observedDestination: boolean };
 
 /**
  * Lockfiles this refuses by name.
@@ -208,12 +216,20 @@ export async function admitEntry(
   deps: ResolvedPathInsideDeps = {},
 ): Promise<EntryVerdict> {
   if (isAbsoluteSpelling(entry.path)) {
-    return { ok: false, reason: "an entry names a path relative to the repository, not an absolute one" };
+    return {
+      ok: false,
+      reason: "an entry names a path relative to the repository, not an absolute one",
+      observedDestination: false,
+    };
   }
   // AFTER the absolute check, so a Windows absolute spelling still refuses with
   // the reason that actually describes it rather than with this one.
   if (hasBackslash(entry.path)) {
-    return { ok: false, reason: "a backslash is not a path separator here — declare entries with forward slashes" };
+    return {
+      ok: false,
+      reason: "a backslash is not a path separator here — declare entries with forward slashes",
+      observedDestination: false,
+    };
   }
 
   const source = path.resolve(roots.source.path, entry.path);
@@ -224,7 +240,7 @@ export async function admitEntry(
   // and `path.resolve` is not one.
   const material = refusedMaterial(destination, entry.mode);
   if (material !== null) {
-    return { ok: false, reason: material };
+    return { ok: false, reason: material, observedDestination: false };
   }
 
   // Both, separately, and both must hold. Checked in parallel because neither
@@ -234,10 +250,10 @@ export async function admitEntry(
     isResolvedPathInsideRoot(destination, roots.destination.prepared, deps),
   ]);
   if (!sourceInside) {
-    return { ok: false, reason: REFUSED_OUTSIDE_SOURCE };
+    return { ok: false, reason: REFUSED_OUTSIDE_SOURCE, observedDestination: true };
   }
   if (!destinationInside) {
-    return { ok: false, reason: REFUSED_OUTSIDE_DESTINATION };
+    return { ok: false, reason: REFUSED_OUTSIDE_DESTINATION, observedDestination: true };
   }
   return { ok: true, source, destination };
 }

@@ -39,9 +39,18 @@ export interface ApplyProvisioningResult {
 
 /** A set of selected declarations that may name one destination, and the repository's own. */
 interface Contest {
-  readonly favoured: ProvisionEntry;
+  /**
+   * Absent when more than one member is the repository's own: priority is
+   * claimed twice, nothing available can choose between them, and the group is
+   * refused entire rather than left to the ordinary pass (design.md D3b).
+   */
+  readonly favoured: ProvisionEntry | undefined;
   readonly held: readonly ProvisionEntry[];
 }
+
+/** Every member of a contest, favoured first when it has one. */
+const membersOf = (contest: Contest): readonly ProvisionEntry[] =>
+  contest.favoured === undefined ? contest.held : [contest.favoured, ...contest.held];
 
 /** What the report needs to name one member: never the entry itself. */
 const memberOf = (entry: ProvisionEntry) => ({ id: entry.id, path: entry.path, source: entry.source });
@@ -52,21 +61,31 @@ const memberOf = (entry: ProvisionEntry) => ({ id: entry.id, path: entry.path, s
  * Recomputed rather than carried on the wire (design.md D1): the offer's own
  * groups answered a question about every offered row, and the user has since
  * unticked some of them. A group with no favoured member left is not a contest
- * — nothing in it claims priority — so its members are applied as they are.
+ * — nothing in it claims priority — so its members are applied as they are,
+ * UNLESS priority was claimed twice, which is the opposite state (design.md
+ * D3b).
  */
 function contestsOf(entries: readonly ProvisionEntry[]): Contest[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const contests: Contest[] = [];
   for (const group of contendersOf(entries, NATIVE_PROVIDER_FILE)) {
-    const favoured = group.favoured === undefined ? undefined : byId.get(group.favoured);
-    if (favoured === undefined) {
+    // One predicate, the same one the dialog applies to the selection it holds
+    // (design.md D3c). More than one repository declaration is refused entire —
+    // nothing available chooses between them (D3b) — exactly one is favoured,
+    // and none means nothing claims priority, so the members are applied as
+    // they are.
+    const natives = group.natives.map((id) => byId.get(id)).filter((e): e is ProvisionEntry => e !== undefined);
+    const favoured = natives.length === 1 ? natives[0] : undefined;
+    if (favoured === undefined && natives.length < 2) {
       continue;
     }
     const held = group.members
-      .filter((id) => id !== favoured.id)
+      .filter((id) => id !== favoured?.id)
       .map((id) => byId.get(id))
       .filter((entry): entry is ProvisionEntry => entry !== undefined);
-    if (held.length > 0) {
+    // A group refused entire is a contest of its own members; one with a
+    // favoured row needs someone for it to be weighed against.
+    if (favoured === undefined ? held.length > 1 : held.length > 0) {
       contests.push({ favoured, held });
     }
   }
@@ -81,8 +100,14 @@ function contestsOf(entries: readonly ProvisionEntry[]): Contest[] {
  * free, and collapsing `inadmissible` into `present` reports a collision
  * nobody observed while discarding the refusal the gate actually had
  * (.reviews/round-1.md F002).
+ *
+ * `refused` and `inadmissible` are both gate refusals and are NOT the same
+ * reading (design.md D3a). Only `inadmissible` reached the filesystem, so only
+ * it leaves the destination unproven; `refused` is a fact about this member's
+ * own name or mode and says nothing about the destination at all
+ * (.reviews/round-6.md OOB-F016).
  */
-type Reading = "absent" | "present" | "unreadable" | "inadmissible";
+type Reading = "absent" | "present" | "unreadable" | "inadmissible" | "refused";
 
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code;
 
@@ -95,7 +120,7 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
 function indexByMember(contests: readonly Contest[]): Map<string, number> {
   const at = new Map<string, number>();
   for (const [index, contest] of contests.entries()) {
-    for (const member of [contest.favoured, ...contest.held]) {
+    for (const member of membersOf(contest)) {
       at.set(member.id, index);
     }
   }
@@ -104,7 +129,7 @@ function indexByMember(contests: readonly Contest[]): Map<string, number> {
 
 /** The contests as the wire carries them: membership once, per contest. */
 const wireContests = (contests: readonly Contest[]): ProvisionResultContest[] =>
-  contests.map((contest) => ({ members: [contest.favoured, ...contest.held].map(memberOf) }));
+  contests.map((contest) => ({ members: membersOf(contest).map(memberOf) }));
 
 /**
  * Every entry failed, for one reason that is nothing to do with any entry.
@@ -168,9 +193,16 @@ export async function applyProvisioning(
    * The gate owns where an entry lands, so this asks it rather than resolving
    * the path a second way.
    */
+  /** The reason a member was refused for what it IS, until it can be answered. */
+  const refusedItself = new Map<ProvisionEntry, string>();
+
   const read = async (entry: ProvisionEntry): Promise<Reading> => {
     const admitted = await admitEntry(entry, roots, deps);
     if (!admitted.ok) {
+      if (!admitted.observedDestination) {
+        refusedItself.set(entry, admitted.reason);
+        return "refused";
+      }
       return "inadmissible";
     }
     try {
@@ -187,11 +219,12 @@ export async function applyProvisioning(
    * filesystem itself and so cannot be told apart from an unreadable
    * destination (`resolvedPathBoundary.ts:117-121`).
    */
-  const contended = (readings: readonly Reading[]): boolean => readings.some((reading) => reading !== "absent");
+  const contended = (readings: readonly Reading[]): boolean =>
+    readings.some((reading) => reading !== "absent" && reading !== "refused");
 
   /** Refuse every member that is still claiming, naming the whole contest. */
   const refuseContest = async (contest: Contest, why: string): Promise<void> => {
-    const members = [contest.favoured, ...contest.held];
+    const members = membersOf(contest);
     for (const member of members) {
       if (answered.has(member)) {
         continue;
@@ -206,8 +239,31 @@ export async function applyProvisioning(
   // BEFORE the ordered pass, so what it reads is what was already in the
   // worktree rather than what this apply has since written (design.md D3).
   for (const contest of contests) {
-    const members = [contest.favoured, ...contest.held];
-    if (contended(await Promise.all(members.map(read)))) {
+    if (contest.favoured === undefined) {
+      // Priority claimed twice. Declaration order inside one file is not a
+      // precedence the spec gives, and inventing one would decide a user's
+      // config silently — so nothing is written and every member is named
+      // (design.md D3b).
+      await refuseContest(
+        contest,
+        "may name this same destination, and more than one of them is the repository's own declaration",
+      );
+      continue;
+    }
+    const members = membersOf(contest);
+    const readings = await Promise.all(members.map(read));
+    // A member refused for what it IS is refused ALONE, keeping the rule that
+    // actually fired (D4b) decorated with its contest (D4a). Answered BEFORE
+    // the group is settled, because a refusal that observed nothing is not the
+    // group's to overwrite — reporting a destination collision for a link that
+    // is never followed is round-3 F006 again (.reviews/round-7.md F014).
+    for (const member of members) {
+      const reason = refusedItself.get(member);
+      if (reason !== undefined) {
+        answered.set(member, step(member, reason, contest));
+      }
+    }
+    if (contended(readings)) {
       // The whole group, not only the loser: leaving the favoured member to run
       // would merge it into a destination it did not create — `makeDirectory`
       // answers `written` for an existing directory — installing neither its
@@ -218,9 +274,18 @@ export async function applyProvisioning(
       );
       continue;
     }
-    live.set(contest.favoured, contest);
+    // The contest goes on without the members above, so an admissible favoured
+    // member still claims a destination no reading found present (D3a).
     for (const member of contest.held) {
-      held.set(member, contest);
+      if (!answered.has(member)) {
+        held.set(member, contest);
+      }
+    }
+    // A favoured member refused this way did not claim, which is D4 row 3 —
+    // the held members are refused by the pass below, never written in its
+    // place.
+    if (!answered.has(contest.favoured)) {
+      live.set(contest.favoured, contest);
     }
   }
 
@@ -235,7 +300,7 @@ export async function applyProvisioning(
       // — a copy of `MixedCase/seed` has to create `MixedCase` — and the
       // favoured member would then merge into a destination an unrelated writer
       // owns while reporting that it claimed it (.reviews/round-1.md F001).
-      const members = [contest.favoured, ...contest.held];
+      const members = membersOf(contest);
       if (contended(await Promise.all(members.map(read)))) {
         await refuseContest(
           contest,
@@ -300,7 +365,7 @@ export async function applyProvisioning(
     // and the notice renders `path: reason`, so a reason that names only the
     // counterparty leaves the user unable to tell which config files are in
     // dispute (.reviews/round-1.md F004).
-    const claimed = answered.get(contest.favoured)?.outcome.kind;
+    const claimed = contest.favoured === undefined ? undefined : answered.get(contest.favoured)?.outcome.kind;
     const why =
       claimed === "copied" || claimed === "linked" || claimed === "degradedToCopy"
         ? "may name this same destination, and it was claimed by the repository's own declaration"

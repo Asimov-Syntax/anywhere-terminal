@@ -24,6 +24,7 @@ import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandR
 import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
+import type { NativeConfigDivergence, NativeConfigWrite } from "../worktree/provisioning/writeNativeConfig";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsRead } from "../worktree/repoPullRequests";
@@ -313,6 +314,7 @@ async function builtHost(
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
+    writeNativeConfig?: (mainWorktree: string, divergence: NativeConfigDivergence) => Promise<NativeConfigWrite>;
     /** What the ref reader should answer. */
     readRefs?: (input: RepoRefsInput) => Promise<RepoRefsRead>;
     /** Collects every input the ref reader was handed. */
@@ -443,6 +445,7 @@ async function builtHost(
     ...(over.issueDebrisAuthorization === undefined ? {} : { issueDebrisAuthorization: over.issueDebrisAuthorization }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
     ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
+    ...(over.writeNativeConfig === undefined ? {} : { writeNativeConfig: over.writeNativeConfig }),
     ...(over.readRefs === undefined && over.refsInputs === undefined
       ? {}
       : {
@@ -2514,7 +2517,7 @@ describe("the provisioning offer the create form is given", () => {
       entries: [{ id: "i1", path, mode: "copy", source: "asimov/worktree.yaml" }],
       setup: [],
       ports: [],
-      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
       contenders: [],
       problems: [],
@@ -3010,8 +3013,13 @@ describe("[D5] a switch is a new request with its own identity", () => {
     setup: [],
     ports: [],
     providers: [
-      { id: "asimov", files: ["asimov/worktree.yaml"], active: true },
-      { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: false },
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      {
+        id: "orca",
+        files: ["orca.yaml", ".worktreeinclude"],
+        present: ["orca.yaml", ".worktreeinclude"],
+        active: false,
+      },
     ],
     excluded: [],
     contenders: [],
@@ -3026,8 +3034,13 @@ describe("[D5] a switch is a new request with its own identity", () => {
       ...OFFERED,
       entries: [{ id: "i1", path: "node_modules", mode: "link", source: "orca.yaml" }],
       providers: [
-        { id: "orca", files: ["orca.yaml", ".worktreeinclude"], active: true },
-        { id: "asimov", files: ["asimov/worktree.yaml"], active: false },
+        {
+          id: "orca",
+          files: ["orca.yaml", ".worktreeinclude"],
+          present: ["orca.yaml", ".worktreeinclude"],
+          active: true,
+        },
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: false },
       ],
     };
   }
@@ -3308,6 +3321,195 @@ describe("[D5] a switch is a new request with its own identity", () => {
 
     expect(offersIn(h.view)).toHaveLength(before + 1);
     expect(pathsIn(offersIn(h.view).at(-1))).toEqual(["node_modules"]);
+    h.dispose();
+  });
+});
+
+describe("[D8] a save is recorded in one file, under the order a switch obeys", () => {
+  const OFFERED: ProvisionModel = {
+    entries: [
+      { id: "i1", path: ".env", mode: "copy", source: "asimov/worktree.yaml" },
+      { id: "i2", path: "node_modules", mode: "link", source: "asimov/worktree.yaml" },
+    ],
+    setup: [],
+    ports: [],
+    providers: [
+      { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+    ],
+    excluded: [],
+    contenders: [],
+    problems: [],
+  };
+
+  function offersIn(view: { posts: unknown[] }) {
+    return (view.posts as ExtensionToWebViewMessage[]).filter((p) => p.type === "worktreeProvisionOffer");
+  }
+
+  /** An open form, plus every divergence the host handed the writer. */
+  async function opened(
+    over: {
+      write?: (main: string, d: NativeConfigDivergence) => Promise<NativeConfigWrite>;
+      read?: (main: string, prefer?: string) => Promise<ProvisionModel>;
+    } = {},
+  ) {
+    const seen: { main: string; divergence: NativeConfigDivergence }[] = [];
+    const h = await builtHost(undefined, false, {
+      readProvisioning: (over.read ?? (async () => OFFERED)) as never,
+      writeNativeConfig: (async (main: string, divergence: NativeConfigDivergence) => {
+        seen.push({ main, divergence });
+        return over.write ? over.write(main, divergence) : { ok: true, wrote: true };
+      }) as never,
+    });
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    return { ...h, seen };
+  }
+
+  const save = (over: Record<string, unknown> = {}) => ({
+    type: "worktreeProvisionSave" as const,
+    repoId: REPO,
+    opening: 1,
+    switch: 1,
+    offerId: "",
+    kept: ["i1"],
+    ...over,
+  });
+
+  function liveOffer(view: { posts: unknown[] }): string {
+    return (offersIn(view).at(-1) as { offerId: string }).offerId;
+  }
+
+  /**
+   * The id the user was SHOWN for a path.
+   *
+   * The offer store re-mints every selectable id so they are unique within one
+   * offer, so the ids the webview holds are not the adapter's. A test that sent
+   * the adapter's would be asserting against a model no dialog ever saw.
+   */
+  function shownId(view: { posts: unknown[] }, path: string): string {
+    const model = (offersIn(view).at(-1) as { model: ProvisionModel }).model;
+    const found = model.entries.find((e) => e.path === path);
+    if (found === undefined) {
+      throw new Error(`no offered entry for ${path}`);
+    }
+    return found.id;
+  }
+
+  it("hands the writer the repository's own path and the divergence it derived", async () => {
+    const h = await opened();
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), kept: [shownId(h.view, ".env")] }));
+    await settle();
+
+    expect(h.seen).toHaveLength(1);
+    expect(h.seen[0]?.main).toBe(MAIN_PATH);
+    // `i2` was cleared and came from a framework file, so it is an exclusion.
+    expect(h.seen[0]?.divergence.exclude).toEqual(["node_modules"]);
+    h.dispose();
+  });
+
+  it("writes nothing for an offer id this form was never issued", async () => {
+    const h = await opened();
+
+    h.host.handleMessage(h.view, save({ offerId: "not-an-offer" }));
+    await settle();
+
+    expect(h.seen).toEqual([]);
+    // And the same form, with the id it WAS issued, writes — so the refusal
+    // above is this id being wrong rather than the message never arriving.
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 2 }));
+    await settle();
+    expect(h.seen).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("writes nothing for an opening the user has closed", async () => {
+    const h = await opened();
+    const offerId = liveOffer(h.view);
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+
+    h.host.handleMessage(h.view, save({ offerId }));
+    await settle();
+
+    expect(h.seen).toEqual([]);
+    // Reopened, the same save writes — the refusal is the closed opening.
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    await settle();
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), opening: 2 }));
+    await settle();
+    expect(h.seen).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("does not publish over a switch that overtook it", async () => {
+    // The save begins against the offer on screen and is still writing when the
+    // user takes another source. Without ONE sequence covering both, the save
+    // lands last and puts back the model the user moved on from.
+    let release: (() => void) | undefined;
+    const h = await opened({
+      write: async () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ok: true, wrote: true });
+        }),
+      read: async (_main, prefer) =>
+        prefer === "orca"
+          ? { ...OFFERED, entries: [{ id: "i9", path: "vendor", mode: "link", source: "orca.yaml" }] }
+          : OFFERED,
+    });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 1 }));
+    await settle();
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 2,
+      provider: "orca",
+    });
+    await settle();
+    release?.();
+    await settle();
+
+    // The switch's model is what the form is left describing.
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.entries.map((e) => e.path)).toEqual(["vendor"]);
+    h.dispose();
+  });
+
+  it("refuses a save whose sequence a switch already passed", async () => {
+    const h = await opened();
+    const offerId = liveOffer(h.view);
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 5,
+      provider: "orca",
+    });
+    await settle();
+
+    h.host.handleMessage(h.view, save({ offerId, switch: 4 }));
+    await settle();
+
+    expect(h.seen).toEqual([]);
+    // Above the ceiling, the same save writes.
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), switch: 6 }));
+    await settle();
+    expect(h.seen).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("reports a refusal on the model and leaves the form standing", async () => {
+    const h = await opened({ write: async () => ({ ok: false, reason: "unavailable" }) });
+
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view) }));
+    await settle();
+
+    const last = offersIn(h.view).at(-1) as { model: ProvisionModel };
+    expect(last.model.problems.map((p) => p.file)).toEqual([".vscode/worktree.json"]);
+    expect(last.model.entries.map((e) => e.path)).toEqual([".env", "node_modules"]);
     h.dispose();
   });
 });
@@ -5092,7 +5294,7 @@ describe("the provisioning a create is actually given", () => {
       ],
       setup: [],
       ports: [],
-      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], active: true }],
+      providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
       excluded: [],
       contenders: [],
       problems: [],

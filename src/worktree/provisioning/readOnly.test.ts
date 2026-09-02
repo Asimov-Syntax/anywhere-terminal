@@ -51,6 +51,7 @@ const NOT_READ_PATH = [
   "entryGate.ts",
   "offerStore.ts",
   "provisioningDeps.ts",
+  "writeNativeConfig.ts",
 ];
 
 /** Source with its comments removed — this asks what the code does, not what it says. */

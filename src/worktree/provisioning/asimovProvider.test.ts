@@ -77,7 +77,9 @@ describe("readAsimovProvisioning", () => {
     expect(model.setup.map((s) => s.script)).toEqual(["pnpm install --frozen-lockfile", "node esbuild.js"]);
     expect(model.setup.every((s) => s.kind === "shell")).toBe(true);
     expect(model.problems).toEqual([]);
-    expect(model.providers).toEqual([{ id: "asimov", files: [ASIMOV_PROVIDER_FILE], active: true }]);
+    expect(model.providers).toEqual([
+      { id: "asimov", files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+    ]);
   });
 
   it("attributes every row, expanded ones included", async () => {
@@ -258,7 +260,7 @@ describe("a directly-read model carries the contender relation too", () => {
     expect(grouped).toEqual([["MixedCase", "mixedcase"]]);
     // One declaring file, so nothing in it is "the repository's own" relative
     // to the rest — the row the user keeps is theirs to pick (design.md D3).
-    expect(model.contenders[0]?.favoured).toBeUndefined();
+    expect(model.contenders[0]?.natives).toEqual([]);
   });
 });
 

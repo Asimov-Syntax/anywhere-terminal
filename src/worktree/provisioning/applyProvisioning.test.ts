@@ -535,3 +535,201 @@ describe("[round-5 F011] the worktree could not be read at all", () => {
     expect(contests).toEqual([]);
   });
 });
+
+// [OOB-F016 / D3a] `read` collapsed every gate refusal into `inadmissible`, so
+// an inherited member refused by its OWN material rule proved the shared
+// destination "not free" and the admissible native member was refused at a
+// destination that did not exist. A refusal reached before the gate touched
+// anything is a fact about the entry, not a reading of the destination.
+describe("[OOB-F016] a member's own refusal is not an observation of the destination", () => {
+  const DEPS = {
+    [`${MAIN}/node_modules`]: { kind: "dir" },
+    [`${MAIN}/node_modules/pkg`]: { kind: "file", size: 7 },
+  } as const;
+
+  it("lets the favoured member claim a destination no reading found present", async () => {
+    // One destination, two modes: the repository's own says copy it, the
+    // inherited file says link it — and linking node_modules is refused by a
+    // rule that never opens anything.
+    const { steps, fs } = await applyTo(DEPS, [
+      entry("node_modules", "copy", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    expect(fs.nodes.has(`${WT}/node_modules/pkg`)).toBe(true);
+    // Production order, per D5: this refusal is settled in the reading pass
+    // that precedes the ordered one, alongside the group refusals, because
+    // that is where the gate answered it.
+    expect(steps.map((s) => [s.id, s.outcome.kind])).toEqual([
+      ["i2", "refused"],
+      ["i1", "copied"],
+    ]);
+  });
+
+  it("refuses that member with the rule that actually fired, naming the contest", async () => {
+    // D4b: the reason stays the member's own; D4a: the membership rides the
+    // contest index, so the reader still sees what it was weighed against.
+    const { steps, contests } = await applyTo(DEPS, [
+      entry("node_modules", "copy", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    const refused = steps.find((s) => s.id === "i2");
+    expect(refused?.outcome).toMatchObject({ reason: expect.stringContaining("node_modules is never linked") });
+    expect(named(contests, refused)).toEqual([
+      "node_modules (declared in .vscode/worktree.json)",
+      "node_modules (declared in asimov/worktree.yaml)",
+    ]);
+  });
+
+  it("[round-7 F014] keeps its own rule when a SIBLING's reading refuses the contest", async () => {
+    // The destination is already there, so the favoured member's reading is
+    // `present` and the group is refused. The member the gate refused for what
+    // it IS observed nothing, and its reason is not the group's to overwrite:
+    // reporting "could not be shown to be free" for a link that is never
+    // followed invents a collision the same way round 3's F006 did.
+    const { steps, fs } = await applyTo({ ...DEPS, [`${WT}/node_modules`]: { kind: "dir" } }, [
+      entry("node_modules", "copy", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    expect(fs.created).toEqual([]);
+    // Answered before the contest is settled, so the order says which refusal
+    // observed nothing — the webview compares provisioning state by this key.
+    expect(steps.map((s) => s.id)).toEqual(["i2", "i1"]);
+    expect(steps[0]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("node_modules is never linked"),
+    });
+    expect(steps[1]?.outcome).toMatchObject({
+      kind: "refused",
+      reason: expect.stringContaining("could not be shown to be free"),
+    });
+  });
+
+  it("still refuses the whole contest when the refusal DID observe the destination", async () => {
+    // A containment refusal reaches realpath and lstat, so it cannot be told
+    // apart from an unreadable destination — the narrowing must not reopen
+    // what D3 closed.
+    const { steps, fs } = await applyTo(
+      {
+        [`${MAIN}/escape`]: { kind: "dir" },
+        [`${MAIN}/escape/a`]: { kind: "file", size: 3 },
+        [`${WT}/escape`]: { kind: "link", target: "/outside" },
+        "/outside": { kind: "dir" },
+      },
+      [entry("escape/a", "copy", NATIVE, "i1"), entry("Escape/a", "copy", INHERITED, "i2")],
+    );
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
+    expect(fs.created).toEqual([]);
+  });
+});
+
+describe("[round-7 F017] the favoured member is refused before any reading (D4 row 3)", () => {
+  const DEPS = {
+    ...MATERIAL,
+    [`${MAIN}/node_modules`]: { kind: "dir" },
+    [`${MAIN}/node_modules/pkg`]: { kind: "file", size: 7 },
+  } as const;
+
+  it("refuses every member by its own rule, and writes nothing", async () => {
+    // Both declarations say link, and node_modules is never linked — so the
+    // favoured member never claims and the group is settled entirely by rules
+    // that opened nothing. Row 3 is reached with no reading behind it.
+    const { steps, contests, fs } = await applyTo(DEPS, [
+      entry(".env", "copy", NATIVE, "u1"),
+      entry("node_modules", "link", NATIVE, "i1"),
+      entry("node_modules", "link", INHERITED, "i2"),
+    ]);
+
+    expect(fs.nodes.has(`${WT}/node_modules`)).toBe(false);
+    // The uncontested copy runs FIRST in the ordered pass, so its landing
+    // after both refusals is what says the group was settled in the pre-pass.
+    expect(steps.map((s) => [s.id, s.outcome.kind])).toEqual([
+      ["i1", "refused"],
+      ["i2", "refused"],
+      ["u1", "copied"],
+    ]);
+    for (const id of ["i1", "i2"]) {
+      const refused = steps.find((s) => s.id === id);
+      expect(refused?.outcome).toMatchObject({ reason: expect.stringContaining("node_modules is never linked") });
+      expect(named(contests, refused)).toEqual([
+        "node_modules (declared in .vscode/worktree.json)",
+        "node_modules (declared in asimov/worktree.yaml)",
+      ]);
+    }
+  });
+
+  it("refuses a held member the gate would have admitted, naming the contest", async () => {
+    // The favoured member is refused for what it is; the held one is perfectly
+    // admissible and still gets nothing, because D4 row 3 does not hand a
+    // destination to the inherited declaration when the repository's own
+    // failed to claim it.
+    const { steps, contests, fs } = await applyTo(DEPS, [
+      entry("node_modules", "link", NATIVE, "i1"),
+      entry("node_modules", "copy", INHERITED, "i2"),
+    ]);
+
+    expect(fs.created).toEqual([]);
+    expect(steps.map((s) => [s.id, s.outcome.kind])).toEqual([
+      ["i1", "refused"],
+      ["i2", "refused"],
+    ]);
+    expect(steps[0]?.outcome).toMatchObject({ reason: expect.stringContaining("node_modules is never linked") });
+    expect(named(contests, steps[1])).toEqual([
+      "node_modules (declared in .vscode/worktree.json)",
+      "node_modules (declared in asimov/worktree.yaml)",
+    ]);
+  });
+});
+
+// [OOB-F015 / D3b] `contendersOf` names a favoured member only when exactly one
+// comes from the native file, so two native spellings left the group with none
+// — and `contestsOf` dropped it on the branch reading "nothing in it claims
+// priority". The ordinary pass then ran and the INHERITED declaration's
+// material landed at the destination. Two natives is the opposite state:
+// priority is claimed twice, and nothing available can choose between them.
+describe("[OOB-F015] a group that claims priority twice is refused entire", () => {
+  const THREE = {
+    [`${MAIN}/MixedCase`]: { kind: "file", size: 11 },
+    [`${MAIN}/MIXEDCASE`]: { kind: "file", size: 22 },
+    [`${MAIN}/mixedcase`]: { kind: "file", size: 33 },
+  } as const;
+  const MEMBERS = [
+    entry("MixedCase", "copy", NATIVE, "i1"),
+    entry("MIXEDCASE", "copy", NATIVE, "i2"),
+    entry("mixedcase", "copy", INHERITED, "i3"),
+  ];
+
+  it("writes nothing, and does not hand the destination to the inherited row", async () => {
+    const { steps, fs } = await applyTo(THREE, MEMBERS);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused", "refused"]);
+    expect(fs.created).toEqual([]);
+    expect(fs.nodes.has(`${WT}/mixedcase`)).toBe(false);
+  });
+
+  it("names every member of the group, by path and declaring file", async () => {
+    const { steps, contests } = await applyTo(THREE, MEMBERS);
+
+    for (const step of steps) {
+      expect(named(contests, step)).toEqual([
+        "MixedCase (declared in .vscode/worktree.json)",
+        "MIXEDCASE (declared in .vscode/worktree.json)",
+        "mixedcase (declared in asimov/worktree.yaml)",
+      ]);
+    }
+  });
+
+  it("still applies a group where nothing at all claims priority", async () => {
+    // The branch D3b narrows was written for this state and keeps it: two
+    // inherited spellings, no native member, nothing claiming priority.
+    const { steps } = await applyTo(THREE, [
+      entry("MixedCase", "copy", INHERITED, "i1"),
+      entry("mixedcase", "copy", INHERITED, "i2"),
+    ]);
+
+    expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "copied"]);
+  });
+});

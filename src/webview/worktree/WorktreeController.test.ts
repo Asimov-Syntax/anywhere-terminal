@@ -8,10 +8,14 @@ import type {
 } from "../../types/messages";
 import type { PaneAttribution, PaneReport } from "../paneAttribution";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
+import { openWorktreeCreateDialog } from "./WorktreeCreateDialog";
 import {
   agentRow,
+  createDefaults,
   noRepoTree,
   provisionModel,
+  provisionOffer,
+  REPO_ID,
   singleRepoPresence,
   singleRepoTree,
   twoRepoTree,
@@ -3501,5 +3505,70 @@ describe("[D5] the switch the dialog takes reaches the host as a request", () =>
     const defaults = h.posts.find((m) => m.type === "requestWorktreeCreateDefaults") as { opening: number };
     const swap = h.posts.find((m) => m.type === "worktreeProvisionSwitch") as { opening: number };
     expect(swap.opening).toBe(defaults.opening);
+  });
+});
+
+describe("[D1, D8] pressing Configure in the real form reaches the host as a save", () => {
+  /**
+   * The dialog opened on the CONTROLLER's own deps.
+   *
+   * Calling `createDialogDeps().onProvisionSave` by hand proves only that the
+   * conversion works — it would keep passing with a form that renders no
+   * control, or one whose control calls nothing. The button here is the shipped
+   * one, and the assertion is on what the controller posted.
+   */
+  function form(h: Harness) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const made = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): Record<string, unknown> } };
+      }
+    ).view.deps.createDialogDeps();
+    const dispose = openWorktreeCreateDialog(host, {
+      ...(made as unknown as Parameters<typeof openWorktreeCreateDialog>[1]),
+      repos: [createDefaults({ provisioning: provisionOffer() })],
+      onSubmit: () => {},
+    });
+    return { host, dispose };
+  }
+
+  it("posts the ticked ids against the offer that named them, on the form's opening", () => {
+    const h = mount();
+    const { host, dispose } = form(h);
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+    dispose();
+
+    const posted = h.posts.filter((m) => m.type === "worktreeProvisionSave");
+    expect(posted).toHaveLength(1);
+    // Nothing on this message can carry a path, a key or file text: the host
+    // derives the file it writes and the root it writes under from its own
+    // cache, and `repoId` selects a record rather than becoming a destination.
+    expect(Object.keys(posted[0] ?? {}).sort()).toEqual(["kept", "offerId", "opening", "repoId", "switch", "type"]);
+    expect(posted[0]).toMatchObject({
+      repoId: REPO_ID,
+      switch: 1,
+      offerId: "provision-1",
+      kept: ["i1", "i2", "i3", "i4"],
+    });
+  });
+
+  it("rides the same opening every other request from the form rides", () => {
+    const h = mount();
+    const { host, dispose } = form(h);
+    const deps = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { onSelectionChange(s: { repoId: string; branch: string }): void } } };
+      }
+    ).view.deps.createDialogDeps();
+    deps.onSelectionChange({ repoId: "/repo/.git", branch: "feat" });
+    host.querySelector<HTMLButtonElement>(".wt-bring-save")?.click();
+    dispose();
+
+    // A save naming a retired opening is not honoured host-side, which is what
+    // stops a dismissed form writing to the repository's configuration.
+    const asked = h.posts.find((m) => m.type === "requestWorktreeCreateDefaults") as { opening: number };
+    const save = h.posts.find((m) => m.type === "worktreeProvisionSave") as { opening: number };
+    expect(save.opening).toBe(asked.opening);
   });
 });

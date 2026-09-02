@@ -48,7 +48,11 @@ const ASIMOV: ProviderContext = { id: "asimov", file: ASIMOV_PROVIDER_FILE };
 /** The four keys § 3.1 maps. Anything else is reported rather than ignored. */
 const KNOWN_KEYS = new Set(["copy", "link", "ports", "setup"]);
 
-const PROVIDERS = [{ id: "asimov" as const, files: [ASIMOV_PROVIDER_FILE], active: true }];
+// Only ever returned from `fromOpened`, which absence never reaches, so the
+// file this names is one that was there.
+const PROVIDERS = [
+  { id: "asimov" as const, files: [ASIMOV_PROVIDER_FILE], present: [ASIMOV_PROVIDER_FILE], active: true },
+];
 
 /**
  * The repository's own provisioning file, as the normalized model.

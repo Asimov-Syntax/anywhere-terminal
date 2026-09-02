@@ -1514,6 +1514,77 @@ describe("the invariants that span the host and the webview", () => {
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
   });
 
+  it("[8_1] refuses both contenders through one contest when the destination cannot be read", async () => {
+    // Round-6 F012. F011 shipped through `extension.ts`'s unreadable-root
+    // branch, and round 5 witnessed the FIX on `failEveryEntry` alone because I
+    // claimed this file could not make `prepareEntryGate` answer `null`. It can:
+    // the bring-over case above creates the destination precisely so that it
+    // does not. Not creating it is the whole harness, and reverting the wiring
+    // in `extension.ts` leaves the builder's own tests green.
+    noProviderFiles();
+    fs.mkdirSync(path.join(REPO, ".vscode"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    fs.writeFileSync(
+      path.join(REPO, ".vscode", "worktree.json"),
+      '{"extends": "asimov/worktree.yaml", "copy": [".ENV"]}\n',
+    );
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow-cb").length > 0,
+      "the create form to offer the contenders",
+    );
+
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.value = "feat/contested-unreadable";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    for (const box of document.querySelectorAll<HTMLInputElement>(".wt-bring-box .wt-brow-cb")) {
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    await settle();
+
+    // Deliberately NOT created, unlike the case above. This is what drives
+    // `prepareEntryGate` to `null` and takes the create down the branch F011 was
+    // found on.
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => /create worktree/i.test(b.textContent ?? ""))
+      ?.click();
+    await settleUntil(
+      () => document.querySelectorAll(".wt-notice").length > 0,
+      "the create to report something back to the panel",
+    );
+    await settle();
+
+    const created = [...document.querySelectorAll(".wt-notice")].filter((n) =>
+      (n.textContent ?? "").includes("Create done."),
+    );
+    expect(created).toHaveLength(1);
+    const reason = [...(created[0]?.querySelectorAll(".wt-reason") ?? [])].map((n) => n.textContent ?? "").join("\n");
+
+    // Neither contender was materialized, and the count says so.
+    expect(created[0]?.textContent).toContain("0 of 2 brought over.");
+
+    // Each member carries its OWN refusal, tagged into the same contest.
+    expect(reason).toContain(".env: the worktree could not be read after it was created [contest 1]");
+    expect(reason).toContain(".ENV: the worktree could not be read after it was created [contest 1]");
+
+    // D4a: the membership is stated ONCE for the contest, and names every
+    // member by path and by declaring file — its own included.
+    expect(reason.match(/one destination these may all name/g)).toHaveLength(1);
+    expect(reason).toContain(".ENV (declared in .vscode/worktree.json)");
+    expect(reason).toContain(".env (declared in asimov/worktree.yaml)");
+  });
+
   /**
    * The provider files the assembly's repository carries, cleared.
    *

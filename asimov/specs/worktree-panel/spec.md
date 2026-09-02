@@ -1773,12 +1773,19 @@ problem, naming the task, rather than being completed with a value the extension
 
 WHEN more than one provisioning source is detected, the create form SHALL populate its section from
 exactly one of them, chosen by a fixed order that does not depend on filesystem enumeration or
-timing. No row from an unchosen source SHALL appear among the offered entries.
+timing, EXCEPT where the repository's own configuration names a source to build on. No row from a
+source that was neither chosen nor named SHALL appear among the offered entries.
 
 #### Scenario: Two sources in one repository
 
-- **WHEN** a repository carries both of two detected provisioning sources
+- **WHEN** a repository carries both of two detected provisioning sources and names neither
 - **THEN** the section shows the rows of exactly one of them, and none of the other's
+
+#### Scenario: The repository names the source to build on
+
+- **WHEN** the repository's own configuration names one of two other detected sources to build on
+- **THEN** the section shows the named source's rows together with the repository's own, and none
+  from the third
 
 ### Requirement: A present source answers, even when its answer is nothing
 
@@ -1810,13 +1817,14 @@ replaced SHALL itself become one of the rows offering to switch.
 ### Requirement: The material a worktree was promised is actually put there
 
 WHEN a worktree is created with provisioning entries the user left selected, the extension SHALL
-materialize each of them into the new worktree — copying by default, linking where the entry says
-link — and SHALL report the outcome of every entry it was given, including the ones it refused.
-Copying SHALL happen before linking.
+materialize each one it does not refuse into the new worktree — copying by default, linking where
+the entry says link — and SHALL report the outcome of every entry it was given, refusals included.
+Copying SHALL happen before linking, EXCEPT where declarations may name one destination, which the
+two requirements above settle.
 
 #### Scenario: The files the dialog listed are in the new worktree
 
-- **WHEN** a create carries selected copy entries
+- **WHEN** a create carries selected copy entries, none of which may name another's destination
 - **THEN** each of those files exists in the new worktree, and each is reported as copied
 
 #### Scenario: Only what was selected is materialized
@@ -2077,14 +2085,15 @@ and offer to ask again. Asking to remove a worktree SHALL NOT leave the user wit
 
 ### Requirement: A declaration that will yield is offered as yielding
 
-WHERE a declared entry may name the same destination as the repository's own declaration, the
-dialog SHALL offer it unselected and SHALL say that it will be refused while the repository's own
-remains selected, and SHALL NOT count it among the entries it says will be brought over.
+WHERE declared entries may name one destination, what the dialog says will be brought over SHALL
+follow from the selection it currently holds, under the rule the apply uses to decide that group. A
+row that selection would have refused SHALL say so and SHALL NOT be counted, and where unselecting
+it is what lets the group succeed, it SHALL be offered unselected.
 
 #### Scenario: The inherited spelling is offered beside the repository's own
 
-- **WHEN** the offer contains two declarations that may name one destination and one of them is the
-  repository's own
+- **WHEN** the offer contains two declarations that may name one destination and exactly one of them
+  is the repository's own
 - **THEN** the repository's own is selected and the other is not, and the other says it will be
   refused while its counterpart stays selected
 
@@ -2098,6 +2107,236 @@ remains selected, and SHALL NOT count it among the entries it says will be broug
 - **WHEN** two declarations may name one destination and neither is the repository's own
 - **THEN** both stay selected, because nothing decides between them and unselecting either would
   pick a winner the apply does not
+
+#### Scenario: More than one of the repository's own declarations names a destination
+
+- **WHEN** the offer contains two declarations from the repository's own file that may name one
+  destination, beside an inherited declaration that may name it too
+- **THEN** all three are offered selected, each says the create will refuse it because more than one
+  of the repository's own declarations names this destination, and none is counted — there is no
+  selection the dialog could offer that makes this group succeed, and unselecting one of the
+  repository's own on the user's behalf would pick the winner the apply refuses to pick
+
+#### Scenario: The user unselects one of the repository's own
+
+- **WHEN** the user leaves exactly one of the repository's own declarations in that group selected
+- **THEN** the remaining one stops saying it will be refused and is counted, and the inherited
+  declaration says it will yield to it
+
+#### Scenario: The user selects the second one again
+
+- **WHEN** a second of the repository's own declarations is selected again
+- **THEN** every row in the group returns to saying it will be refused, and none is counted
+
+#### Scenario: Only the inherited declaration is left selected
+
+- **WHEN** the user unselects both of the repository's own declarations and leaves the inherited one
+- **THEN** it stops saying it will be refused and is counted, because the selection it holds names
+  one declaration for that destination
+
+### Requirement: A destination two declarations may both name is held by the repository's own
+
+WHERE two selected declarations may name one destination and one of them is the repository's own,
+the extension SHALL materialize the repository's own declaration before the other, so that the
+material and the `mode` at that destination are the repository's own declaration's.
+
+#### Scenario: Both spellings resolve to one file
+
+- **WHEN** two selected declarations differ only in a form the worktree's filesystem folds, and one
+  of them is the repository's own
+- **THEN** the worktree holds the repository's own declaration's material under its own `mode`
+
+#### Scenario: The two spellings may be two files here
+
+- **WHEN** two such declarations name destinations this filesystem may keep apart
+- **THEN** only the repository's own is materialized, and the other is refused naming both
+  declarations, because nothing available can establish that the second destination is a different
+  slot rather than the first one having been removed
+
+### Requirement: A collision the extension cannot attribute to its own write is refused
+
+WHERE a destination two selected declarations may both name is already present when the apply
+begins, or is present after the repository's own declaration ran without the extension being able
+to establish that this apply's own write put it there, the extension SHALL report a refusal naming
+both declarations, SHALL NOT resolve the destination in favour of the inherited declaration, and
+SHALL NOT write into it.
+
+#### Scenario: The destination was already in the worktree
+
+- **WHEN** the destination already exists when the apply begins
+- **THEN** neither declaration's material is written into it and both are named in the refusal
+
+#### Scenario: The repository's own declaration failed first
+
+- **WHEN** the repository's own declaration is refused or fails before it claims the destination
+- **THEN** the other declaration is refused rather than applied in its place
+
+#### Scenario: The repository's own declaration claimed it
+
+- **WHEN** the repository's own declaration has materialized the destination
+- **THEN** the other declaration is refused rather than written, whatever its own destination reads
+
+#### Scenario: More than two declarations may name one destination
+
+- **WHEN** three or more selected declarations may name one destination
+- **THEN** every refusal names every one of them, by path and declaring file, its own included
+
+### Requirement: A destination more than one of the repository's own declarations name is refused entire
+
+WHERE more than one selected declaration naming a destination is the repository's own, the extension
+SHALL materialize none of them, SHALL report a refusal naming every declaration in the group by path
+and declaring file, and SHALL NOT resolve the destination in favour of any of them.
+
+Nothing available decides between two of the repository's own declarations: their order inside one
+file is not a precedence anything here grants, and choosing by it would settle a user's config
+silently.
+
+#### Scenario: Two of the repository's own declarations name one destination
+
+- **WHEN** two selected declarations from the repository's own file may name one destination, beside
+  an inherited declaration that may name it too
+- **THEN** nothing is written at that destination, and every one of the three is refused naming the
+  others
+
+#### Scenario: The user leaves only one of them selected
+
+- **WHEN** the user unselects all but one of the repository's own declarations for that destination
+- **THEN** the remaining one is the repository's own declaration for the group and is materialized,
+  because the question the refusal could not answer is no longer being asked
+
+### Requirement: A symlink that would resolve to itself is never created
+
+WHERE recreating a symlink in the new worktree would produce a link whose target resolves to that
+link's own destination, the extension SHALL refuse it and report why, rather than creating a link
+that resolves to itself.
+
+### Requirement: A repository can build on a source instead of replacing it
+
+The repository's own configuration SHALL be able to name another provisioning source to build on.
+WHERE it does, the section SHALL list the named source's declared material together with the
+repository's own, and every row SHALL name the file that declared it.
+
+WHERE the repository's own configuration names no source to build on, its declared material SHALL
+be the whole of the section, and every other detected source SHALL remain unchosen — inheriting
+SHALL NOT happen unless it was asked for.
+
+#### Scenario: Building on another source
+
+- **WHEN** the repository's own configuration names another source to build on, and both declare
+  material
+- **THEN** every declared item from both appears as its own row, and each row names its own
+  declaring file rather than a single combined origin
+
+#### Scenario: Declaring without naming a source to build on
+
+- **WHEN** the repository's own configuration declares material and names no source to build on,
+  in a repository that also carries another detected source
+- **THEN** the section shows only the repository's own material, and the other source appears as a
+  row offering to switch
+
+### Requirement: The repository's own declaration wins the path it shares
+
+WHERE the repository's own configuration declares material at a path also declared by the source it
+builds on, exactly one row SHALL be offered for that path, and it SHALL be the repository's own —
+including how that material is brought over, so a path the named source links MAY become a path the
+repository copies.
+
+The surviving row SHALL name the file that declared it.
+
+#### Scenario: The same path declared by both
+
+- **WHEN** the source being built on declares a path as linked, and the repository's own
+  configuration declares the same path as copied
+- **THEN** one row is offered for that path, it is copied rather than linked, and it names the
+  repository's own configuration as its source
+
+### Requirement: A path the repository removed is shown as deliberate
+
+The repository's own configuration SHALL be able to remove material inherited from the source it
+builds on. A removed path SHALL be shown as deliberately excluded rather than omitted, SHALL keep
+the name of the file that originally declared it, and SHALL NOT be counted among the material the
+section says will be brought over.
+
+Removing a path the repository itself declared SHALL be reported as a problem naming that path,
+and SHALL NOT remove the row.
+
+#### Scenario: An inherited path removed
+
+- **WHEN** the repository's own configuration removes a path the source it builds on declared
+- **THEN** that path is shown as deliberately excluded, still naming the file that declared it, and
+  the section's count of what will be brought over does not include it
+
+#### Scenario: Removing a path the repository itself declared
+
+- **WHEN** the repository's own configuration both declares a path and removes it
+- **THEN** the row remains offered and the section reports a problem naming that path
+
+### Requirement: Setup commands from two sources run as both files wrote them
+
+WHERE the section carries setup commands from more than one file, every command SHALL be offered,
+in the order the files declare them, with the source being built on before the repository's own.
+Two identical commands from two files SHALL both be offered.
+
+#### Scenario: The same command declared twice
+
+- **WHEN** the source being built on and the repository's own configuration each declare the same
+  setup command
+- **THEN** both are offered as separate rows, each naming its own file, and neither is dropped
+
+### Requirement: One unreadable part never discards the rest of a configuration
+
+A configuration that is malformed, that holds a key the system does not read, that names a source
+to build on which is not there, or that names one which is there and could not be read SHALL each
+be reported as a distinct problem naming the file and what was lost. None of them SHALL discard the
+rest of the file.
+
+WHERE the named source to build on is not there, the repository's own declared material SHALL still
+be offered.
+
+### Requirement: A source that could not be read is not a source that is absent
+
+A named source to build on that was found and could not be read SHALL be reported as unreadable and
+SHALL NOT be reported as one that is not there.
+
+#### Scenario: Naming a source that is there and cannot be read
+
+- **WHEN** the repository's own configuration names a source to build on which the repository does
+  carry, and that file cannot be read
+- **THEN** the section reports that the file could not be read, not that it is missing, and still
+  offers the repository's own declared material
+
+#### Scenario: Naming a source that is not there
+
+- **WHEN** the repository's own configuration names a source to build on which the repository does
+  not carry, and also declares its own material
+- **THEN** the section reports that the named source is missing, offers the repository's own
+  declared material, and leaves the create available
+
+#### Scenario: A key the system does not read
+
+- **WHEN** the repository's own configuration holds one key the system does not read alongside keys
+  it does
+- **THEN** the section reports that one key and offers every row the other keys declared
+
+### Requirement: Every key a configuration declares is judged as a key of that file
+
+Every key a configuration file declares SHALL be judged as a key of that file, whatever the key is
+named. A name the configuration format's host language gives a meaning of its own SHALL NOT thereby
+supply a value the system reads. WHERE the configuration is one that reports keys the system does
+not read, such a key SHALL be reported among them.
+
+#### Scenario: A key named for a host-language member
+
+- **WHEN** the repository's own configuration declares a key whose name the configuration format's
+  host language gives its own meaning to, and that key holds values the system would otherwise read
+- **THEN** the section reports it as a key the system does not read, and none of the values under it
+  is used to name a source to build on, to remove a row, or to declare one
+
+#### Scenario: The same key in a configuration that reports no keys
+
+- **WHEN** a detected source that does not report unrecognized keys declares such a key, holding
+  values the system would otherwise read
+- **THEN** no row and no setup step is taken from it
 
 ### Requirement: Deleting the branch is a separate opt-in, offered only on a proven merge
 

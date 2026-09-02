@@ -9,7 +9,7 @@
 // Nothing here runs anything. `script` is display text now and one argument to a
 // shell later, and the quoting below is what keeps those two the same command.
 
-import { type ParseError, parse as parseJsonc } from "jsonc-parser";
+import type { ParseError } from "jsonc-parser";
 import { posixShellQuote } from "../../utils/posixShellQuote";
 import {
   type AdapterRead,
@@ -24,6 +24,7 @@ import {
   type ProviderContext,
   type ProviderDeps,
   problem,
+  readJsonc,
   report,
 } from "./providerKit";
 
@@ -140,13 +141,7 @@ export const vscodeTasksAdapter: ProviderAdapter = {
     }
 
     const errors: ParseError[] = [];
-    const parsed: unknown = parseJsonc(opened.text, errors, {
-      // Both are the file format, not a defect in it: VS Code writes this file
-      // with comments and accepts a trailing comma in it.
-      disallowComments: false,
-      allowTrailingComma: true,
-      allowEmptyContent: true,
-    });
+    const parsed: unknown = readJsonc(opened.text, errors);
     if (errors.length > 0) {
       report(
         draft,
