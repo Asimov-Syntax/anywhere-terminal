@@ -25,14 +25,14 @@ Build the shared authorizer, mint it at the mutation seam, apply it to file prov
     1. `src/worktree/worktreeMutationService.ts` and `src/worktree/worktreeMutationService.test.ts`: mint source and destination authorizations immediately after successful create, pass them to file provisioning and the destination to ports, and fail affected selections without changing create success or launch ordering.
     2. `src/extension.ts` and `src/extension.worktreeMutations.test.ts`: accept the widened production dependency inputs while preserving existing apply order and per-selection reporting.
 
-- [ ] 1_3 Recheck observed roots at selected file mutations
+- [x] 1_3 Recheck observed roots at selected file mutations — verified: pnpm exec vitest run 'src/worktree/provisioning/entryGate.test.ts' 'src/worktree/provisioning/applyEntries.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/freeze-provision-recorded.log 2>&1 exit 0
   - **Deps**: 1_2
   - **Refs**: design.md D1, design.md D3; specs/worktree-panel/spec.md#selected-post-create-writes-retain-observed-checkout-identity
   - **Acceptance**:
     - Outcome: Unstable provisioning identity produces failed selected-file outcomes
     - Verify: command pnpm exec vitest run 'src/worktree/provisioning/entryGate.test.ts' 'src/worktree/provisioning/applyEntries.test.ts' 'src/extension.worktreeAssembly.test.ts'
   - **Plan**:
-    1. `src/worktree/provisioning/entryGate.ts`, `src/worktree/provisioning/applyEntries.ts`, `src/worktree/provisioning/entryGate.test.ts`, and `src/worktree/provisioning/applyEntries.test.ts`: prepare authorized roots and recheck source and destination immediately before each selected read or destination mutation while preserving existing no-follow and containment rules.
+    1. `src/worktree/provisioning/entryGate.ts`, `src/worktree/provisioning/applyEntries.ts`, `src/worktree/provisioning/entryGate.test.ts`, `src/worktree/provisioning/applyEntries.test.ts`, and `src/worktree/provisioning/applyEntries.node.test.ts`: prepare authorized roots and recheck source and destination immediately before each selected read or destination mutation while preserving existing no-follow and containment rules.
     2. `src/extension.ts` and `src/extension.worktreeAssembly.test.ts`: bind production file provisioning to mutation-issued authorizations and witness source, ancestor, and regular-root substitution without using replacement content or destination.
 
 - [ ] 1_4 Consume mutation-issued authority for target claims

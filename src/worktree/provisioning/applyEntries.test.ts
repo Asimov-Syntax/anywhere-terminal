@@ -9,6 +9,7 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
+import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { afterDelay } from "../deadline";
 import { applyEntry } from "./applyEntries";
 import { type FakeNode, fakeFs } from "./applyEntries.fake";
@@ -16,6 +17,13 @@ import { prepareEntryGate } from "./entryGate";
 
 const MAIN = "/repo";
 const WT = "/wt/feature";
+
+function observed(path: string): AuthorizedDirectory {
+  return { path, platform: "darwin", components: [{ path, identity: { dev: 7, ino: path.length } }] };
+}
+
+const AUTHORIZATION = { source: observed(MAIN), destination: observed(WT) };
+const AUTHORITY = { directoryStillAuthorized: async () => true };
 
 const entry = (path: string, mode: "copy" | "link" = "copy"): ProvisionEntry => ({
   id: "i1",
@@ -35,11 +43,11 @@ const budget = () => ({ maxNodes: 1000, maxBytes: 1 << 20, deadline: afterDelay(
 
 async function apply(e: ProvisionEntry, tree: Record<string, FakeNode>, over: Partial<ReturnType<typeof budget>> = {}) {
   const fs = fakeFs({ ...base, ...tree });
-  const roots = await prepareEntryGate(MAIN, WT, fs);
+  const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
   if (roots === null) {
     throw new Error("roots did not prepare");
   }
-  const result = await applyEntry(e, roots, { ...budget(), ...over }, fs);
+  const result = await applyEntry(e, roots, { ...budget(), ...over }, fs, AUTHORITY);
   return { result, fs };
 }
 
@@ -48,6 +56,50 @@ describe("a copy replaces nothing that already existed", () => {
     const { result, fs } = await apply(entry(".env"), { "/repo/.env": { kind: "file", mode: 0o600 } });
     expect(result.outcome.kind).toBe("copied");
     expect(fs.nodes.get("/wt/feature/.env")).toEqual({ kind: "file", mode: 0o600, size: 1 });
+  });
+
+  it("fails before opening a destination whose observed root changed", async () => {
+    const fs = fakeFs({ ...base, "/repo/.env": { kind: "file", mode: 0o600 } });
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    let destinationChecks = 0;
+
+    const result = await applyEntry(entry(".env"), roots, budget(), fs, {
+      directoryStillAuthorized: async (authorization) => {
+        if (authorization.path !== WT) {
+          return true;
+        }
+        destinationChecks += 1;
+        return destinationChecks === 1;
+      },
+    });
+
+    expect(result.outcome.kind).toBe("failed");
+    expect(fs.nodes.has("/wt/feature/.env")).toBe(false);
+  });
+
+  it("fails before reading source material whose observed root changed", async () => {
+    const fs = fakeFs({ ...base, "/repo/.env": { kind: "file", mode: 0o600 } });
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
+    if (roots === null) {
+      throw new Error("roots did not prepare");
+    }
+    let sourceChecks = 0;
+
+    const result = await applyEntry(entry(".env"), roots, budget(), fs, {
+      directoryStillAuthorized: async (authorization) => {
+        if (authorization.path !== MAIN) {
+          return true;
+        }
+        sourceChecks += 1;
+        return sourceChecks === 1;
+      },
+    });
+
+    expect(result.outcome.kind).toBe("failed");
+    expect(fs.nodes.has("/wt/feature/.env")).toBe(false);
   });
 
   it("skips a destination that already exists rather than replacing it", async () => {
@@ -93,11 +145,11 @@ describe("the walk never follows something it did not check", () => {
         fs.nodes.set("/repo/.env", { kind: "link", target: "/outside/secret" });
       }
     };
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
-    const result = await applyEntry(entry(".env"), roots, budget(), fs);
+    const result = await applyEntry(entry(".env"), roots, budget(), fs, AUTHORITY);
     expect(result.outcome.kind).not.toBe("copied");
     expect(fs.nodes.has("/wt/feature/.env")).toBe(false);
   });
@@ -348,14 +400,14 @@ describe("[F007/F016/F020] the budget is an exact account, not an estimate", () 
       "/repo/b/f0": { kind: "file", size: 1 },
       "/repo/b/f1": { kind: "file", size: 1 },
     });
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
     const shared = { ...budget(), maxNodes: 5 };
 
-    const first = await applyEntry(entry("a"), roots, shared, fs);
-    const second = await applyEntry(entry("b"), roots, shared, fs);
+    const first = await applyEntry(entry("a"), roots, shared, fs, AUTHORITY);
+    const second = await applyEntry(entry("b"), roots, shared, fs, AUTHORITY);
 
     expect(first.outcome.kind).toBe("copied");
     // Three nodes are already spent; `b` needs three more and only two remain.
@@ -368,7 +420,7 @@ describe("[F007/F016/F020] the budget is an exact account, not an estimate", () 
     // just inside it ran to completion however long it took, so the bound held
     // on file COUNT and not on time.
     const fs = fakeFs({ ...base, "/repo/slow": { kind: "file", size: 1 } });
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
@@ -384,7 +436,7 @@ describe("[F007/F016/F020] the budget is an exact account, not an estimate", () 
         }),
     };
 
-    const result = await applyEntry(entry("slow"), roots, { ...budget(), deadline: afterDelay(5) }, hangs);
+    const result = await applyEntry(entry("slow"), roots, { ...budget(), deadline: afterDelay(5) }, hangs, AUTHORITY);
 
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
@@ -411,12 +463,12 @@ describe("[F019/F024] the walk fails loudly rather than quietly", () => {
       "/repo/apps/web": { kind: "dir" },
       "/repo/apps/web/.env": { kind: "file", size: 1 },
     });
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
 
-    const result = await applyEntry(entry("apps/web/.env"), roots, budget(), fs);
+    const result = await applyEntry(entry("apps/web/.env"), roots, budget(), fs, AUTHORITY);
 
     expect(result.outcome.kind).toBe("refused");
     if (result.outcome.kind === "refused") {
@@ -434,7 +486,7 @@ describe("[F019/F024] the walk fails loudly rather than quietly", () => {
       "/repo/fast": { kind: "file", size: 1 },
       "/repo/slow": { kind: "file", size: 1 },
     });
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
@@ -449,8 +501,8 @@ describe("[F019/F024] the walk fails loudly rather than quietly", () => {
     };
     const shared = { ...budget(), deadline: afterDelay(40) };
 
-    const first = await applyEntry(entry("fast"), roots, shared, deps);
-    const second = await applyEntry(entry("slow"), roots, shared, deps);
+    const first = await applyEntry(entry("fast"), roots, shared, deps, AUTHORITY);
+    const second = await applyEntry(entry("slow"), roots, shared, deps, AUTHORITY);
 
     expect(first.outcome.kind).toBe("copied");
     expect(second.outcome.kind).toBe("failed");
@@ -500,11 +552,11 @@ describe("a link points at the main checkout, or says the platform would not let
     for (const code of ["EPERM", "ENOSYS", "UNKNOWN"]) {
       const one = fakeFs({ ...base, ...linkable });
       one.symlink = refuse(code);
-      const roots = await prepareEntryGate(MAIN, WT, one);
+      const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, one);
       if (roots === null) {
         throw new Error("roots did not prepare");
       }
-      const result = await applyEntry(entry(".env", "link"), roots, budget(), one);
+      const result = await applyEntry(entry(".env", "link"), roots, budget(), one, AUTHORITY);
       expect(result.outcome.kind).toBe("degradedToCopy");
       // Degraded means the user still got the material — not a link reported as
       // made, and not a failure.
@@ -520,11 +572,11 @@ describe("a link points at the main checkout, or says the platform would not let
       error.code = "EIO";
       throw error;
     };
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("roots did not prepare");
     }
-    const result = await applyEntry(entry(".env", "link"), roots, budget(), fs);
+    const result = await applyEntry(entry(".env", "link"), roots, budget(), fs, AUTHORITY);
     expect(result.outcome.kind).toBe("failed");
     expect(fs.nodes.has("/wt/feature/.env")).toBe(false);
   });

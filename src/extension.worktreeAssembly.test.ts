@@ -369,6 +369,16 @@ const STORED_ENTRY: VaultSessionEntry = {
 
 /** One entry per call of the session registry reader, so a second scan is visible. */
 const registryReads: number[] = [];
+let provisioningAuthorizationStable = true;
+
+vi.mock("./utils/authorizedDirectory", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./utils/authorizedDirectory")>();
+  return {
+    ...real,
+    directoryStillAuthorized: (...args: Parameters<typeof real.directoryStillAuthorized>) =>
+      provisioningAuthorizationStable ? real.directoryStillAuthorized(...args) : Promise.resolve(false),
+  };
+});
 
 vi.mock("./vault/readers/runningSessions", async (importOriginal) => {
   const real = await importOriginal<typeof import("./vault/readers/runningSessions")>();
@@ -440,6 +450,7 @@ beforeEach(() => {
   argv = [];
   launched = [];
   publishedRow = null;
+  provisioningAuthorizationStable = true;
   noStartableAgents = false;
   lockedRow = false;
   prunableRow = false;
@@ -1421,6 +1432,56 @@ describe("the invariants that span the host and the webview", () => {
     expect([...document.querySelectorAll(".wt-bring-box .wt-brow-code")].map((e) => e.textContent)).toEqual([
       ".env.second",
     ]);
+  });
+
+  it("fails selected provisioning when production observes a changed checkout identity", async () => {
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    const { surface } = await assemble();
+    const provisionResults: WorktreeProvisionResultMessage[] = [];
+    const deliver = surface.post;
+    surface.post = (message: ExtensionToWebViewMessage) => {
+      if (message.type === "worktreeProvisionResult") {
+        provisionResults.push(message);
+      }
+      return deliver(message);
+    };
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow-cb").length > 0,
+      "the create form to offer the provider's file",
+    );
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.value = "feat/unstable";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    const box = document.querySelector<HTMLInputElement>(".wt-bring-box .wt-brow-cb");
+    if (box === null) {
+      throw new Error("the form did not offer the file");
+    }
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
+    fs.mkdirSync(destination, { recursive: true });
+    provisioningAuthorizationStable = false;
+
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => /create worktree/i.test(button.textContent ?? ""))
+      ?.click();
+    await settleUntil(() => provisionResults.length > 0, "the failed provisioning result");
+
+    expect(provisionResults[0]?.steps[0]?.outcome.kind).toBe("failed");
+    expect(fs.existsSync(path.join(destination, ".env"))).toBe(false);
   });
 
   it("[3_2] brings a ticked file over and reports it on the create's OWN notice", async () => {

@@ -19,6 +19,7 @@
 
 import path from "node:path";
 import type { ProvisionEntry } from "../../types/messages";
+import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { isWindowsAbsPath } from "../../utils/pathBoundary";
 import {
   isResolvedPathInsideRoot,
@@ -32,6 +33,12 @@ import { platformFoldsFilenameCase } from "./providerKit";
 export interface GateRoot {
   readonly path: string;
   readonly prepared: PreparedRoot;
+  readonly authorization: AuthorizedDirectory;
+}
+
+export interface EntryAuthorizations {
+  readonly source: AuthorizedDirectory;
+  readonly destination: AuthorizedDirectory;
 }
 
 export interface EntryGateRoots {
@@ -80,6 +87,7 @@ const REFUSED_OUTSIDE_DESTINATION = "resolves outside the worktree being created
 export async function prepareEntryGate(
   mainCheckout: string,
   worktree: string,
+  authorization: EntryAuthorizations,
   deps: ResolvedPathInsideDeps = {},
 ): Promise<EntryGateRoots | null> {
   const [source, destination] = await Promise.all([
@@ -90,8 +98,8 @@ export async function prepareEntryGate(
     return null;
   }
   return {
-    source: { path: mainCheckout, prepared: source },
-    destination: { path: worktree, prepared: destination },
+    source: { path: mainCheckout, prepared: source, authorization: authorization.source },
+    destination: { path: worktree, prepared: destination, authorization: authorization.destination },
   };
 }
 

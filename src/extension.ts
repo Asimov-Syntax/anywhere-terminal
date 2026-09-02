@@ -49,7 +49,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
-import { authorizeDirectory } from "./utils/authorizedDirectory";
+import { authorizeDirectory, directoryStillAuthorized } from "./utils/authorizedDirectory";
 import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
@@ -567,8 +567,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Sequential, and every entry answers. `applyEntry` never throws, so a
         // rejection here would be a bug rather than a bad entry — the call site
         // catches one anyway, because the create has already succeeded by then.
-        applyProvision: async (mainCheckout, worktreePath, entries, _authorization) => {
-          const roots = await prepareEntryGate(mainCheckout, worktreePath);
+        applyProvision: async (mainCheckout, worktreePath, entries, authorization) => {
+          const roots = await prepareEntryGate(mainCheckout, worktreePath, authorization);
           if (roots === null) {
             return entries.map((entry) => ({
               id: entry.id,
@@ -593,7 +593,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           };
           try {
             for (const entry of ordered) {
-              steps.push(await applyEntry(entry, roots, budget, nodeApplyFsDeps));
+              steps.push(await applyEntry(entry, roots, budget, nodeApplyFsDeps, { directoryStillAuthorized }));
             }
           } finally {
             budget.deadline.cancel();

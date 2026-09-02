@@ -30,6 +30,7 @@ import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ProvisionEntry, ProvisionStepResult } from "../../types/messages";
+import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { isResolvedPathInsideRoot, type ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
 import type { Deadline } from "../deadline";
 import { messageOf } from "../errorMessage";
@@ -42,6 +43,10 @@ export interface LstatLike {
   isSymbolicLink(): boolean;
   mode: number;
   size: number;
+}
+
+export interface ApplyAuthorizationDeps {
+  directoryStillAuthorized(authorization: AuthorizedDirectory): Promise<boolean>;
 }
 
 export interface ApplyFsDeps {
@@ -132,6 +137,8 @@ const MAX_DETAILS = 100;
 /** Thrown to stop a walk at once; carries the reason the entry reports. */
 class BudgetExceeded extends Error {}
 
+class AuthorizationLost extends Error {}
+
 /** The property `copyFileNoFollow` reports a partial transfer through. */
 const FORWARDED = "provisionBytesForwarded";
 
@@ -177,6 +184,7 @@ export async function applyEntry(
   roots: EntryGateRoots,
   budget: ApplyBudget,
   deps: ApplyFsDeps & ResolvedPathInsideDeps,
+  authority: ApplyAuthorizationDeps,
 ): Promise<ProvisionStepResult> {
   const step = (outcome: ProvisionStepResult["outcome"], details?: readonly Detail[]): ProvisionStepResult => ({
     id: entry.id,
@@ -184,6 +192,21 @@ export async function applyEntry(
     outcome,
     ...(details !== undefined && details.length > 0 ? { details } : {}),
   });
+
+  const requireAuthorized = async (root: EntryGateRoots["source"], label: string): Promise<void> => {
+    const stable = await authority.directoryStillAuthorized(root.authorization).catch(() => false);
+    if (!stable) {
+      throw new AuthorizationLost(`the observed ${label} checkout changed before this entry could be applied`);
+    }
+  };
+  const requireSource = (): Promise<void> => requireAuthorized(roots.source, "source");
+  const requireDestination = (): Promise<void> => requireAuthorized(roots.destination, "destination");
+
+  try {
+    await Promise.all([requireSource(), requireDestination()]);
+  } catch (error) {
+    return step({ kind: "failed", reason: messageOf(error) });
+  }
 
   const admitted = await admitEntry(entry, roots, deps);
   if (!admitted.ok) {
@@ -312,12 +335,14 @@ export async function applyEntry(
    * Either check alone is wrong, in a different direction (design.md D6).
    */
   async function copyLink(source: string, destination: string): Promise<NodeResult> {
+    await requireSource();
     const target = await deps.readlink(source);
     // From the REAL directories, not the spelled ones. An entry reached through
     // a symlinked ancestor (`alias -> deep/a/b`) has a lexical dirname that is
     // not where the link actually lives, and resolving a relative target from it
     // refuses links that are genuinely inside — the false negative that mirrors
     // the escape this pair of checks exists to catch.
+    await Promise.all([requireSource(), requireDestination()]);
     const [sourceDir, destinationDir] = await Promise.all([
       realpath(path.dirname(source)),
       realpath(path.dirname(destination)),
@@ -335,6 +360,7 @@ export async function applyEntry(
       };
     }
     try {
+      await requireDestination();
       await deps.symlink(target, destination);
     } catch (error) {
       if (codeOf(error) === "EEXIST") {
@@ -354,6 +380,7 @@ export async function applyEntry(
    */
   async function makeDirectory(destination: string, mode: number): Promise<NodeResult> {
     try {
+      await requireDestination();
       await deps.mkdir(destination, mode);
     } catch (error) {
       if (codeOf(error) !== "EEXIST") {
@@ -414,6 +441,7 @@ export async function applyEntry(
 
   async function walk(source: string, destination: string): Promise<NodeResult> {
     spend();
+    await requireSource();
     const node = await deps.lstat(source);
 
     // The entry's material rule, applied where the material actually lands.
@@ -454,6 +482,7 @@ export async function applyEntry(
         // stat's estimate, and a file that grows between the two spent bytes
         // this could only notice afterwards (.reviews/round-4.md F021).
         const ceiling = budget.maxBytes - (spent.bytes - node.size);
+        await Promise.all([requireSource(), requireDestination()]);
         settleBytes(node.size, await deps.copyFileNoFollow(source, destination, node.mode, stopping.signal, ceiling));
       } catch (error) {
         if (codeOf(error) === "EEXIST") {
@@ -490,6 +519,7 @@ export async function applyEntry(
       return made;
     }
 
+    await requireSource();
     const children = await deps.readdir(source);
     // Checked, not reserved — each child charges itself below.
     check(children.length);
@@ -521,6 +551,7 @@ export async function applyEntry(
     spend();
     const target = path.relative(path.dirname(entryDestination), entrySource);
     try {
+      await requireDestination();
       await deps.symlink(target, entryDestination);
     } catch (error) {
       const code = codeOf(error);
