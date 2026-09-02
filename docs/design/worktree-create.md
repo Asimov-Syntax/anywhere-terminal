@@ -509,14 +509,15 @@ is different: it can take minutes, and an agent that starts while `pnpm install`
 races the very tree it was asked to work in. So *"wait for setup to finish before starting the
 agent"* is an offered choice, meaningful only when setup will actually run:
 
-- **Off** (default): setup runs in its own terminal and the agent starts as soon as the worktree
-  exists. The user sees a worktree immediately.
-- **On**: the agent's start is sequenced after the setup runner exits.
+- **Off** (default): setup runs in its own terminal and the agent starts as soon as setup has been
+  started for the created worktree. The user sees the worktree immediately.
+- **On**: the agent waits for every selected step and starts only when all of them succeed. A failed,
+  skipped, cancelled, or timed-out run starts no agent and reports on the worktree row.
 
-The gate is about **completion, not success** — it does not promise setup worked, and a failed
-setup under a gate still starts nothing and reports per § 5.5 of the provisioning doc. The control
-is disabled, not hidden, when no setup step is selected: hiding it would make its absence look
-like a layout change rather than a consequence of the checkbox above it.
+The control is visible only for an agent create and is disabled, not hidden, when no setup step is
+selected: hiding it would make its absence look like a layout change rather than a consequence of
+the checkbox above it. Without selected setup, the ordinary agent launch path applies regardless
+of the carried boolean.
 
 **Moving uncommitted changes**, when the user asked for it, happens between git success and
 provisioning, so a setup command sees the moved work. The Git extension's `migrateChanges` is the
