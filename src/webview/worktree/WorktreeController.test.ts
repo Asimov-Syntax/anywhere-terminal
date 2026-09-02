@@ -1563,11 +1563,11 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_A,
       token: 1,
-      refs: [{ name: "main" }],
+      refs: [{ name: "main", oid: "oid-main" }],
       truncated: false,
     });
 
-    expect(applied).toEqual([{ repoId: REPO_A, refs: { list: [{ name: "main" }], truncated: false } }]);
+    expect(applied).toEqual([{ repoId: REPO_A, refs: { list: [{ name: "main", oid: "oid-main" }], truncated: false } }]);
     expect(refsHeld(h).get(REPO_A)).toBeDefined();
   });
 
@@ -1698,7 +1698,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_A,
       token: 1,
-      refs: [{ name: "stale" }],
+      refs: [{ name: "stale", oid: "oid-stale" }],
       truncated: false,
     });
 
@@ -1709,7 +1709,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_A,
       token: 2,
-      refs: [{ name: "main" }],
+      refs: [{ name: "main", oid: "oid-main" }],
       truncated: false,
     });
 
@@ -1879,7 +1879,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_A,
       token: opening,
-      refs: [{ name: "main" }],
+      refs: [{ name: "main", oid: "oid-main" }],
       truncated: false,
     });
 
@@ -1913,7 +1913,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_A,
       token: 1,
-      refs: [{ name: "main" }],
+      refs: [{ name: "main", oid: "oid-main" }],
       truncated: false,
     });
 
@@ -1940,7 +1940,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_A,
       token: 1,
-      refs: [{ name: "main" }],
+      refs: [{ name: "main", oid: "oid-main" }],
       truncated: false,
     });
     expect(refsHeld(h).get(REPO_A), "nothing was stored, so clearing it proves nothing").toBeDefined();
@@ -1957,7 +1957,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeRefs",
       repoId: REPO_B,
       token: 1,
-      refs: [{ name: "main" }],
+      refs: [{ name: "main", oid: "oid-main" }],
       truncated: false,
     });
     expect(refsHeld(h).has(REPO_B), "repo B's list was never stored, so pruning it proves nothing").toBe(true);

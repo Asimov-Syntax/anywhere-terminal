@@ -27,6 +27,7 @@ import type {
   WorktreeRemoveAssessmentPayload,
   WorktreeRemoveRequestMessage,
 } from "./messages";
+import type { ResolvedMode } from "./messages";
 
 type Mode<K extends WorktreeCreateMode["kind"]> = Extract<WorktreeCreateMode, { kind: K }>;
 type After<K extends WorktreeAfterCreate["kind"]> = Extract<WorktreeAfterCreate, { kind: K }>;
@@ -48,6 +49,27 @@ const adopt: Mode<"adopt"> = {
   branch: "feat/x",
   adoptPath: "/wt/x",
   expectedBranchOid: "abc123",
+};
+
+// --- A resolved adopt carries the tip its submit mode requires ---------------
+//
+// The form builds `WorktreeCreateMode.adopt` from a resolution, and that mode
+// requires `expectedBranchOid`. A resolution that does not carry it leaves the
+// form inventing the value or falling back to a fresh create beside a checkout
+// that is already there (design.md D3).
+
+type Resolved<K extends ResolvedMode["kind"]> = Extract<ResolvedMode, { kind: K }>;
+
+const resolvedAdopt: Resolved<"adopt"> = {
+  kind: "adopt",
+  adoptPath: "/wt/x",
+  expectedBranchOid: "abc123",
+};
+
+// @ts-expect-error a resolved adopt without the branch tip cannot build a submit mode
+const resolvedAdoptWithoutTip: Resolved<"adopt"> = {
+  kind: "adopt",
+  adoptPath: "/wt/x",
 };
 
 // --- A base ref belongs to the modes that create one -------------------------

@@ -1906,11 +1906,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // near-duplicate beside a checkout already there — it falls back to the
         // FREE path the suffixing already computed (D3).
         const verdict = await corroborate(repo, msg.query, selection.mode.repairPath);
+        // The tip comes from the enumeration this probe already took, never
+        // from a second read: adopt promises the user a commit, and a tip read
+        // apart from the listing beside it would be a promise about a different
+        // instant. No tip means no promise, so the offer falls back to the free
+        // path rather than degrading to one the form would have to invent.
+        const tip = refs.find((ref) => ref.name === msg.query)?.oid;
         mode =
           verdict?.kind === "offer"
             ? { kind: "reattach", repairPath: verdict.repairPath, expectedOid: verdict.expectedOid }
-            : verdict?.kind === "adopt"
-              ? { kind: "adopt", adoptPath: verdict.adoptPath }
+            : verdict?.kind === "adopt" && tip !== undefined
+              ? { kind: "adopt", adoptPath: verdict.adoptPath, expectedBranchOid: tip }
               : { kind: "fresh" };
         break;
       }

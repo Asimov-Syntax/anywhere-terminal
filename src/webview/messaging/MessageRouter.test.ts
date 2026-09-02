@@ -222,7 +222,7 @@ describe("the worktree create dialog's answers reach the controller", () => {
       type: "worktreeRefs",
       repoId: "/repo/.git",
       token: 1,
-      refs: [{ name: "main", heldBy: "repo" }],
+      refs: [{ name: "main", oid: "oid-main", heldBy: "repo" }],
       truncated: false,
     });
 
@@ -230,7 +230,7 @@ describe("the worktree create dialog's answers reach the controller", () => {
       type: "worktreeRefs",
       repoId: "/repo/.git",
       token: 1,
-      refs: [{ name: "main", heldBy: "repo" }],
+      refs: [{ name: "main", oid: "oid-main", heldBy: "repo" }],
       truncated: false,
     });
   });

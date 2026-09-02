@@ -2168,10 +2168,10 @@ describe("Bring over — the offer's own channel (round-1 B4, W2, W3, S1)", () =
 
 describe("the create dialog offers branches and a create-new entry in one list", () => {
   const REFS = [
-    { name: "main" },
-    { name: "feat/search" },
-    { name: "feat/search-ui" },
-    { name: "fix/lock", heldBy: "lock-spike" },
+    { name: "main", oid: "oid-main" },
+    { name: "feat/search", oid: "oid-feat-search" },
+    { name: "feat/search-ui", oid: "oid-feat-search-ui" },
+    { name: "fix/lock", oid: "oid-fix-lock", heldBy: "lock-spike" },
   ] as const;
 
   function withRefs(truncated = false) {
@@ -2560,7 +2560,7 @@ describe("the create dialog offers branches and a create-new entry in one list",
 });
 
 describe("Escape closes the branch list before it dismisses the dialog (D7)", () => {
-  const REFS = [{ name: "main" }, { name: "feat/search" }];
+  const REFS = [{ name: "main", oid: "oid-main" }, { name: "feat/search", oid: "oid-feat-search" }];
 
   function openWithList() {
     const cancelled: true[] = [];
@@ -2656,7 +2656,7 @@ describe("Escape closes the branch list before it dismisses the dialog (D7)", ()
 // ── A held branch is offered, explained, and unsubmittable (D5) ────────────
 
 describe("a branch another worktree holds is offered but not selectable", () => {
-  const REFS = [{ name: "main" }, { name: "fix/lock", heldBy: "lock-spike" }];
+  const REFS = [{ name: "main", oid: "oid-main" }, { name: "fix/lock", oid: "oid-fix-lock", heldBy: "lock-spike" }];
 
   function held(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
     return open({ repos: [createDefaults({ refs: { list: REFS, truncated: false } })], ...over });
@@ -2810,12 +2810,12 @@ describe("a branch another worktree holds is offered but not selectable", () => 
     // would carry the old repository's answer into the new one.
     const { q, submitted } = open({
       repos: [
-        createDefaults({ refs: { list: [{ name: "fix/lock" }], truncated: false } }),
+        createDefaults({ refs: { list: [{ name: "fix/lock", oid: "oid-fix-lock" }], truncated: false } }),
         createDefaults({
           repoId: "/other/.git",
           repoLabel: "other",
           agents: [],
-          refs: { list: [{ name: "fix/lock", heldBy: "lock-spike" }], truncated: false },
+          refs: { list: [{ name: "fix/lock", oid: "oid-fix-lock", heldBy: "lock-spike" }], truncated: false },
         }),
       ],
     });
@@ -2849,10 +2849,10 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
   const create = (q: <T extends HTMLElement>(s: string) => T) => q<HTMLButtonElement>(".wt-btn--primary");
 
   /** `feat/x` exists in the first repo and does not in the second. */
-  function twoRepos(second: { name: string; heldBy?: string }[]) {
+  function twoRepos(second: { name: string; oid: string; heldBy?: string }[]) {
     return open({
       repos: [
-        createDefaults({ refs: { list: [{ name: "feat/x" }], truncated: false } }),
+        createDefaults({ refs: { list: [{ name: "feat/x", oid: "oid-feat-x" }], truncated: false } }),
         createDefaults({
           repoId: "/other/.git",
           repoLabel: "other",
@@ -2872,7 +2872,7 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
     // Only ever upgrading to existing left the wire carrying `reuse` for a
     // branch that is not there — the failure D4's single-source rule exists to
     // stop, arriving through the one route nothing re-derived.
-    const { q, submitted } = twoRepos([{ name: "unrelated" }]);
+    const { q, submitted } = twoRepos([{ name: "unrelated", oid: "oid-unrelated" }]);
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     expect(create(q).disabled).toBe(false);
 
@@ -2883,7 +2883,7 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
   });
 
   it("takes `existing` up when the new repository does have it", () => {
-    const { q, submitted } = twoRepos([{ name: "feat/x" }]);
+    const { q, submitted } = twoRepos([{ name: "feat/x", oid: "oid-feat-x" }]);
     type(q<HTMLInputElement>("#wt-branch"), "nothing-like-it");
     switchRepo(q);
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
@@ -2899,12 +2899,12 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
     // directory and refused a legitimate create.
     const { q, submitted } = open({
       repos: [
-        createDefaults({ refs: { list: [{ name: "feat/x", heldBy: "spike" }], truncated: false } }),
+        createDefaults({ refs: { list: [{ name: "feat/x", oid: "oid-feat-x", heldBy: "spike" }], truncated: false } }),
         createDefaults({
           repoId: "/other/.git",
           repoLabel: "other",
           agents: [],
-          refs: { list: [{ name: "feat/x" }], truncated: false },
+          refs: { list: [{ name: "feat/x", oid: "oid-feat-x" }], truncated: false },
         }),
       ],
     });
@@ -2922,7 +2922,7 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
     // `choice` is not maintained under detached, and a list can land while it
     // is on. Handing the mode back to the box without re-deriving restored
     // whatever was true before.
-    let apply: ((repoId: string, refs: { list: { name: string }[]; truncated: boolean }) => void) | undefined;
+    let apply: ((repoId: string, refs: { list: { name: string; oid: string }[]; truncated: boolean }) => void) | undefined;
     const { q, submitted } = open({
       bindRefs: (fn) => {
         apply = fn as typeof apply;
@@ -2932,7 +2932,7 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
     q<HTMLButtonElement>(".wt-advanced-toggle").click();
     q<HTMLButtonElement>("#wt-detached").click();
 
-    apply?.(REPO_ID, { list: [{ name: "feat/x" }], truncated: false });
+    apply?.(REPO_ID, { list: [{ name: "feat/x", oid: "oid-feat-x" }], truncated: false });
     q<HTMLButtonElement>("#wt-detached").click();
     create(q).click();
 
@@ -2941,7 +2941,7 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
 
   it("says why a held row was refused from the keyboard (round-1 S2)", () => {
     const { q } = open({
-      repos: [createDefaults({ refs: { list: [{ name: "fix/lock", heldBy: "lock-spike" }], truncated: false } })],
+      repos: [createDefaults({ refs: { list: [{ name: "fix/lock", oid: "oid-fix-lock", heldBy: "lock-spike" }], truncated: false } })],
     });
     const input = q<HTMLInputElement>("#wt-branch");
     type(input, "fix");
@@ -2962,7 +2962,7 @@ describe("switching repository re-decides what the typed name means (round-1 B2,
 // ── The base ref is refused where the mode cannot apply it (§ 2.1, D5) ────
 
 describe("the base ref states when it cannot apply", () => {
-  const RESOLVED_REFS = [{ name: "main" }, { name: "feat/search" }, { name: "fix/lock", heldBy: "lock-spike" }];
+  const RESOLVED_REFS = [{ name: "main", oid: "oid-main" }, { name: "feat/search", oid: "oid-feat-search" }, { name: "fix/lock", oid: "oid-fix-lock", heldBy: "lock-spike" }];
 
   /** Type into a field and let the edit SETTLE, which is when the host is asked. */
   function settle(input: HTMLInputElement, value: string): void {
@@ -3757,7 +3757,7 @@ describe("create worktree — recover a debris destination", () => {
 // ── Selecting a pull request (§ 5, D4) ──────────────────────────────────────
 
 describe("selecting a pull request resolves to its own deterministic branch", () => {
-  const PR_REFS = [{ name: "main" }, { name: "release" }] as const;
+  const PR_REFS = [{ name: "main", oid: "oid-main" }, { name: "release", oid: "oid-release" }] as const;
 
   const PRS = [
     {
@@ -3783,7 +3783,7 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
    * to the host and comes back, which is the path a pull request has to feed
    * rather than replace.
    */
-  function withPrs(over: { refs?: readonly { name: string; heldBy?: string }[] } = {}) {
+  function withPrs(over: { refs?: readonly { name: string; oid: string; heldBy?: string }[] } = {}) {
     const asked: { branch: string; base?: { kind: string; ref?: string } }[] = [];
     const h = open({
       repos: [
@@ -3859,7 +3859,7 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
   });
 
   it("treats a pull request whose branch already exists as that existing branch", () => {
-    const h = withPrs({ refs: [{ name: "main" }, { name: "release" }, { name: "pr/42" }] });
+    const h = withPrs({ refs: [{ name: "main", oid: "oid-main" }, { name: "release", oid: "oid-release" }, { name: "pr/42", oid: "oid-pr-42" }] });
     h.pick(42);
 
     expect(h.branch().value).toBe("pr/42");
@@ -3966,7 +3966,7 @@ describe("selecting a pull request resolves to its own deterministic branch", ()
   });
 
   it("refuses a pull request whose branch another worktree holds, in the same words", () => {
-    const h = withPrs({ refs: [{ name: "main" }, { name: "release" }, { name: "pr/42", heldBy: "lock-spike" }] });
+    const h = withPrs({ refs: [{ name: "main", oid: "oid-main" }, { name: "release", oid: "oid-release" }, { name: "pr/42", oid: "oid-pr-42", heldBy: "lock-spike" }] });
     const before = h.branch().value;
     h.pick(42);
 

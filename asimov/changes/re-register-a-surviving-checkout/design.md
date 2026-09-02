@@ -43,6 +43,13 @@ Neither detector knows the branch tip — case A's probe is path-scoped and case
 HEAD left. `answerCreateProbe` fills `expectedBranchOid` from the ref enumeration it already holds,
 once, for both cases. A candidate whose tip the enumeration does not carry is not offered as adopt.
 
+The enumeration does not carry it today: `readRepoRefs` asks `for-each-ref` for
+`%(refname:short)` alone. It gains `%(objectname)` in the SAME format string, split on the first
+space — a ref name cannot contain one — so the tip costs no extra process and no second read that
+could disagree with the first about one instant. Reading it separately with `git rev-parse` was
+rejected for exactly that: two reads, two instants, and a tip that may not be the one the listing was
+built from.
+
 ### D4: The entry is reconstructed gitdir-first, under an identity that is re-checked
 
 ```

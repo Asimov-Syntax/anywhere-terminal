@@ -139,8 +139,10 @@ const SCRIPT: Record<string, { code?: number; stdout?: string; stderr?: string }
   // The repository's local branches, for the create dialog's combobox. `feature`
   // is the one the linked worktree has checked out, so the list the form
   // receives has to mark it held — derived from the listing, never read here.
-  [`${REPO}|for-each-ref --format=%(refname:short) --count=${MAX_REFS + 1} refs/heads/`]: {
-    stdout: "main\nfeature\nidle\n",
+  [`${REPO}|for-each-ref --format=%(objectname) %(refname:short) --count=${MAX_REFS + 1} refs/heads/`]: {
+    // Two columns since WT-012.15: the tip travels with the name so an adopt
+    // offer can promise a commit the same read produced.
+    stdout: `${"1".repeat(40)} main\n${"2".repeat(40)} feature\n${"3".repeat(40)} idle\n`,
   },
   // § 2.3 condition 3: the branch's tip, and the directory's own HEAD. They
   // agree here, which is what makes the repair offerable at all.

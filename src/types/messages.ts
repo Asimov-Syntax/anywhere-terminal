@@ -1350,7 +1350,20 @@ export type ResolvedMode =
   | { kind: "fresh" }
   | { kind: "reuse" }
   | { kind: "reattach"; repairPath: string; expectedOid: string }
-  | { kind: "adopt"; adoptPath: string };
+  | {
+      kind: "adopt";
+      adoptPath: string;
+      /**
+       * The BRANCH tip, not the directory's HEAD.
+       *
+       * The same distinction `WorktreeCreateMode.adopt` records, and for the
+       * same reason: the file that held the directory's own HEAD is exactly
+       * what was lost. The resolution carries it because the FORM builds the
+       * submit mode, and a form that had to invent this value would promise a
+       * commit nobody resolved.
+       */
+      expectedBranchOid: string;
+    };
 
 /**
  * WebView → Extension: what would a create against this selection actually do?

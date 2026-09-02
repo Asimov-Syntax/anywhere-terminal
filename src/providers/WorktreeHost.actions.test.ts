@@ -1247,7 +1247,7 @@ describe("the destination a create opens on comes from the host", () => {
 describe("the list of branches a create can pick from comes from the host", () => {
   it("answers a refs request with what the reader found", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
-      readRefs: async () => ({ ok: true, refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }], truncated: true }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "main", oid: "oid-main", heldBy: "repo" }, { name: "idle", oid: "oid-idle" }], truncated: true }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -1259,7 +1259,7 @@ describe("the list of branches a create can pick from comes from the host", () =
       type: "worktreeRefs",
       repoId: REPO,
       token: 1,
-      refs: [{ name: "main", heldBy: "repo" }, { name: "idle" }],
+      refs: [{ name: "main", oid: "oid-main", heldBy: "repo" }, { name: "idle", oid: "oid-idle" }],
       truncated: true,
     });
     dispose();
@@ -1274,7 +1274,7 @@ describe("the list of branches a create can pick from comes from the host", () =
       releaseForge = resolve;
     });
     const { host, view, dispose } = await builtHost([windowRow()], false, {
-      readRefs: async () => ({ ok: true, refs: [{ name: "main" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "main", oid: "oid-main" }], truncated: false }),
       readPullRequests: async () => {
         await held;
         return { ok: true, pullRequests: [], truncated: false };
@@ -1371,7 +1371,7 @@ describe("the list of branches a create can pick from comes from the host", () =
     // The refs answer and the destination reply must still survive it: this read
     // is discovery, and discovery never takes the create with it.
     const { host, view, dispose } = await builtHost([windowRow()], false, {
-      readRefs: async () => ({ ok: true, refs: [{ name: "main" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "main", oid: "oid-main" }], truncated: false }),
       readPullRequests: async () => {
         throw new Error("gh exploded");
       },
@@ -1465,7 +1465,7 @@ describe("the list of branches a create can pick from comes from the host", () =
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       readRefs: async () => {
         await gate;
-        return { ok: true, refs: [{ name: "main" }], truncated: false };
+        return { ok: true, refs: [{ name: "main", oid: "oid-main" }], truncated: false };
       },
     });
     // The form opens first: refs rides an opening the host already holds, and the
@@ -4005,7 +4005,7 @@ describe("the host resolves a selection before the create runs", () => {
     // superseded or invented opening accumulate it (round-4 B7).
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -4026,7 +4026,7 @@ describe("the host resolves a selection before the create runs", () => {
   it("answers only the newest probe of an opening, never the one it overtook", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -4064,7 +4064,7 @@ describe("the host resolves a selection before the create runs", () => {
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 9, seq: 2, query: "second" });
     // Both are now suspended on the SAME unresolved read.
     expect(view.posts.filter((m) => m.type === "worktreeCreateResolution")).toHaveLength(0);
-    release?.({ ok: true, refs: [{ name: "first" }], truncated: false });
+    release?.({ ok: true, refs: [{ name: "first", oid: "oid-first" }], truncated: false });
     await settle();
 
     const answers = view.posts.filter((m) => m.type === "worktreeCreateResolution");
@@ -4076,7 +4076,7 @@ describe("the host resolves a selection before the create runs", () => {
   it("ignores a probe that arrives below the opening's newest seq", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -4233,7 +4233,7 @@ describe("the host resolves a selection before the create runs", () => {
     // taken (round-3 B4).
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       probeReattach: async ({ repairPath }) => ({ kind: "adopt", adoptPath: repairPath }),
       resolveBase: async () => undefined,
     });
@@ -4261,7 +4261,7 @@ describe("the host resolves a selection before the create runs", () => {
     const resolveBase = vi.fn(async () => "deadbeef");
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
       resolveBase,
     });
     // The form opens first: refs rides an opening the host already holds, and the
@@ -4287,7 +4287,7 @@ describe("the host resolves a selection before the create runs", () => {
   it("reuses an existing branch no worktree holds, echoing the opening and the query", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
@@ -4311,7 +4311,7 @@ describe("the host resolves a selection before the create runs", () => {
   it("blocks on the worktree that already holds the branch, and names its path", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
@@ -4329,7 +4329,7 @@ describe("the host resolves a selection before the create runs", () => {
   it("creates a branch nothing has heard of", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat" }], truncated: false }),
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
@@ -4369,7 +4369,7 @@ describe("the host resolves a selection before the create runs", () => {
     const subjects: { repoPath: string; branch: string; repairPath: string }[] = [];
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       probeSubjects: subjects,
       probeReattach: async ({ repairPath }) => ({ kind: "offer", repairPath, expectedOid: "def" }),
     });
@@ -4392,7 +4392,7 @@ describe("the host resolves a selection before the create runs", () => {
   it("reports adopt as its own state rather than as a repair", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       probeReattach: async ({ repairPath }) => ({ kind: "adopt", adoptPath: repairPath }),
     });
     // The dialog opens by asking for the branch list; the probe rides that
@@ -4413,7 +4413,7 @@ describe("the host resolves a selection before the create runs", () => {
     // beside a checkout that is already sitting there (D3).
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       probeReattach: async () => ({ kind: "declined", because: "headMoved" }),
     });
     // The dialog opens by asking for the branch list; the probe rides that
@@ -4435,7 +4435,7 @@ describe("the host resolves a selection before the create runs", () => {
     // offer is exactly what D3 exists to prevent.
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
     });
     // The dialog opens by asking for the branch list; the probe rides that
     // read rather than taking a second one (design.md D2).
@@ -4549,7 +4549,7 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => {
         reads += 1;
-        return { ok: true, refs: [{ name: "main" }], truncated: false };
+        return { ok: true, refs: [{ name: "main", oid: "oid-main" }], truncated: false };
       },
     });
 
@@ -4577,7 +4577,7 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => {
         await held;
-        return { ok: true, refs: [{ name: "main" }], truncated: false };
+        return { ok: true, refs: [{ name: "main", oid: "oid-main" }], truncated: false };
       },
       readPullRequests: async () => {
         await held;
@@ -4819,7 +4819,7 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
       exists: (p: string) => p === "/trees/repo-feat",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       probeReattach: async ({ repairPath }: { repairPath: string }) => ({
         kind: "offer" as const,
         repairPath,
@@ -5027,7 +5027,7 @@ describe("the host resolves a selection before the create runs", () => {
     // dialog open, for the life of the extension host (round-3 B7, round-4 W8).
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -5096,7 +5096,7 @@ describe("the host resolves a selection before the create runs", () => {
     await setFolders([OTHER_ROOT]);
     expect(host.openingsHeld(), "the setup never released the opening").toBe(0);
 
-    release?.({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false });
+    release?.({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false });
     await settle();
 
     expect(probeSubjects, "a departed repository was still corroborated").toEqual([]);
@@ -5110,7 +5110,7 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, setFolders, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
       sibling: true,
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat", heldBy: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       probeReattach: async () => {
         await depart();
         return { kind: "declined", because: "headMoved" };
@@ -5184,7 +5184,7 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dropSibling, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
       sibling: true,
-      readRefs: async () => ({ ok: true, refs: [{ name: "feat" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat" }], truncated: false }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -5278,7 +5278,7 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
       refsInputs,
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -5305,7 +5305,7 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => {
         await gate;
-        return { ok: true, refs: [{ name: "idle" }], truncated: false };
+        return { ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false };
       },
     });
     // The form opens first: refs rides an opening the host already holds, and the
@@ -5330,7 +5330,7 @@ describe("the host resolves a selection before the create runs", () => {
     // `fresh` on no evidence would not be (round-4 B7).
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       createRoot: "/trees",
-      readRefs: async () => ({ ok: true, refs: [{ name: "idle" }], truncated: false }),
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
     });
     host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query: "idle" });
     await settle();

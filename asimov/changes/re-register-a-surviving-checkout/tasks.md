@@ -5,7 +5,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 0. Close the wire's resolution half
 
-- [ ] 1_0 Carry the branch tip on the resolved adopt mode
+- [x] 1_0 Carry the branch tip on the resolved adopt mode — verified: bun test 'src/types/messages.contract.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-surviving-checkout-is-offered-as-adopt-not-skipped}; design.md D3
   - **Acceptance**:
@@ -14,6 +14,8 @@ thing here. Then a second detector, an executor, the form's action, and the guar
   - **Plan**:
     1. `src/types/messages.ts` — `ResolvedMode`'s `adopt` variant gains `expectedBranchOid: string`, so the form can build `WorktreeCreateMode.adopt` from a resolution without inventing the value.
     2. In the same file, document on that field that it is the BRANCH tip and not a directory HEAD, the distinction `WorktreeCreateMode.adopt` already records.
+    3. `src/worktree/repoRefs.ts` — `WorktreeRef` gains `oid: string` and `readRepoRefs` asks `for-each-ref` for `--format=%(objectname) %(refname:short)`, splitting each line on the first space; a line with no space is dropped rather than read as a nameless ref.
+    4. `src/providers/WorktreeHost.ts` — the existing adopt producer in `answerCreateProbe` fills the new field from the ref enumeration it already holds, and answers the free path instead of adopt when that enumeration carries no tip for the branch. Required here rather than in 1_4: a field the type demands and no producer supplies fails `check-types` for the whole tree.
 
 ## 1. Recognise it and build it
 
@@ -66,7 +68,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     - Verify: unit src/providers/WorktreeHost.actions.test.ts
   - **Plan**:
     1. `src/providers/WorktreeHost.ts` calls `probeAdopt` on `occupiedCandidate.path` inside `answerCreateProbe`, only when the selection resolved to `reuse` and an `occupiedCandidate` is present, and never when it resolved to `fresh`.
-    2. In the same file, fill `expectedBranchOid` for both adopt producers from the ref enumeration `answerCreateProbe` already holds, and fall back to the free path when the enumeration carries no tip for the branch.
+    2. In the same file, the new occupied-candidate producer fills `expectedBranchOid` on the rule 1_0 established for the existing one.
     3. In the same file, add an `adoptSupported` option defaulting to `process.platform !== "win32"`, and when it is false answer the suffixed fresh path instead of adopt, with the reason stating the platform is not yet verified rather than that the reconstruction fails.
     4. In the same file, change `takesBase` to exclude `adopt`, and extend the `offerable` rule so an adopt resolution never records a debris candidate.
   - **Boundary**: The prunable detector stays where it is — `probeReattach` keeps producing the listed case's adopt.

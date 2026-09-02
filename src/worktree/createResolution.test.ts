@@ -16,13 +16,13 @@ function facts(over: Partial<SelectionFacts> = {}): SelectionFacts {
 
 describe("resolveSelection", () => {
   it("a name no branch carries is a fresh create", () => {
-    expect(resolveSelection(facts({ refs: [{ name: "main" }] })).mode).toEqual({ kind: "fresh" });
+    expect(resolveSelection(facts({ refs: [{ name: "main", oid: "oid-main" }] })).mode).toEqual({ kind: "fresh" });
   });
 
   it("an existing branch nothing holds is reused, not duplicated", () => {
     // The failure this task deletes: creating `feat/search-2` beside a
     // `feat/search` that already exists and that nobody is using.
-    const read = resolveSelection(facts({ refs: [{ name: "feat/search" }] }));
+    const read = resolveSelection(facts({ refs: [{ name: "feat/search", oid: "oid-feat-search" }] }));
 
     expect(read.mode).toEqual({ kind: "reuse" });
     expect(read.blockedBy).toBeUndefined();
@@ -31,7 +31,7 @@ describe("resolveSelection", () => {
   it("a branch a live worktree holds is blocked, and names the holder's PATH", () => {
     const read = resolveSelection(
       facts({
-        refs: [{ name: "feat/search", heldBy: "search-spike" }],
+        refs: [{ name: "feat/search", oid: "oid-feat-search", heldBy: "search-spike" }],
         worktrees: [wt("/wt/search-spike", { branch: "feat/search" })],
       }),
     );
@@ -44,7 +44,7 @@ describe("resolveSelection", () => {
     // claim would refuse the one action that resolves it.
     const read = resolveSelection(
       facts({
-        refs: [{ name: "feat/search" }],
+        refs: [{ name: "feat/search", oid: "oid-feat-search" }],
         worktrees: [wt("/wt/stale", { branch: "feat/search", prunable: true })],
       }),
     );
@@ -58,7 +58,7 @@ describe("resolveSelection", () => {
     // live claim is the one that decides, because git will refuse regardless.
     const read = resolveSelection(
       facts({
-        refs: [{ name: "feat/search" }],
+        refs: [{ name: "feat/search", oid: "oid-feat-search" }],
         worktrees: [
           wt("/wt/stale", { branch: "feat/search", prunable: true }),
           wt("/wt/live", { branch: "feat/search" }),
@@ -73,7 +73,7 @@ describe("resolveSelection", () => {
   it("a bare or detached worktree holds no branch", () => {
     const read = resolveSelection(
       facts({
-        refs: [{ name: "feat/search" }],
+        refs: [{ name: "feat/search", oid: "oid-feat-search" }],
         worktrees: [
           wt("/repo/bare", { bare: true, branch: "feat/search" }),
           wt("/wt/spike", { detached: true, branch: "feat/search" }),
@@ -86,11 +86,11 @@ describe("resolveSelection", () => {
   });
 
   it("nothing typed resolves nothing rather than guessing a mode", () => {
-    expect(resolveSelection(facts({ query: "   ", refs: [{ name: "main" }] })).mode).toEqual({ kind: "none" });
+    expect(resolveSelection(facts({ query: "   ", refs: [{ name: "main", oid: "oid-main" }] })).mode).toEqual({ kind: "none" });
   });
 
   it("surrounding whitespace does not make an existing branch look new", () => {
-    expect(resolveSelection(facts({ query: "  feat/search  ", refs: [{ name: "feat/search" }] })).mode).toEqual({
+    expect(resolveSelection(facts({ query: "  feat/search  ", refs: [{ name: "feat/search", oid: "oid-feat-search" }] })).mode).toEqual({
       kind: "reuse",
     });
   });

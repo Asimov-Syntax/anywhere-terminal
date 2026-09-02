@@ -12,6 +12,16 @@ function ok(stdout: string): GitCommandResult {
   return { code: 0, stdout: Buffer.from(stdout, "utf8"), stderr: "", timedOut: false, failedToSpawn: false };
 }
 
+/**
+ * git's `%(objectname) %(refname:short)` output, from names alone.
+ *
+ * The fixtures name branches; the tip is what the format now also carries, and
+ * writing it out at every call site would bury the case each test is making.
+ */
+function listing(...names: readonly string[]): GitCommandResult {
+  return ok(names.map((name) => (name.length === 0 ? "" : `oid-${name} ${name}`)).join("\n") + "\n");
+}
+
 function failed(overrides: Partial<GitCommandResult> = {}): GitCommandResult {
   return {
     code: 128,
@@ -42,7 +52,7 @@ function linked(displayPath: string, branch?: string): RepoRefsWorktree {
 
 describe("readRepoRefs", () => {
   it("names each local branch git reported", async () => {
-    const { runner } = runnerOf(ok("main\nfeat/search\nfix/lock\n"));
+    const { runner } = runnerOf(listing("main", "feat/search", "fix/lock"));
 
     const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [] });
 
@@ -59,7 +69,7 @@ describe("readRepoRefs", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.args).toEqual([
       "for-each-ref",
-      "--format=%(refname:short)",
+      "--format=%(objectname) %(refname:short)",
       `--count=${MAX_REFS + 1}`,
       "refs/heads/",
     ]);
@@ -68,7 +78,7 @@ describe("readRepoRefs", () => {
 
   it("caps the list and says it is partial", async () => {
     const names = Array.from({ length: MAX_REFS + 1 }, (_, i) => `branch-${i}`);
-    const { runner } = runnerOf(ok(`${names.join("\n")}\n`));
+    const { runner } = runnerOf(listing(...names));
 
     const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [] });
 
@@ -78,7 +88,7 @@ describe("readRepoRefs", () => {
 
   it("a list exactly at the cap is complete, not partial", async () => {
     const names = Array.from({ length: MAX_REFS }, (_, i) => `branch-${i}`);
-    const { runner } = runnerOf(ok(`${names.join("\n")}\n`));
+    const { runner } = runnerOf(listing(...names));
 
     const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [] });
 
@@ -110,7 +120,7 @@ describe("readRepoRefs", () => {
   });
 
   it("marks a branch another worktree holds with that directory's name", async () => {
-    const { runner } = runnerOf(ok("main\nfeat/search\n"));
+    const { runner } = runnerOf(listing("main", "feat/search"));
 
     const read = await readRepoRefs(runner, {
       cwd: "/repo",
@@ -118,13 +128,13 @@ describe("readRepoRefs", () => {
     });
 
     expect(read.ok === true && read.refs).toEqual([
-      { name: "main", heldBy: "repo" },
-      { name: "feat/search", heldBy: "search-spike" },
+      { name: "main", oid: "oid-main", heldBy: "repo" },
+      { name: "feat/search", oid: "oid-feat/search", heldBy: "search-spike" },
     ]);
   });
 
   it("names the directory only, never the path that holds it", async () => {
-    const { runner } = runnerOf(ok("feat/search\n"));
+    const { runner } = runnerOf(listing("feat/search"));
 
     const read = await readRepoRefs(runner, {
       cwd: "/repo",
@@ -137,41 +147,41 @@ describe("readRepoRefs", () => {
   });
 
   it("a branch no worktree holds carries no holder", async () => {
-    const { runner } = runnerOf(ok("main\nidle\n"));
+    const { runner } = runnerOf(listing("main", "idle"));
 
     const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [linked("/repo", "main")] });
 
-    expect(read.ok === true && read.refs[1]).toEqual({ name: "idle" });
+    expect(read.ok === true && read.refs[1]).toEqual({ name: "idle", oid: "oid-idle" });
   });
 
   it("a detached or bare worktree holds nothing", async () => {
-    const { runner } = runnerOf(ok("main\n"));
+    const { runner } = runnerOf(listing("main"));
 
     const read = await readRepoRefs(runner, {
       cwd: "/repo",
       worktrees: [linked("/wt/detached"), { displayPath: "/repo/bare", bare: true, detached: false, branch: "main" }],
     });
 
-    expect(read.ok === true && read.refs).toEqual([{ name: "main" }]);
+    expect(read.ok === true && read.refs).toEqual([{ name: "main", oid: "oid-main" }]);
   });
 
   // `detached` is the authority, not the presence of `branch`: a listing that
   // carries both is detached, and marking `main` held there would block the one
   // branch nothing is holding.
   it("a detached worktree still naming a branch holds nothing", async () => {
-    const { runner } = runnerOf(ok("main\n"));
+    const { runner } = runnerOf(listing("main"));
 
     const read = await readRepoRefs(runner, {
       cwd: "/repo",
       worktrees: [{ displayPath: "/wt/spike", bare: false, detached: true, branch: "main" }],
     });
 
-    expect(read.ok === true && read.refs).toEqual([{ name: "main" }]);
+    expect(read.ok === true && read.refs).toEqual([{ name: "main", oid: "oid-main" }]);
   });
 
   // git permits one worktree per branch, so a second is a listing that raced.
   it("two worktrees claiming one branch resolve to the first, not the last", async () => {
-    const { runner } = runnerOf(ok("main\n"));
+    const { runner } = runnerOf(listing("main"));
 
     const read = await readRepoRefs(runner, {
       cwd: "/repo",
@@ -181,8 +191,28 @@ describe("readRepoRefs", () => {
     expect(read.ok === true && read.refs[0]?.heldBy).toBe("repo");
   });
 
+  // The format is two columns now, so a line with no separator is not a short
+  // line missing its tip — it is a line this reader cannot attribute. Dropping
+  // it is what stops an empty name or an empty tip reaching a caller that
+  // compares against one and passes.
+  it("a line carrying no tip is not a branch", async () => {
+    const { runner } = runnerOf(ok("oid-main main\nfeat/no-tip\n"));
+
+    const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [] });
+
+    expect(read.ok === true && read.refs).toEqual([{ name: "main", oid: "oid-main" }]);
+  });
+
+  it("carries the tip git reported beside the name", async () => {
+    const { runner } = runnerOf(ok("deadbeef main\n"));
+
+    const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [] });
+
+    expect(read.ok === true && read.refs[0]?.oid).toBe("deadbeef");
+  });
+
   it("blank lines in git's output are not branches", async () => {
-    const { runner } = runnerOf(ok("main\n\nfeat/search\n\n"));
+    const { runner } = runnerOf(listing("main", "", "feat/search"));
 
     const read = await readRepoRefs(runner, { cwd: "/repo", worktrees: [] });
 
