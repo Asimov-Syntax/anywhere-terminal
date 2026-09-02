@@ -1,9 +1,23 @@
-import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { API, Repository } from "../providers/git";
-import type { Deadline } from "./deadline";
+import { afterDelay, type Deadline } from "./deadline";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
 import {
   MIGRATION_DEADLINE_MS,
@@ -14,6 +28,7 @@ import {
   readMigrationSnapshot,
 } from "./migrateChanges";
 
+const execFile = promisify(execFileCallback);
 const OID = "0".repeat(40);
 const ordinary = (path: string) => `1 .M N... 100644 100644 100644 ${OID} ${OID} ${path}\0`;
 const renamed = (to: string, from: string) => `2 R. N... 100644 100644 100644 ${OID} ${OID} R100 ${to}\0${from}\0`;
@@ -197,6 +212,273 @@ describe("readMigrationSnapshot", () => {
         { maxBytes: exactBudget - 1 },
       ),
     ).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a regular file replaced by a writerless FIFO without waiting on a writer",
+    async () => {
+      const root = await worktree("fifo-replacement");
+      const target = join(root, "changing");
+      const replacement = join(root, "replacement.fifo");
+      await writeFile(target, "before");
+      await execFile("mkfifo", [replacement]);
+      let replaced = false;
+      const snapshot = readMigrationSnapshot(
+        runner(() => result(ordinary("changing"))),
+        root,
+        {
+          fs: {
+            lstat: async (candidate) => {
+              const stat = await lstat(candidate);
+              if (candidate === target && !replaced) {
+                replaced = true;
+                await rename(replacement, target);
+              }
+              return stat;
+            },
+            readlink,
+            open: (candidate, flags) => open(candidate, flags),
+          },
+        },
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waited = new Promise<"waited">((resolve) => {
+        timer = setTimeout(() => resolve("waited"), 500);
+      });
+
+      const outcome = await Promise.race([snapshot.then((value) => ({ kind: "settled" as const, value })), waited]);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+
+      expect(outcome).toEqual({ kind: "settled", value: undefined });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a regular path replaced by a symlink outside the worktree",
+    async () => {
+      const root = await worktree("symlink-replacement");
+      const outside = await worktree("symlink-outside");
+      const target = join(root, "changing");
+      const external = join(outside, "external");
+      await writeFile(target, "before");
+      await writeFile(external, "outside");
+      let replaced = false;
+
+      const snapshot = await readMigrationSnapshot(
+        runner(() => result(ordinary("changing"))),
+        root,
+        {
+          fs: {
+            lstat: async (candidate) => {
+              const stat = await lstat(candidate);
+              if (candidate === target && !replaced) {
+                replaced = true;
+                await rm(target);
+                await symlink(external, target);
+              }
+              return stat;
+            },
+            readlink,
+            open: (candidate, flags) => open(candidate, flags),
+          },
+        },
+      );
+
+      expect(snapshot).toBeUndefined();
+    },
+  );
+
+  it("closes an opened handle when the helper's initial fstat stalls", async () => {
+    const root = await worktree("stalled-fstat");
+    await writeFile(join(root, "changing"), "content");
+    let closeHandle: ReturnType<typeof vi.spyOn> | undefined;
+    let releaseStat: (() => void) | undefined;
+
+    const snapshot = readMigrationSnapshot(
+      runner(() => result(ordinary("changing"))),
+      root,
+      {
+        fs: {
+          lstat,
+          readlink,
+          open: async (candidate, flags) => {
+            const handle = await open(candidate, flags);
+            const stat = await handle.stat();
+            vi.spyOn(handle, "stat").mockImplementationOnce(
+              () =>
+                new Promise((resolve) => {
+                  releaseStat = () => resolve(stat);
+                }),
+            );
+            closeHandle = vi.spyOn(handle, "close");
+            return handle;
+          },
+        },
+        makeDeadline: () => afterDelay(50),
+      },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<"waited">((resolve) => {
+      timer = setTimeout(() => resolve("waited"), 500);
+    });
+
+    const outcome = await Promise.race([snapshot.then((value) => ({ kind: "settled" as const, value })), waited]);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    releaseStat?.();
+    await Promise.resolve();
+
+    expect(outcome).toEqual({ kind: "settled", value: undefined });
+    expect(closeHandle).toHaveBeenCalled();
+  });
+
+  it("closes a handle whose open resolves after the deadline before fstat stalls", async () => {
+    const root = await worktree("late-open-stalled-fstat");
+    const target = join(root, "changing");
+    await writeFile(target, "content");
+    let releaseOpen: (() => Promise<void>) | undefined;
+    let releaseStat: (() => void) | undefined;
+    let closeHandle: ReturnType<typeof vi.spyOn> | undefined;
+    const pendingOpen = new Promise<Awaited<ReturnType<typeof open>>>((resolve) => {
+      releaseOpen = async () => {
+        const handle = await open(target, "r");
+        const stat = await handle.stat();
+        vi.spyOn(handle, "stat").mockImplementationOnce(
+          () =>
+            new Promise((finish) => {
+              releaseStat = () => finish(stat);
+            }),
+        );
+        closeHandle = vi.spyOn(handle, "close");
+        resolve(handle);
+      };
+    });
+
+    const snapshot = await readMigrationSnapshot(
+      runner(() => result(ordinary("changing"))),
+      root,
+      {
+        fs: {
+          lstat,
+          readlink,
+          open: async () => pendingOpen,
+        },
+        makeDeadline: () => afterDelay(50),
+      },
+    );
+    expect(snapshot).toBeUndefined();
+
+    await releaseOpen?.();
+    await Promise.resolve();
+    expect(closeHandle).toHaveBeenCalled();
+    releaseStat?.();
+  });
+
+  it("refuses when the opened file's path becomes a same-identity symlink", async () => {
+    const root = await worktree("same-identity-symlink");
+    const target = join(root, "changing");
+    await writeFile(target, "content");
+    const stat = await lstat(target);
+    const symlinkStat = {
+      ...stat,
+      isFile: () => false,
+      isSymbolicLink: () => true,
+    } as typeof stat;
+    let reads = 0;
+
+    const snapshot = await readMigrationSnapshot(
+      runner(() => result(ordinary("changing"))),
+      root,
+      {
+        fs: {
+          lstat: async (candidate) => {
+            if (candidate !== target) {
+              return lstat(candidate);
+            }
+            reads += 1;
+            return reads === 1 ? stat : symlinkStat;
+          },
+          readlink,
+          open: (candidate, flags) => open(candidate, flags),
+        },
+      },
+    );
+
+    expect(snapshot).toBeUndefined();
+  });
+
+  it("closes every regular-file handle after a successful snapshot", async () => {
+    const root = await worktree("closed-handle");
+    await writeFile(join(root, "changing"), "content");
+    const closes: Array<ReturnType<typeof vi.spyOn>> = [];
+
+    const snapshot = await readMigrationSnapshot(
+      runner(() => result(ordinary("changing"))),
+      root,
+      {
+        fs: {
+          lstat,
+          readlink,
+          open: async (candidate, flags) => {
+            const handle = await open(candidate, flags);
+            closes.push(vi.spyOn(handle, "close"));
+            return handle;
+          },
+        },
+      },
+    );
+
+    expect(snapshot).toBeDefined();
+    expect(closes).toHaveLength(1);
+    expect(closes[0]).toHaveBeenCalledOnce();
+  });
+
+  it("returns undefined within the deadline when handle close stalls", async () => {
+    const root = await worktree("stalled-close");
+    const target = join(root, "changing");
+    await writeFile(target, "content");
+    let releaseClose: (() => Promise<void>) | undefined;
+
+    const snapshot = readMigrationSnapshot(
+      runner(() => result(ordinary("changing"))),
+      root,
+      {
+        fs: {
+          lstat,
+          readlink,
+          open: async (candidate, flags) => {
+            const handle = await open(candidate, flags);
+            const close = handle.close.bind(handle);
+            vi.spyOn(handle, "close").mockImplementation(
+              () =>
+                new Promise<void>((resolve) => {
+                  releaseClose = async () => {
+                    await close();
+                    resolve();
+                  };
+                }),
+            );
+            return handle;
+          },
+        },
+        makeDeadline: () => afterDelay(50),
+      },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<"waited">((resolve) => {
+      timer = setTimeout(() => resolve("waited"), 500);
+    });
+
+    const outcome = await Promise.race([snapshot.then((value) => ({ kind: "settled" as const, value })), waited]);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    await releaseClose?.();
+
+    expect(outcome).toEqual({ kind: "settled", value: undefined });
   });
 
   it("refuses unresolved, malformed, failed, unreadable, and over-budget snapshots", async () => {

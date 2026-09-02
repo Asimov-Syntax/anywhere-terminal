@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream, type Stats } from "node:fs";
+import { constants, type Stats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { API, Repository } from "../providers/git";
@@ -9,6 +10,7 @@ import {
   type FileIdentity,
   fileIdentityOf,
 } from "../utils/authorizedDirectory";
+import { type OpenLike, openRegularFile } from "../utils/regularFileRead";
 import { afterDelay, type Deadline } from "./deadline";
 import type { GitCommandRunner } from "./gitCommandRunner";
 
@@ -71,7 +73,7 @@ export type MigrateChangesOutcome =
 interface MigrationFs {
   lstat(path: string): Promise<Stats>;
   readlink(path: string): Promise<string>;
-  createReadStream(path: string): ReturnType<typeof createReadStream>;
+  open: OpenLike;
 }
 
 export interface MigrationDeps {
@@ -92,6 +94,10 @@ class SnapshotBudget {
     private readonly deadline: Deadline,
     private readonly maxBytes: number,
   ) {}
+
+  get remaining(): number {
+    return Math.max(0, this.maxBytes - this.used);
+  }
 
   take(bytes: number): void {
     this.used += bytes;
@@ -121,7 +127,7 @@ class SnapshotBudget {
 const nodeFs: MigrationFs = {
   lstat: (target) => fs.lstat(target),
   readlink: (target) => fs.readlink(target),
-  createReadStream: (target) => createReadStream(target),
+  open: (target, flags) => fs.open(target, flags),
 };
 
 function isNotFound(error: unknown): boolean {
@@ -272,44 +278,136 @@ function affectedPaths(records: readonly MigrationRecord[]): string[] {
   return [...paths].sort();
 }
 
-async function hashFile(target: string, budget: SnapshotBudget, io: MigrationFs): Promise<string> {
-  const hash = createHash("sha256");
-  const stream = io.createReadStream(target);
+async function closeBounded(handle: FileHandle, budget: SnapshotBudget): Promise<boolean> {
+  const closing = handle.close();
   try {
-    const iterator = stream[Symbol.asyncIterator]();
-    while (true) {
-      const next = await budget.run(iterator.next());
-      if (next.done) {
-        return hash.digest("hex");
+    await budget.run(closing);
+    return true;
+  } catch {
+    void closing;
+    return false;
+  }
+}
+
+async function openBoundedRegularFile(
+  target: string,
+  expected: Stats,
+  budget: SnapshotBudget,
+  io: MigrationFs,
+): Promise<{ handle: FileHandle; stat: Stats }> {
+  let openedHandle: FileHandle | undefined;
+  let abandoned = false;
+  const opening = openRegularFile(
+    target,
+    (candidate, flags) => io.open(candidate, flags | (constants.O_NOFOLLOW ?? 0)),
+    (handle) => {
+      openedHandle = handle;
+      if (abandoned) {
+        void handle.close().catch(() => {});
       }
-      const chunk = Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
-      budget.take(chunk.length);
-      hash.update(chunk);
-    }
+    },
+  );
+  let handle: FileHandle;
+  try {
+    handle = await budget.run(opening);
   } catch (error) {
-    stream.destroy();
+    abandoned = true;
+    if (openedHandle !== undefined) {
+      void openedHandle.close().catch(() => {});
+    }
+    throw error;
+  }
+  try {
+    const stat = await budget.run(handle.stat());
+    const expectedIdentity = fileIdentityOf(expected);
+    const openedIdentity = fileIdentityOf(stat);
+    if (
+      expectedIdentity === undefined ||
+      openedIdentity === undefined ||
+      !sameIdentity(expectedIdentity, openedIdentity)
+    ) {
+      throw new SnapshotFailure();
+    }
+    return { handle, stat };
+  } catch (error) {
+    await closeBounded(handle, budget);
     throw error;
   }
 }
 
-async function readBoundedFile(target: string, budget: SnapshotBudget, io: MigrationFs): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  const stream = io.createReadStream(target);
+async function readRegularFile(
+  target: string,
+  expected: Stats,
+  budget: SnapshotBudget,
+  io: MigrationFs,
+  consume: (chunk: Buffer) => void,
+): Promise<Stats> {
+  const { handle, stat } = await openBoundedRegularFile(target, expected, budget, io);
+  let failed = false;
+  let failure: unknown;
   try {
-    const iterator = stream[Symbol.asyncIterator]();
-    while (true) {
-      const next = await budget.run(iterator.next());
-      if (next.done) {
-        return Buffer.concat(chunks);
+    if (!Number.isSafeInteger(stat.size) || stat.size < 0 || stat.size > budget.remaining) {
+      throw new SnapshotFailure();
+    }
+    budget.take(stat.size);
+    let offset = 0;
+    while (offset < stat.size) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - offset));
+      const read = await budget.run(handle.read(buffer, 0, buffer.length, offset));
+      if (read.bytesRead <= 0) {
+        throw new SnapshotFailure();
       }
-      const chunk = Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
-      budget.take(chunk.length);
-      chunks.push(chunk);
+      consume(buffer.subarray(0, read.bytesRead));
+      offset += read.bytesRead;
+    }
+    const after = await budget.run(handle.stat());
+    const pathAfter = await budget.run(io.lstat(target));
+    if (
+      after.size !== stat.size ||
+      after.mode !== stat.mode ||
+      after.mtimeMs !== stat.mtimeMs ||
+      after.ctimeMs !== stat.ctimeMs ||
+      !sameIdentity(fileIdentityOf(stat), fileIdentityOf(after)) ||
+      pathAfter.isSymbolicLink() ||
+      !pathAfter.isFile() ||
+      !sameIdentity(fileIdentityOf(stat), fileIdentityOf(pathAfter))
+    ) {
+      throw new SnapshotFailure();
     }
   } catch (error) {
-    stream.destroy();
-    throw error;
+    failed = true;
+    failure = error;
   }
+  const closed = await closeBounded(handle, budget);
+  if (!closed) {
+    throw new SnapshotFailure();
+  }
+  if (failed) {
+    throw failure;
+  }
+  return stat;
+}
+
+async function hashFile(
+  target: string,
+  expected: Stats,
+  budget: SnapshotBudget,
+  io: MigrationFs,
+): Promise<{ hash: string; mode: number }> {
+  const hash = createHash("sha256");
+  const stat = await readRegularFile(target, expected, budget, io, (chunk) => hash.update(chunk));
+  return { hash: hash.digest("hex"), mode: stat.mode & 0o7777 };
+}
+
+async function readBoundedFile(
+  target: string,
+  expected: Stats,
+  budget: SnapshotBudget,
+  io: MigrationFs,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  await readRegularFile(target, expected, budget, io, (chunk) => chunks.push(Buffer.from(chunk)));
+  return Buffer.concat(chunks);
 }
 
 async function pathState(
@@ -339,7 +437,8 @@ async function pathState(
     return { path: relativePath, kind: "symlink", mode, target: link };
   }
   if (stat.isFile()) {
-    return { path: relativePath, kind: "file", mode, hash: await hashFile(target, budget, io) };
+    const opened = await hashFile(target, stat, budget, io);
+    return { path: relativePath, kind: "file", mode: opened.mode, hash: opened.hash };
   }
   return { path: relativePath, kind: stat.isDirectory() ? "directory" : "other", mode };
 }
@@ -427,7 +526,7 @@ async function evidenceFile(
   if (!stat.isFile() || stat.isSymbolicLink() || identity === undefined) {
     throw new SnapshotFailure();
   }
-  return { name, kind: "file", identity, hash: await hashFile(target, budget, io) };
+  return { name, kind: "file", identity, hash: (await hashFile(target, stat, budget, io)).hash };
 }
 
 async function captureSourceEvidenceWithin(
@@ -449,7 +548,7 @@ async function captureSourceEvidenceWithin(
   let adminPath = gitPath;
   let contentHash: string | undefined;
   if (entry.isFile()) {
-    const content = await readBoundedFile(gitPath, budget, io);
+    const content = await readBoundedFile(gitPath, entry, budget, io);
     contentHash = createHash("sha256").update(content).digest("hex");
     const text = decode(content);
     const match = text?.trim().match(/^gitdir:\s*(.+)$/);

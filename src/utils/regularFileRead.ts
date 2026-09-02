@@ -43,10 +43,15 @@ export function readFlags(c: { O_RDONLY: number; O_NONBLOCK?: number }): number 
  * working: it is not `ENOENT`/`ENOTDIR`, so every reader that separates absence
  * from failure files it under failure with no change.
  */
-export async function openRegularFile(filePath: string, openFile: OpenLike = open): Promise<FileHandle> {
+export async function openRegularFile(
+  filePath: string,
+  openFile: OpenLike = open,
+  onOpen?: (handle: FileHandle) => void,
+): Promise<FileHandle> {
   const handle = await openFile(filePath, readFlags(constants));
   let regular = false;
   try {
+    onOpen?.(handle);
     regular = (await handle.stat()).isFile();
   } finally {
     if (!regular) {
