@@ -214,7 +214,7 @@
     1. `src/worktree/WorktreeCache.ts`: choose one current successful root per repository before failed-folder retention; use it for every same-repository folder association and order entry, store its registration beside the generation in the same cached repository record, and resolve registration there.
     2. `src/worktree/WorktreeCache.test.ts`: cover an earlier failed folder remembering registration A while a later current folder publishes the same repository from registration B; generation lookup and `rootFor` use B, a subsequent repo-scoped rebuild cannot mint authority from A, stale generations remain refused, and closing the successful sibling retains a degraded group without a generation.
 
-- [ ] 5_2 Retain duplicate folders without hidden authority
+- [x] 5_2 Retain duplicate folders without hidden authority — verified: bun test 'src/worktree/WorktreeCache.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 5_1
   - **Refs**: design.md D3 <!-- review round 4 F012, F013 -->
   - **Acceptance**:

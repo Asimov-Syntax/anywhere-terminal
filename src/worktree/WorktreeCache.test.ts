@@ -463,6 +463,19 @@ describe("WorktreeCache — two folders sharing one repository", () => {
     expect(cache.registrationFor("/a/.git", followUpGeneration)).toBeUndefined();
     expect(cache.rootFor("/a/.git")).toEqual(registeredB);
   });
+
+  it("retains every failed duplicate mapping when no sibling currently resolves", () => {
+    const cache = createWorktreeCache();
+    cache.applyBuild(build([REPO_A], shared, both(resolved, resolved)));
+
+    cache.applyBuild(build([], {}, both({ kind: "failed", reason: "boom" }, { kind: "failed", reason: "boom" })));
+    cache.applyBuild(build([], {}, [{ folder: "/a/sub", outcome: { kind: "failed", reason: "still failing" } }]));
+
+    const retained = cache.readRepo("/a/.git");
+    expect(retained?.worktrees).toHaveLength(2);
+    expect(retained?.degraded).toBe("still failing");
+    expect(retained?.generation).toBeUndefined();
+  });
 });
 
 // Review round 1, W2. design.md D3 says `read()` returns the retained
@@ -497,17 +510,19 @@ describe("WorktreeCache — degraded cause while git is unavailable", () => {
 
   it("publishes no registration for any repository while git is unusable", () => {
     const cache = createWorktreeCache();
-    cache.applyBuild(build([REPO_A], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
-    expect(cache.read().repos[0].generation).not.toBeUndefined();
+    const registered = root("/a/.git", 11);
+    cache.applyBuild(build([registered], { "/a/.git": listing([worktree("/a", { kind: "main" })]) }));
+    const publishedGeneration = cache.read().repos[0].generation as number;
 
     cache.applyBuild(gitGone("git 2.20 is below 2.31", ["/a"]));
     expect(cache.read().repos[0].generation).toBeUndefined();
 
     // And a per-repo rebuild that lands while git is still unusable mints no
-    // authority either — the same reasoning the degraded mark already gets
-    // (design.md D12).
+    // public OR private authority — the next sequence value is predictable to a
+    // client that saw the prior publication.
     cache.applyRepo("/a/.git", listing([worktree("/a", { kind: "main" }), worktree("/a/wt")]));
     expect(cache.read().repos[0].generation).toBeUndefined();
+    expect(cache.registrationFor("/a/.git", publishedGeneration + 1)).toBeUndefined();
   });
 
   it("publishes one again once git answers", () => {

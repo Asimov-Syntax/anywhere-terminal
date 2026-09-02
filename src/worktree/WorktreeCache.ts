@@ -136,6 +136,7 @@ export function createWorktreeCache(): WorktreeCache {
     incoming: WorktreeRepo,
     listing: RepoListing,
     registration: ResolvedRepo["registration"],
+    authoritative = true,
   ): CachedRepo {
     const stored = repos.get(repoId);
     if (listing.degraded !== undefined && stored) {
@@ -150,8 +151,8 @@ export function createWorktreeCache(): WorktreeCache {
     }
     return {
       repo: incoming,
-      generation: nextGeneration(),
-      registration,
+      generation: authoritative ? nextGeneration() : undefined,
+      registration: authoritative ? registration : undefined,
       // Survives the listing that just replaced everything else: a rebuild says
       // what the repository contains, never whether it is being watched.
       unwatched: stored?.unwatched,
@@ -201,7 +202,7 @@ export function createWorktreeCache(): WorktreeCache {
           // current root and fresh listing stand. Remember that root here too:
           // the failed folder keeps the group if the sibling closes, but cannot
           // later initiate a repo-scoped observation from stale registration.
-          resolved = currentRoots.get(remembered.repoId);
+          resolved = currentRoots.get(remembered.repoId) ?? remembered;
         } else if (remembered && stored) {
           next.set(remembered.repoId, {
             // Retained for the same reason and on the same terms: this folder
@@ -246,7 +247,10 @@ export function createWorktreeCache(): WorktreeCache {
     if (!root) {
       return;
     }
-    repos.set(repoId, merge(repoId, assembleRepo(root, listing, folders, rank), listing, root.registration));
+    repos.set(
+      repoId,
+      merge(repoId, assembleRepo(root, listing, folders, rank), listing, root.registration, gitAvailable),
+    );
   }
 
   function markUnwatched(repoId: string, reason: string | undefined): void {
@@ -331,6 +335,9 @@ export function createWorktreeCache(): WorktreeCache {
   }
 
   function registrationFor(repoId: string, generation: number): ResolvedRepo["registration"] {
+    if (!gitAvailable) {
+      return undefined;
+    }
     const cached = repos.get(repoId);
     return cached?.generation === generation ? cached.registration : undefined;
   }
