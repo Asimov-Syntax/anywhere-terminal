@@ -1043,10 +1043,17 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
   ])("%s the production selected-source exclusion", async (_case, exclusionFails) => {
     migrationWalk = true;
     migrationExcludeFails = exclusionFails;
+    fs.mkdirSync(REPO_ID, { recursive: true });
     await assemble();
     clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    expect(
+      outbound.find(
+        (message) => message.type === "requestWorktreeCreateDefaults" && message.sourceWorktreeId === LINKED,
+      ),
+    ).toMatchObject({ sourceGeneration: expect.any(Number) });
     await settleUntil(
-      () => document.querySelector<HTMLInputElement>("#wt-migrate-changes") !== null,
+      () => posted.some((message) => message.type === "worktreeMigrationOffer"),
       "the migration offer to reach the create form",
     );
     const branchInput = document.querySelector<HTMLInputElement>("#wt-branch");

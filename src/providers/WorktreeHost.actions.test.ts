@@ -131,6 +131,12 @@ const apiWithSibling: GitApiAccessor = () =>
     repositories: [{ rootUri: { fsPath: "/repo" } }, { rootUri: { fsPath: OTHER_ROOT } }],
   }) as ReturnType<GitApiAccessor>;
 
+const repositoryRegistration = (repoId: string) => ({
+  path: repoId,
+  platform: "darwin" as const,
+  components: [{ path: repoId, identity: { dev: 1, ino: repoId === REPO ? 1 : 2 } }],
+});
+
 /** `gone` makes the feat worktree prunable AND absent, which is `missing`. */
 function deps(
   gone: boolean | (() => boolean) = false,
@@ -145,6 +151,7 @@ function deps(
     runner: r,
     capabilities: capabilities ?? createGitCapabilities(r),
     normalize: async (p: string) => p.replace(/\/+$/, "") || "/",
+    authorizeCommonDirectory: async (repoId) => repositoryRegistration(repoId),
     stat: async (path: string) => {
       if (isGone() && path === FEAT_PATH) {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -335,7 +342,8 @@ async function builtHost(
   over: {
     extra?: string[][];
     createRoot?: string;
-    probeMigrationSource?: (sourcePath: string) => Promise<MigrationOfferEvidence | undefined>;
+    probeMigrationSource?: WorktreeHostOptions["probeMigrationSource"];
+    authorizeCommonDirectory?: WorktreeTreeDeps["authorizeCommonDirectory"];
     migrationOfferId?: () => string;
     exists?: (p: string) => boolean;
     probeGitEntry?: (p: string) => "present" | "absent" | "unknown";
@@ -438,7 +446,12 @@ async function builtHost(
       gitUsable.now ? await probed.probeVersion() : { kind: "absent", reason: "git is no longer on PATH" },
   };
   const host = createWorktreeHost({
-    deps: deps(isGone, over.extra ?? [], shared, over.sibling === true, capabilities),
+    deps: {
+      ...deps(isGone, over.extra ?? [], shared, over.sibling === true, capabilities),
+      ...(over.authorizeCommonDirectory === undefined
+        ? {}
+        : { authorizeCommonDirectory: over.authorizeCommonDirectory }),
+    },
     workspaceFolders: () => [...folders.now],
     pool: {
       subscribePattern: () =>
@@ -2554,10 +2567,10 @@ describe("the migration offer the create form is given", () => {
     view.posts.filter((message) => message.type === "worktreeMigrationOffer");
 
   it("offers only the exact owned source with a positive complete count", async () => {
-    const probed: string[] = [];
+    const probed: Parameters<NonNullable<WorktreeHostOptions["probeMigrationSource"]>>[] = [];
     const h = await builtHost([], false, {
-      probeMigrationSource: async (sourcePath) => {
-        probed.push(sourcePath);
+      probeMigrationSource: async (...input) => {
+        probed.push(input);
         return migrationEvidence(3);
       },
     });
@@ -2567,10 +2580,19 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
 
-    expect(probed).toEqual([FEAT_PATH]);
+    expect(probed).toEqual([
+      [
+        FEAT_PATH,
+        {
+          registration: repositoryRegistration(REPO),
+          sourceKind: "linked",
+        },
+      ],
+    ]);
     expect(migrationOffers(h.view)).toEqual([
       {
         type: "worktreeMigrationOffer",
@@ -2591,6 +2613,133 @@ describe("the migration offer the create form is given", () => {
     ]);
   });
 
+  it("probes the normalized source identity rather than Git's display spelling", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      extra: [RAW],
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: RAW_ID,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    expect(probes).toEqual([RAW_ID]);
+    expect(probes).not.toContain(RAW_DISPLAY);
+  });
+
+  it("requires the selected publication generation before probing", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 2,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: (gen() ?? 0) + 1,
+    });
+    await settle();
+
+    expect(probes).toEqual([]);
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("offers nothing from a degraded retained group", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+    const priorGeneration = gen();
+    await h.degrade();
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: priorGeneration,
+    });
+    await settle();
+
+    expect(probes).toEqual([]);
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("keeps a pending offer only while the selected private registration remains current", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    let current = repositoryRegistration(REPO);
+    const h = await builtHost([], false, {
+      authorizeCommonDirectory: async () => current,
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    current = {
+      ...current,
+      components: [{ path: REPO, identity: { dev: 1, ino: 99 } }],
+    };
+    await h.relist();
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("allows a repo-scoped generation advance that retains the selected registration", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    await h.host.mutationBindings().forceRebuild(REPO);
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toHaveLength(1);
+  });
+
   it("never substitutes another worktree into the same opening", async () => {
     const probed: string[] = [];
     const h = await builtHost([], false, {
@@ -2605,12 +2754,14 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: MAIN_PATH,
+      sourceGeneration: gen(),
     });
     h.host.handleMessage(h.view, {
       type: "requestWorktreeCreateDefaults",
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
 
@@ -2640,6 +2791,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 2,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
 
@@ -2653,6 +2805,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
     expect(missingProbe).not.toHaveBeenCalled();
@@ -2664,6 +2817,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
     expect(migrationOffers(incapable.view)).toEqual([]);
@@ -2683,6 +2837,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
     resolvers.shift()?.(migrationEvidence());
@@ -2694,12 +2849,14 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 2,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     h.host.handleMessage(h.view, {
       type: "requestWorktreeCreateDefaults",
       repoId: REPO,
       opening: 3,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     resolvers.shift()?.(migrationEvidence());
     await settle();
@@ -2724,6 +2881,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
 
     await h.vanish();
@@ -2744,6 +2902,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
     h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
@@ -2752,6 +2911,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 2,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
     h.host.handleMessage(h.view, {
@@ -2759,6 +2919,7 @@ describe("the migration offer the create form is given", () => {
       repoId: REPO,
       opening: 3,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
 
@@ -2794,6 +2955,7 @@ describe("redeeming a migration offer", () => {
       repoId: REPO,
       opening: 1,
       sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
     });
     await settle();
     return h;

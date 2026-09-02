@@ -1474,6 +1474,26 @@ describe("the create a toolbar with no repository opens", () => {
     ]);
   });
 
+  it("freezes the selected row's repository generation in its opening request", () => {
+    const tree = twoRepoTree();
+    tree.repos[0].generation = 41;
+    const h = ready({ type: "worktreeTreeResponse", tree, presence: singleRepoPresence(1_000_000) });
+    const source = tree.repos[0].worktrees[1];
+    if (source === undefined) {
+      throw new Error("fixture lost its linked source");
+    }
+
+    menuActions(h).createWorktree(source);
+
+    expect(defaultsRequests(h)).toContainEqual({
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      sourceGeneration: 41,
+    });
+  });
+
   it("repository and toolbar doors carry no source row", () => {
     const h = ready(twoRepoResponse());
 

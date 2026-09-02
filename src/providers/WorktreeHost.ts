@@ -46,7 +46,7 @@ import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { classifyDestination, type GitEntryProbe } from "../worktree/debrisClassification";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
-import type { MigrationOfferEvidence } from "../worktree/migrateChanges";
+import type { MigrationOfferEvidence, MigrationRepositoryBinding } from "../worktree/migrateChanges";
 import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
@@ -195,7 +195,10 @@ export interface WorktreeHostOptions {
   /** `anywhereTerminal.worktree.createRoot`, read through `SettingsReader`. */
   createRoot?(): { value: string | undefined; explicitlySet: boolean };
   /** Prove that one exact source can currently be migrated. */
-  probeMigrationSource?(sourcePath: string): Promise<MigrationOfferEvidence | undefined>;
+  probeMigrationSource?(
+    sourcePath: string,
+    binding?: MigrationRepositoryBinding,
+  ): Promise<MigrationOfferEvidence | undefined>;
   /** Cryptographically random in production; deterministic only in tests. */
   migrationOfferId?(): string;
   /**
@@ -717,7 +720,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * closes the guard has to be the pass in flight, not the pass that finished.
    */
   const provisionReading = new Map<string, number>();
-  const migrationReading = new Map<string, { sequence: number; sourceWorktreeId: string }>();
+  const migrationReading = new Map<string, { sequence: number; sourceWorktreeId: string; sourceGeneration: number }>();
   const migrationOffers = new Map<
     string,
     {
@@ -726,6 +729,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       repoId: string;
       sourceWorktreeId: string;
       sourcePath: string;
+      binding: MigrationRepositoryBinding;
       evidence: MigrationOfferEvidence;
     }
   >();
@@ -2253,7 +2257,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             ?.worktrees.find(
               (row) =>
                 row.id === offered?.sourceWorktreeId &&
-                row.displayPath === offered.sourcePath &&
+                row.kind === offered?.binding.sourceKind &&
                 !row.bare &&
                 !row.missing &&
                 !row.prunable,
@@ -2263,6 +2267,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             offered.surface !== surfaceKey(surface) ||
             offered.opening !== msg.opening ||
             offered.repoId !== msg.repoId ||
+            !isDeepStrictEqual(cache.rootFor(msg.repoId)?.registration, offered.binding.registration) ||
             liveOpening.get(surfaceKey(surface)) !== msg.opening ||
             source === undefined ||
             options.probeMigrationSource === undefined
@@ -2288,19 +2293,29 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               await create(request);
               return;
             }
-            const current = await options.probeMigrationSource?.(migrationOffer.sourcePath).catch(() => undefined);
+            const current = await options
+              .probeMigrationSource?.(migrationOffer.sourcePath, migrationOffer.binding)
+              .catch(() => undefined);
             const source = cache
               .read()
               .repos.find((repo) => repo.repoId === migrationOffer.repoId)
               ?.worktrees.find(
                 (row) =>
                   row.id === migrationOffer.sourceWorktreeId &&
-                  row.displayPath === migrationOffer.sourcePath &&
+                  row.kind === migrationOffer.binding.sourceKind &&
                   !row.bare &&
                   !row.missing &&
                   !row.prunable,
               );
-            if (source === undefined || current === undefined || !isDeepStrictEqual(current, migrationOffer.evidence)) {
+            if (
+              source === undefined ||
+              current === undefined ||
+              !isDeepStrictEqual(
+                cache.rootFor(migrationOffer.repoId)?.registration,
+                migrationOffer.binding.registration,
+              ) ||
+              !isDeepStrictEqual(current, migrationOffer.evidence)
+            ) {
               surface.post({
                 type: "worktreeMutationResult",
                 verb: "create",
@@ -2760,19 +2775,28 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         } else if (liveOpening.get(key) !== msg.opening) {
           return;
         }
-        if (opening && msg.sourceWorktreeId !== undefined && options.probeMigrationSource !== undefined) {
+        if (
+          opening &&
+          msg.sourceWorktreeId !== undefined &&
+          Number.isSafeInteger(msg.sourceGeneration) &&
+          (msg.sourceGeneration as number) > 0 &&
+          options.probeMigrationSource !== undefined
+        ) {
           const slot = `${key}::${msg.opening}`;
           const reading = migrationReading.get(slot);
           if (reading === undefined) {
-            const mine = { sequence: ++migrationSequence, sourceWorktreeId: msg.sourceWorktreeId };
+            const sourceGeneration = msg.sourceGeneration as number;
+            const mine = { sequence: ++migrationSequence, sourceWorktreeId: msg.sourceWorktreeId, sourceGeneration };
             migrationReading.set(slot, mine);
             const source = repo.worktrees.find(
               (row) => row.id === msg.sourceWorktreeId && !row.bare && !row.missing && !row.prunable,
             );
-            if (source !== undefined) {
-              const sourcePath = source.displayPath;
+            const registration = cache.registrationFor(msg.repoId, sourceGeneration);
+            if (source !== undefined && registration !== undefined) {
+              const sourcePath = source.id;
+              const binding = { registration, sourceKind: source.kind };
               void options
-                .probeMigrationSource(sourcePath)
+                .probeMigrationSource(sourcePath, binding)
                 .then((evidence) => {
                   const currentReading = migrationReading.get(slot);
                   const currentSource = cache
@@ -2780,11 +2804,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                     .repos.find((candidate) => candidate.repoId === msg.repoId)
                     ?.worktrees.find(
                       (row) =>
-                        row.id === source.id &&
-                        row.displayPath === sourcePath &&
-                        !row.bare &&
-                        !row.missing &&
-                        !row.prunable,
+                        row.id === source.id && row.kind === source.kind && !row.bare && !row.missing && !row.prunable,
                     );
                   if (
                     disposed ||
@@ -2792,6 +2812,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                     liveOpening.get(key) !== msg.opening ||
                     currentReading?.sequence !== mine.sequence ||
                     currentReading.sourceWorktreeId !== mine.sourceWorktreeId ||
+                    currentReading.sourceGeneration !== mine.sourceGeneration ||
+                    !isDeepStrictEqual(cache.rootFor(msg.repoId)?.registration, registration) ||
                     currentSource === undefined ||
                     evidence === undefined ||
                     !Number.isSafeInteger(evidence.snapshot.count) ||
@@ -2809,6 +2831,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                     repoId: msg.repoId,
                     sourceWorktreeId: source.id,
                     sourcePath,
+                    binding,
                     evidence,
                   });
                   deliver(surface, {

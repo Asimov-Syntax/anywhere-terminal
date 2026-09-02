@@ -172,15 +172,15 @@
     1. `src/worktree/migrateChanges.ts`: require the retained repository registration when probing and executing; require source ownership by its main-or-linked role, compare a linked back-pointer by canonical path and `.git` file identity so symlink spellings remain valid but hard-link aliases fail, and require both common identities to match the pre-offer registration before API entry.
     2. `src/worktree/migrateChanges.test.ts`: cover ordinary main, standalone main, linked, linked-to-standalone substitution, wrong repository, common-directory replacement before the first source probe, accepted symlink spelling, rejected hard-link alias, and pre-call registration mismatch at either worktree.
 
-- [ ] 4_4 Freeze the selected publication through the offer
+- [x] 4_4 Freeze the selected publication through the offer — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/providers/WorktreeHost.actions.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 4_3
   - **Refs**: design.md D3, D5 <!-- review round 2 F006, F007 -->
   - **Acceptance**:
     - Outcome: An offer retains the selected normalized row and its pre-probe repository registration
-    - Verify: command pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/providers/WorktreeHost.actions.test.ts'
+    - Verify: command pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/providers/WorktreeHost.actions.test.ts' 'src/extension.worktreeAssembly.test.ts'
   - **Plan**:
     1. `src/types/messages.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`: freeze the selected row's normalized id and repository generation in the opening request; repository and toolbar doors retain neither.
-    2. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`: synchronously resolve that generation to the current private cached registration before probing; retain it through offer and redemption; cover raw display aliases, whole-tree registration refresh after selection, repo-scoped generation advance with the same registration, degraded retained rows, and stable cross-repository or role replacement.
+    2. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/extension.worktreeAssembly.test.ts`: synchronously resolve that generation to the current private cached registration before probing; retain it through offer and redemption; cover raw display aliases, whole-tree registration refresh after selection, repo-scoped generation advance with the same registration, degraded retained rows, stable cross-repository or role replacement, and the shipped assembly opening.
 
 - [ ] 4_5 Carry repository ownership through execution
   - **Deps**: 4_4

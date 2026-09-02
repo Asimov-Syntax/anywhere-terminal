@@ -1188,6 +1188,8 @@ export interface WorktreeCreateDefaultsRequestMessage {
   opening: number;
   /** The worktree row that opened this form, absent for repository and toolbar doors. */
   sourceWorktreeId?: string;
+  /** The published repository observation that contained `sourceWorktreeId`. */
+  sourceGeneration?: number;
   /**
    * The branch the form currently holds, if any.
    *

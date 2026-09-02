@@ -346,7 +346,7 @@ export class WorktreeController {
    */
   private refsToken = 0;
   /** The row source for the live create opening, absent for repository and toolbar doors. */
-  private createSource: { repoId: string; worktreeId: string } | null = null;
+  private createSource: { repoId: string; worktreeId: string; generation?: number } | null = null;
   /**
    * The create waiting on the host, and the repositories it has yet to hear
    * from. A set rather than one id because an unscoped create asks every
@@ -497,7 +497,12 @@ export class WorktreeController {
             repoId: selection.repoId,
             opening: this.refsToken,
             branch: selection.branch,
-            ...(source?.repoId === selection.repoId ? { sourceWorktreeId: source.worktreeId } : {}),
+            ...(source?.repoId === selection.repoId
+              ? {
+                  sourceWorktreeId: source.worktreeId,
+                  ...(source.generation === undefined ? {} : { sourceGeneration: source.generation }),
+                }
+              : {}),
           });
           // The same settled edit, asked as the other question: the defaults
           // answer where a create would GO, and this one answers what it would
@@ -907,12 +912,16 @@ export class WorktreeController {
     if (targets.length === 0 || (repoId !== undefined && !targets.includes(repoId))) {
       return;
     }
+    const sourceRepo = repoId === undefined ? undefined : repos.find((repo) => repo.repoId === repoId);
     const source =
       sourceWorktreeId === undefined
         ? null
-        : repoId !== undefined &&
-            repos.find((repo) => repo.repoId === repoId)?.worktrees.some((row) => row.id === sourceWorktreeId)
-          ? { repoId, worktreeId: sourceWorktreeId }
+        : sourceRepo?.worktrees.some((row) => row.id === sourceWorktreeId)
+          ? {
+              repoId: sourceRepo.repoId,
+              worktreeId: sourceWorktreeId,
+              ...(sourceRepo.generation === undefined ? {} : { generation: sourceRepo.generation }),
+            }
           : undefined;
     if (source === undefined) {
       return;
@@ -948,7 +957,12 @@ export class WorktreeController {
         type: "requestWorktreeCreateDefaults",
         repoId: target,
         opening: this.refsToken,
-        ...(source?.repoId === target ? { sourceWorktreeId: source.worktreeId } : {}),
+        ...(source?.repoId === target
+          ? {
+              sourceWorktreeId: source.worktreeId,
+              ...(source.generation === undefined ? {} : { sourceGeneration: source.generation }),
+            }
+          : {}),
       });
       // Not awaited by `pendingCreate`: the form opens on the destination alone
       // and gains the list when it lands, so a repository whose enumeration is
