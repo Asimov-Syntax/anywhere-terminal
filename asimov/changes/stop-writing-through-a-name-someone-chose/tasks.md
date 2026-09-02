@@ -29,7 +29,7 @@
     7. In the same test file, add a witness substituting a stable different file at the lock name before release, asserting the substitute survives and the result carries `lock-release-failed`.
     8. In the same test file, add a witness that schedules the substitution INSIDE the injected `lstat`'s return, so it lands between the comparison and the unlink, and assert the substitute IS unlinked. This is R2 and it stays red-by-design: name it so, and assert the current behaviour rather than a fix.
 
-- [ ] 1_3 State the four races where the code is
+- [x] 1_3 State the four races where the code is — verified: bash -c 'f=docs/design/worktree-provisioning.md; for k in openat renameat R1 R2 R3 R4; do grep -q -- "$k" "$f" || { echo "missing $k"; exit 1; }; done' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2
   - **Refs**: design.md D3; design.md D4
   - **Acceptance**:

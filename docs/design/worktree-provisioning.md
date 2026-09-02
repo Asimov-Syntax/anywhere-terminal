@@ -500,11 +500,38 @@ What the write is allowed to hold rules about, and what it must ask:
   2^53 collide — 2^53 and 2^53+1 are the same number — so a DIFFERENT file could be unlinked as an
   owned temporary or as this holder's lock.
 
-- **What a save says about a lock it could not release is NOT settled here** (WT-012.22). The
-  primitive answers a boolean, and `false` covers four situations of which only one is a leaked lock:
-  the others are an indeterminate inspection, a lock renamed away leaving the name empty, and a
-  DIFFERENT writer's live lock now holding that name. Naming the pathname in all four tells the user
-  to delete someone else's live lock, so the report waits for a typed release disposition.
+- **What a save says about a lock it could not release is settled in § 6** (WT-012.22, shipped).
+  The primitive answers a typed disposition rather than a boolean, because `false` covered four
+  situations of which only one is a leaked lock: the others are an indeterminate inspection, a lock
+  renamed away leaving the name empty, and a DIFFERENT writer's live lock now holding that name.
+  Naming the pathname in all four would tell the user to delete someone else's live lock.
+
+- **A name is not an anchor, and four races follow from that** (WT-012.21). Every operation here
+  reaches its object through a NAME that re-resolves on each call. Node exposes no `*at` syscall —
+  `fs.openat`, `fs.renameat` and `fs.linkat` are all `undefined` on v24.7, and `FileHandle` carries
+  no descriptor-relative operation — so none of these can be anchored in this runtime. `openat` and
+  `renameat` are the declined mechanism, and a Node release exposing them is the condition to reopen
+  this. What IS closed: a staging name is 16 random bytes and is created `wx`, so an object already
+  there is refused rather than opened — `writeFile` opened `O_WRONLY|O_CREAT|O_TRUNC` and FOLLOWED a
+  symlink at a name derived from the clock, which handed anyone who could guess it a write into a
+  file of their choosing. What is left open, each accepted with its trigger:
+
+  | | Race | Trigger | What a user can do |
+  |---|---|---|---|
+  | R1 | Directory substitution — a rename-plus-symlink at the DIRECTORY between any two of the lock, the temporary, the read and the commit redirects one of them | a writer able to rename a directory the extension is mid-write inside | keep the configuration directory writable only by its owner; a user who is the only writer of that directory cannot be hit |
+  | R2 | Release leaf — the identity comparison and the `unlink` are two calls, so a substitution landing between them unlinks the substitute (`lockedJsonFile.ts` `releaseLock`) | a same-user process racing a release | none from the panel; the exposure is bounded to that directory |
+  | R3 | Temporary leaf — the ownership check and the `rename` are two calls, so a substitution between them commits the substitute (`lockedJsonFile.ts` `stageReplacement`) | an observer who discovers the created temporary name | as R1 — the random name prevents advance placement, not observation afterwards |
+  | R4 | Post-release wedge — a lock name replaced under us is refused rather than removed, and nothing reclaims a lock by age | R2's trigger, or a foreign writer that crashed holding it | delete the reported `.anywhere-terminal.lock` file by hand once no editor is running; the panel reports the failure but never names the path, because the name is reboundable |
+
+  R2 and R3 PRE-DATE this and were ownerless; R4 is the price of the release refusing to delete a
+  lock it cannot prove is its own, which is strictly better than the alternative it replaced.
+
+- **`0o600` on a lock is hygiene, not a security claim.** Mutual exclusion comes from `O_EXCL` on the
+  NAME; write permission on an empty lock file grants neither rename nor unlink, which need write
+  permission on the parent directory. It is also POSIX-only — Node's `mode` argument does not produce
+  an owner-only ACL on Windows, as `src/vault/VaultCacheStore.ts` already records for the vault cache.
+  Post-open validation of the lock DESCRIPTOR was considered and rejected: `wx` is `O_CREAT|O_EXCL`
+  and already refuses every pre-existing object, leaving nothing for an `fstat` to discover.
 
 ## 8. What this does not do
 

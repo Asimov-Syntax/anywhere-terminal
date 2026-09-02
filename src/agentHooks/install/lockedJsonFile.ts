@@ -4,6 +4,13 @@
 // is never reclaimed by age; waiting fails closed instead, and a non-ENOENT
 // release failure is reported with the exact path rather than swallowed
 // (install-claude-hooks-v1 D5, D9).
+//
+// Both the release and the commit reach their object through a NAME across two
+// calls — the identity comparison and the `unlink`, the ownership check and the
+// `rename` — so a substitution landing between them is not seen. Node exposes no
+// `*at` syscall to anchor either. Recorded as R2 and R3 in
+// `docs/design/worktree-provisioning.md` § 7, with triggers, rather than implied
+// closed by the comparisons above them.
 
 import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";

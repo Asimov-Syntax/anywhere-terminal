@@ -278,9 +278,9 @@ export class CursorHookInstaller {
    * refuses when the name is `notOurs` (install-claude-hooks-v1 D1, D3).
    *
    * The trade is not free and is stated in `docs/design/worktree-provisioning.md`
-   * § 7 as R4: where the name was replaced by something abandoned, the old code
-   * unlinked it and freed the name, and this one leaves it for a holder that may
-   * not exist. Locks are deliberately never reclaimed by age, so that lock stays.
+   * § 7 as R4, with what a user can do about it: where the name was replaced by
+   * something abandoned, the old code unlinked it and freed the name, and this one
+   * leaves it for a holder that may not exist. Nothing reclaims a lock by age.
    */
   private async withLock<T>(
     work: () => Promise<T>,
