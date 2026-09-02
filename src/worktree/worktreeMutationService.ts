@@ -34,7 +34,7 @@ import type { DeleteBranchOutcome } from "./deleteBranch";
 import { messageOf } from "./errorMessage";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
-import type { MigrateChangesOutcome, MigrationOfferEvidence } from "./migrateChanges";
+import type { MigrateChangesOutcome, MigrationOfferEvidence, MigrationSourceEvidence } from "./migrateChanges";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
 import { createMutationQueue } from "./mutationQueue";
 import type { ReattachVerdict } from "./reattachProbe";
@@ -259,11 +259,14 @@ export interface MutationServiceDeps {
    */
   normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
 
+  /** Capture the checkout registration observed immediately after Git creates it. */
+  captureMigrationDestination?(repoId: string, destinationPath: string): Promise<MigrationSourceEvidence | undefined>;
   /** Move host-authorized source work after checkout creation and before every later step. */
   migrateChanges?(input: {
     readonly sourcePath: string;
     readonly destinationPath: string;
     readonly source: MigrationOfferEvidence["source"];
+    readonly destination: MigrationSourceEvidence;
     readonly snapshot: MigrationOfferEvidence["snapshot"];
   }): Promise<MigrateChangesOutcome>;
 
@@ -355,6 +358,12 @@ export interface MutationServiceDeps {
   gitExcludeDirFor(
     repoId: string,
     repoPath: string,
+    createdPath: string,
+  ): { gitDir: string; relativePath: string } | null;
+  /** The narrow selected-source rule required before migration, if the destination is nested there. */
+  migrationGitExcludeDirFor(
+    repoId: string,
+    sourcePath: string,
     createdPath: string,
   ): { gitDir: string; relativePath: string } | null;
   addToGitExclude(gitDir: string, entry: string): Promise<void>;
@@ -927,7 +936,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // was supposed to be, which is the one thing the two-phase check exists to
       // detect.
       const intent = intentFor(request.mode, request.disposition);
-      const first = await validateCreatePath(request.path, before, deps.pathDeps, intent);
+      const first = await validateCreatePath(request.path, before, deps.pathDeps, intent, {
+        allowedContainingWorktree: request.migration?.sourcePath,
+      });
       if (!first.ok) {
         deps.report(fail(first.reason), request.origin);
         return;
@@ -944,7 +955,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // PHASE 2 — the FULL check again, not a spot-check. Lexical walk,
             // normalization, containment, type and emptiness all re-run here,
             // because any of them can have changed during the wait.
-            const check = await validateCreatePath(request.path, ctx, deps.pathDeps, intent);
+            const check = await validateCreatePath(request.path, ctx, deps.pathDeps, intent, {
+              allowedContainingWorktree: request.migration?.sourcePath,
+            });
             if (!check.ok) {
               return fail(check.reason);
             }
@@ -1026,29 +1039,68 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             const wanted = request.provision ?? [];
             const wantedPorts = request.ports ?? [];
-            // D8 also precedes migration: a destination nested in the source is
-            // otherwise new untracked source work, and `untracked: true` could
-            // make the Git extension try to stash its own destination.
-            const exclude = deps.gitExcludeDirFor(request.repoId, repoPath, check.path);
-            if (exclude !== null) {
+            const migrationIndeterminate = async (reason: string): Promise<MutationOutcome> => ({
+              kind: "ok",
+              verb: "create",
+              repoId: request.repoId,
+              worktreeId: (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path,
+              migrationIndeterminate: reason.slice(0, 1_000),
+            });
+            let destinationEvidence: MigrationSourceEvidence | undefined;
+            if (request.migration !== undefined) {
+              if (deps.captureMigrationDestination === undefined) {
+                return migrationIndeterminate("migration destination authorization is unavailable in this window");
+              }
               try {
-                await deps.addToGitExclude(exclude.gitDir, excludePatternFor(exclude.relativePath));
+                destinationEvidence = await deps.captureMigrationDestination(request.repoId, check.path);
               } catch (error) {
-                if (request.migration === undefined) {
-                  throw error;
-                }
-                const worktreeId = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
-                return {
-                  kind: "ok",
-                  verb: "create",
-                  repoId: request.repoId,
-                  worktreeId,
-                  migrationIndeterminate:
-                    `the destination exclusion could not be established: ${migrationReasonOf(error)}`.slice(0, 1_000),
-                };
+                return migrationIndeterminate(
+                  `the migration destination registration could not be verified: ${migrationReasonOf(error)}`,
+                );
+              }
+              if (destinationEvidence === undefined) {
+                return migrationIndeterminate("the migration destination registration could not be verified");
               }
             }
+
+            const writtenExclusions = new Set<string>();
+            const writeExclusion = async (
+              exclusion: { gitDir: string; relativePath: string } | null,
+              critical: boolean,
+            ): Promise<MutationOutcome | undefined> => {
+              if (exclusion === null) {
+                return undefined;
+              }
+              const pattern = excludePatternFor(exclusion.relativePath);
+              const key = `${normalizePathForCompare(exclusion.gitDir)}\0${pattern}`;
+              if (writtenExclusions.has(key)) {
+                return undefined;
+              }
+              try {
+                await deps.addToGitExclude(exclusion.gitDir, pattern);
+                writtenExclusions.add(key);
+                return undefined;
+              } catch (error) {
+                return critical
+                  ? migrationIndeterminate(
+                      `the selected-source destination exclusion could not be established: ${migrationReasonOf(error)}`,
+                    )
+                  : undefined;
+              }
+            };
+
             if (request.migration !== undefined) {
+              const exclusionFailure = await writeExclusion(
+                deps.migrationGitExcludeDirFor(request.repoId, request.migration.sourcePath, check.path),
+                true,
+              );
+              if (exclusionFailure !== undefined) {
+                return exclusionFailure;
+              }
+            }
+            await writeExclusion(deps.gitExcludeDirFor(request.repoId, repoPath, check.path), false);
+
+            if (request.migration !== undefined && destinationEvidence !== undefined) {
               const migration =
                 deps.migrateChanges === undefined
                   ? ({ kind: "indeterminate", reason: "migration is unavailable in this window" } as const)
@@ -1057,18 +1109,12 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                         sourcePath: request.migration.sourcePath,
                         destinationPath: check.path,
                         source: request.migration.source,
+                        destination: destinationEvidence,
                         snapshot: request.migration.snapshot,
                       })
                       .catch((error) => ({ kind: "indeterminate" as const, reason: migrationReasonOf(error) }));
               if (migration.kind === "indeterminate") {
-                const worktreeId = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
-                return {
-                  kind: "ok",
-                  verb: "create",
-                  repoId: request.repoId,
-                  worktreeId,
-                  migrationIndeterminate: migration.reason,
-                };
+                return migrationIndeterminate(migration.reason);
               }
             }
             let sourceAuthorization: AuthorizedDirectory | undefined;

@@ -68,7 +68,7 @@ import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
-import { migrateChanges, probeMigrationSource } from "./worktree/migrateChanges";
+import { captureMigrationDestination, migrateChanges, probeMigrationSource } from "./worktree/migrateChanges";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
@@ -666,6 +666,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
+        captureMigrationDestination: (repoId, destinationPath) => captureMigrationDestination(repoId, destinationPath),
         migrateChanges: (input) =>
           migrateChanges(input, {
             api: gitDecorationProvider.getApi?.(),
@@ -739,12 +740,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const dir = isPathInside(root, repoPath) ? root : createdPath;
           return { gitDir: repoId, relativePath: path.relative(repoPath, dir) };
         },
+        migrationGitExcludeDirFor: (repoId, sourcePath, createdPath) =>
+          isPathInside(createdPath, sourcePath)
+            ? { gitDir: repoId, relativePath: path.relative(sourcePath, createdPath) }
+            : null,
         addToGitExclude: async (gitDir, entry) => {
-          // Reported, never fatal: the worktree exists either way, and failing
-          // the create over a hygiene write would be the worse outcome.
           const outcome = await addToGitExclude(gitDir, entry);
           if ("failed" in outcome) {
             console.warn(`[AnyWhere Terminal] could not update info/exclude: ${outcome.failed}`);
+            throw new Error(outcome.failed);
           }
         },
         report: (outcome, origin) => {

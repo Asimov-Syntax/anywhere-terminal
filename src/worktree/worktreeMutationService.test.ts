@@ -67,6 +67,25 @@ function migrationEvidence(): MigrationOfferEvidence {
   };
 }
 
+function migrationDestination(path = "/repo/wt/new"): MigrationOfferEvidence["source"] {
+  return {
+    path,
+    directory: authorization(path),
+    git: {
+      path: `${path}/.git`,
+      kind: "file",
+      identity: { dev: 7, ino: 31 },
+      contentHash: "gitfile-destination",
+      adminPath: "/repo/.git/worktrees/new",
+      adminIdentity: { dev: 7, ino: 32 },
+      adminFiles: [],
+      commonPath: REPO,
+      commonIdentity: { dev: 7, ino: 33 },
+      backPointerPath: `${path}/.git`,
+    },
+  };
+}
+
 /** The merge evidence a proven merge would carry for `DELETE_BRANCH`'s pair. */
 function mergeEvidenceFor(req: BranchDeleteRequest) {
   return {
@@ -143,7 +162,9 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     report: (outcome) => outcomes.push(outcome),
     afterCreate: async () => {},
     gitExcludeDirFor: () => null,
+    migrationGitExcludeDirFor: () => null,
     addToGitExclude: async () => {},
+    captureMigrationDestination: async (_repoId, candidate) => migrationDestination(candidate),
     authorizeDirectory: async (candidate) => authorization(candidate),
     now: () => 0,
     ...over,
@@ -2123,6 +2144,10 @@ describe("migration runs inside the successful create", () => {
   it("orders exclusion and migration before authorization, provisioning, ports, and launch", async () => {
     const seen: string[] = [];
     const h = harness({
+      captureMigrationDestination: async (_repoId, path) => {
+        seen.push("capture");
+        return migrationDestination(path);
+      },
       gitExcludeDirFor: () => ({ gitDir: REPO, relativePath: "wt" }),
       addToGitExclude: async () => {
         seen.push("exclude");
@@ -2151,6 +2176,7 @@ describe("migration runs inside the successful create", () => {
     await h.service.createWorktree(create({ provision: entries, ports }));
 
     expect(seen).toEqual([
+      "capture",
       "exclude",
       "migration",
       "authorize:/repo",
@@ -2171,6 +2197,7 @@ describe("migration runs inside the successful create", () => {
       sourcePath: migration.source.path,
       destinationPath: "/repo/wt/new",
       source: migration.source,
+      destination: migrationDestination(),
       snapshot: migration.snapshot,
     });
   });
@@ -2274,11 +2301,115 @@ describe("migration runs inside the successful create", () => {
     expect(outcome(h)?.kind).toBe("error");
   });
 
-  it("turns an exclusion rejection into migration uncertainty after create", async () => {
+  it.each([
+    ["is unavailable", async () => undefined],
+    [
+      "rejects",
+      async () => {
+        throw new Error("registration unreadable");
+      },
+    ],
+  ])("stops before exclusion and migration when destination registration capture %s", async (_case, capture) => {
+    const addToGitExclude = vi.fn(async () => undefined);
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const afterCreate = vi.fn(async () => undefined);
+    const h = harness({
+      captureMigrationDestination: capture,
+      addToGitExclude,
+      migrateChanges: moved,
+      afterCreate,
+    });
+
+    await h.service.createWorktree(create());
+
+    expect(outcome(h)).toMatchObject({ kind: "ok", migrationIndeterminate: expect.stringContaining("destination") });
+    expect(addToGitExclude).not.toHaveBeenCalled();
+    expect(moved).not.toHaveBeenCalled();
+    expect(afterCreate).not.toHaveBeenCalled();
+  });
+
+  it("writes the narrow selected-source exclusion before migration without suppressing sibling work", async () => {
+    const seen: string[] = [];
+    const addToGitExclude = vi.fn(async () => {
+      seen.push("source-exclude");
+    });
+    const sourcePath = "/linked/source";
+    const h = harness({
+      captureMigrationDestination: async (_repoId, path) => {
+        seen.push("capture");
+        return migrationDestination(path);
+      },
+      migrationGitExcludeDirFor: (repoId, source, created) => {
+        expect([repoId, source, created]).toEqual([REPO, sourcePath, "/linked/source/new"]);
+        return { gitDir: REPO, relativePath: "new" };
+      },
+      addToGitExclude,
+      migrateChanges: async () => {
+        seen.push("migration");
+        return { kind: "moved" };
+      },
+    });
+
+    await h.service.createWorktree(
+      create({
+        path: "/linked/source/new",
+        migration: { sourcePath, source: migration.source, snapshot: migration.snapshot },
+      }),
+    );
+
+    expect(seen).toEqual(["capture", "source-exclude", "migration"]);
+    expect(addToGitExclude).toHaveBeenCalledWith(REPO, "/new/");
+    expect(addToGitExclude).not.toHaveBeenCalledWith(REPO, expect.stringContaining("sibling"));
+  });
+
+  it("writes independent source and main exclusions but deduplicates an identical rule", async () => {
+    for (const sameRule of [false, true]) {
+      const addToGitExclude = vi.fn(async () => undefined);
+      const h = harness({
+        migrationGitExcludeDirFor: () => ({ gitDir: REPO, relativePath: "wt/new" }),
+        gitExcludeDirFor: () => ({ gitDir: REPO, relativePath: sameRule ? "wt/new" : "wt" }),
+        addToGitExclude,
+        migrateChanges: async () => ({ kind: "moved" }),
+      });
+
+      await h.service.createWorktree(create());
+
+      expect(addToGitExclude.mock.calls).toEqual(
+        sameRule
+          ? [[REPO, "/wt/new/"]]
+          : [
+              [REPO, "/wt/new/"],
+              [REPO, "/wt/"],
+            ],
+      );
+    }
+  });
+
+  it("keeps independent main-checkout hygiene failure nonfatal", async () => {
     const moved = vi.fn(async () => ({ kind: "moved" as const }));
     const afterCreate = vi.fn(async () => undefined);
     const h = harness({
       gitExcludeDirFor: () => ({ gitDir: REPO, relativePath: "wt" }),
+      addToGitExclude: async () => {
+        throw new Error("main hygiene is read-only");
+      },
+      migrateChanges: moved,
+      afterCreate,
+    });
+
+    await h.service.createWorktree(create());
+
+    expect(outcome(h)?.kind).toBe("ok");
+    expect(outcome(h)?.migrationIndeterminate).toBeUndefined();
+    expect(moved).toHaveBeenCalledOnce();
+    expect(afterCreate).toHaveBeenCalledOnce();
+  });
+
+  it("turns a selected-source exclusion rejection into migration uncertainty after create", async () => {
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const afterCreate = vi.fn(async () => undefined);
+    const h = harness({
+      migrationGitExcludeDirFor: () => ({ gitDir: REPO, relativePath: "wt/new" }),
       addToGitExclude: async () => {
         throw new Error("exclude is read-only");
       },

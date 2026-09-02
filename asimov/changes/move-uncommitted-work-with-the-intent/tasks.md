@@ -128,15 +128,16 @@
     2. `src/worktree/migrateChanges.ts`: reject static or persisting intermediate-component redirection around final-component reads; refuse linked-worktree `.git` content above 1 MiB before allocation and read accepted content into one exact-size buffer.
     3. `src/worktree/migrateChanges.test.ts`: cover offer-time snapshot bracketing, repository and back-pointer mismatches, persistent destination replacement surrounding the call, bracketed post-call source `.git` substitution, static and persistent intermediate-directory symlinks, over-cap refusal, peak allocation, and a 132 KiB UTF-8 gitdir path.
 
-- [ ] 3_2 Capture destination and exclude the selected source
+- [x] 3_2 Capture destination and exclude the selected source — verified: pnpm exec vitest run 'src/worktree/createPath.test.ts' 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D6, D8; specs/worktree-panel/spec.md#{the-work-moves-between-a-new-checkout-and-every-later-step, migration-uncertainty-does-not-undo-a-successful-create} <!-- review round 1 F001, F003 -->
   - **Acceptance**:
     - Outcome: The observed destination reaches migration only after narrow selected-source exclusion
-    - Verify: command pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
+    - Verify: command pnpm exec vitest run 'src/worktree/createPath.test.ts' 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
   - **Plan**:
-    1. `src/worktree/worktreeMutationService.ts`: immediately capture the observed destination after create, carry it into migration, require narrow source-relative exclusion, preserve separate nonfatal main-checkout hygiene, deduplicate identical rules, and stop with successful uncertainty on a failed migration proof.
-    2. `src/extension.ts`: bind destination capture and both exclusion subjects to the shared runner, repository id, filesystem authorization, and migration adapter.
-    3. `src/worktree/worktreeMutationService.test.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: cover destination evidence forwarding, linked-source nesting outside main with sibling movable work, narrow independent exclusions without duplicate writes, nonfatal main-hygiene failure, migration-exclusion failure, capture failure, indeterminate short-circuit, and production bindings.
+    1. `src/worktree/createPath.ts`, `src/worktree/createPath.test.ts`: admit a destination nested only in the migration-selected source worktree while retaining every other worktree-overlap refusal.
+    2. `src/worktree/worktreeMutationService.ts`: immediately capture the observed destination after create, carry it into migration, require narrow source-relative exclusion, preserve separate nonfatal main-checkout hygiene, deduplicate identical rules, and stop with successful uncertainty on a failed migration proof.
+    3. `src/extension.ts`: bind destination capture and both exclusion subjects to the shared runner, repository id, filesystem authorization, and migration adapter.
+    4. `src/worktree/worktreeMutationService.test.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: cover destination evidence forwarding, linked-source nesting outside main with sibling movable work, narrow independent exclusions without duplicate writes, nonfatal main-hygiene failure, migration-exclusion failure, capture failure, indeterminate short-circuit, and production bindings.
 
 **Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2`

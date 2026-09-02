@@ -97,6 +97,33 @@ describe("validateCreatePath", () => {
     expect(result).toMatchObject({ ok: false });
   });
 
+  it("admits nesting only inside the migration-selected linked worktree", async () => {
+    expect(
+      await validateCreatePath("/repo/wt-existing/inner", ctx, fsOf({}), undefined, {
+        allowedContainingWorktree: "/repo/wt-existing",
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await validateCreatePath("/repo/wt-existing/inner", ctx, fsOf({}), undefined, {
+        allowedContainingWorktree: "/repo/wt-other",
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      await validateCreatePath("/repo/wt-existing", ctx, fsOf({}), undefined, {
+        allowedContainingWorktree: "/repo/wt-existing",
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("keeps the selected Windows worktree itself forbidden across case and separator drift", async () => {
+    const windows = { mainWorktree: "C:\\Repo", linkedWorktrees: ["C:\\Repo\\WT"] };
+    const deps = fsOf({ platform: "win32" });
+    const options = { allowedContainingWorktree: "C:\\Repo\\WT" };
+
+    expect(await validateCreatePath("c:/repo/wt", windows, deps, undefined, options)).toMatchObject({ ok: false });
+    expect(await validateCreatePath("c:/repo/wt/child", windows, deps, undefined, options)).toMatchObject({ ok: true });
+  });
+
   it("refuses the main worktree itself", async () => {
     const result = await validateCreatePath("/repo", ctx, fsOf({ dirs: { "/repo": [] } }));
     expect(result).toMatchObject({ ok: false });

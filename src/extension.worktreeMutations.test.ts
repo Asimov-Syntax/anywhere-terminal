@@ -29,11 +29,16 @@ let forceUndegraded = false;
  */
 let observations: number[] = [];
 const migrationCalls: Array<{ input: unknown; deps: unknown }> = [];
+const destinationCaptureCalls: Array<{ repoId: string; destinationPath: string }> = [];
 
 vi.mock("./worktree/migrateChanges", async (importOriginal) => {
   const real = await importOriginal<typeof import("./worktree/migrateChanges")>();
   return {
     ...real,
+    captureMigrationDestination: async (repoId: string, destinationPath: string) => {
+      destinationCaptureCalls.push({ repoId, destinationPath });
+      return { path: destinationPath } as never;
+    },
     migrateChanges: async (input: unknown, deps: unknown) => {
       migrationCalls.push({ input, deps });
       return { kind: "moved" as const };
@@ -90,6 +95,7 @@ beforeEach(() => {
   forceUndegraded = false;
   observations = [];
   migrationCalls.length = 0;
+  destinationCaptureCalls.length = 0;
   vi.resetModules();
 });
 
@@ -165,6 +171,8 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.deps?.observation).toBe("function");
     expect(typeof received.deps?.authorizeDirectory).toBe("function");
     expect(typeof received.deps?.applyPorts).toBe("function");
+    expect(typeof received.deps?.captureMigrationDestination).toBe("function");
+    expect(typeof received.deps?.migrationGitExcludeDirFor).toBe("function");
     expect(typeof received.deps?.migrateChanges).toBe("function");
   });
 
@@ -195,17 +203,31 @@ describe("the shipped extension supplies its mutating capabilities", () => {
           adminFiles: [],
         },
       },
+      destination: { path: "/repo-wt/destination" } as never,
       snapshot: { count: 1, records: [], states: [] },
     } as Parameters<NonNullable<MutationServiceDeps["migrateChanges"]>>[0];
 
+    await received.deps?.captureMigrationDestination?.("/repo/.git", "/repo-wt/destination");
     await received.deps?.migrateChanges?.(input);
 
+    expect(destinationCaptureCalls).toEqual([{ repoId: "/repo/.git", destinationPath: "/repo-wt/destination" }]);
     expect(migrationCalls).toEqual([
       {
         input,
         deps: expect.objectContaining({ api, runner: received.deps?.runner, uri: expect.any(Function) }),
       },
     ]);
+  });
+
+  it("derives migration exclusion from the selected source rather than the main checkout", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+
+    expect(received.deps?.migrationGitExcludeDirFor("/repo/.git", "/linked/source", "/linked/source/new")).toEqual({
+      gitDir: "/repo/.git",
+      relativePath: "new",
+    });
+    expect(received.deps?.migrationGitExcludeDirFor("/repo/.git", "/linked/source", "/repo/wt/new")).toBeNull();
   });
 });
 

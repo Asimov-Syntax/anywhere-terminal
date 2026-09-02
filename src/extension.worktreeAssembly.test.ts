@@ -92,6 +92,10 @@ let watchers: { path: string; deliver: () => void }[] = [];
  * goes, the registration stays, so the listing and the filesystem genuinely differ.
  */
 let removeLeavesRegistration = false;
+/** Enable the migration composition walk without changing every assembly case. */
+let migrationWalk = false;
+let migrationExcludeFails = false;
+let migrationEvents: string[] = [];
 
 /** Every envelope the host posted to the surface, and every message the webview sent back. */
 let posted: ExtensionToWebViewMessage[] = [];
@@ -176,6 +180,9 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
     createGitCommandRunner: () => ({
       run: async (args: readonly string[], cwd: string, runOptions?: { timeoutMs?: number }) => {
         argv.push({ args: [...args], cwd, timeoutMs: runOptions?.timeoutMs });
+        if (migrationWalk && args[0] === "worktree" && args[1] === "add") {
+          migrationEvents.push("worktree-add");
+        }
         if (args[0] === "worktree" && args[1] === "repair") {
           // Real `worktree repair` rewrites the two-way link, and the listing
           // stops reporting the registration as stale. A fake that left the
@@ -233,6 +240,62 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
         };
       },
     }),
+  };
+});
+
+vi.mock("./worktree/migrateChanges", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/migrateChanges")>();
+  return {
+    ...real,
+    probeMigrationSource: async (...args: Parameters<typeof real.probeMigrationSource>) =>
+      migrationWalk
+        ? ({
+            source: {
+              path: args[1],
+              directory: { path: args[1], platform: process.platform, components: [] },
+              git: {
+                path: path.join(args[1], ".git"),
+                kind: "file",
+                identity: { dev: 1, ino: 2 },
+                adminPath: path.join(REPO_ID, "worktrees", "feature"),
+                adminIdentity: { dev: 1, ino: 3 },
+                adminFiles: [],
+                commonPath: REPO_ID,
+                commonIdentity: { dev: 1, ino: 4 },
+                backPointerPath: path.join(args[1], ".git"),
+              },
+            },
+            snapshot: { count: 1, records: [], states: [] },
+          } as never)
+        : real.probeMigrationSource(...args),
+    captureMigrationDestination: async (...args: Parameters<typeof real.captureMigrationDestination>) => {
+      if (!migrationWalk) {
+        return real.captureMigrationDestination(...args);
+      }
+      migrationEvents.push("destination-capture");
+      return { path: args[1] } as never;
+    },
+    migrateChanges: async (...args: Parameters<typeof real.migrateChanges>) => {
+      if (!migrationWalk) {
+        return real.migrateChanges(...args);
+      }
+      migrationEvents.push("migrate-changes");
+      return { kind: "moved" as const };
+    },
+  };
+});
+
+vi.mock("./worktree/gitExclude", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/gitExclude")>();
+  return {
+    ...real,
+    addToGitExclude: async (...args: Parameters<typeof real.addToGitExclude>) => {
+      if (!migrationWalk) {
+        return real.addToGitExclude(...args);
+      }
+      migrationEvents.push(`exclude:${args[1]}`);
+      return migrationExcludeFails ? { failed: "assembly exclusion failed" } : { added: true };
+    },
   };
 });
 
@@ -464,6 +527,9 @@ beforeEach(() => {
   dirtyPaths = [];
   removeTimesOut = false;
   removeLeavesRegistration = false;
+  migrationWalk = false;
+  migrationExcludeFails = false;
+  migrationEvents = [];
   watchRepos = false;
   watchers = [];
   posted = [];
@@ -969,6 +1035,80 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // The branch the user typed, and a destination the HOST resolved.
     expect(added[0]).toContain("feat/login");
     expect(added[0]?.some((a) => a.startsWith(TMP))).toBe(true);
+  });
+
+  it.each([
+    ["moves after", false],
+    ["stops on", true],
+  ])("%s the production selected-source exclusion", async (_case, exclusionFails) => {
+    migrationWalk = true;
+    migrationExcludeFails = exclusionFails;
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelector<HTMLInputElement>("#wt-migrate-changes") !== null,
+      "the migration offer to reach the create form",
+    );
+    const branchInput = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branchInput === null) {
+      throw new Error("no branch input");
+    }
+    branchInput.focus();
+    branchInput.value = "migration-target";
+    branchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    branchInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () =>
+        posted.some((message) => message.type === "worktreeCreateResolution" && message.query === "migration-target"),
+      "the migration branch resolution",
+    );
+
+    const advanced = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.classList.contains("wt-advanced-toggle"),
+    );
+    advanced?.click();
+    const pathInput = document.querySelector<HTMLInputElement>("#wt-path");
+    if (pathInput === null) {
+      throw new Error("no destination override input");
+    }
+    const destination = path.join(LINKED, "nested");
+    pathInput.focus();
+    pathInput.value = destination;
+    pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+    pathInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () => outbound.some((message) => message.type === "worktreeCreateProbe" && message.candidatePath === destination),
+      "the nested source destination probe",
+    );
+    await settle();
+
+    document.querySelector<HTMLInputElement>("#wt-migrate-changes")?.click();
+    const create = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.startsWith("Create worktree"),
+    );
+    if (create === undefined) {
+      throw new Error("no Create button");
+    }
+    expect(create.disabled, "the migration form would not submit").toBe(false);
+    create.click();
+    await settleUntil(
+      () => outbound.some((message) => message.type === "worktreeCreate"),
+      "the migration create request",
+    );
+    await settle();
+
+    expect(outbound.find((message) => message.type === "worktreeCreate")).toMatchObject({
+      path: destination,
+      migrateChanges: { offerId: expect.any(String) },
+    });
+    expect(gitCalls("add"), document.body.textContent ?? "no rendered outcome").toHaveLength(1);
+    expect(migrationEvents.slice(0, 3)).toEqual(["worktree-add", "destination-capture", "exclude:/nested/"]);
+    if (exclusionFails) {
+      expect(migrationEvents).not.toContain("migrate-changes");
+      expect(document.body.textContent).toContain("Migration may be partial");
+    } else {
+      expect(migrationEvents).toEqual(["worktree-add", "destination-capture", "exclude:/nested/", "migrate-changes"]);
+    }
   });
 
   it("prunes on a confirmed count, from the menu item the count unlocks", async () => {
