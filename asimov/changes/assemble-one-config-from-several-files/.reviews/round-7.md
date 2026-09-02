@@ -251,3 +251,73 @@
 - suggestedFix: none
 - status: fixed
 - triage: Accepted round-5 suggestion closed by construction.
+
+---
+
+## Author triage — revision after the handback, 2026-09-02
+
+**Both blockers are withdrawn as stale. The handback is not taken.** Round 7 reviewed a tree that
+predates the two dependencies which replaced the mechanism it attacks.
+
+### The ancestry
+
+Round 7's recorded Head is `f995fb7e`. `git merge-base --is-ancestor` puts WT-012.17's first commit
+(`9498f73b`) OUTSIDE that ancestry: the reviewed tree predates WT-012.17 entirely.
+
+At `f995fb7e`, `readProvisioning.ts` carried:
+
+```js
+function identityOf(): (declared: string) => string {
+  const fold = platformFoldsFilenameCase();
+  return (declared) => {
+    ...
+    return fold ? trimmed.toLowerCase() : trimmed;
+  };
+}
+```
+
+That factory — platform-gated, `toLowerCase`-folded, and used as the MERGE key — is precisely and
+only what F001 and F013 attack. It no longer exists.
+
+### What replaced it
+
+At HEAD the two concerns are split across two functions with opposite obligations:
+
+| Function | Job | May it drop a row? |
+|---|---|---|
+| `identityOf` (`providerKit.ts:317`) | merge/dedupe key — `path.posix.normalize` plus a trailing-slash strip, nothing else | yes, so it is purely lexical and folds NOTHING |
+| `foldable` → `contendersOf` (`providerKit.ts:376-383`) | flags that two rows MAY name one slot | no — it only groups, and the contest owner names every member |
+
+The aggressive Unicode fold survives only in the second, where over-inclusion costs a visible contest
+rather than a vanished declaration.
+
+### Verified on this host, not reasoned
+
+- **F013.** `identityOf("İ") !== identityOf("i̇")`, and the same for `Ϗ`/`ϗ` and `ẞ`/`ß`, so no
+  declaration is merged away. Each pair is still grouped by `contendersOf` with the native row
+  favoured. F013's stated impact — "a supported default Windows configuration can silently discard a
+  declaration" — cannot occur: the fold that would discard it is gone, and the fold that remains
+  discards nothing.
+- **F001.** On `darwin`, `contendersOf` groups an inherited `mixedcase` with a native `MixedCase` as
+  one contest, favoured on the native row: `[{"members":["a","b"],"favoured":"b"}]`. The chair's
+  probe found the apply "copied the inherited spelling and skipped the native row as already there"
+  through `extension.ts:574-590` copy-before-link — the path WT-012.18 replaced with
+  `contestsOf`/`applyProvisioning`, which materializes the favoured member and refuses the held one.
+
+### The one honest dependency
+
+F001's closure is not complete in this change. The GROUPING is verified here; the apply-time outcome
+is WT-012.18's accepted contract (`award-a-contested-destination-or-refuse-it`), which this change
+already declares in `Depends On`. That change's own verification round is open. If it does not close,
+F001 reopens here — recorded rather than assumed.
+
+D11 anticipated exactly this: "Two declarations name one destination slot on a volume that folds
+names is its own invariant with its own acceptance story ... It is now a change of its own; this one
+ships without it and records the residual." The residual has since been given its owner.
+
+### Disposition
+
+F001 and F013: **withdrawn — stale**, superseded by WT-012.17 and WT-012.18. No `D11` change and no
+new invariant owner is required, so the remediation boundary is not crossed and no handback is owed.
+F012 and the round's WARN/SUGGEST remain open on their own terms. A verification round against
+current HEAD follows, because the author establishing his own findings stale is a claim, not evidence.
