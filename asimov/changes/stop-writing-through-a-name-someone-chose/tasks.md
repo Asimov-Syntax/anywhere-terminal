@@ -44,7 +44,7 @@
 
 ## 2. What round 1 sent back
 
-- [ ] 1_4 Stage through the shared replacement instead of a copy of it
+- [x] 1_4 Stage through the shared replacement instead of a copy of it — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts src/cursor/CursorHookInstaller.runtime.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_3
   - **Refs**: specs/agent-hook-installation/spec.md#a-replacement-is-staged-where-nothing-can-be-waiting-for-it; design.md D1
   - **Acceptance**:

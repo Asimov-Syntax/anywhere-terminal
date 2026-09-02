@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import type { FileHandle } from "node:fs/promises";
 import { chmod, lstat, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { LockedFile } from "../agentHooks/install/lockedJsonFile";
@@ -289,11 +288,7 @@ export class CursorHookInstaller {
     lockReleaseFailed: (result: T) => T,
   ): Promise<T> {
     let releaseFailed = false;
-    const result = await new LockedFile(this.options.configPath, {
-      fs: this.fs,
-      sleep: this.sleep,
-      platform: this.platform,
-    }).withLock(work, lockUnavailable, writeFailed, () => {
+    const result = await this.locked().withLock(work, lockUnavailable, writeFailed, () => {
       releaseFailed = true;
     });
     // The reason only — never the pathname. `LockedFile` hands the callback a
@@ -363,41 +358,28 @@ export class CursorHookInstaller {
     }
   }
 
+  /**
+   * The shared staging, not a copy of it.
+   *
+   * The copy cleaned up by PATHNAME: any failure after the exclusive create
+   * unlinked the staging name outright, so an observer who moved the owned
+   * temporary and left something else there had that something else deleted
+   * (review round 1 F001). `stageReplacement` discards only a temporary whose
+   * identity it still owns. It is also where the random name and the `wx` create
+   * live, so there is one place for the next invariant to land rather than two.
+   */
   private async atomicReplace(contents: string, mode: number | undefined): Promise<boolean> {
-    const path = this.platform === "win32" ? win32 : posix;
-    const temporaryPath = path.join(
-      path.dirname(this.options.configPath),
-      `.${path.basename(this.options.configPath) || "hooks.json"}.${Buffer.from(this.createRandomBytes(16)).toString("hex")}.tmp`,
-    );
+    return this.locked().atomicReplace(contents, mode);
+  }
 
-    // `wx` is O_CREAT|O_EXCL, so an object already at this name is refused
-    // instead of opened. `writeFile` opened O_WRONLY|O_CREAT|O_TRUNC and FOLLOWED
-    // a symlink there — and the name was the clock, so anyone who could guess it
-    // got a write into a file of their choosing (design.md D1).
-    let handle: FileHandle;
-    try {
-      handle = await this.fs.open(temporaryPath, "wx", mode ?? 0o600);
-    } catch {
-      // Nothing of ours exists at that name, so there is nothing to clean up —
-      // and removing whatever IS there would destroy an object we did not create.
-      return false;
-    }
-
-    try {
-      await handle.writeFile(contents, { encoding: "utf8" });
-      // Through the handle, not the pathname: the create won it, and a chmod by
-      // name would hand the window back.
-      if (mode !== undefined) {
-        await handle.chmod(mode);
-      }
-      await handle.close();
-      await this.replace(temporaryPath, this.options.configPath);
-      return true;
-    } catch {
-      await handle.close().catch(() => undefined);
-      await this.fs.unlink(temporaryPath).catch(() => undefined);
-      return false;
-    }
+  private locked(): LockedFile {
+    return new LockedFile(this.options.configPath, {
+      fs: this.fs,
+      sleep: this.sleep,
+      platform: this.platform,
+      rename: this.replace,
+      randomBytes: this.createRandomBytes,
+    });
   }
 
   private wrapperPath(): string {

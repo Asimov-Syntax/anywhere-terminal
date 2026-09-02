@@ -1096,3 +1096,84 @@ describe("which lock a release removes", () => {
     expect(await readdir(probe)).toEqual([]);
   });
 });
+
+// Round 1 F001. The copy of `stageReplacement` cleaned up by pathname, so an
+// observer who moved the owned temporary and left something else at the name had
+// that something else deleted. The shared one discards only what it still owns.
+describe("what a failed staging discards", () => {
+  async function setup() {
+    const paths = await fixture();
+    const original = `${JSON.stringify({ version: 1, hooks: {} })}\n`;
+    await writeFile(paths.configPath, original, "utf8");
+    return { paths, original };
+  }
+
+  it("leaves an object substituted at the staging name when the replace fails", async () => {
+    const { paths, original } = await setup();
+    let staged: string | undefined;
+
+    const result = await new CursorHookInstaller(paths, {
+      rename: async (from) => {
+        staged = from;
+        // The owned temporary goes; a decoy takes its name.
+        await unlink(from);
+        await writeFile(from, "NOT OURS\n", "utf8");
+        throw new Error("denied");
+      },
+    }).install();
+
+    expect(result.installed).toBe(false);
+    expect(staged).toBeDefined();
+    expect(await readFile(staged as string, "utf8")).toBe("NOT OURS\n");
+    expect(await readFile(paths.configPath, "utf8")).toBe(original);
+  });
+
+  it("reports a failed handle write and leaves the configuration alone", async () => {
+    const { paths, original } = await setup();
+
+    const result = await new CursorHookInstaller(paths, {
+      fs: {
+        open: (async (path: string, ...rest: unknown[]) => {
+          const handle = await (open as (...a: never[]) => ReturnType<typeof open>)(
+            path as never,
+            ...(rest as never[]),
+          );
+          if (path.endsWith(".tmp")) {
+            handle.writeFile = async () => {
+              throw new Error("no space");
+            };
+          }
+          return handle;
+        }) as unknown as typeof open,
+      },
+    }).install();
+
+    expect(result.installed).toBe(false);
+    expect(await readFile(paths.configPath, "utf8")).toBe(original);
+  });
+
+  it("reports a failed chmod and leaves the configuration alone", async () => {
+    const { paths, original } = await setup();
+    await chmod(paths.configPath, 0o644);
+
+    const result = await new CursorHookInstaller(paths, {
+      fs: {
+        open: (async (path: string, ...rest: unknown[]) => {
+          const handle = await (open as (...a: never[]) => ReturnType<typeof open>)(
+            path as never,
+            ...(rest as never[]),
+          );
+          if (path.endsWith(".tmp")) {
+            handle.chmod = async () => {
+              throw new Error("denied");
+            };
+          }
+          return handle;
+        }) as unknown as typeof open,
+      },
+    }).install();
+
+    expect(result.installed).toBe(false);
+    expect(await readFile(paths.configPath, "utf8")).toBe(original);
+  });
+});
