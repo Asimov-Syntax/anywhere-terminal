@@ -130,6 +130,81 @@ native member is **refused entire**, naming every member by path and declaring f
 the same answer the spec already gives when nothing can establish which slot a destination is, and it
 cannot end with an inherited row quietly taking a destination two native rows asked for.
 
+### D3c — The offer asks the apply's question, over the selection it holds
+
+D3b settled how a group with more than one repository declaration is APPLIED and left how it is
+OFFERED where it was, so the dialog ticked every member of such a group, attached no note, and
+counted them all into "N copied" — and every one came back `refused` (.reviews/round-7.md F007,
+reopened under its round-5 ID because it is the same invariant through the same mechanism).
+
+The recurrence is the point. F007 has now been found three times, and each time the dialog was
+re-deriving "what will arrive" from a hand-rolled subset of the apply's rule. The apply's rule is
+one function over the SUBMITTED entries — `contendersOf(selected, NATIVE_PROVIDER_FILE)` — and the
+dialog's job is to state its answer for the selection currently held. So the fix is to make the
+dialog ask the same question rather than to add a fourth special case to it.
+
+`contendersOf` itself cannot cross the boundary: `providerKit.ts` imports `node:path` and
+`resolvedPathBoundary`, and the webview bundle is `src/webview/main.ts`. What crosses is the one
+fact the dialog lacks — WHICH members are the repository's own. Today the wire carries a
+pre-computed winner, and a winner computed against the full offer is stale the moment the user
+unticks a row.
+
+So `ProvisionContenders.favoured` and `priorityClaimedTwice` are both replaced by
+
+```ts
+/** The members declared by the repository's own file, in `members` order. */
+readonly natives: readonly string[];
+```
+
+and every consumer applies one predicate to the selection it is looking at:
+
+| Repository declarations among the SELECTED members | Outcome |
+|---|---|
+| more than one | the group is refused entire (D3b) |
+| exactly one | that one is favoured; the rest yield (D4) |
+| none | nothing claims priority; the members are applied as they are |
+
+The table is the same on both sides of the wire, which is what makes the dialog's statement
+checkable against the apply's behaviour rather than merely similar to it. It also answers
+.reviews/round-7.md F016 by construction: there is no longer a pair of optional fields that can
+contradict each other, because there is one field and the three states are ranges of its length.
+
+`remint` must translate it like `members` and `favoured` before it (F015). It rebuilt each group
+from `members` and `favoured` alone, so `priorityClaimedTwice` never crossed the wire at all — the
+apply was unaffected only because D1 recomputes the groups from the submitted entries, which is
+exactly why every test passed.
+
+**The default is SELECTED, and the plan attack is what settled it.** The first draft offered such a
+group unselected, copying the yielder. That is incoherent: at an all-unselected group the predicate
+above reads zero repository declarations among the selected members and answers "nothing claims
+priority", so every row would carry a refusal note the rule contradicts — and a user who then ticked
+only the inherited member would have it COPIED while its row still said none of them would be
+brought over. That is round-5 F007 exactly, reached a fourth time.
+
+The reason the yielder's unselected default works is that it is a FIXED POINT: unticked is precisely
+the state in which the group succeeds. A group with two of the repository's own declarations has no
+such state — the only selections that succeed keep exactly one of them, and choosing which is what
+D3b forbids. So the default is the ordinary one, every member selected, which IS a fixed point in
+the other direction: the predicate answers "refuse entire", every row says so, and the count is
+zero. Each note is a live function of the selection, as the yielder's already is
+(`WorktreeCreateDialog.ts:1090-1098`), so unticking one repository declaration turns the group into
+an ordinary contest in front of the user and the notes follow.
+
+Offering them selected also avoids a silent behaviour change the unselected default would have
+carried: the inherited member of such a group would have stopped arriving without anything saying
+so.
+
+**What this requirement does NOT reach.** The dialog's advisory "may be the same file as X" partner
+list and its "N spellings may be one file" line are statements about the OFFER's membership, not
+about what will arrive, and they stay that way — the requirement quantifies over what the dialog
+says will be brought over. Nor does it promise the apply's whole answer: the apply also refuses on a
+destination reading the dialog cannot take before the worktree exists (D4 row 1). What is claimed,
+and what is checkable, is that the GROUP-DECISION rule is the same one on both sides.
+
+**A shape worth naming, because it is the easiest way to reach this state by accident:** `copy` and
+`link` in one repository file naming the same path produce two entries from the repository's own
+file with the same subject, distinguished only by their verb.
+
 ### D4 — The adjudication
 
 For a contested group `G` with favoured `f` and each other selected member `m`:
@@ -265,3 +340,6 @@ twin-create probe this change does not assume.
 | The extraction did not change what the caller receives | Results are returned in the order they were produced, as the closure did | Returning them in provider order, which the webview's comparison key can see | Unit witness on the returned order for a mixed model | supported |
 | A contested destination is claimed by the favoured member's own write | No favoured member merges into a destination an earlier entry or another process created | One reading, taken before the ordered pass, with the favoured turn arbitrarily later | D3's second reading, immediately before that turn; witness where an uncontested `MixedCase/seed` copy creates the directory first | supported |
 | A recreated symlink is never refused for a loop this volume cannot have | Refusal only on exact self-reference | Refusing on the folding key, which `Foo -> foo` beside a real `foo` satisfies without being a loop | D6 uses exact equality; witness that a case-distinct in-repo link is still recreated | supported |
+| What the dialog says will arrive follows from the selection held | For every selection the dialog can hold, the notes its contested rows carry and the count it summarises agree with the GROUP-DECISION rule `contendersOf` applies to that same selection. Not the apply's whole answer — D4 row 1 also refuses on a destination reading no dialog can take before the worktree exists | A group state the dialog decides by a rule of its own — how F007 recurred at rounds 3, 5 and 7 — or a default tick state that is not a fixed point of the dialog's own predicate, which is how the first draft of D3c reached it a fourth time | One predicate over `natives` and the live selection on both sides (D3c); witnesses walking the dialog through every selection of a two-native group — as offered, one repository declaration unselected, selected again, and only the inherited one left — asserting note and count at each | unresolved — closed by tasks 10_3 and 10_6 |
+| The group identity the dialog reasons about is the one the apply will recompute | `natives` survives every transform between `contendersOf` and the dialog | `remint` rebuilding a group field by field and dropping one, as it did to `priorityClaimedTwice` (F015); or carrying it through with the PRE-remint ids, which passes every `members`-only assertion and then reads as zero natives in the dialog | A witness on `remint` asserting the translated group names the new ids and that no pre-remint id survives. The plan attack traced the whole offer path and found `remint` the only field-by-field rebuild on it; the second producer, `modelFromDraft`, calls `contendersOf` with no repository source and correctly yields an empty list | unresolved — closed by task 10_2 |
+| A member refused for what it IS keeps its own rule under every schedule | For every contest, a member whose gate refusal observed nothing reports that refusal, whatever any sibling's reading was | The pre-pass ordering that refuses the contest and `continue`s before the member's own reason is recorded (F014) | A witness asserting the REASON and the step ORDER of that member, in a contest where a sibling reads non-`absent` — the reorder is visible through `provisionKey`, which is what the extraction-order row exists to catch. The plan attack confirmed D4 row 1, the contest index, and every existing order-asserting witness survive the hoist | unresolved — closed by task 10_4 |

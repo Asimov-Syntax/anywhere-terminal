@@ -189,3 +189,69 @@
     1b. In `src/types/messages.ts`, give `ProvisionContenders` the field that records it, beside `favoured`.
     2. In `src/worktree/provisioning/applyProvisioning.ts`, refuse such a group entire instead of letting it fall through to the ordinary pass.
     3. Witness two native spellings plus one inherited: nothing is written, the inherited material is not at the destination, and the refusal names all three by path and declaring file.
+
+## 10. Round-7 handback — the offer asks the apply's question
+
+- [ ] 10_1 Carry which members are the repository's own, instead of a winner
+  - **Deps**: none
+  - **Refs**: design.md D3c, specs/worktree-panel/spec.md#a-destination-more-than-one-of-the-repository-s-own-declarations-name-is-refused-entire
+  - **Acceptance**:
+    - Outcome: A contender group states its repository declarations, and the three group states are ranges of that list's length
+    - Verify: unit src/worktree/provisioning/providerKit.test.ts
+  - **Plan**:
+    1. In `src/types/messages.ts`, replace `ProvisionContenders.favoured` and `priorityClaimedTwice` with the members list D3c names, so no pair of fields can contradict each other.
+    2. In `src/worktree/provisioning/providerKit.ts`, have `contendersOf` fill it from the same `source` comparison it already makes, and stop computing a winner.
+    3. In `src/worktree/provisioning/applyProvisioning.ts`, have `contestsOf` derive the favoured member and the refuse-entire case from it, keeping D3b's and D4's behaviour exactly as the round-7 witnesses pin it.
+    4. Witness a group with one repository declaration, one with two, and one with none.
+
+- [ ] 10_2 Keep the group's identity across reminting
+  - **Deps**: 10_1
+  - **Refs**: design.md D3c, .reviews/round-7.md
+  - **Acceptance**:
+    - Outcome: A reminted group names the same declarations under the ids the offer issued
+    - Verify: unit src/worktree/provisioning/offerStore.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/offerStore.ts`, translate the new field through `remint` as `members` already is, so no group field can be dropped by being rebuilt one key at a time.
+    2. Witness that a two-repository-declaration group survives an offer round trip naming the ids the offer issued, and that no pre-remint id survives — carrying the list through untranslated passes every members-only assertion and then reads as no repository declarations at all.
+    3. Keep the drop-on-miss the members list already uses, so the new list stays a subset of it.
+
+- [ ] 10_3 Offer a group nothing can decide as one the create will refuse
+  - **Deps**: 10_2
+  - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding, design.md D3c
+  - **Acceptance**:
+    - Outcome: A group with more than one selected repository declaration is offered unselected, says why, and is counted nowhere
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeCreateDialog.ts`, replace the winner-based `yieldsTo` with the predicate D3c's table states, read against the selection the dialog currently holds rather than against the offer as issued.
+    2. Give the row a note for the state where nothing can decide — distinct from the yielder's, which names a counterpart whose unticking rescues the row, because here no single counterpart does.
+    3. Keep the note live as the user ticks and unticks, the way the yielder's note already is, and leave the group's rows at the ordinary selected default rather than unselecting any of them.
+    4. Witness the group as offered, and that its rows are selected and counted nowhere.
+
+- [ ] 10_4 Record a member's own rule before the contest is settled
+  - **Deps**: 10_1
+  - **Refs**: design.md D4b, .reviews/round-7.md
+  - **Acceptance**:
+    - Outcome: A member refused for what it is reports that rule even when a sibling's reading refuses the contest
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/applyProvisioning.ts`, answer the members the gate refused for what they are before the contended reading decides the group, so a refusal that observed nothing cannot be overwritten by one that did.
+    2. Witness the REASON on that member's step, not only its outcome kind, in a contest where a sibling reads non-absent, and pin the step order too — the reorder is observable through the key the webview compares provisioning state by.
+
+- [ ] 10_5 Witness the favoured member refused by its own rule
+  - **Deps**: 10_4
+  - **Refs**: design.md D3a, .reviews/round-7.md
+  - **Acceptance**:
+    - Outcome: A contest whose favoured member is refused before any reading writes nothing and refuses every member
+    - Verify: unit src/worktree/provisioning/applyProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/applyProvisioning.test.ts`, witness D4 row 3 reached through the pre-pass rather than through the ordered pass, using one fixture that also covers a contest in which every member is refused by its own rule.
+
+- [ ] 10_6 Walk the dialog through every selection of a group nothing can decide
+  - **Deps**: 10_3
+  - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding, design.md D3c
+  - **Acceptance**:
+    - Outcome: At every selection of a two-repository-declaration group, the notes and the count say what that selection would receive
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeCreateDialog.test.ts`, drive one group of two repository declarations and one inherited declaration through each selection the spec's scenarios name — as offered, one repository declaration unselected, selected again, and only the inherited one left — asserting the note on every row and the summary count at each step.
+    2. The last of those is the state that falsified the first draft of this plan: the inherited declaration alone is applied, so nothing may still be claiming it will be refused.

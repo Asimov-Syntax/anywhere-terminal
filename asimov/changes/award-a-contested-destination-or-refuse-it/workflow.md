@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.18
 Lane: full — HIGH risk: two accepted requirements constrain one order, and the folding key is deliberately over-inclusive so over-refusal loses a declaration | flags: new-api-contract
-Planned at: 8a48e52c
+Planned at: ae9d85befbfbd97b336e8da318dec4f2a4bd6b6a
 - Plan attack run before Gate 2. It refuted FOUR ledger rows and the design was rewritten rather than argued: D4's pre-existing check ran only against the loser, so the favoured member merged into a destination that was already there while only the loser was reported; the D3 reading cannot attribute a name another entry's directory walk or another process created, so the "skipped, awarded to f" outcome claimed a causal fact the apply cannot establish and is now a refusal; promoting the favoured member ahead of the copy pass gave an UNCONTESTED `Foo/seed` copy a new refusal, so the loser yields its place instead and nothing is promoted; and D6's folding-key test would have refused an ordinary `Foo -> foo` beside a real `foo` on a case-sensitive volume, destroying material to prevent a loop that volume cannot have.
 - Gate 2 taken under fastlane on the standing goal, with the user away. The scope cut it carries: the folded self-loop (a link that loops only because the destination folds) is NOT owned here — it needs the twin-create probe this change refuses to assume, and the filesystem answers ELOOP to a reader meanwhile.
 - Round 1 REJECTed with four blockers and every one of them changed an artifact rather than a line, so cycle 1 closed at triage instead of opening a fix loop: D3 now owns two readings and a four-state observation (one reading cannot show that the favoured member own write created its destination, and "not ENOENT" is not "absent"), D4 gained the row those imply, D4a says a refusal names every member including itself, and D5 owns the returned ORDER — the closure answered in execution order and the extraction had quietly changed it to provider order.
@@ -45,3 +45,5 @@ Planned at: 8a48e52c
 - Round-4 contracts specialist reached this session directly after its hand-back to the chair failed to route: the F006 fix preserves a contested entry's own rule but drops contest membership from it, so the favoured member's ordinary refusal names nobody — against D4a and D4b, which require every refusal to name every member. Confirmed against src/worktree/provisioning/applyProvisioning.ts. The F006 witness asserts only the rule substring and does not witness membership. To be fixed whatever the chair returns, since the chair may never have received this finding.
 
 Round-7 handback: F007 reopened — D3b settled how a two-native group is APPLIED and left how it is OFFERED unmoved, so the dialog ticks and counts rows the apply refuses entire. Gates unticked: Gate 2, All tasks done, and the Verify gate. F013 rides the same requirement; F014, F015, F016 and F017 are accepted and become tasks in the replan.
+
+Round-7 replan: D3c makes the offer and the apply decide a contested group by one predicate over which members are the repository's own, read against the selection currently held. The plan attack refuted the first draft — a two-repository-declaration group offered UNSELECTED is not a fixed point of that predicate, so its rows would carry a note the rule contradicts and the inherited member ticked alone would be copied while saying it would not be. The rows are offered selected instead.
