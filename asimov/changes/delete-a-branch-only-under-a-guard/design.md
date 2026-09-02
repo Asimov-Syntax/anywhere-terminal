@@ -49,39 +49,56 @@ delete, not merely at report time" stops being defence in depth and becomes the 
 between an opt-in and another worktree left with a dangling HEAD.
 
 So the re-check is not advisory and is not a nicety of ordering: **the check runs immediately before
-the transaction, and its absence is a defect, not a missing optimization.** It is `git worktree list
---porcelain` read fresh — not the tree's cached model, which is what "at report time" would mean.
+the transaction, and its absence is a defect, not a missing optimization.** D7 defines the fresh
+full-holder read; porcelain alone is only one input and is not a sufficient guard.
 
 The residual is honest: the window between that read and the transaction is not covered. Another
 process can check the branch out inside it. That window is small and unavoidable without a lock git
 does not offer, and the failure mode is a dangling HEAD in a worktree the user can repair, not lost
 commits — the commits are merged, which is the precondition for the control existing at all.
 
-## D7 — The in-use check mirrors git's own registrations, and fails closed
+## D7 — The in-use check covers every Git registration, and fails closed
 
 The oracle refuted D3's check, not D3's premise. `git branch -d` consults `branch_checked_out`,
-which registers four things (`branch.c:405-450`): a worktree's symbolic HEAD, a rebase's held
-branch, bisect's origin branch, and sequencer `--update-refs` branches. `git worktree list
+which registers four things (`branch.c:386-460`): a worktree's symbolic HEAD, a rebase's held
+branch, bisect's origin branch, and rebase/sequencer `--update-refs` branches. `git worktree list
 --porcelain` reports only the first — `branch <ref>` or `detached` (`builtin/worktree.c:949-979`).
 So a rebase of the target branch in another worktree leaves porcelain saying `detached`, and the
 transaction deletes a branch git itself would refuse.
 
-Worse, git's enumeration fails OPEN: a linked worktree whose administrative `gitdir` or HEAD is
-unreadable is silently omitted (`worktree.c:41-56,121-155`).
-
-So the check reads, for the main checkout and every linked worktree, all four holders:
+The check follows Git's conditions rather than treating every stale marker as a holder:
 
 | Holder | Read |
 |---|---|
 | symbolic HEAD | `git worktree list --porcelain` |
-| rebase | `<wt>/rebase-merge/head-name`, `<wt>/rebase-apply/head-name` |
-| bisect | `<wt>/BISECT_START` |
-| sequencer `--update-refs` | `<wt>/sequencer/todo` |
+| rebase | `rebase-merge/head-name`; `rebase-apply/head-name` only when `rebase-apply/applying` is absent |
+| bisect | `BISECT_START` only while `BISECT_LOG` exists |
+| rebase/sequencer `--update-refs` | `rebase-merge/update-refs`, parsed as repeated ref / before-OID / after-OID records, with both OIDs validated |
 
-and **refuses on any doubt**: a non-zero exit, a timeout, output it cannot parse, a worktree entry
-it cannot read, or a count of administrative directories that disagrees with the entries returned.
-Silence is not evidence of absence — that is precisely how git's own enumeration fails open, and
-this check exists because the one it replaced was weaker than it looked.
+Git's enumeration fails OPEN: a linked worktree whose administrative `gitdir` cannot be read is
+silently omitted (`worktree.c:94-194`). The host therefore reconciles porcelain against the raw
+administrative directory before trusting either:
+
+- resolve the common git directory and enumerate every non-dot entry under its `worktrees` directory;
+- require one non-bare, unambiguous main record plus exactly one linked porcelain record per raw
+  administrative entry;
+- require every raw entry to be a directory with a readable, non-empty `gitdir` pointer;
+- treat a missing `worktrees` directory as zero linked worktrees, and every other read error,
+  count/name mismatch, malformed porcelain record, or bare main record as a refusal.
+
+It then **refuses on any remaining doubt**: a non-zero exit, timeout, state file it cannot read,
+or malformed/truncated update-refs triple. A normally absent optional state file means that holder
+is absent; an existing file with invalid content is not absence. Silence is not evidence of absence.
+
+Source correction from the build handback: Git v2.50.1 `branch.c#prepare_checked_out_branches`
+calls `sequencer_get_update_refs_state`, whose state is `rebase-merge/update-refs`; `sequencer.c`
+parses repeated three-line ref / before-OID / after-OID records. `sequencer/todo` is a different
+instruction file and is not evidence for this holder. Authoritative sources:
+`https://github.com/git/git/blob/v2.50.1/branch.c`,
+`https://github.com/git/git/blob/v2.50.1/sequencer.c`,
+`https://github.com/git/git/blob/v2.50.1/wt-status.c`,
+`https://github.com/git/git/blob/v2.50.1/worktree.c`, and
+`https://github.com/git/git/blob/v2.50.1/builtin/worktree.c`.
 
 ## D8 — The recorded ref is verified, not a fresh derivation of it
 
@@ -126,7 +143,7 @@ restored, so the compound action reports its parts separately.
 | It is never on by default | Absent from the request ⇒ never deleted | An opt-out, or a default-true field | Optional wire field defaulting to absent | supported |
 | The typed confirmation never unlocks it | The two controls are independent | Reusing the removal's confirmation as consent for the branch | Witness: confirmed removal without the opt-in deletes no branch | supported |
 | Both OIDs are verified at delete time | The transaction refuses if either moved | Verifying only the branch, letting the default branch move under a stale proof | Witness driving a moved base OID and asserting the branch survives | supported after replan — D8 records the default's REF NAME with its OID and verifies that name; re-derivation now only refuses, never selects what to verify |
-| A branch checked out elsewhere is never deleted | Re-read immediately before the transaction | D3: `update-ref` will delete it, unlike `git branch -d` | Witness with the branch checked out in a second worktree, asserting refusal | supported after replan — D7 reads all four holders git registers and refuses on any unreadable or unparseable state, so absence of evidence stops being evidence of absence |
+| A branch held elsewhere is never deleted | Re-read immediately before the transaction, covering every holder Git registers | D3: `update-ref` will delete it; or a linked administrative entry omitted by porcelain; or malformed update-refs state parsed as absence | One witness per holder and Git condition, plus malformed/truncated update-refs, raw-admin/porcelain count mismatch, unreadable gitdir, and main/bare-record refusal; removing reconciliation or OID validation kills the suite | supported after corrected replan — D7 covers all four holders and reconciles raw administrative entries before trusting absence |
 | The default branch is never deleted on evidence this code can observe | Refused at proof time, and again at execution against both the recorded ref name and a fresh derivation | A selector move that the code observes and ignores | Witness at both points, plus a recorded-name-versus-re-derived-name divergence | supported — D8 |
 | The selector race is disclosed, not closed | `origin/HEAD` can be repointed at the target after the fresh derivation and before the transaction | Documenting the guard as if it covered this | None possible — a negative about an external process; D9 states it and the spec claims only what is observable | supported — stated, not proven |
 | A failed delete leaves the removal successful | Two outcomes, reported separately | Reporting the compound as failed, implying the worktree survives | Witness: failed delete, removal still reported removed | supported after replan — tasks 4_1 and 4_2 carry the outcome through the result message, the action result and the notice, and the acceptance is the rendered notice rather than the service return |

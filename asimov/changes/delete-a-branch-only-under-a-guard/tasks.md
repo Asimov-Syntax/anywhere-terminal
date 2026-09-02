@@ -40,7 +40,7 @@
     5. Return a discriminated outcome naming which guard refused, never a bare boolean.
 
 - [ ] 2_2 Run the delete after the removal, and report it apart
-  - **Deps**: 2_1
+  - **Deps**: 2_1, 4_4
   - **Refs**: design.md D5; specs/worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal
   - **Acceptance**:
     - Outcome: A failed branch delete reports the removal as succeeded and the branch failure separately
@@ -65,7 +65,7 @@
     3. Send `deleteBranch` on the remove request only when it is ticked.
 
 - [ ] 3_2 Wire the binding at the host
-  - **Deps**: 3_1, 4_4
+  - **Deps**: 3_1, 4_3, 4_4
   - **Refs**: design.md D2
   - **Acceptance**:
     - Outcome: The opt-in reaches the guarded delete with the report's own evidence
@@ -117,7 +117,8 @@
     - Outcome: A branch any git operation elsewhere holds is never deleted
     - Verify: unit src/worktree/deleteBranch.test.ts
   - **Plan**:
-    1. In `src/worktree/deleteBranch.ts`, extend the in-use check beyond porcelain's symbolic HEAD to read the rebase head-name files, the bisect start marker, and the sequencer todo file in each worktree's administrative directory, for the main checkout and every linked worktree.
-    2. Refuse the deletion on a non-zero exit, a timeout, unparseable output, or any administrative entry that cannot be read, rather than treating silence as absence.
-    3. In `src/worktree/deleteBranch.ts`, verify the recorded default ref NAME against its recorded OID, and additionally refuse when the target re-derives as the default branch.
-    4. Witness each holder separately, plus an unreadable entry, plus a recorded-name-versus-re-derived-name divergence.
+    1. In `src/worktree/deleteBranch.ts`, extend the in-use check beyond porcelain's symbolic HEAD to the other states Git v2.50.1 registers: rebase-merge head-name; rebase-apply head-name only when its applying marker is absent; BISECT_START only when BISECT_LOG is present; and rebase update-refs state. Parse update-refs as repeated three-line records containing the ref, before-OID, and after-OID, validating both OIDs; the sequencer todo instruction file is not this state.
+    2. Derive the common git directory, enumerate every non-dot entry under its worktrees directory, and require exactly one porcelain main record plus one linked record per raw administrative entry. A missing worktrees directory means zero linked entries; an unreadable entry, unreadable gitdir pointer, non-directory entry, bare or ambiguous main record, malformed porcelain, or count or name mismatch refuses the deletion.
+    3. Refuse the deletion on a non-zero exit, timeout, unparseable output, malformed or truncated update-refs triple, or unreadable state that is not a normal absent optional file, rather than treating silence as absence.
+    4. In `src/worktree/deleteBranch.ts`, verify the recorded default ref NAME against its recorded OID, and additionally refuse when the target re-derives as the default branch.
+    5. Witness each holder separately; the rebase-apply applying and stale BISECT_START non-holder conditions; malformed and truncated update-refs records; an unreadable entry; linked entry count or name mismatch including a gitdir-omitted worktree; main-record and bare-main refusal; and recorded-name-versus-re-derived-name divergence. The count-mismatch and malformed-triple witnesses must fail when reconciliation or OID validation is removed.

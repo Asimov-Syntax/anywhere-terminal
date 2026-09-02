@@ -31,6 +31,8 @@
 
 Blueprint: docs/PLAN.md task WT-013.3
 Lane: full
-Planned at: 50d298f6
+Planned at: d88a68a3 (re-earned after the Git v2.50.1 holder-state correction; originally 50d298f6)
 Escalation flags: security-privacy (from the PLAN row) — review is always recommended, never skipped.
 Must-not: no force delete anywhere in this change; `git worktree remove` never touches the branch.
+- FASTLANE handback: corrected D7/task 4_4 from `sequencer/todo` to Git v2.50.1's actual `rebase-merge/update-refs` three-line records; completed tasks 1_1, 1_2 and 2_1 remain closed. Task 2_2 and host wiring 3_2 now wait for corrected 4_4 so the weak porcelain-only guard is never user-reachable.
+- FASTLANE oracle triage: accepted the admin-entry reconciliation and causal-test gaps, narrowed exact holder equivalence to Git's real rebase/bisect conditions, and made 3_2 depend on D10 task 4_3 as well as 4_4. No product scope changed.
