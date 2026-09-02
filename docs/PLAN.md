@@ -829,7 +829,7 @@ refused outright.
 | **Labels** | security-privacy |
 | **Notes** | **Reverses a recorded rule** that branch deletion is never part of removal. The reasoning behind that rule is preserved — what changed is that it turned on the word *silently*, and an off-by-default, proof-gated, guarded opt-in is not what it refused. The guard is what makes it safe rather than merely careful: a branch can advance between the merge check and the delete, and without an expected-old-value the window is unbounded |
 | **Acceptance** | The control is off by default and never implied by removing the worktree; it is absent rather than disabled when the merge proof is false or unproven; typing the confirmation never unlocks it; both the branch OID and the default-branch OID recorded with the proof are verified immediately before the delete, and a move in either one fails the delete rather than discarding work; the default branch is never offered for deletion; a branch checked out in another worktree is re-checked immediately before the delete and refused; the control is offered in the pre-removal report and executed only after the removal succeeds; a failed branch delete leaves the removal reported as successful and the branch failure reported separately; `git worktree remove` itself never touches the branch |
-| **Status** | todo |
+| **Status** | done |
 ### [WT-013.4] The Report Is Legible Before It Is Dangerous
 
 | Field | Value |

@@ -234,17 +234,19 @@ Rules, all of which hold together:
 2. **Offered only when `branchMerged` is proven.** Unproven or false means the control is absent —
    not present-and-disabled, since an unmergeable branch is not a thing the user should be
    invited to reconsider mid-removal.
-3. **Guarded by expected old value — both of them.** The merge proof is a statement about two
-   refs, so both are recorded and both are verified immediately before the delete: the branch's
-   OID *and* the default branch's OID. Guarding only the branch would let the default branch move
-   backwards under a proof that is no longer true. Where git can express it, the verification and
-   the delete go in one ref transaction.
-4. **Never the default branch**, whatever it is named, and never a branch **checked out in another
-   worktree** — re-checked immediately before the delete, not merely at report time.
-5. **The remaining race is stated, not hidden.** Another process can check the branch out, or
-   advance it, in the window the transaction does not cover. The guarantee is *guarded and
-   fail-closed*, not *provably safe*: the delete fails rather than proceeding on stale evidence,
-   which is a different and weaker claim than nothing bad can happen.
+3. **Guarded by the exact ancestry-tested pair — both of them.** The proof resolves the branch and
+   default ref OIDs first, tests ancestry on those immutable OIDs, and records that exact pair. The
+   opt-in echoes the same report evidence, and redemption refuses any name, OID, or fingerprint
+   mismatch. Immediately before deletion, the branch OID and default-branch OID are verified in the
+   same ref transaction that deletes the branch.
+4. **Never the default branch, and never a branch Git still holds.** The final read reconciles
+   porcelain output with raw worktree administration, then checks symbolic HEAD, rebase, bisect,
+   and rebase update-refs state in every worktree and the main checkout. Missing, malformed,
+   unreadable, inconsistent, or deadline-expired holder state refuses deletion.
+5. **The remaining race is stated, not hidden.** Another process can check the branch out after the
+   final holder read but before the ref transaction; `update-ref` does not lock checkout state. A
+   branch or default-ref movement is caught by the transaction's expected old values. The guarantee
+   is *guarded and fail-closed*, not *provably safe*.
 6. **A failed branch delete never fails the removal.** The worktree is gone; the branch remains and
    is reported. Rolling back a directory deletion is not possible, so the compound action reports
    its parts.
@@ -304,7 +306,7 @@ A removal that did some of what it set out to do says so, and says exactly what 
 | All confirmable risks passed | Ordinary confirm, no typed confirmation (§ 2.4) |
 | New failure appears at execution | Re-prompts rather than proceeding (§ 3) |
 | Branch or default branch moved after the merge check | Guarded delete fails on either OID; worktree removal stands (§ 5) |
-| Branch is the default branch, or checked out elsewhere | Deletion never offered (§ 5) |
+| Branch is the default branch, checked out, or held by rebase/bisect/update-refs state | Deletion is refused (§ 5) |
 | `missing` worktree | Removes cleanly; git prunes the registration |
 | git and filesystem disagree | `indeterminate`, naming what was observed (§ 6) |
 | Listing unreadable at any observation point | `indeterminate`, not a refusal (§ 3) |
