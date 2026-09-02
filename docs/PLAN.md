@@ -500,7 +500,7 @@ nothing to provision.
 | **Labels** | infra |
 | **Notes** | Written after an activation failure that no suite could have caught. A dependency whose package `main` is a UMD bundle calls its factory with `require` as a parameter and the factory then requires a relative path; the bundler cannot follow a require reached through a parameter, so the call survives into the output and resolves against the output directory at runtime. The whole test suite stayed green because the test runner resolves the dependency's ESM entry and never loads the bundle at all — so the gate has to read the built artifact, not the source. The immediate instance was fixed by aliasing that dependency to its ESM build; this task is the tripwire that would have caught it, and it must fail on the artifact rather than assert against a list of known-bad package names |
 | **Acceptance** | A build whose output holds a relative `require` that will not resolve at runtime fails the build; the check reads the built artifact rather than the sources; a deliberately reintroduced instance is caught, so the check is not vacuous; node builtins and the editor host module are not reported |
-| **Status** | todo |
+| **Status** | done |
 
 
 ---
