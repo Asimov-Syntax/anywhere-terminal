@@ -21,19 +21,23 @@
         {
           "phase": "plan",
           "from": 1788366843957
+        },
+        {
+          "phase": "build",
+          "from": 1788370943867
         }
       ],
       "firstAt": 1788366843957,
-      "lastAt": 1788370356262,
+      "lastAt": 1788371123676,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "plan",
           "agent": "asm-oracle",
           "model": "gpt-5.6-sol",
-          "messages": 5,
-          "inputTokens": 40187,
-          "outputTokens": 12460,
+          "messages": 6,
+          "inputTokens": 64703,
+          "outputTokens": 12981,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
           "cacheReadTokens": 297600,
@@ -67,15 +71,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 116,
-          "inputTokens": 232,
-          "outputTokens": 117632,
-          "reasoningTokens": 34812,
-          "cacheWriteTokens": 326978,
-          "cacheReadTokens": 23798284,
+          "messages": 143,
+          "inputTokens": 286,
+          "outputTokens": 143956,
+          "reasoningTokens": 41731,
+          "cacheWriteTokens": 361031,
+          "cacheReadTokens": 31896591,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 326978,
+            "cacheWrite1hTokens": 361031,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -163,6 +167,24 @@
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
           "cacheReadTokens": 696320,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 9,
+          "inputTokens": 63673,
+          "outputTokens": 6417,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 535040,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

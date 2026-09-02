@@ -17,6 +17,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { LockedFile } from "../agentHooks/install/lockedJsonFile";
 import {
   CURSOR_HOOK_COMMAND,
   CURSOR_HOOK_EVENTS,
@@ -125,22 +126,24 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
       files.set(path, typeof contents === "string" ? contents : Buffer.from(contents).toString("utf8"));
     }),
   };
-  // Fail fast on anything this double does not implement. `LockedFile` fills
-  // unsupplied operations from the REAL `node:fs/promises` (lockedJsonFile.ts:80),
-  // so an omission would resolve these Windows-shaped paths relative to cwd on the
-  // POSIX host and touch the actual filesystem — silently. Throwing names the
-  // operation instead (review round 1 F003).
-  const sealed = new Proxy(memoryFsImpl, {
-    get(target, property, receiver) {
-      if (property in target || typeof property === "symbol") {
-        return Reflect.get(target, property, receiver);
-      }
-      throw new Error(`memory filesystem does not implement ${String(property)}`);
-    },
-  });
-  const memoryFs = sealed as unknown as NonNullable<CursorHookInstallerDependencies["fs"]> & typeof memoryFsImpl;
+  // `LockedFile` fills operations this double omits from the REAL
+  // `node:fs/promises` (lockedJsonFile.ts:80), which on this POSIX host would
+  // resolve the Windows-shaped paths relative to cwd. A `get` trap cannot stop
+  // that: the constructor spreads `dependencies.fs` into a plain object, which
+  // copies own properties and never consults the trap (round 2 F003). A stub IS
+  // an own property, so the spread carries it and the reach throws.
+  const unmodelled = (operation: string) =>
+    vi.fn(() => {
+      throw new Error(`memory filesystem does not implement ${operation}`);
+    });
+  const link = unmodelled("link");
+  const memoryFs = {
+    ...memoryFsImpl,
+    link,
+  } as unknown as NonNullable<CursorHookInstallerDependencies["fs"]> & typeof memoryFsImpl;
   return {
     files,
+    link,
     memoryFs,
     paths: { configPath, storagePath, platform: "win32" as const },
     replacements,
@@ -1102,12 +1105,30 @@ describe("which lock a release removes", () => {
     await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("raises for an operation the Windows double does not implement", () => {
-    const { memoryFs } = windowsMemoryFixture({ version: 1, hooks: {} });
+  it("throws from production code rather than reaching the real filesystem", async () => {
+    // Driven through `LockedFile`, not by reading a property off the fixture —
+    // the previous witness read the property directly, which no production path
+    // does, so it proved nothing about the reach it claimed to guard.
+    const { link, memoryFs, paths } = windowsMemoryFixture({ version: 1, hooks: {} });
+    const staged = await new LockedFile(paths.configPath, {
+      fs: memoryFs,
+      platform: "win32",
+    }).stageReplacement("{}\n", 0o600);
 
-    // The previous guard watched a temp directory the code never touches, so it
-    // passed whether or not a real-filesystem fallthrough existed.
-    expect(() => (memoryFs as unknown as Record<string, unknown>).link).toThrow(/does not implement link/);
+    // `commit` swallows the throw and answers false, so the proof that the reach
+    // was INTERCEPTED is that the stub fired — had it been absent, the real
+    // `link` would have run against a Windows-shaped path relative to cwd.
+    await expect(staged?.commit("create")).resolves.toBe(false);
+    expect(link).toHaveBeenCalled();
+  });
+
+  it("supplies every operation the shared lock can reach, so none falls through", () => {
+    const { memoryFs } = windowsMemoryFixture({ version: 1, hooks: {} });
+    const reachable = ["chmod", "link", "lstat", "mkdir", "open", "readFile", "rename", "unlink", "writeFile"];
+
+    for (const operation of reachable) {
+      expect(typeof (memoryFs as unknown as Record<string, unknown>)[operation]).toBe("function");
+    }
   });
 });
 

@@ -93,7 +93,7 @@
     4. In `src/cursor/CursorHookInstaller.test.ts`, add a witness that removes the parent directory between the acquisition attempt and the open, asserting the result is `lock-unavailable` and the parent is still absent.
     5. In `src/agentHooks/install/lockedJsonFile.test.ts`, add a witness that the default still creates a missing parent, so the two existing consumers are pinned.
 
-- [ ] 1_8 Make the double's omissions throw on the path production takes
+- [x] 1_8 Make the double's omissions throw on the path production takes — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_7
   - **Refs**: design.md D2
   - **Acceptance**:
