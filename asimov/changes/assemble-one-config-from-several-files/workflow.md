@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -180,4 +180,6 @@ platform reading and records the residual.
 - D14 confirmed `supported` — the row cap is charged at append time, and merge → exclude → group runs in that order at `readProvisioning.ts:249-264`. Task 8_3 is a witness, not a change, and says so.
 - D11's amended paragraph was overclaiming and is now scoped: a group with ZERO repository declarations — two spellings inside the base file, or any framework-only view after a switch — is a stated contest with no stated outcome. That is the "nothing claims priority" arm the sibling change accepted, recorded here so the paragraph is not read as covering it.
 - Carried, NOT folded in: `vscodeTasksProvider` has no unknown-key report at all, so for `.vscode/tasks.json` D12 delivers only "nothing is consumed" and its witness asserts that rather than reporting. Giving that adapter a key report is its own scope with its own acceptance.
+- Round-7 handback built: 8_1 (28084468), 8_2, 8_3. Verify Gate re-run on the whole tree — check-types clean, biome check-mode at the 3/14/1 baseline with all three errors in `agentHooks`/`cursor` files this change never touches, I10 gate ok, shipped-bundle gate ok, `verify-status` exit 0.
+- 8_3 changed no production code, and that was the plan's own instruction rather than a discovery: D14's ordering was already right, so the task exists to give it a failure mode. `remint` drops an untranslatable id silently, so the witness counts group sizes — an assertion that only checks "every id resolves" passes on a group that has been silently shrunk.
 
