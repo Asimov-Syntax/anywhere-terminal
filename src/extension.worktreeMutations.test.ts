@@ -28,6 +28,18 @@ let forceUndegraded = false;
  * between the two reads `observeAfter` makes. Empty means "it never moved".
  */
 let observations: number[] = [];
+const migrationCalls: Array<{ input: unknown; deps: unknown }> = [];
+
+vi.mock("./worktree/migrateChanges", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/migrateChanges")>();
+  return {
+    ...real,
+    migrateChanges: async (input: unknown, deps: unknown) => {
+      migrationCalls.push({ input, deps });
+      return { kind: "moved" as const };
+    },
+  };
+});
 
 vi.mock("./worktree/worktreeMutationService", async (importOriginal) => {
   const real = await importOriginal<typeof import("./worktree/worktreeMutationService")>();
@@ -77,14 +89,21 @@ beforeEach(() => {
   received.reports = [];
   forceUndegraded = false;
   observations = [];
+  migrationCalls.length = 0;
   vi.resetModules();
 });
 
 /** Runs `activate` against the mock host, exactly as the B1 test does. */
-async function activateExtension(): Promise<void> {
+async function activateExtension(gitApi?: object): Promise<void> {
   const { activate } = await import("./extension");
   const vscode = await import("./test/__mocks__/vscode");
   vscode.__resetAll();
+  if (gitApi !== undefined) {
+    const event = () => ({ dispose: () => {} });
+    vscode.__setExtension({
+      activate: async () => ({ enabled: true, onDidChangeEnablement: event, getAPI: () => gitApi }),
+    } as never);
+  }
   (vscode.extensions as { onDidChange?: unknown }).onDidChange = () => ({ dispose: () => {} });
   const win = vscode.window as Record<string, unknown>;
   win.state ??= { focused: true, active: true };
@@ -146,6 +165,47 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.deps?.observation).toBe("function");
     expect(typeof received.deps?.authorizeDirectory).toBe("function");
     expect(typeof received.deps?.applyPorts).toBe("function");
+    expect(typeof received.deps?.migrateChanges).toBe("function");
+  });
+
+  it("binds migration to the active Git API, shared runner, and exact host evidence", async () => {
+    const event = () => ({ dispose: () => {} });
+    const api = {
+      state: "initialized",
+      onDidChangeState: event,
+      repositories: [],
+      onDidOpenRepository: event,
+      onDidCloseRepository: event,
+      openRepository: async () => null,
+    };
+    await activateExtension(api);
+    received.actions?.reconcileFingerprints?.([]);
+    const input = {
+      sourcePath: "/repo-wt/source",
+      destinationPath: "/repo-wt/destination",
+      source: {
+        path: "/repo-wt/source",
+        directory: { path: "/repo-wt/source", platform: "darwin", components: [] },
+        git: {
+          path: "/repo-wt/source/.git",
+          kind: "file",
+          identity: { dev: 1, ino: 2 },
+          adminPath: "/repo/.git/worktrees/source",
+          adminIdentity: { dev: 1, ino: 3 },
+          adminFiles: [],
+        },
+      },
+      snapshot: { count: 1, records: [], states: [] },
+    } as Parameters<NonNullable<MutationServiceDeps["migrateChanges"]>>[0];
+
+    await received.deps?.migrateChanges?.(input);
+
+    expect(migrationCalls).toEqual([
+      {
+        input,
+        deps: expect.objectContaining({ api, runner: received.deps?.runner, uri: expect.any(Function) }),
+      },
+    ]);
   });
 });
 

@@ -36,6 +36,7 @@ import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
 import { createMutationQueue } from "./mutationQueue";
+import type { MigrateChangesOutcome, MigrationOfferEvidence } from "./migrateChanges";
 import type { ReattachVerdict } from "./reattachProbe";
 import type { RemovalAssessment, RemovalEvidence } from "./worktreeBlockers";
 import { createFingerprintStore, type FingerprintStore } from "./worktreeFingerprint";
@@ -102,6 +103,8 @@ export type MutationOutcome =
         ports: readonly ProvisionPortResult[];
         portWarnings?: readonly ProvisionPortWarning[];
       };
+      /** The checkout exists, but migration could not establish where all source work ended up. */
+      migrationIndeterminate?: string;
     }
   /**
    * Something is at risk, so the removal has NOT run and is waiting on a
@@ -136,6 +139,15 @@ export type MutationVerb = "create" | "remove" | "lock" | "unlock" | "prune";
  */
 export function existenceFromStatError(error: NodeJS.ErrnoException): false | null {
   return error.code === "ENOENT" || error.code === "ENOTDIR" ? false : null;
+}
+
+function migrationReasonOf(error: unknown): string {
+  try {
+    const text = error instanceof Error ? error.message : String(error);
+    return text.trim().slice(0, 1_000) || "the Git integration did not complete the migration";
+  } catch {
+    return "the Git integration did not complete the migration";
+  }
 }
 
 /** The fields of a worktree record that answer D3's conditions 1 and 4. */
@@ -246,6 +258,14 @@ export interface MutationServiceDeps {
    * null for a path it cannot normalize, and the path is used then.
    */
   normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
+
+  /** Move host-authorized source work after checkout creation and before every later step. */
+  migrateChanges?(input: {
+    readonly sourcePath: string;
+    readonly destinationPath: string;
+    readonly source: MigrationOfferEvidence["source"];
+    readonly snapshot: MigrationOfferEvidence["snapshot"];
+  }): Promise<MigrateChangesOutcome>;
 
   /** Delete the requested branch only after the worktree removal is known to have succeeded. */
   deleteBranch?(repoPath: string, request: BranchDeleteRequest): Promise<DeleteBranchOutcome>;
@@ -785,6 +805,11 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // worktree exists whether or not a window opened (round-3 W7).
       let openFailure: string | null = null;
 
+      if (request.migration !== undefined && (request.mode.kind === "reattach" || request.mode.kind === "adopt")) {
+        deps.report(fail("Migration is available only when creating a new checkout."), request.origin);
+        return;
+      }
+
       // Reattach leaves before the create-path check, not inside it.
       //
       // `validateCreatePath` answers "may a worktree be CREATED here", and one
@@ -1001,6 +1026,53 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             const wanted = request.provision ?? [];
             const wantedPorts = request.ports ?? [];
+            // D8 also precedes migration: a destination nested in the source is
+            // otherwise new untracked source work, and `untracked: true` could
+            // make the Git extension try to stash its own destination.
+            const exclude = deps.gitExcludeDirFor(request.repoId, repoPath, check.path);
+            if (exclude !== null) {
+              try {
+                await deps.addToGitExclude(exclude.gitDir, excludePatternFor(exclude.relativePath));
+              } catch (error) {
+                if (request.migration === undefined) {
+                  throw error;
+                }
+                const worktreeId = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
+                return {
+                  kind: "ok",
+                  verb: "create",
+                  repoId: request.repoId,
+                  worktreeId,
+                  migrationIndeterminate: `the destination exclusion could not be established: ${migrationReasonOf(error)}`.slice(
+                    0,
+                    1_000,
+                  ),
+                };
+              }
+            }
+            if (request.migration !== undefined) {
+              const migration =
+                deps.migrateChanges === undefined
+                  ? ({ kind: "indeterminate", reason: "migration is unavailable in this window" } as const)
+                  : await deps
+                      .migrateChanges({
+                        sourcePath: request.migration.sourcePath,
+                        destinationPath: check.path,
+                        source: request.migration.source,
+                        snapshot: request.migration.snapshot,
+                      })
+                      .catch((error) => ({ kind: "indeterminate" as const, reason: migrationReasonOf(error) }));
+              if (migration.kind === "indeterminate") {
+                const worktreeId = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
+                return {
+                  kind: "ok",
+                  verb: "create",
+                  repoId: request.repoId,
+                  worktreeId,
+                  migrationIndeterminate: migration.reason,
+                };
+              }
+            }
             let sourceAuthorization: AuthorizedDirectory | undefined;
             let destinationAuthorization: AuthorizedDirectory | undefined;
             if (wanted.length > 0 || wantedPorts.length > 0) {
@@ -1008,12 +1080,6 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 deps.authorizeDirectory(repoPath).catch(() => undefined),
                 deps.authorizeDirectory(check.path).catch(() => undefined),
               ]);
-            }
-            // D8: a root inside the main worktree must not dirty the parent's
-            // status. A failure here is reported, never fatal to the create.
-            const exclude = deps.gitExcludeDirFor(request.repoId, repoPath, check.path);
-            if (exclude !== null) {
-              await deps.addToGitExclude(exclude.gitDir, excludePatternFor(exclude.relativePath));
             }
             // BEFORE afterCreate, which launches an agent or a terminal INTO
             // this worktree: the whole point of copying `.env` is that whatever
@@ -1026,7 +1092,10 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             let provisioned: readonly ProvisionStepResult[] | undefined;
             let allocatedPorts: readonly ProvisionPortResult[] | undefined;
             let portWarnings: readonly ProvisionPortWarning[] = [];
-            let provisionedAt: string | undefined;
+            let provisionedAt =
+              request.migration === undefined
+                ? undefined
+                : ((await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path);
             if (wanted.length > 0) {
               const failed = (reason: string): readonly ProvisionStepResult[] =>
                 wanted.map((entry) => ({
@@ -1079,7 +1148,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               allocatedPorts = applied.ports;
               portWarnings = applied.warnings;
             }
-            if (provisioned !== undefined || allocatedPorts !== undefined) {
+            if (provisionedAt === undefined && (provisioned !== undefined || allocatedPorts !== undefined)) {
               // The id the tree will key this worktree on, not the path git was
               // handed — a result message whose `worktreeId` is only USUALLY
               // the one consumers hold is a latent mismatch (round-1 F015).
@@ -1107,12 +1176,12 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               // create notice carried no `worktreeId` at all, so the merge key
               // the provisioning message arrives under matched nothing and every
               // real create grew a second, invented notice (round-2 F017).
-              ...(provisionedAt === undefined
+              ...(provisionedAt === undefined ? {} : { worktreeId: provisionedAt }),
+              ...(provisioned === undefined && allocatedPorts === undefined
                 ? {}
                 : {
-                    worktreeId: provisionedAt,
                     provision: {
-                      path: provisionedAt,
+                      path: provisionedAt ?? check.path,
                       steps: provisioned ?? [],
                       ports: allocatedPorts ?? [],
                       ...(portWarnings.length === 0 ? {} : { portWarnings }),

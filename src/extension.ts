@@ -68,7 +68,7 @@ import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
-import { probeMigrationSource } from "./worktree/migrateChanges";
+import { migrateChanges, probeMigrationSource } from "./worktree/migrateChanges";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
@@ -663,6 +663,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
+        migrateChanges: (input) =>
+          migrateChanges(input, {
+            api: gitDecorationProvider.getApi?.(),
+            runner: worktreeTreeDeps.runner,
+            uri: vscode.Uri.file,
+          }),
         runner: worktreeTreeDeps.runner,
         forceRebuild: bindings.forceRebuild,
         resolve: bindings.resolve,

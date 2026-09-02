@@ -77,7 +77,7 @@
     4. `src/providers/WorktreeHost.actions.test.ts`: cover malformed, unknown, cross-opening, cross-source, replaced-directory, rewritten-`.git`, replaced-admin, and stale-snapshot offers plus successful redemption.
     5. `src/webview/worktree/WorktreeController.test.ts`: assert absent and checked wire shapes without source path or count.
 
-- [ ] 2_2 Move before later work and stop on indeterminate state
+- [x] 2_2 Move before later work and stop on indeterminate state — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 2_1
   - **Refs**: specs/worktree-panel/spec.md#{the-work-moves-between-a-new-checkout-and-every-later-step, migration-uncertainty-does-not-undo-a-successful-create, declining-to-move-performs-no-migration} <!-- design.md D1, D2, D5, D6, D7 -->
   - **Acceptance**:

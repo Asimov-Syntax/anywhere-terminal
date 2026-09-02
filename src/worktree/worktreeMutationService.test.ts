@@ -9,6 +9,7 @@ import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import type { ClearDebrisDeps } from "./clearDebris";
 import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
+import type { MigrationOfferEvidence } from "./migrateChanges";
 import type { ReattachVerdict } from "./reattachProbe";
 import type { RemovalEvidence } from "./worktreeBlockers";
 import {
@@ -43,6 +44,26 @@ function authorization(path: string): AuthorizedDirectory {
     path,
     platform: process.platform,
     components: [{ path, identity: { dev: 7, ino: path.length + 1 } }],
+  };
+}
+
+function migrationEvidence(): MigrationOfferEvidence {
+  const sourcePath = "/repo-wt/source";
+  return {
+    source: {
+      path: sourcePath,
+      directory: authorization(sourcePath),
+      git: {
+        path: `${sourcePath}/.git`,
+        kind: "file",
+        identity: { dev: 7, ino: 21 },
+        contentHash: "gitfile-a",
+        adminPath: "/repo/.git/worktrees/source",
+        adminIdentity: { dev: 7, ino: 22 },
+        adminFiles: [],
+      },
+    },
+    snapshot: { count: 1, records: [], states: [] },
   };
 }
 
@@ -2078,6 +2099,204 @@ describe("a removal report is produced without performing the removal", () => {
       report?.kind === "assessed" && report.assessment.kind === "confirmable" && report.assessment.evidence,
     ).toEqual(evidence({ dirtyPaths: ["src/replacement.ts"] }));
     expect(report?.kind === "assessed" && typeof report.fingerprint).toBe("string");
+  });
+});
+
+describe("migration runs inside the successful create", () => {
+  const entries = [{ id: "i1", path: ".env", mode: "copy" as const, source: "asimov/worktree.yaml" }];
+  const ports = [{ id: "p1", name: "APP", source: "asimov/worktree.yaml", port: 5183 }];
+  const migration = migrationEvidence();
+  const create = (over: Record<string, unknown> = {}) => ({
+    repoId: REPO,
+    path: "/repo/wt/new",
+    afterCreate: { kind: "none" as const },
+    mode: { kind: "fresh" as const, branch: "feat" },
+    disposition: { kind: "free" as const },
+    migration: { sourcePath: migration.source.path, source: migration.source, snapshot: migration.snapshot },
+    ...over,
+  });
+  const outcome = (h: ReturnType<typeof harness>) =>
+    h.outcomes.find((item) => (item as { verb?: string }).verb === "create") as
+      | { kind: string; worktreeId?: string; migrationIndeterminate?: string; provision?: unknown }
+      | undefined;
+
+  it("orders exclusion and migration before authorization, provisioning, ports, and launch", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      gitExcludeDirFor: () => ({ gitDir: REPO, relativePath: "wt" }),
+      addToGitExclude: async () => {
+        seen.push("exclude");
+      },
+      migrateChanges: async () => {
+        seen.push("migration");
+        return { kind: "moved" };
+      },
+      authorizeDirectory: async (path) => {
+        seen.push(`authorize:${path}`);
+        return authorization(path);
+      },
+      applyProvision: async () => {
+        seen.push("files");
+        return [];
+      },
+      applyPorts: async () => {
+        seen.push("ports");
+        return { ports: [], warnings: [] };
+      },
+      afterCreate: async () => {
+        seen.push("afterCreate");
+      },
+    });
+
+    await h.service.createWorktree(create({ provision: entries, ports }));
+
+    expect(seen).toEqual([
+      "exclude",
+      "migration",
+      "authorize:/repo",
+      "authorize:/repo/wt/new",
+      "files",
+      "ports",
+      "afterCreate",
+    ]);
+  });
+
+  it("forwards the host-held source evidence and destination exactly", async () => {
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const h = harness({ migrateChanges: moved });
+
+    await h.service.createWorktree(create());
+
+    expect(moved).toHaveBeenCalledWith({
+      sourcePath: migration.source.path,
+      destinationPath: "/repo/wt/new",
+      source: migration.source,
+      snapshot: migration.snapshot,
+    });
+  });
+
+  it.each([
+    ["fresh", { kind: "fresh" as const, branch: "feat" }],
+    ["detached", { kind: "fresh-detached" as const, baseRef: "HEAD" }],
+    ["reuse", { kind: "reuse" as const, branch: "feat" }],
+  ])("moves for a %s checkout", async (_name, mode) => {
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const h = harness({ migrateChanges: moved });
+
+    await h.service.createWorktree(create({ mode }));
+
+    expect(moved).toHaveBeenCalledOnce();
+    expect(outcome(h)?.kind).toBe("ok");
+  });
+
+  it("normalizes a move-only create without inventing provisioning results", async () => {
+    const h = harness({
+      migrateChanges: async () => ({ kind: "moved" }),
+      normalizeWorktreeId: async () => "/normalized/new",
+    });
+
+    await h.service.createWorktree(create());
+
+    expect(outcome(h)).toMatchObject({ kind: "ok", worktreeId: "/normalized/new" });
+    expect(outcome(h)?.provision).toBeUndefined();
+  });
+
+  it.each([
+    ["indeterminate result", async () => ({ kind: "indeterminate" as const, reason: "source no longer matches" })],
+    [
+      "adapter rejection",
+      async () => {
+        throw new Error("Git integration rejected");
+      },
+    ],
+    [
+      "non-stringifiable rejection",
+      async () => {
+        throw Object.create(null);
+      },
+    ],
+    [
+      "oversized rejection",
+      async () => {
+        throw new Error("x".repeat(2_000));
+      },
+    ],
+  ])("keeps the checkout and stops every later step on %s", async (_name, migrateChanges) => {
+    const authorize = vi.fn(async (path: string) => authorization(path));
+    const applyProvision = vi.fn(async () => []);
+    const applyPorts = vi.fn(async () => ({ ports: [], warnings: [] }));
+    const afterCreate = vi.fn(async () => undefined);
+    const h = harness({
+      migrateChanges,
+      authorizeDirectory: authorize,
+      applyProvision,
+      applyPorts,
+      afterCreate,
+      normalizeWorktreeId: async () => "/normalized/new",
+    });
+
+    await h.service.createWorktree(create({ provision: entries, ports, afterCreate: { kind: "newWindow" } }));
+
+    expect(outcome(h)).toMatchObject({
+      kind: "ok",
+      worktreeId: "/normalized/new",
+      migrationIndeterminate: expect.any(String),
+    });
+    expect(outcome(h)?.migrationIndeterminate?.length).toBeLessThanOrEqual(1_000);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(applyProvision).not.toHaveBeenCalled();
+    expect(applyPorts).not.toHaveBeenCalled();
+    expect(afterCreate).not.toHaveBeenCalled();
+  });
+
+  it("attempts no migration when the option was declined", async () => {
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const h = harness({ migrateChanges: moved });
+    const { migration: _declined, ...declined } = create();
+
+    await h.service.createWorktree(declined);
+
+    expect(moved).not.toHaveBeenCalled();
+    expect(outcome(h)?.kind).toBe("ok");
+  });
+
+  it.each([
+    [
+      "reattach",
+      { kind: "reattach" as const, branch: "feat", repairPath: "/repo-wt/stale", expectedOid: "oid-1" },
+    ],
+    [
+      "adopt",
+      { kind: "adopt" as const, branch: "feat", adoptPath: "/repo-wt/stale", expectedBranchOid: "oid-1" },
+    ],
+  ])("refuses migration on %s before git or the adapter", async (_name, mode) => {
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const h = harness({ migrateChanges: moved });
+
+    await h.service.createWorktree(create({ mode }));
+
+    expect(moved).not.toHaveBeenCalled();
+    expect(h.argv).toEqual([]);
+    expect(outcome(h)?.kind).toBe("error");
+  });
+
+  it("turns an exclusion rejection into migration uncertainty after create", async () => {
+    const moved = vi.fn(async () => ({ kind: "moved" as const }));
+    const afterCreate = vi.fn(async () => undefined);
+    const h = harness({
+      gitExcludeDirFor: () => ({ gitDir: REPO, relativePath: "wt" }),
+      addToGitExclude: async () => {
+        throw new Error("exclude is read-only");
+      },
+      migrateChanges: moved,
+      afterCreate,
+    });
+
+    await h.service.createWorktree(create());
+
+    expect(outcome(h)).toMatchObject({ kind: "ok", migrationIndeterminate: expect.stringContaining("read-only") });
+    expect(moved).not.toHaveBeenCalled();
+    expect(afterCreate).not.toHaveBeenCalled();
   });
 });
 
