@@ -597,6 +597,38 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
   });
 });
 
+// [round-7 F019] The position test asked the template's IMMEDIATE parent, so one
+// pair of parentheses put a ParenthesizedExpression in between and the request
+// produced no verdict at all. Parentheses are syntax, not a value.
+describe("[round-7 F019] a computed request is found through the parentheses", () => {
+  const OPEN = `$${"{"}`;
+  const heads = (bundle: string) => verdicts(bundle).map((v) => v.specifier);
+
+  it("reports a parenthesized template argument", () => {
+    expect(heads(`var r = require; r((\`./${OPEN}name}\`));`).join(" ")).toContain("./");
+  });
+
+  it("reports it through several parentheses", () => {
+    expect(heads(`var r = require; r((((\`../${OPEN}n}\`))));`).join(" ")).toContain("../");
+  });
+
+  it("reports the parenthesized UMD-factory shape", () => {
+    const viaFactory = `(function (factory) { factory(require) })(function (e) { e((\`../${OPEN}n}\`)); });`;
+    expect(heads(viaFactory).join(" ")).toContain("../");
+  });
+
+  it("still does not report a template in CALLEE position", () => {
+    // `\`./${OPEN}x}\`()` parses as a call whose EXPRESSION is the template. Walking
+    // out by parent kind alone would call that an argument; the membership test
+    // is what refuses it.
+    expect(verdicts(`var t = \`./${OPEN}x}\`();`)).toEqual([]);
+  });
+
+  it("still does not report parenthesized path data", () => {
+    expect(verdicts(`var p = (\`./${OPEN}name}/icon.svg\`);`)).toEqual([]);
+  });
+});
+
 // [round-6 F015] Each collector parsed the artifact for itself, so a 1 MB
 // bundle paid three AST constructions and three walks per gate run, and the two
 // relative-prefix conditions could drift apart. One AST now serves all three.

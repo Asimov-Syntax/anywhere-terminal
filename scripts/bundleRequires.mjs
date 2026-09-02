@@ -60,12 +60,23 @@ const isFunction = (node) => node !== undefined && (ts.isFunctionExpression(node
 /**
  * Whether `node` sits where a module request can be passed.
  *
- * `parent.arguments` is checked by identity rather than by parent kind alone: a
- * tagged template's own template is a child of a call-like node too, and it is
- * the tag's input, never a request.
+ * The position is a fact about the CALL, not about the immediate parent:
+ * `r((`./${name}`))` put a ParenthesizedExpression in between and the request
+ * produced no verdict at all (.reviews/round-7.md F019). Parentheses are syntax,
+ * so climb out of them first — the same thing `unwrap` does descending.
+ *
+ * `parent.arguments` is then checked by IDENTITY rather than by parent kind: a
+ * tagged template's own template is a child of a call-like node too, and
+ * `` `./${x}`() `` is a call whose EXPRESSION is the template, which kind alone
+ * would call an argument.
  */
 function isCallArgument(node) {
-  const parent = node.parent;
+  let cur = node;
+  let parent = cur.parent;
+  while (parent !== undefined && ts.isParenthesizedExpression(parent)) {
+    cur = parent;
+    parent = cur.parent;
+  }
   if (parent === undefined || !(ts.isCallExpression(parent) || ts.isNewExpression(parent))) {
     return false;
   }
@@ -417,13 +428,6 @@ function requireLiteral(node, isTainted) {
   return ts.isStringLiteralLike(arg) ? arg.text : undefined;
 }
 
-/**
- * Literals that look relative but are not module specifiers.
- *
- * The sweep is sound and imprecise (design.md D6), so this is where imprecision
- * is paid for — explicitly, one reviewed entry at a time, rather than by
- * weakening the rule. It is not a place to silence a real finding.
- */
 /** The relative prefixes Node accepts, POSIX and Win32 (design.md D6). */
 export const RELATIVE_PREFIXES = ["./", "../", ".\\", "..\\"];
 

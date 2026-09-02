@@ -250,7 +250,7 @@ the extension failed to activate. No suite could catch it, because every suite i
 
 ## 8. Round-7 handback — delete the propagation pass, keep the absolute warning
 
-- [ ] 8_1 Find a computed request through the parentheses around it
+- [x] 8_1 Find a computed request through the parentheses around it — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D7, .reviews/round-7.md#f019
   - **Acceptance**:
