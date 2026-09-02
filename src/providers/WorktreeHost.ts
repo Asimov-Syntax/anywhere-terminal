@@ -522,6 +522,8 @@ export interface WorktreeMutationBindings {
   resolve(target: WorktreeMutationTarget): ResolvedMutationTarget | null;
   /** The repository's main worktree path, for the repo-scoped verbs. */
   repoPath(repoId: string): string | null;
+  /** The migration registration paired with the currently published generation. */
+  migrationRegistration(repoId: string): MigrationRepositoryBinding["registration"] | undefined;
   /**
    * The observation the current tree holds of this repository, or `undefined`
    * when it holds none — the listing is stale, failed, absent, or git is
@@ -653,6 +655,10 @@ interface SurfaceState {
 export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   const now = options.now ?? Date.now;
   const cache = createWorktreeCache();
+  const currentMigrationRegistration = (repoId: string): MigrationRepositoryBinding["registration"] | undefined => {
+    const generation = cache.readRepo(repoId)?.generation;
+    return generation === undefined ? undefined : cache.registrationFor(repoId, generation);
+  };
   const surfaces = new Map<WorktreeSurface, SurfaceState>();
   const watches = new Map<string, WorktreeWatch>();
   const projector = options.projector;
@@ -2268,7 +2274,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             offered.surface !== surfaceKey(surface) ||
             offered.opening !== msg.opening ||
             offered.repoId !== msg.repoId ||
-            !isDeepStrictEqual(cache.rootFor(msg.repoId)?.registration, offered.binding.registration) ||
+            !isDeepStrictEqual(currentMigrationRegistration(msg.repoId), offered.binding.registration) ||
             liveOpening.get(surfaceKey(surface)) !== msg.opening ||
             source === undefined ||
             options.probeMigrationSource === undefined
@@ -2312,7 +2318,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               source === undefined ||
               current === undefined ||
               !isDeepStrictEqual(
-                cache.rootFor(migrationOffer.repoId)?.registration,
+                currentMigrationRegistration(migrationOffer.repoId),
                 migrationOffer.binding.registration,
               ) ||
               !isDeepStrictEqual(current, migrationOffer.evidence)
@@ -2815,7 +2821,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                     currentReading?.sequence !== mine.sequence ||
                     currentReading.sourceWorktreeId !== mine.sourceWorktreeId ||
                     currentReading.sourceGeneration !== mine.sourceGeneration ||
-                    !isDeepStrictEqual(cache.rootFor(msg.repoId)?.registration, registration) ||
+                    !isDeepStrictEqual(currentMigrationRegistration(msg.repoId), registration) ||
                     currentSource === undefined ||
                     evidence === undefined ||
                     !Number.isSafeInteger(evidence.snapshot.count) ||
@@ -4002,6 +4008,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         };
       },
       repoPath: (repoId) => cache.read().repos.find((r) => r.repoId === repoId)?.mainPath ?? null,
+      migrationRegistration: currentMigrationRegistration,
       // The claim a launch is admitted against, published as its value and
       // never derived from `degraded` (round-2 B7, round-7 W8, design.md D12).
       observation: (repoId) => observationOf(repoById(repoId)),

@@ -224,7 +224,7 @@
     1. `src/worktree/WorktreeCache.ts`: use a current canonical root only when one exists; otherwise preserve every failed folder's remembered association, and prevent Git-unavailable repo-scoped applies or private lookups from minting authority.
     2. `src/worktree/WorktreeCache.test.ts`: cover both duplicate folders failing before one closes, plus Git-unavailable repo-scoped success followed by guessed-generation lookup.
 
-- [ ] 5_3 Recheck current publication authority through offer execution
+- [x] 5_3 Recheck current publication authority through offer execution — verified: bun test 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 5_2
   - **Refs**: design.md D3 <!-- review round 4 F013, F014 -->
   - **Acceptance**:

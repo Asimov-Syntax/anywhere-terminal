@@ -2688,6 +2688,49 @@ describe("the migration offer the create form is given", () => {
     expect(migrationOffers(h.view)).toEqual([]);
   });
 
+  it("does not probe a guessed hidden generation while Git is unavailable", async () => {
+    const probe = vi.fn(async () => migrationEvidence());
+    const h = await builtHost([], false, { probeMigrationSource: probe });
+    const priorGeneration = gen() as number;
+    await h.loseGit();
+    await h.host.mutationBindings().forceRebuild(REPO);
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: priorGeneration + 1,
+    });
+    await settle();
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("drops a pending probe when its publication becomes degraded", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    await h.degrade();
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
   it("keeps a pending offer only while the selected private registration remains current", async () => {
     let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
     let current = repositoryRegistration(REPO);
@@ -3022,6 +3065,51 @@ describe("redeeming a migration offer", () => {
     await settle();
 
     expect(h.calls.filter(([name]) => name === "createWorktree")).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("refuses an issued offer after its publication becomes degraded", async () => {
+    const h = await offeredHost();
+    await h.degrade();
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    h.dispose();
+  });
+
+  it("refuses final handoff when authority is withdrawn during the source recheck", async () => {
+    let probes = 0;
+    let resolveFinal: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () => {
+        probes += 1;
+        if (probes === 1) {
+          return Promise.resolve(migrationEvidence());
+        }
+        return new Promise((resolve) => {
+          resolveFinal = resolve;
+        });
+      },
+      migrationOfferId: () => "migration-token",
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+    await h.degrade();
+    resolveFinal?.(migrationEvidence());
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
     h.dispose();
   });
 
