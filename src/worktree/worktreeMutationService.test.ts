@@ -2127,13 +2127,14 @@ describe("migration runs inside the successful create", () => {
   const entries = [{ id: "i1", path: ".env", mode: "copy" as const, source: "asimov/worktree.yaml" }];
   const ports = [{ id: "p1", name: "APP", source: "asimov/worktree.yaml", port: 5183 }];
   const migration = migrationEvidence();
+  const binding = { registration: authorization(REPO), sourceKind: "linked" as const };
   const create = (over: Record<string, unknown> = {}) => ({
     repoId: REPO,
     path: "/repo/wt/new",
     afterCreate: { kind: "none" as const },
     mode: { kind: "fresh" as const, branch: "feat" },
     disposition: { kind: "free" as const },
-    migration: { sourcePath: migration.source.path, source: migration.source, snapshot: migration.snapshot },
+    migration: { sourcePath: migration.source.path, source: migration.source, snapshot: migration.snapshot, binding },
     ...over,
   });
   const outcome = (h: ReturnType<typeof harness>) =>
@@ -2188,17 +2189,20 @@ describe("migration runs inside the successful create", () => {
   });
 
   it("forwards the host-held source evidence and destination exactly", async () => {
+    const capture = vi.fn(async (_repoId: string, path: string) => migrationDestination(path));
     const moved = vi.fn(async () => ({ kind: "moved" as const }));
-    const h = harness({ migrateChanges: moved });
+    const h = harness({ captureMigrationDestination: capture, migrateChanges: moved });
 
     await h.service.createWorktree(create());
 
+    expect(capture).toHaveBeenCalledWith(REPO, "/repo/wt/new", binding.registration);
     expect(moved).toHaveBeenCalledWith({
       sourcePath: migration.source.path,
       destinationPath: "/repo/wt/new",
       source: migration.source,
       destination: migrationDestination(),
       snapshot: migration.snapshot,
+      binding,
     });
   });
 
@@ -2353,7 +2357,7 @@ describe("migration runs inside the successful create", () => {
     await h.service.createWorktree(
       create({
         path: "/linked/source/new",
-        migration: { sourcePath, source: migration.source, snapshot: migration.snapshot },
+        migration: { sourcePath, source: migration.source, snapshot: migration.snapshot, binding },
       }),
     );
 

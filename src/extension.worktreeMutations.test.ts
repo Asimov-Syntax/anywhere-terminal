@@ -29,14 +29,19 @@ let forceUndegraded = false;
  */
 let observations: number[] = [];
 const migrationCalls: Array<{ input: unknown; deps: unknown }> = [];
-const destinationCaptureCalls: Array<{ repoId: string; destinationPath: string }> = [];
+const destinationCaptureCalls: Array<{ repoId: string; destinationPath: string; registration: unknown }> = [];
 
 vi.mock("./worktree/migrateChanges", async (importOriginal) => {
   const real = await importOriginal<typeof import("./worktree/migrateChanges")>();
   return {
     ...real,
-    captureMigrationDestination: async (repoId: string, destinationPath: string) => {
-      destinationCaptureCalls.push({ repoId, destinationPath });
+    captureMigrationDestination: async (
+      repoId: string,
+      destinationPath: string,
+      _deps: unknown,
+      registration: unknown,
+    ) => {
+      destinationCaptureCalls.push({ repoId, destinationPath, registration });
       return { path: destinationPath } as never;
     },
     migrateChanges: async (input: unknown, deps: unknown) => {
@@ -188,6 +193,11 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     };
     await activateExtension(api);
     received.actions?.reconcileFingerprints?.([]);
+    const registration = {
+      path: "/repo/.git",
+      platform: "darwin" as const,
+      components: [{ path: "/repo/.git", identity: { dev: 1, ino: 1 } }],
+    };
     const input = {
       sourcePath: "/repo-wt/source",
       destinationPath: "/repo-wt/destination",
@@ -205,12 +215,15 @@ describe("the shipped extension supplies its mutating capabilities", () => {
       },
       destination: { path: "/repo-wt/destination" } as never,
       snapshot: { count: 1, records: [], states: [] },
+      binding: { registration, sourceKind: "linked" },
     } as Parameters<NonNullable<MutationServiceDeps["migrateChanges"]>>[0];
 
-    await received.deps?.captureMigrationDestination?.("/repo/.git", "/repo-wt/destination");
+    await received.deps?.captureMigrationDestination?.("/repo/.git", "/repo-wt/destination", registration);
     await received.deps?.migrateChanges?.(input);
 
-    expect(destinationCaptureCalls).toEqual([{ repoId: "/repo/.git", destinationPath: "/repo-wt/destination" }]);
+    expect(destinationCaptureCalls).toEqual([
+      { repoId: "/repo/.git", destinationPath: "/repo-wt/destination", registration },
+    ]);
     expect(migrationCalls).toEqual([
       {
         input,

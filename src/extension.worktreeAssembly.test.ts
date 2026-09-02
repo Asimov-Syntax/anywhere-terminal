@@ -248,7 +248,7 @@ vi.mock("./worktree/migrateChanges", async (importOriginal) => {
   return {
     ...real,
     probeMigrationSource: async (...args: Parameters<typeof real.probeMigrationSource>) =>
-      migrationWalk
+      migrationWalk && args[3] !== undefined
         ? ({
             source: {
               path: args[1],
@@ -272,12 +272,18 @@ vi.mock("./worktree/migrateChanges", async (importOriginal) => {
       if (!migrationWalk) {
         return real.captureMigrationDestination(...args);
       }
+      if (args[3] === undefined) {
+        return undefined;
+      }
       migrationEvents.push("destination-capture");
       return { path: args[1] } as never;
     },
     migrateChanges: async (...args: Parameters<typeof real.migrateChanges>) => {
       if (!migrationWalk) {
         return real.migrateChanges(...args);
+      }
+      if (args[0].binding === undefined) {
+        return { kind: "indeterminate" as const, reason: "missing repository binding" };
       }
       migrationEvents.push("migrate-changes");
       return { kind: "moved" as const };

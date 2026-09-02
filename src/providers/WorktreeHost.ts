@@ -197,7 +197,7 @@ export interface WorktreeHostOptions {
   /** Prove that one exact source can currently be migrated. */
   probeMigrationSource?(
     sourcePath: string,
-    binding?: MigrationRepositoryBinding,
+    binding: MigrationRepositoryBinding,
   ): Promise<MigrationOfferEvidence | undefined>;
   /** Cryptographically random in production; deterministic only in tests. */
   migrationOfferId?(): string;
@@ -421,6 +421,7 @@ export interface WorktreeActions {
       readonly sourcePath: string;
       readonly source: MigrationOfferEvidence["source"];
       readonly snapshot: MigrationOfferEvidence["snapshot"];
+      readonly binding: MigrationRepositoryBinding;
     };
     origin?: WorktreeSurface;
   }): Promise<void>;
@@ -2333,6 +2334,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
                 sourcePath: migrationOffer.sourcePath,
                 source: migrationOffer.evidence.source,
                 snapshot: migrationOffer.evidence.snapshot,
+                binding: migrationOffer.binding,
               },
             });
           };

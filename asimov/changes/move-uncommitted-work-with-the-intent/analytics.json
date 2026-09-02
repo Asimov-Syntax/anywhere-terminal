@@ -148,10 +148,14 @@
         {
           "phase": "plan",
           "from": 1788370448063
+        },
+        {
+          "phase": "build",
+          "from": 1788376190721
         }
       ],
       "firstAt": 1788342089142,
-      "lastAt": 1788372893115,
+      "lastAt": 1788376066978,
       "buckets": [
         {
           "runtime": "claude",
@@ -194,12 +198,12 @@
           "phase": "plan",
           "agent": "asm-oracle",
           "model": "gpt-5.6-sol",
-          "messages": 73,
-          "inputTokens": 754142,
-          "outputTokens": 75907,
+          "messages": 74,
+          "inputTokens": 769154,
+          "outputTokens": 78153,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 3929472,
+          "cacheReadTokens": 4041600,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -248,12 +252,12 @@
           "phase": "plan",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 409,
-          "inputTokens": 1121822,
-          "outputTokens": 150735,
+          "messages": 674,
+          "inputTokens": 1383601,
+          "outputTokens": 211073,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 90249472,
+          "cacheReadTokens": 154220032,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

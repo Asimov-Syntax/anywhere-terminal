@@ -2977,6 +2977,7 @@ describe("redeeming a migration offer", () => {
             sourcePath: FEAT_PATH,
             source: evidence.source,
             snapshot: evidence.snapshot,
+            binding: { registration: repositoryRegistration(REPO), sourceKind: "linked" },
           },
         }),
       ],

@@ -666,7 +666,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
-        captureMigrationDestination: (repoId, destinationPath) => captureMigrationDestination(repoId, destinationPath),
+        captureMigrationDestination: (repoId, destinationPath, registration) =>
+          captureMigrationDestination(repoId, destinationPath, {}, registration),
         migrateChanges: (input) =>
           migrateChanges(input, {
             api: gitDecorationProvider.getApi?.(),
@@ -930,11 +931,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const ghRunner = createGitCommandRunner({ executable: "gh" });
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
-    probeMigrationSource: (sourcePath) =>
-      probeMigrationSource(gitDecorationProvider.getApi?.(), sourcePath, {
-        runner: worktreeTreeDeps.runner,
-        uri: vscode.Uri.file,
-      }),
+    probeMigrationSource: (sourcePath, binding) =>
+      probeMigrationSource(
+        gitDecorationProvider.getApi?.(),
+        sourcePath,
+        {
+          runner: worktreeTreeDeps.runner,
+          uri: vscode.Uri.file,
+        },
+        binding,
+      ),
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).

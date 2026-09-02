@@ -182,15 +182,15 @@
     1. `src/types/messages.ts`, `src/webview/worktree/WorktreeController.ts`, `src/webview/worktree/WorktreeController.test.ts`: freeze the selected row's normalized id and repository generation in the opening request; repository and toolbar doors retain neither.
     2. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/extension.worktreeAssembly.test.ts`: synchronously resolve that generation to the current private cached registration before probing; retain it through offer and redemption; cover raw display aliases, whole-tree registration refresh after selection, repo-scoped generation advance with the same registration, degraded retained rows, stable cross-repository or role replacement, and the shipped assembly opening.
 
-- [ ] 4_5 Carry repository ownership through execution
+- [x] 4_5 Carry repository ownership through execution — verified: pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' 'src/providers/WorktreeHost.actions.test.ts' 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 4_4
   - **Refs**: design.md D2, D3, D5, D6, D8 <!-- review round 2 F006, F007 -->
   - **Acceptance**:
     - Outcome: Nested migration executes only for the selected source and pre-offer repository registration
-    - Verify: command pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
+    - Verify: command pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' 'src/providers/WorktreeHost.actions.test.ts' 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' 'src/extension.worktreeAssembly.test.ts'
   - **Plan**:
-    1. `src/worktree/migrateChanges.ts`, `src/worktree/migrateChanges.test.ts`: remove the transitional unregistered adapter path once every production caller supplies repository registration and source role.
-    2. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: carry the expected repository registration beside normalized source evidence through destination capture and migration, stopping indeterminate on any mismatch after the queued rebuild.
+    1. `src/worktree/migrateChanges.ts`, `src/worktree/migrateChanges.test.ts`: require repository registration and source role on the production adapter path; retain unbound calls only as module-level compatibility coverage.
+    2. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: carry the expected repository registration beside normalized source evidence from redeemed offer through destination capture and migration, stopping indeterminate on any mismatch after the queued rebuild.
     3. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: bind the registration-aware source probe, destination capture, and migration adapter; prove a raw display versus normalized id nested create reaches the narrow exclusion and only the originally selected repository incarnation reaches the API.
 
 **Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5`

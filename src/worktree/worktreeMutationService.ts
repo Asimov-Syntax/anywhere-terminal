@@ -34,7 +34,12 @@ import type { DeleteBranchOutcome } from "./deleteBranch";
 import { messageOf } from "./errorMessage";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { excludePatternFor } from "./gitExclude";
-import type { MigrateChangesOutcome, MigrationOfferEvidence, MigrationSourceEvidence } from "./migrateChanges";
+import type {
+  MigrateChangesOutcome,
+  MigrationOfferEvidence,
+  MigrationRepositoryBinding,
+  MigrationSourceEvidence,
+} from "./migrateChanges";
 import { createMutationCoordinator, type MutationCoordinator, type MutationSettle } from "./mutationCoordinator";
 import { createMutationQueue } from "./mutationQueue";
 import type { ReattachVerdict } from "./reattachProbe";
@@ -260,7 +265,11 @@ export interface MutationServiceDeps {
   normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
 
   /** Capture the checkout registration observed immediately after Git creates it. */
-  captureMigrationDestination?(repoId: string, destinationPath: string): Promise<MigrationSourceEvidence | undefined>;
+  captureMigrationDestination?(
+    repoId: string,
+    destinationPath: string,
+    registration: MigrationRepositoryBinding["registration"],
+  ): Promise<MigrationSourceEvidence | undefined>;
   /** Move host-authorized source work after checkout creation and before every later step. */
   migrateChanges?(input: {
     readonly sourcePath: string;
@@ -268,6 +277,7 @@ export interface MutationServiceDeps {
     readonly source: MigrationOfferEvidence["source"];
     readonly destination: MigrationSourceEvidence;
     readonly snapshot: MigrationOfferEvidence["snapshot"];
+    readonly binding: MigrationRepositoryBinding;
   }): Promise<MigrateChangesOutcome>;
 
   /** Delete the requested branch only after the worktree removal is known to have succeeded. */
@@ -1052,7 +1062,11 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 return migrationIndeterminate("migration destination authorization is unavailable in this window");
               }
               try {
-                destinationEvidence = await deps.captureMigrationDestination(request.repoId, check.path);
+                destinationEvidence = await deps.captureMigrationDestination(
+                  request.repoId,
+                  check.path,
+                  request.migration.binding.registration,
+                );
               } catch (error) {
                 return migrationIndeterminate(
                   `the migration destination registration could not be verified: ${migrationReasonOf(error)}`,
@@ -1111,6 +1125,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                         source: request.migration.source,
                         destination: destinationEvidence,
                         snapshot: request.migration.snapshot,
+                        binding: request.migration.binding,
                       })
                       .catch((error) => ({ kind: "indeterminate" as const, reason: migrationReasonOf(error) }));
               if (migration.kind === "indeterminate") {
