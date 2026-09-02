@@ -701,6 +701,7 @@ export class WorktreeController {
           disposition: draft.disposition ?? { kind: "free" },
           // Ids only, resolved host-side against the model it displayed.
           ...(draft.provision === undefined ? {} : { provision: draft.provision }),
+          ...(draft.migrateChanges === undefined ? {} : { migrateChanges: draft.migrateChanges }),
           // The launch details travel with the agent variant and with no other —
           // the union is what makes any other pairing unrepresentable.
           afterCreate:

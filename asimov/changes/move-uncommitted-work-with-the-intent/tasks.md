@@ -52,10 +52,20 @@
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts`: cover singular and plural text, default decline, checked draft, redraw preservation, replacement reset, mode exclusion and repository switch.
     5. `src/webview/worktree/WorktreeController.test.ts`: cover offer routing, stale opening rejection, and application to the current form.
 
+- [x] 1_5 Refuse special-file replacement during snapshot reads — verified: pnpm exec vitest run 'src/worktree/migrateChanges.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
+  - **Deps**: 1_4
+  - **Refs**: design.md D4
+  - **Acceptance**:
+    - Outcome: Snapshot hashing opens only regular files and returns within its deadline when a path is a writerless FIFO
+    - Verify: unit src/worktree/migrateChanges.test.ts
+  - **Plan**:
+    1. `src/worktree/migrateChanges.ts`, `src/utils/regularFileRead.ts`: expose the opened handle before its type check, use no-follow regular-file opens, bounded handle reads, post-read path identity, and deadline-bounded cleanup.
+    2. `src/worktree/migrateChanges.test.ts`: cover real writerless FIFO replacement, outside and same-identity symlinks, exact byte bounds, successful and stalled close, stalled initial fstat, and open-after-timeout cleanup.
+
 ## 2. Redeem and execute the move
 
-- [ ] 2_1 Redeem only the delivered offer
-  - **Deps**: 1_4
+- [x] 2_1 Redeem only the delivered offer — verified: pnpm exec vitest run 'src/providers/WorktreeHost.actions.test.ts' 'src/webview/worktree/WorktreeController.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
+  - **Deps**: 1_5
   - **Refs**: specs/worktree-panel/spec.md#{the-move-offer-states-one-complete-distinct-path-count, declining-to-move-performs-no-migration} <!-- design.md D3, D6 -->
   - **Acceptance**:
     - Outcome: Only the current opaque offer reaches create with host-held source and count

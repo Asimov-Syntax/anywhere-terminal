@@ -1122,6 +1122,8 @@ export interface WorktreeCreateRequestMessage {
    * against the model it issued (worktree-rpc.md § 2.4).
    */
   provision?: ProvisionSelection;
+  /** Opaque consent only; the host retains the source path, count, and evidence. */
+  migrateChanges?: { readonly offerId: string };
 }
 
 /** WebView → Extension: start a fresh agent session in a worktree. */

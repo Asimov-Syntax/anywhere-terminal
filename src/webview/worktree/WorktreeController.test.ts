@@ -752,6 +752,30 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
 
     expect(h.posts[0]).not.toHaveProperty("provision");
+    expect(h.posts[0]).not.toHaveProperty("migrateChanges");
+  });
+
+  it("carries only the checked opaque migration offer onto create", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "main",
+      path: "/wt",
+      openAfter: "none",
+      migrateChanges: { offerId: "migration-7" },
+    });
+
+    expect(h.posts[0]).toMatchObject({
+      type: "worktreeCreate",
+      migrateChanges: { offerId: "migration-7" },
+    });
+    expect((h.posts[0] as { migrateChanges: object }).migrateChanges).toEqual({ offerId: "migration-7" });
   });
 
   it("[F005] routes worktreeProvisionResult through the table production shares", () => {

@@ -50,7 +50,23 @@ const SESSION = "claude:s1";
 
 function migrationEvidence(count = 1): MigrationOfferEvidence {
   return {
-    source: { path: FEAT_PATH } as MigrationOfferEvidence["source"],
+    source: {
+      path: FEAT_PATH,
+      directory: {
+        path: FEAT_PATH,
+        platform: "darwin",
+        components: [{ path: FEAT_PATH, identity: { dev: 1, ino: 10 } }],
+      },
+      git: {
+        path: `${FEAT_PATH}/.git`,
+        kind: "file",
+        identity: { dev: 1, ino: 11 },
+        contentHash: "gitfile-a",
+        adminPath: "/repo/.git/worktrees/feat",
+        adminIdentity: { dev: 1, ino: 12 },
+        adminFiles: [{ name: "HEAD", kind: "file", identity: { dev: 1, ino: 13 }, hash: "head-a" }],
+      },
+    },
     snapshot: { count, records: [], states: [] },
   };
 }
@@ -2751,6 +2767,152 @@ describe("the migration offer the create form is given", () => {
       "fixed-opaque-token",
       "fixed-opaque-token",
     ]);
+  });
+});
+
+describe("redeeming a migration offer", () => {
+  const request = (offerId: string) =>
+    ({
+      type: "worktreeCreate",
+      repoId: REPO,
+      opening: 1,
+      path: "/trees/new-feat",
+      mode: { kind: "fresh", branch: "new-feat" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
+      migrateChanges: { offerId },
+    }) as const;
+
+  async function offeredHost(rechecks: readonly MigrationOfferEvidence[] = [migrationEvidence()]) {
+    let probe = 0;
+    const h = await builtHost([], false, {
+      probeMigrationSource: async () => rechecks[Math.min(probe++, rechecks.length - 1)],
+      migrationOfferId: () => "migration-token",
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+    });
+    await settle();
+    return h;
+  }
+
+  it("passes only host-held evidence after the delivered token rechecks", async () => {
+    const evidence = migrationEvidence(3);
+    const h = await offeredHost([evidence, evidence]);
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([
+      [
+        "createWorktree",
+        expect.objectContaining({
+          migration: {
+            sourcePath: FEAT_PATH,
+            source: evidence.source,
+            snapshot: evidence.snapshot,
+          },
+        }),
+      ],
+    ]);
+    expect((h.calls.find(([name]) => name === "createWorktree")?.[1] as { migration: object }).migration).not.toHaveProperty(
+      "offerId",
+    );
+    h.dispose();
+  });
+
+  it.each([
+    ["unknown", { ...request("unknown") }],
+    ["cross-opening", { ...request("migration-token"), opening: 2 }],
+    ["cross-source data", { ...request("migration-token"), migrateChanges: { offerId: "migration-token", sourcePath: "/tmp" } }],
+    ["malformed", { ...request("migration-token"), migrateChanges: { offerId: 7 } }],
+    [
+      "excluded mode",
+      {
+        ...request("migration-token"),
+        mode: { kind: "reattach", branch: "feat", repairPath: FEAT_PATH, expectedOid: "def" },
+      },
+    ],
+  ])("refuses %s redemption before create", async (_name, message) => {
+    const h = await offeredHost();
+
+    h.host.handleMessage(h.view, message as never);
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    h.dispose();
+  });
+
+  it("spends a delivered token once", async () => {
+    const evidence = migrationEvidence();
+    const h = await offeredHost([evidence, evidence]);
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toHaveLength(1);
+    h.dispose();
+  });
+
+  it.each([
+    [
+      "replaced source directory",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        source: {
+          ...evidence.source,
+          directory: {
+            ...evidence.source.directory,
+            components: [{ path: FEAT_PATH, identity: { dev: 1, ino: 99 } }],
+          },
+        },
+      }),
+    ],
+    [
+      "rewritten .git file",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        source: { ...evidence.source, git: { ...evidence.source.git, contentHash: "gitfile-b" } },
+      }),
+    ],
+    [
+      "replaced admin directory",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        source: {
+          ...evidence.source,
+          git: { ...evidence.source.git, adminIdentity: { dev: 1, ino: 99 } },
+        },
+      }),
+    ],
+    [
+      "stale work snapshot",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        snapshot: { ...evidence.snapshot, count: evidence.snapshot.count + 1 },
+      }),
+    ],
+  ])("refuses %s after the final source recheck", async (_name, change) => {
+    const offered = migrationEvidence();
+    const h = await offeredHost([offered, change(offered)]);
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    expect(h.view.posts).toContainEqual(
+      expect.objectContaining({
+        type: "worktreeMutationResult",
+        verb: "create",
+        result: expect.objectContaining({ kind: "error", message: expect.stringContaining("source work changed") }),
+      }),
+    );
+    h.dispose();
   });
 });
 

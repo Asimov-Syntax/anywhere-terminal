@@ -7,6 +7,7 @@
 // the same tree is free.
 
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type * as vscode from "vscode";
 import type {
   BaseVerdict,
@@ -409,6 +410,11 @@ export interface WorktreeActions {
     provision?: readonly ProvisionEntry[];
     /** Ports resolved from the same host-held offer, kept separate from path-bearing entries. */
     ports?: readonly ProvisionPort[];
+    migration?: {
+      readonly sourcePath: string;
+      readonly source: MigrationOfferEvidence["source"];
+      readonly snapshot: MigrationOfferEvidence["snapshot"];
+    };
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(
@@ -1604,6 +1610,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     );
   }
 
+  function isKnownMigration(value: unknown): value is { readonly offerId: string } {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      onlyKeys(value, ["offerId"]) &&
+      typeof (value as { offerId?: unknown }).offerId === "string" &&
+      (value as { offerId: string }).offerId.length > 0
+    );
+  }
+
   /**
    * A branch-delete opt-in: five non-empty strings echoed back from a report
    * the host itself issued, and nothing else. Shape only — the guard replaces
@@ -2186,6 +2202,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // dialog.
         let selected: readonly ProvisionEntry[] | undefined;
         let selectedPorts: readonly ProvisionPort[] | undefined;
+        let migrationOffer: ReturnType<typeof migrationOffers.get>;
         if (msg.provision !== undefined) {
           // Checked at RUNTIME like its three neighbours above. It was the one
           // field that got only a `!== undefined` before `.offerId` and
@@ -2218,6 +2235,39 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           selected = offered.entries.filter((entry) => wanted.has(entry.id));
           selectedPorts = offered.ports.filter((port) => wanted.has(port.id));
         }
+        if (msg.migrateChanges !== undefined) {
+          if (
+            !isKnownMigration(msg.migrateChanges) ||
+            (msg.mode.kind !== "fresh" && msg.mode.kind !== "fresh-detached" && msg.mode.kind !== "reuse")
+          ) {
+            return;
+          }
+          const offered = migrationOffers.get(msg.migrateChanges.offerId);
+          const source = cache
+            .read()
+            .repos.find((repo) => repo.repoId === msg.repoId)
+            ?.worktrees.find(
+              (row) =>
+                row.id === offered?.sourceWorktreeId &&
+                row.displayPath === offered.sourcePath &&
+                !row.bare &&
+                !row.missing &&
+                !row.prunable,
+            );
+          if (
+            offered === undefined ||
+            offered.surface !== surfaceKey(surface) ||
+            offered.opening !== msg.opening ||
+            offered.repoId !== msg.repoId ||
+            liveOpening.get(surfaceKey(surface)) !== msg.opening ||
+            source === undefined ||
+            options.probeMigrationSource === undefined
+          ) {
+            return;
+          }
+          migrationOffers.delete(msg.migrateChanges.offerId);
+          migrationOffer = offered;
+        }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
           const request = {
             repoId: msg.repoId,
@@ -2229,8 +2279,50 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             ...(selectedPorts === undefined ? {} : { ports: selectedPorts }),
             origin: surface,
           };
+          const runCreate = async (): Promise<void> => {
+            if (migrationOffer === undefined) {
+              await create(request);
+              return;
+            }
+            const current = await options.probeMigrationSource?.(migrationOffer.sourcePath).catch(() => undefined);
+            const source = cache
+              .read()
+              .repos.find((repo) => repo.repoId === migrationOffer.repoId)
+              ?.worktrees.find(
+                (row) =>
+                  row.id === migrationOffer.sourceWorktreeId &&
+                  row.displayPath === migrationOffer.sourcePath &&
+                  !row.bare &&
+                  !row.missing &&
+                  !row.prunable,
+              );
+            if (
+              source === undefined ||
+              current === undefined ||
+              !isDeepStrictEqual(current, migrationOffer.evidence)
+            ) {
+              surface.post({
+                type: "worktreeMutationResult",
+                verb: "create",
+                repoId: msg.repoId,
+                result: {
+                  kind: "error",
+                  message: "the source work changed — close and reopen the dialog, then create again",
+                },
+              });
+              return;
+            }
+            await create({
+              ...request,
+              migration: {
+                sourcePath: migrationOffer.sourcePath,
+                source: migrationOffer.evidence.source,
+                snapshot: migrationOffer.evidence.snapshot,
+              },
+            });
+          };
           if (msg.afterCreate.kind !== "agent") {
-            perform(() => create(request));
+            perform(runCreate);
             return;
           }
           const asked = msg.afterCreate;
@@ -2238,7 +2330,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // refused its launch would leave the user a directory they did not
           // ask for on its own.
           if (admissibleLaunch(surface, asked)) {
-            perform(() => create(request));
+            perform(runCreate);
           }
         }
         return;
