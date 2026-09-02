@@ -8,7 +8,7 @@
 
 - [x] Gate 1: direction approved — ship an indeterminate failure contract
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.10
 Lane: light
-Planned at: 65711861
+Planned at: a55609b1
 Gate 1 choices: ship truthful indeterminate reporting; on 2026-09-02 the user selected best-effort path identity, explicitly accepting unobservable source, intermediate-component, and destination ABA intervals instead of native helpers or deferral.
 Accepted risk: another process can transiently substitute source bytes/components/`.git` or destination between path-based observations and restore them before the next check; execution-time named-path work is authorized, observable drift becomes indeterminate. Owner: worktree subsystem. Reactivate on transactional/typed Git APIs, cross-platform handle-relative Node APIs, or an observed substitution incident.
 Verify lint: Biome 2.4.5 reported 3 pre-existing format errors in `src/agentHooks/AgentHookController.test.ts`, `src/agentHooks/install/ClaudeHookInstaller.test.ts`, and `src/cursor/CursorHookInstaller.test.ts`; this change does not touch them, while all migration-owned files pass check mode.
@@ -43,3 +43,4 @@ Review handback: round 3 closed F006–F007 but accepted F010; replan the whole-
 Gate 2 fastlane: approved after Oracle supported canonical current-root selection, same-record generation/registration lookup, repo-scoped follow-up refusal, and degraded sibling retention for F010.
 Review extension: the user explicitly authorized adding review rounds for this FASTLANE cycle; round 4 may use the one-time extension after F010 is fixed.
 Review handback: round 4 fixed F010 but accepted F012–F014; replan duplicate-folder retention, unpublished-generation refusal, and offer lifecycle checks against current cache authority rather than retained roots.
+Gate 2 fastlane: approved after Oracle supported all-failed duplicate retention, Git-unavailable authority refusal, every host offer checkpoint, and the post-coordinator pre-create check.

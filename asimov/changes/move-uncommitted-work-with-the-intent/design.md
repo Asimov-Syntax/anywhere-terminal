@@ -83,12 +83,17 @@ normalized common directory before listing worktrees and revalidates it after th
 the successful listing's generation and registration in the same internal repository record;
 `WorktreeRepo`, the tree broadcast, and the webview never receive filesystem identities. When any current folder successfully resolves a repository, that one current root is canonical for every
 folder association and order entry naming the same `repoId`; an earlier failed folder remembers that current
-root rather than preserving an older registration. This keeps the failed folder able to retain the group if
-its sibling closes without letting the older root initiate a repo-scoped rebuild. The cache also stores the
-successful listing's registration beside its generation, and `registrationFor` reads both from that same
-record rather than joining public state to the retained root order. A whole-tree rebuild may establish a new registration, while a repo-scoped rebuild must
-retain and revalidate the existing one. Missing or changed evidence makes the listing degraded and
-migration-ineligible rather than minting authority over retained rows.
+root rather than preserving an older registration. When no same-repository folder resolves, every still-open
+failed folder keeps its remembered canonical association so closing one duplicate cannot drop the retained
+group. These retained roots exist only for display, ordering, watches, and later repo-scoped discovery.
+
+The cache stores a successful listing's registration beside its generation and `registrationFor` reads both
+from that same record rather than joining public state to retained root order. A repo-scoped observation while
+the whole tree says Git is unavailable may refresh retained display data, but stores no generation or
+registration authority; private lookup independently refuses while Git is unavailable. A whole-tree rebuild
+may establish a new registration, while a repo-scoped rebuild must retain and revalidate the existing one.
+Missing or changed evidence makes the listing degraded and migration-ineligible rather than minting authority
+over retained rows.
 
 `openCreateFor(info)` freezes both the normalized row id and its public repository generation. The opening
 request returns only those opaque identities to the host. In the same synchronous turn, before starting the
@@ -99,7 +104,11 @@ may advance the generation but retains and revalidates the same private registra
 authoritative generation or registration receives no migration offer.
 
 The host requires the snapshotted registration still be current when the probe resolves, at redemption, and
-after the mutation queue's repo-scoped rebuild. The source probe captures the existing source
+immediately before enqueueing create. After the mutation coordinator's forced repo rebuild, the mutation body
+asks a narrow host binding for the cache's current migration registration before `git worktree add`. Every
+checkpoint derives authority from the currently published generation and its paired registration, never from
+retained `rootFor` identity. This allows a repo-scoped generation advance that revalidated the same
+registration, while refusing retained, degraded, Git-unavailable, or otherwise generation-less groups. The source probe captures the existing source
 `AuthorizedDirectory` component identities plus the `.git` entry's no-follow identity. A remove-and-recreate,
 common-directory replacement, or registration replacement changes one of those identities even when path,
 branch, commit and changed files repeat.
@@ -269,7 +278,7 @@ substitution incident is observed in practice.
 
 | Claim | Semantics | Defeater | Witness/check | Disposition |
 |---|---|---|---|---|
-| The row and final recheck name one owned source | A bracketed worktree listing makes its current root canonical for every same-repository folder association and order entry, and stores its private common-directory registration in the same cached record as its public generation; row selection freezes its normalized id plus that generation, which the host synchronously resolves back to the paired registration before any probe, then binds role, directory, `.git`, admin target, linked placement and back-pointer canonical path plus file identity through the queued rebuild | Earlier failed workspace folder retains registration A while a later current folder publishes the same repo from registration B, or that retained A root later initiates a repo-scoped rebuild; whole-tree registration refresh after row selection but before the first offer probe; degraded retained row; linked-to-standalone substitution; same-inode back-pointer under another name; raw back-pointer alias; cross-repository `.git`; remove/recreate; in-place `.git` rewrite; or admin replacement before the call | Two-folder failed-A/current-B duplicate-repository witness proving generation lookup and `rootFor` both use B, a later repo-scoped observation cannot mint authority from A, and closing B's sibling retains a degraded generation-less group; selected-generation refresh refusal; degraded-row no-offer; listing-bracket and pre-probe common-directory replacement; role substitution; hard-link alias rejection; symlink-spelling alias acceptance; wrong common repository/back-pointer, directory, `.git` content, target and admin-identity witnesses at offer, redemption and final recheck | supported |
+| The row and final recheck name one owned source | A bracketed worktree listing makes its current root canonical for every same-repository folder association and order entry, and stores its private registration in the same cached record as its public generation; all-failed duplicates retain every folder association but no authority; probe completion, redemption, pre-queue handoff, and the mutation body after its forced rebuild each require a currently published generation whose paired registration equals the binding | Earlier failed folder retains A while a later current folder publishes B; retained A later initiates a repo-scoped rebuild; both duplicates fail then the first closes; a Git-unavailable repo-scoped apply hides but privately resolves a guessed generation; a pending probe or issued offer survives degradation through `rootFor`; the coordinator rebuild withdraws authority after host handoff but before create; whole-tree refresh; wrong role/repository; linked topology, `.git`, or admin replacement | Failed-A/current-B paired lookup and canonical-root witness; both-fail then first-closes retention; unavailable guessed-generation no-authority cache/host witnesses; pending-probe and issued-offer degradation refusal; post-coordinator-rebuild refusal before `git worktree add`; same-registration generation advance acceptance; selected-generation refresh, listing bracket, role, alias, repository/back-pointer, directory, `.git`, target and admin-identity witnesses through final recheck | supported |
 | The row appears only for callable source work | Exact source `openRepository` returns a repository with `migrateChanges`, and a bounded snapshot is positive and movable | Capability inferred from another repo; empty, failed, overflowed, unreadable, or unmerged source | Exact-source open plus every ineligible snapshot witness | supported |
 | The stated count is a truthful current snapshot | Displayed N is the issued record count; observed pre-call drift refuses before API entry | Same count with different path, rename origin, mode, link target, or bytes before the call | Replacement witnesses for every dimension plus wording that says "currently" and execution-time work | supported |
 | Untracked work is included | `untracked: true` reaches the API call | Omitting it leaves new files | Exact-options witness | supported |

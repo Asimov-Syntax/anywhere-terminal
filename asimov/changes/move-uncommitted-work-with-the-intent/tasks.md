@@ -214,4 +214,34 @@
     1. `src/worktree/WorktreeCache.ts`: choose one current successful root per repository before failed-folder retention; use it for every same-repository folder association and order entry, store its registration beside the generation in the same cached repository record, and resolve registration there.
     2. `src/worktree/WorktreeCache.test.ts`: cover an earlier failed folder remembering registration A while a later current folder publishes the same repository from registration B; generation lookup and `rootFor` use B, a subsequent repo-scoped rebuild cannot mint authority from A, stale generations remain refused, and closing the successful sibling retains a degraded group without a generation.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1`
+- [ ] 5_2 Retain duplicate folders without hidden authority
+  - **Deps**: 5_1
+  - **Refs**: design.md D3 <!-- review round 4 F012, F013 -->
+  - **Acceptance**:
+    - Outcome: All-failed duplicate folders remain display-only
+    - Verify: unit src/worktree/WorktreeCache.test.ts
+  - **Plan**:
+    1. `src/worktree/WorktreeCache.ts`: use a current canonical root only when one exists; otherwise preserve every failed folder's remembered association, and prevent Git-unavailable repo-scoped applies or private lookups from minting authority.
+    2. `src/worktree/WorktreeCache.test.ts`: cover both duplicate folders failing before one closes, plus Git-unavailable repo-scoped success followed by guessed-generation lookup.
+
+- [ ] 5_3 Recheck current publication authority through offer execution
+  - **Deps**: 5_2
+  - **Refs**: design.md D3 <!-- review round 4 F013, F014 -->
+  - **Acceptance**:
+    - Outcome: Withdrawn publication authority stops pending and issued migration offers
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts`: derive current migration authority from the repository's currently published generation and paired registration at probe completion, redemption, and pre-queue handoff instead of using retained `rootFor` identity; expose that current authority through the narrow mutation binding.
+    2. `src/providers/WorktreeHost.actions.test.ts`: cover guessed hidden generation, pending probe across degradation, issued offer across degradation, pre-queue withdrawal, and same-registration repo-scoped generation advance.
+
+- [ ] 5_4 Recheck authority after the queued rebuild
+  - **Deps**: 5_3
+  - **Refs**: design.md D3 <!-- review round 4 F014 -->
+  - **Acceptance**:
+    - Outcome: A queued authority withdrawal refuses before Git creates the destination
+    - Verify: command pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts'
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: after the coordinator's forced rebuild and before create, require the current migration registration to equal the host-held binding; cover withdrawal, changed registration, unavailable lookup, same-registration generation advance, and no-migration creates.
+    2. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`: bind the mutation service's current-registration check to the host cache authority and prove production passes it through.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4`
