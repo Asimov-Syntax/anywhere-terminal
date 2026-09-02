@@ -31,7 +31,7 @@ describe("createProvisionOfferStore", () => {
         { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
         { id: "i2", path: "mixedcase", mode: "link", source: "orca.yaml" },
       ],
-      contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+      contenders: [{ members: ["i1", "i2"], natives: ["i1"] }],
     });
 
     const live = new Set(offer.model.entries.map((e) => e.id));
@@ -41,12 +41,50 @@ describe("createProvisionOfferStore", () => {
     for (const id of group?.members ?? []) {
       expect(live.has(id)).toBe(true);
     }
-    expect(live.has(group?.favoured ?? "")).toBe(true);
-    // The favoured member is still the repository's own row after reminting,
-    // not merely some id that happens to be live.
-    expect(offer.model.entries.find((e) => e.id === group?.favoured)?.path).toBe("MixedCase");
+    for (const id of group?.natives ?? []) {
+      expect(live.has(id)).toBe(true);
+    }
+    // The repository's own row is still named after reminting, not merely some
+    // id that happens to be live.
+    expect((group?.natives ?? []).map((id) => offer.model.entries.find((e) => e.id === id)?.path)).toEqual([
+      "MixedCase",
+    ]);
     // And the pre-remint ids are gone, so a stale group could not resolve.
     expect(live.has("i1")).toBe(false);
+  });
+
+  it("[round-7 F015] translates a group's repository declarations, not only its members", () => {
+    // `remint` rebuilt each group key by key, so a field added to the group was
+    // silently dropped and the dialog saw a group with no repository
+    // declarations at all. The apply never noticed, because it recomputes its
+    // groups from the entries it is submitted — only the offer side lost.
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, {
+      ...model("MixedCase"),
+      entries: [
+        { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i2", path: "MIXEDCASE", mode: "copy", source: ".vscode/worktree.json" },
+        { id: "i3", path: "mixedcase", mode: "copy", source: "orca.yaml" },
+      ],
+      contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1", "i2"] }],
+    });
+
+    const group = offer.model.contenders[0];
+    const live = new Set(offer.model.entries.map((e) => e.id));
+    const pathOf = new Map(offer.model.entries.map((e) => [e.id, e.path] as const));
+
+    expect(group?.natives).toHaveLength(2);
+    for (const id of group?.natives ?? []) {
+      // The new ids, not the ones the caller handed in. A list carried through
+      // untranslated satisfies every members-only assertion and then resolves
+      // to nothing.
+      expect(live.has(id)).toBe(true);
+      expect(["i1", "i2", "i3"]).not.toContain(id);
+    }
+    expect((group?.natives ?? []).map((id) => pathOf.get(id))).toEqual(["MixedCase", "MIXEDCASE"]);
+    // And still a subset of the members, so the predicate both sides apply
+    // cannot count a declaration the group does not contain.
+    expect((group?.natives ?? []).every((id) => group?.members.includes(id))).toBe(true);
   });
 
   it("offers both members of a contender group rather than withholding either", () => {
@@ -62,7 +100,7 @@ describe("createProvisionOfferStore", () => {
         { id: "i1", path: "MixedCase", mode: "copy", source: ".vscode/worktree.json" },
         { id: "i2", path: "mixedcase", mode: "link", source: "orca.yaml" },
       ],
-      contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+      contenders: [{ members: ["i1", "i2"], natives: ["i1"] }],
     });
 
     const redeemed = store.lookup(A, offer.offerId);

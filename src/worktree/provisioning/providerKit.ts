@@ -404,10 +404,10 @@ export function contendersOf(entries: readonly ProvisionEntry[], favouredSource?
     const native = favouredSource === undefined ? [] : members.filter((e) => e.source === favouredSource);
     groups.push({
       members: members.map((e) => e.id),
-      ...(native.length === 1 && native[0] !== undefined ? { favoured: native[0].id } : {}),
-      // Said out loud rather than left as an absent `favoured`, which the apply
-      // side cannot tell from a favoured row the user unticked (design.md D3b).
-      ...(native.length > 1 ? { priorityClaimedTwice: true as const } : {}),
+      // Reported, not adjudicated. Which members are the repository's own is a
+      // fact about the offer; which one wins depends on what is still selected,
+      // and only the caller looking at a selection can answer that (D3c).
+      natives: native.map((e) => e.id),
     });
   }
   return groups;

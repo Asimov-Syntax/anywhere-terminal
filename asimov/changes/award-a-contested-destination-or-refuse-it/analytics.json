@@ -27,6 +27,10 @@
         {
           "from": 1788314914957,
           "to": 1788315598368
+        },
+        {
+          "from": 1788317457481,
+          "to": null
         }
       ],
       "phases": [
@@ -65,10 +69,14 @@
         {
           "phase": "plan",
           "from": 1788315289344
+        },
+        {
+          "phase": "build",
+          "from": 1788317831028
         }
       ],
       "firstAt": 1788284499327,
-      "lastAt": 1788315581399,
+      "lastAt": 1788317887215,
       "buckets": [
         {
           "runtime": "claude",
@@ -415,15 +423,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 228,
-          "inputTokens": 456,
-          "outputTokens": 169874,
-          "reasoningTokens": 46494,
-          "cacheWriteTokens": 292572,
-          "cacheReadTokens": 52089779,
+          "messages": 251,
+          "inputTokens": 502,
+          "outputTokens": 185204,
+          "reasoningTokens": 47830,
+          "cacheWriteTokens": 316003,
+          "cacheReadTokens": 59700057,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 292572,
+            "cacheWrite1hTokens": 316003,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -433,15 +441,15 @@
           "phase": "build",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 77,
-          "inputTokens": 154,
-          "outputTokens": 44215,
-          "reasoningTokens": 11305,
-          "cacheWriteTokens": 122930,
-          "cacheReadTokens": 13498413,
+          "messages": 83,
+          "inputTokens": 166,
+          "outputTokens": 46553,
+          "reasoningTokens": 11803,
+          "cacheWriteTokens": 164528,
+          "cacheReadTokens": 13959675,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 122930,
+            "cacheWrite1hTokens": 164528,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -496,6 +504,22 @@
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 54688
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-frontend",
+          "model": "claude-sonnet-5",
+          "messages": 2,
+          "inputTokens": 4,
+          "outputTokens": 6,
+          "reasoningTokens": null,
+          "cacheWriteTokens": 28692,
+          "cacheReadTokens": 76761,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 28692
           }
         }
       ]

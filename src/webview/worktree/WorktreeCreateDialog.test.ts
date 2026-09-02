@@ -3461,7 +3461,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
               entries: [...PAIR],
               ports: [],
               setup: [],
-              contenders: [{ members: ["i1", "i2"], favoured: "i1" }],
+              contenders: [{ members: ["i1", "i2"], natives: ["i1"] }],
               ...over,
             }),
           }),
@@ -3496,7 +3496,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
   it("leaves both ticked when no member is the repository's own", () => {
     // Nothing decides between them, and unticking either would pick a winner
     // the apply itself does not.
-    const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
+    const { host } = withPair({ contenders: [{ members: ["i1", "i2"], natives: [] }] });
     const boxes = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb"));
 
     expect(boxes.map((b) => b.checked)).toEqual([true, true]);
@@ -3529,7 +3529,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
   it("names every partner of a three-spelling group, not just one", () => {
     const { host } = withPair({
       entries: [...PAIR, { id: "i3", path: "MIXEDCASE", mode: "copy", source: "orca.yaml" }],
-      contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
+      contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1"] }],
     });
     const first = host.querySelector(".wt-brow-note")?.textContent;
 
@@ -3611,7 +3611,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
   });
 
   it("counts both members when neither is favoured", () => {
-    const { host } = withPair({ contenders: [{ members: ["i1", "i2"] }] });
+    const { host } = withPair({ contenders: [{ members: ["i1", "i2"], natives: [] }] });
 
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 1 linked · 2 spellings may be one file");
   });
@@ -3621,7 +3621,7 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
     // fixture already existed; the summary was never asserted against it.
     const { host } = withPair({
       entries: [...PAIR, { id: "i3", path: "MIXEDCASE", mode: "copy", source: "orca.yaml" }],
-      contenders: [{ members: ["i1", "i2", "i3"], favoured: "i1" }],
+      contenders: [{ members: ["i1", "i2", "i3"], natives: ["i1"] }],
     });
 
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 3 spellings may be one file");
@@ -3635,8 +3635,8 @@ describe("[2_2] a pair that may name one destination is drawn, not withheld", ()
         { id: "i4", path: "other", mode: "copy", source: "orca.yaml" },
       ],
       contenders: [
-        { members: ["i1", "i2"], favoured: "i1" },
-        { members: ["i3", "i4"], favoured: "i3" },
+        { members: ["i1", "i2"], natives: ["i1"] },
+        { members: ["i3", "i4"], natives: ["i3"] },
       ],
     });
 

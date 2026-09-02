@@ -192,40 +192,20 @@
 
 ## 10. Round-7 handback — the offer asks the apply's question
 
-- [ ] 10_1 Carry which members are the repository's own, instead of a winner
+- [x] 10_1 Carry which members are the repository's own, instead of a winner — verified: pnpm exec vitest run 'src/worktree/provisioning/providerKit.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: none
-  - **Refs**: design.md D3c, specs/worktree-panel/spec.md#a-destination-more-than-one-of-the-repository-s-own-declarations-name-is-refused-entire
+  - **Refs**: design.md D3c, specs/worktree-panel/spec.md#a-destination-more-than-one-of-the-repository-s-own-declarations-name-is-refused-entire, specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding
   - **Acceptance**:
-    - Outcome: A contender group states its repository declarations, and the three group states are ranges of that list's length
+    - Outcome: The offer and the apply decide a contested group by one predicate over the selection each is looking at
     - Verify: unit src/worktree/provisioning/providerKit.test.ts
   - **Plan**:
-    1. In `src/types/messages.ts`, replace `ProvisionContenders.favoured` and `priorityClaimedTwice` with the members list D3c names, so no pair of fields can contradict each other.
+    1. In `src/types/messages.ts`, replace `ProvisionContenders.favoured` and `priorityClaimedTwice` with the members list D3c names, so no pair of fields can contradict each other. The consumers below cannot compile without it and cannot be landed apart from it, which is why they are one task.
     2. In `src/worktree/provisioning/providerKit.ts`, have `contendersOf` fill it from the same `source` comparison it already makes, and stop computing a winner.
     3. In `src/worktree/provisioning/applyProvisioning.ts`, have `contestsOf` derive the favoured member and the refuse-entire case from it, keeping D3b's and D4's behaviour exactly as the round-7 witnesses pin it.
-    4. Witness a group with one repository declaration, one with two, and one with none.
-
-- [ ] 10_2 Keep the group's identity across reminting
-  - **Deps**: 10_1
-  - **Refs**: design.md D3c, .reviews/round-7.md
-  - **Acceptance**:
-    - Outcome: A reminted group names the same declarations under the ids the offer issued
-    - Verify: unit src/worktree/provisioning/offerStore.test.ts
-  - **Plan**:
-    1. In `src/worktree/provisioning/offerStore.ts`, translate the new field through `remint` as `members` already is, so no group field can be dropped by being rebuilt one key at a time.
-    2. Witness that a two-repository-declaration group survives an offer round trip naming the ids the offer issued, and that no pre-remint id survives — carrying the list through untranslated passes every members-only assertion and then reads as no repository declarations at all.
-    3. Keep the drop-on-miss the members list already uses, so the new list stays a subset of it.
-
-- [ ] 10_3 Offer a group nothing can decide as one the create will refuse
-  - **Deps**: 10_2
-  - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding, design.md D3c
-  - **Acceptance**:
-    - Outcome: A group with more than one selected repository declaration is offered unselected, says why, and is counted nowhere
-    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
-  - **Plan**:
-    1. In `src/webview/worktree/WorktreeCreateDialog.ts`, replace the winner-based `yieldsTo` with the predicate D3c's table states, read against the selection the dialog currently holds rather than against the offer as issued.
-    2. Give the row a note for the state where nothing can decide — distinct from the yielder's, which names a counterpart whose unticking rescues the row, because here no single counterpart does.
-    3. Keep the note live as the user ticks and unticks, the way the yielder's note already is, and leave the group's rows at the ordinary selected default rather than unselecting any of them.
-    4. Witness the group as offered, and that its rows are selected and counted nowhere.
+    4. In `src/worktree/provisioning/offerStore.ts`, translate the new list through `remint` as `members` already is, with the same drop-on-miss, so no group field can be dropped by being rebuilt one key at a time.
+    5. In `src/webview/worktree/WorktreeCreateDialog.ts`, replace the winner-based `yieldsTo` with the predicate D3c's table states, read against the selection the dialog currently holds; give the undecidable group its own live note, distinct from the yielder's because no single counterpart rescues the row; and leave every row at the ordinary selected default.
+    6. Update the witnesses in `src/worktree/provisioning/offerStore.test.ts`, `src/worktree/provisioning/readProvisioning.test.ts`, `src/worktree/provisioning/asimovProvider.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` that name the replaced field, declaring the suite change.
+    7. Witness in `src/worktree/provisioning/providerKit.test.ts` a group with one repository declaration, one with two, and one with none; and in `src/worktree/provisioning/offerStore.test.ts` that a two-declaration group survives an offer round trip naming the ids the offer issued, with no pre-remint id surviving — carrying the list through untranslated passes every members-only assertion and then reads as no repository declarations at all.
 
 - [ ] 10_4 Record a member's own rule before the contest is settled
   - **Deps**: 10_1
@@ -247,7 +227,7 @@
     1. In `src/worktree/provisioning/applyProvisioning.test.ts`, witness D4 row 3 reached through the pre-pass rather than through the ordered pass, using one fixture that also covers a contest in which every member is refused by its own rule.
 
 - [ ] 10_6 Walk the dialog through every selection of a group nothing can decide
-  - **Deps**: 10_3
+  - **Deps**: 10_1
   - **Refs**: specs/worktree-panel/spec.md#a-declaration-that-will-yield-is-offered-as-yielding, design.md D3c
   - **Acceptance**:
     - Outcome: At every selection of a two-repository-declaration group, the notes and the count say what that selection would receive

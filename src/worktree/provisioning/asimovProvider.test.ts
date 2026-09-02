@@ -258,7 +258,7 @@ describe("a directly-read model carries the contender relation too", () => {
     expect(grouped).toEqual([["MixedCase", "mixedcase"]]);
     // One declaring file, so nothing in it is "the repository's own" relative
     // to the rest — the row the user keeps is theirs to pick (design.md D3).
-    expect(model.contenders[0]?.favoured).toBeUndefined();
+    expect(model.contenders[0]?.natives).toEqual([]);
   });
 });
 

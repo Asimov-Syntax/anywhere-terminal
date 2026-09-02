@@ -835,11 +835,13 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.contenders.length).toBe(1);
     const group = model.contenders[0];
     expect(group?.members.length).toBe(2);
-    // Favoured is the repository's own row — the one the merge rule would have
-    // picked if it could have proved the two are one destination.
+    // The repository's own row is named as such — the one the merge rule would
+    // pick if it could prove the two are one destination. Which member wins is
+    // the apply's and the dialog's answer against a selection, never the read
+    // path's (design.md D3c).
     const native_ = model.entries.find((e) => e.path === native);
-    expect(group?.favoured === undefined).toBe(!favoured);
-    expect(group?.favoured).toBe(native_?.id);
+    expect(group?.natives.length === 1).toBe(favoured);
+    expect(group?.natives).toEqual([native_?.id]);
   });
 
   it("leaves a group of two inherited declarations with no favoured member", async () => {
@@ -855,7 +857,7 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
 
     expect(model.entries.length).toBe(2);
     expect(model.contenders.length).toBe(1);
-    expect(model.contenders[0]?.favoured).toBeUndefined();
+    expect(model.contenders[0]?.natives).toEqual([]);
   });
 
   it("makes three spellings of one name ONE group, not three pairs", async () => {
@@ -924,9 +926,9 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
     expect(model.entries.length).toBe(2);
     expect(model.contenders.length).toBe(1);
     expect(model.contenders[0]?.members.length).toBe(2);
-    // No native declaration exists, so nothing is favoured rather than one of
+    // No native declaration exists, so nothing claims priority rather than one of
     // the two inherited rows being promoted.
-    expect(model.contenders[0]?.favoured).toBeUndefined();
+    expect(model.contenders[0]?.natives).toEqual([]);
   });
 
   it("[round-3 F001] groups the pairs a curated list kept missing", async () => {

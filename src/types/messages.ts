@@ -929,22 +929,17 @@ export interface ProvisionContenders {
   /** Two or more entry ids from the same model. */
   readonly members: readonly string[];
   /**
-   * The member the merge rule favours, present only when exactly one of them is
-   * the repository's own declaration. Two native members, or none, leave this
-   * absent rather than picking one — a fabricated winner is worse than an
-   * honest "this needs deciding where it can be observed".
-   */
-  readonly favoured?: string;
-  /**
-   * Set when MORE THAN ONE member is the repository's own declaration.
+   * The members the repository's own file declared, in `members` order.
    *
-   * Absent `favoured` means two opposite things, and the apply side has to tell
-   * them apart: nothing claims priority — a favoured row the user unticked, so
-   * the members are applied as they are — or priority is claimed twice, where
-   * nothing available can choose and the group is refused entire
-   * (design.md D3b, .reviews/round-6.md OOB-F015).
+   * Which members are the repository's own, rather than a pre-computed winner:
+   * a winner is decided against the whole offer and goes stale the moment the
+   * user unticks a row, so both the dialog and the apply answer from this list
+   * against the selection in front of them (design.md D3c) — more than one is
+   * refused entire, exactly one is favoured, none claims priority. The three
+   * states are ranges of one list's length, so no pair of fields can contradict
+   * each other.
    */
-  readonly priorityClaimedTwice?: true;
+  readonly natives: readonly string[];
 }
 
 export interface ProvisionModel {

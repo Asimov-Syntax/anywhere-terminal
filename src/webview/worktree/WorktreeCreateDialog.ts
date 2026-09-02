@@ -293,6 +293,12 @@ export { sanitizeBranchForPath };
  * value anything reads yet — WT-012.2 is where a checkbox first decides
  * anything.
  */
+/** One of the repository's own declarations competing for a destination. */
+interface Claimant {
+  id: string;
+  path: string;
+}
+
 interface BringRow {
   id: string;
   verb: string;
@@ -332,6 +338,15 @@ interface BringRow {
    * unticking the repository's own is what makes it arrive.
    */
   yields?: { id: string; path: string };
+  /**
+   * More than one of the repository's own declarations names this destination.
+   *
+   * Carries the paths that claim it, because no single one of them can be
+   * unticked to rescue the row — leaving exactly one selected is what settles
+   * it, and the user has to be told which ones are competing to do that
+   * (design.md D3c).
+   */
+  contested?: readonly Claimant[];
 }
 
 /**
@@ -344,15 +359,25 @@ interface BringRow {
 /**
  * Rows the apply will refuse, against the spelling that takes their place.
  *
- * Only a group with a favoured member has losers. A group with none is left
- * alone: nothing decides between its members, and unselecting either would pick
- * a winner the apply itself does not.
+ * Decided by the repository declarations still SELECTED, which is the predicate
+ * the apply applies to the entries it is submitted (design.md D3c): exactly one
+ * makes that one favoured and the rest yield, none leaves nothing claiming
+ * priority, and more than one is refused entire — that last case has no single
+ * counterpart to name, so `refusedEntire` below carries it instead.
+ *
+ * Reading the SELECTION rather than the offer is the whole point. A winner
+ * computed once against the full offer goes stale the moment a row is unticked,
+ * which is how this statement diverged from the apply at rounds 3, 5 and 7.
  */
-function yieldsTo(model: WorktreeProvisionOffer["model"]): Map<string, { id: string; path: string }> {
+function yieldsTo(
+  model: WorktreeProvisionOffer["model"],
+  selected: ReadonlySet<string>,
+): Map<string, { id: string; path: string }> {
   const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
   const losers = new Map<string, { id: string; path: string }>();
   for (const group of model.contenders) {
-    const id = group.favoured;
+    const claiming = group.natives.filter((member) => selected.has(member));
+    const id = claiming.length === 1 ? claiming[0] : undefined;
     const path = id === undefined ? undefined : pathOf.get(id);
     if (id === undefined || path === undefined) {
       continue;
@@ -386,6 +411,52 @@ function contenderPartners(model: WorktreeProvisionOffer["model"]): Map<string, 
 }
 
 /**
+ * Rows the apply will refuse because more than one of the repository's own
+ * declarations for their destination is selected.
+ *
+ * The other half of D3c's predicate, and the half with no counterpart to name:
+ * nothing decides between two of the repository's own declarations, so no
+ * single row can be unticked to rescue the group — the user has to leave one of
+ * them selected, which is why every member says so rather than one of them.
+ *
+ * Selected is the ORDINARY default here, unlike a yielder. Unticking is what
+ * makes a yielder's group succeed, so unticked is the state its note describes;
+ * this group has no succeeding state to default to, and offering it unselected
+ * would make every row's note false at the very selection it was offered at.
+ */
+function contestedBy(model: WorktreeProvisionOffer["model"]): Map<string, readonly Claimant[]> {
+  const pathOf = new Map(model.entries.map((e) => [e.id, e.path] as const));
+  const claimed = new Map<string, readonly Claimant[]>();
+  for (const group of model.contenders) {
+    // Every repository declaration in the group, not only the selected ones:
+    // the note has to be able to come BACK when the user selects a second one
+    // again, and a note that was never rendered cannot.
+    const claiming = group.natives.flatMap((id) => {
+      const path = pathOf.get(id);
+      return path === undefined ? [] : [{ id, path }];
+    });
+    if (claiming.length < 2) {
+      continue;
+    }
+    for (const member of group.members) {
+      claimed.set(member, claiming);
+    }
+  }
+  return claimed;
+}
+
+/** The members no selection of theirs can bring over, for the selection held. */
+function refusedEntire(model: WorktreeProvisionOffer["model"], selected: ReadonlySet<string>): ReadonlySet<string> {
+  const refused = new Set<string>();
+  for (const [member, claiming] of contestedBy(model)) {
+    if (claiming.filter((c) => selected.has(c.id)).length > 1) {
+      refused.add(member);
+    }
+  }
+  return refused;
+}
+
+/**
  * The offer as one flat list, in the order the section renders.
  *
  * Flat rather than grouped by kind because § 2.4's selection is one flat list of
@@ -394,13 +465,21 @@ function contenderPartners(model: WorktreeProvisionOffer["model"]): Map<string, 
  * spec says each row names the file that declared it, which a "Copy 2 files"
  * row cannot do once two files came from two providers.
  */
-function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
+function bringRows(model: WorktreeProvisionOffer["model"], selected?: ReadonlySet<string>): BringRow[] {
   const rows: BringRow[] = [];
   const partners = contenderPartners(model);
-  const yielding = yieldsTo(model);
+  // The initial render has no selection yet, so it asks the predicate what the
+  // DEFAULT would receive: every entry selected. That default is a fixed point
+  // — a yielder is then refused and offered unticked, and an undecidable group
+  // is refused and says so while staying ticked, because no tick state of it
+  // succeeds (design.md D3c).
+  const holding = selected ?? new Set(model.entries.map((e) => e.id));
+  const yielding = yieldsTo(model, holding);
+  const contested = contestedBy(model);
   for (const entry of model.entries) {
     const named = partners.get(entry.id);
     const loses = yielding.get(entry.id);
+    const claimed = contested.get(entry.id);
     rows.push({
       id: entry.id,
       verb: entry.mode === "link" ? "Link" : "Copy",
@@ -410,6 +489,7 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
       ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
       ...(named === undefined ? {} : { contender: named }),
       ...(loses === undefined ? {} : { yields: loses }),
+      ...(claimed === undefined ? {} : { contested: claimed }),
     });
   }
   for (const port of model.ports) {
@@ -470,9 +550,15 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
   // pre-existing — a setup step is offered unticked and still counted, because
   // the line says what the repository asks for and the checkbox says whether it
   // is granted — and this change does not own it.
-  const yielding = yieldsTo(model);
+  const yielding = yieldsTo(model, selected);
+  const contested = refusedEntire(model, selected);
   const brought = model.entries.filter((e) => {
     if (!selected.has(e.id)) {
+      return false;
+    }
+    // Nothing in a group with two selected repository declarations arrives:
+    // the apply refuses it entire before it reads anything (design.md D3b).
+    if (contested.has(e.id)) {
       return false;
     }
     // Selected is not the same as arriving. A yielder the user ticked BACK ON
@@ -647,6 +733,18 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     note.className = "wt-brow-note wt-brow-yield";
     note.dataset.favoured = row.yields.id;
     note.textContent = `refused while ${row.yields.path} is selected`;
+    meta.appendChild(note);
+  }
+  if (row.contested !== undefined) {
+    // Live like the yielding note, and for the same reason: the user settles
+    // this by leaving exactly one of the named declarations selected, and a
+    // standing notice would then describe a state that has lapsed. The ids it
+    // watches travel with it, because no single one of them is the one to
+    // untick (design.md D3c).
+    const note = document.createElement("span");
+    note.className = "wt-brow-note wt-brow-contested";
+    note.dataset.claiming = row.contested.map((c) => c.id).join(" ");
+    note.textContent = `refused while ${row.contested.map((c) => c.path).join(" and ")} are both selected — the repository declares this destination more than once`;
     meta.appendChild(note);
   }
   if (row.excluded === true) {
@@ -1096,6 +1194,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     for (const note of bringBox.querySelectorAll<HTMLElement>(".wt-brow-yield")) {
       const favoured = note.dataset.favoured;
       note.hidden = favoured === undefined || !ticked.has(favoured);
+    }
+    // The condition here is a COUNT, not one id: the group is refused while
+    // more than one of the named declarations is selected, and leaving exactly
+    // one is what settles it (design.md D3c).
+    for (const note of bringBox.querySelectorAll<HTMLElement>(".wt-brow-contested")) {
+      const claiming = note.dataset.claiming;
+      const ids = claiming === undefined || claiming === "" ? [] : claiming.split(" ");
+      note.hidden = ids.filter((id) => ticked.has(id)).length < 2;
     }
   }
 

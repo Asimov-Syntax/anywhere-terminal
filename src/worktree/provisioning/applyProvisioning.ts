@@ -69,8 +69,14 @@ function contestsOf(entries: readonly ProvisionEntry[]): Contest[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const contests: Contest[] = [];
   for (const group of contendersOf(entries, NATIVE_PROVIDER_FILE)) {
-    const favoured = group.favoured === undefined ? undefined : byId.get(group.favoured);
-    if (favoured === undefined && group.priorityClaimedTwice !== true) {
+    // One predicate, the same one the dialog applies to the selection it holds
+    // (design.md D3c). More than one repository declaration is refused entire —
+    // nothing available chooses between them (D3b) — exactly one is favoured,
+    // and none means nothing claims priority, so the members are applied as
+    // they are.
+    const natives = group.natives.map((id) => byId.get(id)).filter((e): e is ProvisionEntry => e !== undefined);
+    const favoured = natives.length === 1 ? natives[0] : undefined;
+    if (favoured === undefined && natives.length < 2) {
       continue;
     }
     const held = group.members

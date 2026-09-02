@@ -5,6 +5,7 @@ import {
   type AdapterRead,
   addSetup,
   contained,
+  contendersOf,
   emitted,
   emptyModel,
   entriesFor,
@@ -460,5 +461,56 @@ describe("[D1] an adapter answers from one open of each file it reads", () => {
 
     expect(answer.extends).toBe("asimov/worktree.yaml");
     expect(answer.exclude).toEqual([".cache"]);
+  });
+});
+
+// [round-7 F007 / D3c] A group used to carry a pre-computed winner. A winner
+// computed against the whole offer is stale the moment the user unticks a row,
+// which is how the dialog kept stating an arriving set the apply then refused.
+// What the group carries now is WHICH members the repository's own file
+// declared, so both sides answer the same question against the selection in
+// front of them: more than one → refused entire, exactly one → favoured, none →
+// nothing claims priority.
+describe("[round-7 F007] a contender group names the repository's own declarations", () => {
+  const NATIVE = ".vscode/worktree.json";
+  const INHERITED = "asimov/worktree.yaml";
+  const at = (path: string, source: string, id: string) => ({ id, path, mode: "copy" as const, source });
+
+  it("names the one repository declaration in an ordinary contest", () => {
+    const groups = contendersOf([at("MixedCase", NATIVE, "i1"), at("mixedcase", INHERITED, "i2")], NATIVE);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.natives).toEqual(["i1"]);
+  });
+
+  it("names both when the repository's own file declares the destination twice", () => {
+    const groups = contendersOf(
+      [at("MixedCase", NATIVE, "i1"), at("MIXEDCASE", NATIVE, "i2"), at("mixedcase", INHERITED, "i3")],
+      NATIVE,
+    );
+    expect(groups[0]?.natives).toEqual(["i1", "i2"]);
+  });
+
+  it("names none when nothing in the group claims priority", () => {
+    const groups = contendersOf([at("MixedCase", INHERITED, "i1"), at("mixedcase", INHERITED, "i2")], NATIVE);
+    expect(groups[0]?.natives).toEqual([]);
+  });
+
+  it("names none at all when no repository file was given", () => {
+    const groups = contendersOf([at("MixedCase", NATIVE, "i1"), at("mixedcase", INHERITED, "i2")]);
+    expect(groups[0]?.natives).toEqual([]);
+  });
+
+  it("keeps the list a subset of the members, in members order", () => {
+    const groups = contendersOf(
+      [at("mixedcase", INHERITED, "i1"), at("MixedCase", NATIVE, "i2"), at("MIXEDCASE", NATIVE, "i3")],
+      NATIVE,
+    );
+    const group = groups[0];
+    expect(group?.members).toEqual(["i1", "i2", "i3"]);
+    expect(group?.natives).toEqual(["i2", "i3"]);
+  });
+
+  it("drops a group the folding key does not actually collide", () => {
+    expect(contendersOf([at("a", NATIVE, "i1"), at("b", INHERITED, "i2")], NATIVE)).toEqual([]);
   });
 });
