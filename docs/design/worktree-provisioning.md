@@ -420,6 +420,32 @@ Writing preserves the existing file's formatting and comments where one exists; 
 written with `extends` pointing at whatever provider detection made active, so the first write is
 additive rather than a snapshot that freezes today's framework config.
 
+What the write is allowed to hold rules about, and what it must ask:
+
+- **Eligibility of the base is the READER's, whole.** The writer asks `baseFor`
+  (`readProvisioning.ts`) whether the file an `extends` would name is usable, and holds no rule of
+  its own about names, containment, existence, type or readability. Four review rounds each added
+  one missing clause to a writer-local check — the declared base uncovered, then probed without
+  validation, then validated as a name only, then name plus containment plus existence but never
+  readability — and each time the save recorded a base the very next read refused. Asking the
+  reader is what makes a rule it gains impossible to miss here.
+- **The destination is the value the containment check authorized**, not the spelling handed to it.
+  `authorizedPathInsideRoot` re-resolves its candidate by contract, so the path it approves is its
+  own resolution; building a destination from the original spelling builds from a value nobody
+  checked. The two coincide on a quiescent filesystem and diverge exactly when it matters.
+- **Everything the write depends on is observed under the lock**, which spans the whole
+  read-modify-write rather than the commit alone: a symlink verdict or a mode taken outside it
+  describes a file the write need not be landing on, and two saves that both read first produce
+  serialized renames and a lost update.
+- **The mode is the existing file's, or `0o644` masked by the process umask** for a first create.
+  `stageReplacement` opens its temporary `0o600`, so a file created through it would otherwise land
+  at a mode nobody chose; and the umask narrows the create but not the chmod, so masking has to
+  happen before the value is passed.
+- **A directory identity this cannot pin is delegated, not assumed.** `LockedFile` serializes an
+  inode while every other operation names a string, so a rename-plus-symlink at that spelling
+  redirects the lock, the temporary, the read and the commit together. WT-012.19 owns the
+  descriptor-anchored write; the obligations that depend on it say so rather than claiming safety.
+
 ## 7. Security
 
 - **Every path is repo-relative and must resolve inside the repository.** Containment is checked

@@ -638,7 +638,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | user-visible-ui |
 | **Notes** | The only task in the phase that writes a config file, sequenced last among the read tasks for that reason. Switching the active provider is also a write to this file — it rewrites `extends`, never the other framework's file |
 | **Acceptance** | Changing an inherited entry produces an inline entry or an exclude rather than an edit to the provider's file; a provider file is byte-identical after any operation this control offers; a first write points `extends` at whatever detection made active rather than freezing today's resolved list; an existing native file keeps its formatting and comments; switching the active provider rewrites only `extends` |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.6] Ports Are Allocated and Named Before They Collide
 

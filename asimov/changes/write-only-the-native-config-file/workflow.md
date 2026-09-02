@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [x] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
@@ -271,3 +271,10 @@ Planned at: e0c17b04
   which this change does not own and which every provider read shares. Both remediation-boundary
   signals fire, so it is its own change and this one depends on it. The writer stays as it is —
   a writer-side `lstat` is exactly the reconstruction F025 spent four rounds refuting.
+- Verify gate ticked with a known-flaky file named, per the gate rule: `src/extension.worktreeAssembly.test.ts`
+  fails a DIFFERENT test on most full-suite runs and reproduces on a clean detached worktree at
+  HEAD with a zero-file diff (1 of 5 runs there, 3 of 4 here). This change touches neither that
+  file nor `src/extension.ts`. `src/agentHooks/AgentHookRuntime.test.ts` appeared in the same class
+  once; since this change DOES edit `src/agentHooks/install/lockedJsonFile.ts`, that suite was run
+  five times in isolation and passed 220/220 every time, so it is the same load-order flake and not
+  this change's.
