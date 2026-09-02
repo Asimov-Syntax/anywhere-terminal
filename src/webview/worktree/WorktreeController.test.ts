@@ -2437,7 +2437,12 @@ describe("what a mutation did comes back to the panel", () => {
       ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5184 } }],
       contests: [{ members: [{ id: "i1", path: ".env", source: "asimov/worktree.yaml" }] }],
       setup: [
-        { id: "s1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "failed", reason: "exit 1" } },
+        {
+          id: "s1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "exit 1" },
+        },
       ],
       setupOutputId: "output-1",
       setupRetryId: "retry-1",
@@ -2461,14 +2466,16 @@ describe("what a mutation did comes back to the panel", () => {
 
   it("posts only opaque setup output and retry actions", () => {
     const h = ready();
-    const deps = (h.controller as unknown as {
-      view: {
-        deps: {
-          onRetrySetup(result: WorktreeActionResult): void;
-          onViewSetupOutput(result: WorktreeActionResult): void;
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            onRetrySetup(result: WorktreeActionResult): void;
+            onViewSetupOutput(result: WorktreeActionResult): void;
+          };
         };
-      };
-    }).view.deps;
+      }
+    ).view.deps;
     h.posts.length = 0;
     const result: WorktreeActionResult = {
       action: "create",

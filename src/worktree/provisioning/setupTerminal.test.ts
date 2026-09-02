@@ -31,7 +31,14 @@ function child(): { child: Pty; data: (value: string) => void; exit: () => void 
 
 describe("SetupTerminal", () => {
   it("does not attach a child until open, streams and bounds its transcript, and forwards input", async () => {
-    let pseudo: { open?: () => void; close?: () => void; handleInput?: (data: string) => void; onDidWrite: (listener: (data: string) => void) => { dispose(): void } } | undefined;
+    let pseudo:
+      | {
+          open?: () => void;
+          close?: () => void;
+          handleInput?: (data: string) => void;
+          onDidWrite: (listener: (data: string) => void) => { dispose(): void };
+        }
+      | undefined;
     const fire = vi.fn();
     const terminal = new SetupTerminal({
       createTerminal: vi.fn((options) => {

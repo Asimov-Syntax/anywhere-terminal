@@ -108,7 +108,11 @@ describe("runSetup", () => {
     );
 
     const [, args] = spawn.mock.calls[0] as unknown as [string, string[]];
-    expect(spawn).toHaveBeenCalledWith("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", expect.any(String)], expect.anything());
+    expect(spawn).toHaveBeenCalledWith(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-EncodedCommand", expect.any(String)],
+      expect.anything(),
+    );
     expect(Buffer.from(args[3] as string, "base64").toString("utf16le")).toBe(script);
     expect(result.steps[0]?.outcome).toEqual({ kind: "failed", reason: "exited with code 7" });
     expect(result.steps[1]?.outcome).toEqual({ kind: "skipped", reason: "previous setup step failed" });

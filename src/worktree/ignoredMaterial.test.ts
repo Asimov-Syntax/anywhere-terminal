@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { deriveProvisionManifest } from "./provisioning/provisionManifest";
 import {
   type DiskIgnoredOptions,
   diskIgnoredDeps,
@@ -8,6 +7,7 @@ import {
   MAX_IGNORED_MS,
   measureIgnoredMaterial,
 } from "./ignoredMaterial";
+import { deriveProvisionManifest } from "./provisioning/provisionManifest";
 
 /**
  * A fake worktree's ignored content. `sizes` maps a worktree-relative path to

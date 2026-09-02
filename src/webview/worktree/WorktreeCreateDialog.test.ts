@@ -721,7 +721,10 @@ describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
       },
     });
     applyOffer?.(REPO_ID, provisionOffer(over));
-    return { ...h, offer: (next: Parameters<typeof provisionOffer>[0] = {}) => applyOffer?.(REPO_ID, provisionOffer(next)) };
+    return {
+      ...h,
+      offer: (next: Parameters<typeof provisionOffer>[0] = {}) => applyOffer?.(REPO_ID, provisionOffer(next)),
+    };
   }
 
   it("renders off, and stays off, by default", () => {

@@ -2818,12 +2818,18 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
 
     view.setData({ ...populated(), actionResults: [result(false)] });
     expect(view.element.textContent ?? "").toContain("0 of 1 setup steps completed");
-    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "Retry setup")).toBe(true);
+    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "Retry setup")).toBe(
+      true,
+    );
 
     view.setData({ ...populated(), actionResults: [result(true)] });
     expect(view.element.textContent ?? "").toContain("1 of 1 setup steps completed");
-    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "Retry setup")).toBe(false);
-    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "View output")).toBe(true);
+    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "Retry setup")).toBe(
+      false,
+    );
+    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "View output")).toBe(
+      true,
+    );
   });
 
   it("[F005] says nothing about provisioning on a create that provisioned nothing", () => {

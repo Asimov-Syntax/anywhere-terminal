@@ -5819,16 +5819,13 @@ describe("the provisioning a create is actually given", () => {
       throw new Error("expected provisioning offer");
     }
 
-    built.host.handleMessage(
-      built.view,
-      {
-        ...REQ,
-        provision: {
-          offerId: offer.offerId,
-          itemIds: [offer.model.entries[0]?.id ?? "", offer.model.ports[0]?.id ?? "", offer.model.setup[0]?.id ?? ""],
-        },
-      } as Parameters<typeof built.host.handleMessage>[1],
-    );
+    built.host.handleMessage(built.view, {
+      ...REQ,
+      provision: {
+        offerId: offer.offerId,
+        itemIds: [offer.model.entries[0]?.id ?? "", offer.model.ports[0]?.id ?? "", offer.model.setup[0]?.id ?? ""],
+      },
+    } as Parameters<typeof built.host.handleMessage>[1]);
     await settle();
 
     expect(creates(built.calls)[0]?.[1]).toMatchObject({

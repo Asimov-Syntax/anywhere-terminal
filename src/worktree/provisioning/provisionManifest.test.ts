@@ -80,7 +80,12 @@ const FAILED_PORT: ProvisionPortResult = {
   outcome: { kind: "failed", reason: "no distinct port could be allocated" },
 };
 
-const OK_SETUP: ProvisionSetupResult = { id: "s1", source: ".vscode/tasks.json", script: "npm ci", outcome: { kind: "ok" } };
+const OK_SETUP: ProvisionSetupResult = {
+  id: "s1",
+  source: ".vscode/tasks.json",
+  script: "npm ci",
+  outcome: { kind: "ok" },
+};
 const FAILED_SETUP: ProvisionSetupResult = {
   id: "s2",
   source: "package.json",
@@ -96,12 +101,7 @@ const SKIPPED_SETUP: ProvisionSetupResult = {
 
 describe("deriveProvisionManifest", () => {
   it("keeps only material this process actually wrote", () => {
-    const manifest = deriveProvisionManifest(
-      [COPIED, LINKED, DEGRADED, SKIPPED, REFUSED, FAILED_STEP],
-      [],
-      [],
-      0,
-    );
+    const manifest = deriveProvisionManifest([COPIED, LINKED, DEGRADED, SKIPPED, REFUSED, FAILED_STEP], [], [], 0);
 
     expect(manifest.materialized).toEqual([
       { path: ".env.worktree", mode: "copy" },

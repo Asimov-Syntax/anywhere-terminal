@@ -108,3 +108,12 @@
     - Verify: command pnpm exec biome check src/extension.ts src/extension.worktreeAssembly.test.ts src/providers/WorktreeHost.ts src/worktree/worktreeMutationService.ts
   - **Plan**:
     1. Apply only the block, import-order, and line-layout changes reported by check mode in `src/extension.ts`, `src/extension.worktreeAssembly.test.ts`, `src/providers/WorktreeHost.ts`, and `src/worktree/worktreeMutationService.ts`.
+
+- [x] 4_4 Complete Biome conformance across the setup delta — verified: git diff --name-only 45dab796 -- 'src/**' | xargs pnpm exec biome check && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_3
+  - **Refs**: design.md D1, D2, D3, D4, D5, D6
+  - **Acceptance**:
+    - Outcome: all remaining setup-delta files pass the current repository formatter and linter without behavioral changes
+    - Verify: command git diff --name-only 45dab796 -- 'src/**' | xargs pnpm exec biome check
+  - **Plan**:
+    1. Apply only check-mode block, import-order, and line-layout findings in `src/providers/WorktreeHost.actions.test.ts`, `src/webview/worktree/WorktreeController.test.ts`, `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/WorktreeView.ts`, `src/webview/worktree/WorktreeView.test.ts`, `src/worktree/ignoredMaterial.test.ts`, `src/worktree/provisioning/provisionManifest.test.ts`, `src/worktree/provisioning/setupRunner.ts`, `src/worktree/provisioning/setupRunner.test.ts`, `src/worktree/provisioning/setupTerminal.ts`, and `src/worktree/provisioning/setupTerminal.test.ts`.

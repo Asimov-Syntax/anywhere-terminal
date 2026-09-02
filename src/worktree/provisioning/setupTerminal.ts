@@ -57,11 +57,15 @@ export class SetupTerminal {
 
   /** Show the terminal and wait until VS Code accepts output. */
   open(): Promise<boolean> {
-    if (this.openPromise) return this.openPromise;
+    if (this.openPromise) {
+      return this.openPromise;
+    }
     const pseudoterminal: PseudoterminalLike = {
       onDidWrite: this.writerForLiveTerminal().event,
       open: () => {
-        if (this.closed) return;
+        if (this.closed) {
+          return;
+        }
         this.opened = true;
         this.resolveOpen?.(true);
         this.connectChild();
@@ -104,7 +108,9 @@ export class SetupTerminal {
 
   /** Reveal live output or recreate a read-only terminal from the bounded tail. */
   reveal(outputId: string, origin: string): boolean {
-    if (this.retainedOutput?.id !== outputId || this.retainedOutput.origin !== origin) return false;
+    if (this.retainedOutput?.id !== outputId || this.retainedOutput.origin !== origin) {
+      return false;
+    }
     if (!this.closed && this.terminal) {
       this.terminal.show(true);
       return true;
@@ -116,7 +122,9 @@ export class SetupTerminal {
       pty: {
         onDidWrite: emitter.event,
         open: () => {
-          if (transcript) emitter.fire(transcript);
+          if (transcript) {
+            emitter.fire(transcript);
+          }
         },
         close: () => emitter.dispose(),
       },
@@ -130,12 +138,16 @@ export class SetupTerminal {
   }
 
   private writerForLiveTerminal(): EmitterLike {
-    if (!this.writer) this.writer = this.createEmitter();
+    if (!this.writer) {
+      this.writer = this.createEmitter();
+    }
     return this.writer;
   }
 
   private connectChild(): void {
-    if (!this.opened || this.closed || !this.child || this.childData) return;
+    if (!this.opened || this.closed || !this.child || this.childData) {
+      return;
+    }
     this.childData = this.child.onData((data) => {
       this.append(data);
       this.writer?.fire(data);
@@ -150,18 +162,24 @@ export class SetupTerminal {
     }
     let start = bytes.length - TRANSCRIPT_LIMIT;
     // Do not turn a multi-byte character split at the tail boundary into U+FFFD.
-    while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start += 1;
+    while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) {
+      start += 1;
+    }
     this.tail = bytes.subarray(start).toString("utf8");
   }
 
   private close(): void {
-    if (this.closed) return;
+    if (this.closed) {
+      return;
+    }
     this.closed = true;
     this.resolveOpen?.(false);
     this.child?.kill();
     this.childData?.dispose();
     this.childData = undefined;
-    for (const listener of this.closeListeners) listener();
+    for (const listener of this.closeListeners) {
+      listener();
+    }
     this.closeListeners.clear();
     this.writer?.dispose();
   }

@@ -1877,7 +1877,9 @@ function provisionKey(result: WorktreeActionResult): string {
 function setupSummary(
   setup: WorktreeActionResult["setup"],
 ): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
-  if (setup === undefined || setup.length === 0) return undefined;
+  if (setup === undefined || setup.length === 0) {
+    return undefined;
+  }
   const ok = setup.filter((step) => step.outcome.kind === "ok");
   const failed = setup.filter((step) => step.outcome.kind === "failed");
   const skipped = setup.filter((step) => step.outcome.kind === "skipped");

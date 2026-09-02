@@ -1,7 +1,7 @@
 import type { NodePtyModule, Pty } from "../../pty/PtyManager";
 import { buildEnvironment, detectShell, loadNodePty } from "../../pty/PtyManager";
 import type { ProvisionSetupResult, ProvisionSetupStep } from "../../types/messages";
-import { directoryStillAuthorized, type AuthorizedDirectory } from "../../utils/authorizedDirectory";
+import { type AuthorizedDirectory, directoryStillAuthorized } from "../../utils/authorizedDirectory";
 import { messageOf } from "../errorMessage";
 
 const SETUP_DEADLINE_MS = 2 * 60 * 60 * 1000;
@@ -60,7 +60,12 @@ export async function runSetup(input: SetupRunInput, dependencies: SetupRunnerDe
 
   for (const step of input.steps) {
     if (stoppedReason !== undefined) {
-      results.push(skipped(step, stoppedReason === "previous setup step failed" ? stoppedReason : `setup stopped: ${stoppedReason}`));
+      results.push(
+        skipped(
+          step,
+          stoppedReason === "previous setup step failed" ? stoppedReason : `setup stopped: ${stoppedReason}`,
+        ),
+      );
       continue;
     }
     if (now() >= deadline) {
@@ -120,7 +125,11 @@ async function runStep(
   }
 
   dependencies.terminal.attach(child);
-  const settled = await waitForExit(child, dependencies.terminal, Math.max(0, dependencies.deadline - dependencies.now()));
+  const settled = await waitForExit(
+    child,
+    dependencies.terminal,
+    Math.max(0, dependencies.deadline - dependencies.now()),
+  );
   if (settled.kind === "exit" && settled.exitCode === 0 && settled.signal === undefined) {
     return { ok: true, reason: "", result: ok(step) };
   }
@@ -174,7 +183,9 @@ function waitForOpen(terminal: SetupRunTerminal, timeout: number): Promise<boole
   return new Promise((resolve) => {
     let settled = false;
     const settle = (opened: boolean): void => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       clearTimeout(timer);
       resolve(opened);
@@ -188,10 +199,7 @@ function waitForOpen(terminal: SetupRunTerminal, timeout: number): Promise<boole
   });
 }
 
-type ProcessSettlement =
-  | { kind: "exit"; exitCode: number; signal?: number }
-  | { kind: "timeout" }
-  | { kind: "closed" };
+type ProcessSettlement = { kind: "exit"; exitCode: number; signal?: number } | { kind: "timeout" } | { kind: "closed" };
 
 function waitForExit(child: Pty, terminal: SetupRunTerminal, timeout: number): Promise<ProcessSettlement> {
   return new Promise((resolve) => {
@@ -200,9 +208,13 @@ function waitForExit(child: Pty, terminal: SetupRunTerminal, timeout: number): P
     let exitSubscription: { dispose(): void } | undefined;
     let closeSubscription: { dispose(): void } | undefined;
     const settle = (result: ProcessSettlement): void => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
-      if (timer !== undefined) clearTimeout(timer);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
       closeSubscription?.dispose();
       exitSubscription?.dispose();
       resolve(result);
@@ -238,4 +250,3 @@ function failed(step: ProvisionSetupStep, reason: string): ProvisionSetupResult 
 function skipped(step: ProvisionSetupStep, reason: string): ProvisionSetupResult {
   return { id: step.id, source: step.source, script: step.script, outcome: { kind: "skipped", reason } };
 }
-
