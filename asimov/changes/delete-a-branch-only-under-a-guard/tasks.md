@@ -40,13 +40,14 @@
     5. Return a discriminated outcome naming which guard refused, never a bare boolean.
 
 - [ ] 2_2 Run the delete after the removal, and report it apart
-  - **Deps**: 2_1, 4_4
+  - **Deps**: 2_1, 4_5
   - **Refs**: design.md D5; specs/worktree-panel/spec.md#the-branch-deletion-is-reported-apart-from-the-removal
   - **Acceptance**:
     - Outcome: A failed branch delete reports the removal as succeeded and the branch failure separately
     - Verify: unit src/worktree/worktreeMutationService.test.ts
   - **Plan**:
     1. In `src/worktree/worktreeMutationService.ts`, add an optional `deleteBranch` binding to `MutationServiceDeps`, beside the existing optional bindings.
+    1a. In `src/providers/WorktreeHost.ts`, widen only the mutation capability signature so the service can accept the optional request; task 3_2 still owns runtime validation and message routing.
     2. Call it in the removal arm only after the removal outcome is a success and only when the request carried the opt-in, so a failed removal attempts no deletion.
     3. Carry the branch outcome on the removal's own result rather than replacing it, following how provisioning rides the create's outcome.
     4. Never let a rejection from the binding change the removal's classification.
@@ -65,7 +66,7 @@
     3. Send `deleteBranch` on the remove request only when it is ticked.
 
 - [ ] 3_2 Wire the binding at the host
-  - **Deps**: 3_1, 4_3, 4_4
+  - **Deps**: 3_1, 4_3, 4_5
   - **Refs**: design.md D2
   - **Acceptance**:
     - Outcome: The opt-in reaches the guarded delete with the report's own evidence
@@ -122,3 +123,17 @@
     3. Refuse the deletion on a non-zero exit, timeout, unparseable output, malformed or truncated update-refs triple, or unreadable state that is not a normal absent optional file, rather than treating silence as absence.
     4. In `src/worktree/deleteBranch.ts`, verify the recorded default ref NAME against its recorded OID, and additionally refuse when the target re-derives as the default branch.
     5. Witness each holder separately; the rebase-apply applying and stale BISECT_START non-holder conditions; malformed and truncated update-refs records; an unreadable entry; linked entry count or name mismatch including a gitdir-omitted worktree; main-record and bare-main refusal; and recorded-name-versus-re-derived-name divergence. The count-mismatch and malformed-triple witnesses must fail when reconciliation or OID validation is removed.
+
+- [x] 4_5 Close the destructive guard attack findings — verified: pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 4_4
+  - **Refs**: design.md D3, D7, D8, D9; specs/worktree-panel/spec.md#a-branch-in-use-or-the-default-branch-is-never-deleted
+  - **Acceptance**:
+    - Outcome: Ref-type substitution, omitted administration, marker symlinks, and malformed object-format state cannot bypass the final holder read
+    - Verify: unit src/worktree/deleteBranch.test.ts
+  - **Plan**:
+    1. In `src/worktree/deleteBranch.ts`, apply `update-ref --stdin` no-deref semantics so a target ref replaced by a symbolic ref cannot delete its referent.
+    2. Reconcile every raw entry except literal `.` and `..`, and follow Git's `stat` semantics for state-marker existence.
+    3. Resolve the default and repository object format before the full holder scan, then leave no awaited work between that scan and the transaction; validate every parsed OID at the active format's width.
+    4. Fail closed on OID-form bisect origins rather than guessing Git's unique abbreviation.
+    5. In `src/worktree/deleteBranch.test.ts`, add a real-Git symbolic-ref regression plus causal witnesses for dot entries, dangling applying symlinks, final-read ordering, SHA-256 width, equal-count path mismatch, and main-worktree holder state.
+    6. Match Git's detached-rebase and full-ref bisect forms, preserve meaningful whitespace in command-output paths, and witness the separate-common-git-dir case with real Git.

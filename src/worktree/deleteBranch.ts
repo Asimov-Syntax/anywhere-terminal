@@ -22,12 +22,14 @@ export type DeleteBranchOutcome =
 export interface DeleteBranchFsDeps {
   readdir(absPath: string): Promise<readonly string[]>;
   lstat(absPath: string): Promise<{ isDirectory(): boolean }>;
+  stat(absPath: string): Promise<unknown>;
   readFile(absPath: string): Promise<string>;
 }
 
 const nodeFs: DeleteBranchFsDeps = {
   readdir: (absPath) => fsp.readdir(absPath),
   lstat: (absPath) => fsp.lstat(absPath),
+  stat: (absPath) => fsp.stat(absPath),
   readFile: (absPath) => fsp.readFile(absPath, "utf8"),
 };
 
@@ -43,8 +45,8 @@ function isAbsent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
 }
 
-function validOid(value: string): boolean {
-  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+function validOid(value: string, length: number): boolean {
+  return value.length === length && /^[0-9a-f]+$/.test(value);
 }
 
 function validFullRef(value: string): boolean {
@@ -63,7 +65,7 @@ function validFullRef(value: string): boolean {
   return value.split("/").every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"));
 }
 
-function parsePorcelain(output: Buffer): PorcelainWorktree[] | null {
+function parsePorcelain(output: Buffer, oidLength: number): PorcelainWorktree[] | null {
   const text = output.toString("utf8");
   if (!text.endsWith("\0\0")) {
     return null;
@@ -95,7 +97,7 @@ function parsePorcelain(output: Buffer): PorcelainWorktree[] | null {
     let bare = 0;
     for (const field of fields.slice(1)) {
       if (field.startsWith("HEAD ")) {
-        if (++head !== 1 || !validOid(field.slice("HEAD ".length))) {
+        if (++head !== 1 || !validOid(field.slice("HEAD ".length), oidLength)) {
           return null;
         }
       } else if (field.startsWith("branch ")) {
@@ -138,7 +140,7 @@ async function optionalFile(fs: DeleteBranchFsDeps, absPath: string): Promise<st
 
 async function optionalExists(fs: DeleteBranchFsDeps, absPath: string): Promise<boolean | undefined> {
   try {
-    await fs.lstat(absPath);
+    await fs.stat(absPath);
     return true;
   } catch (error) {
     return isAbsent(error) ? false : undefined;
@@ -150,8 +152,11 @@ function oneLine(contents: string): string | null {
   return value.includes("\n") ? null : value;
 }
 
-function parseHeldRef(contents: string): string | null {
+function parseRebaseHead(contents: string): string | null | undefined {
   const value = oneLine(contents);
+  if (value === "detached HEAD") {
+    return undefined;
+  }
   return value !== null && validFullRef(value) ? value : null;
 }
 
@@ -160,7 +165,16 @@ function parseHeldBranch(contents: string): string | null {
   return value !== null && validFullRef(`refs/heads/${value}`) ? value : null;
 }
 
-function updateRefsHolds(contents: string, targetRef: string): HolderRead {
+function outputPath(contents: string): string | null {
+  const value = contents.endsWith("\r\n")
+    ? contents.slice(0, -2)
+    : contents.endsWith("\n")
+      ? contents.slice(0, -1)
+      : contents;
+  return value.length > 0 && !value.includes("\0") && !value.includes("\n") && !value.includes("\r") ? value : null;
+}
+
+function updateRefsHolds(contents: string, targetRef: string, oidLength: number): HolderRead {
   if (contents.length === 0) {
     return "clear";
   }
@@ -177,7 +191,7 @@ function updateRefsHolds(contents: string, targetRef: string): HolderRead {
     if (ref === undefined || before === undefined || after === undefined) {
       return "unavailable";
     }
-    if (!validFullRef(ref) || !validOid(before) || !validOid(after)) {
+    if (!validFullRef(ref) || !validOid(before, oidLength) || !validOid(after, oidLength)) {
       return "unavailable";
     }
     held ||= ref === targetRef;
@@ -189,13 +203,14 @@ async function readAdministrativeHolders(
   fs: DeleteBranchFsDeps,
   gitDir: string,
   targetRef: string,
+  oidLength: number,
 ): Promise<HolderRead> {
   const rebaseMerge = await optionalFile(fs, path.join(gitDir, "rebase-merge", "head-name"));
   if (rebaseMerge === undefined) {
     return "unavailable";
   }
   if (rebaseMerge !== null) {
-    const ref = parseHeldRef(rebaseMerge);
+    const ref = parseRebaseHead(rebaseMerge);
     if (ref === null) {
       return "unavailable";
     }
@@ -213,7 +228,7 @@ async function readAdministrativeHolders(
     if (applying === undefined) {
       return "unavailable";
     }
-    const ref = parseHeldRef(rebaseApply);
+    const ref = parseRebaseHead(rebaseApply);
     if (ref === null) {
       return "unavailable";
     }
@@ -231,12 +246,23 @@ async function readAdministrativeHolders(
     if (bisectLog === undefined) {
       return "unavailable";
     }
-    const branch = parseHeldBranch(bisectStart);
-    if (branch === null) {
-      return "unavailable";
-    }
-    if (bisectLog && `refs/heads/${branch}` === targetRef) {
-      return "held";
+    if (bisectLog) {
+      const origin = oneLine(bisectStart);
+      if (origin === null || validOid(origin, oidLength)) {
+        return "unavailable";
+      }
+      const ref = origin.startsWith("refs/heads/")
+        ? origin
+        : (() => {
+            const branch = parseHeldBranch(bisectStart);
+            return branch === null ? null : `refs/heads/${branch}`;
+          })();
+      if (ref === null || !validFullRef(ref)) {
+        return "unavailable";
+      }
+      if (ref === targetRef) {
+        return "held";
+      }
     }
   }
 
@@ -244,7 +270,7 @@ async function readAdministrativeHolders(
   if (updateRefs === undefined) {
     return "unavailable";
   }
-  return updateRefs === null ? "clear" : updateRefsHolds(updateRefs, targetRef);
+  return updateRefs === null ? "clear" : updateRefsHolds(updateRefs, targetRef, oidLength);
 }
 
 async function readRawAdminDirs(
@@ -264,7 +290,7 @@ async function readRawAdminDirs(
 
   const entries: Array<{ adminDir: string; worktreePath: string }> = [];
   for (const name of names) {
-    if (name.startsWith(".")) {
+    if (name === "." || name === "..") {
       continue;
     }
     const adminDir = path.join(worktreesDir, name);
@@ -272,8 +298,8 @@ async function readRawAdminDirs(
       if (!(await fs.lstat(adminDir)).isDirectory()) {
         return null;
       }
-      const pointer = (await fs.readFile(path.join(adminDir, "gitdir"))).trim();
-      if (pointer.length === 0 || pointer.includes("\0")) {
+      const pointer = outputPath(await fs.readFile(path.join(adminDir, "gitdir")));
+      if (pointer === null) {
         return null;
       }
       const gitFile = path.resolve(adminDir, pointer);
@@ -289,13 +315,14 @@ async function holders(
   runner: GitCommandRunner,
   repoPath: string,
   targetRef: string,
+  oidLength: number,
   fs: DeleteBranchFsDeps,
 ): Promise<HolderRead> {
   const listing = await runner.run(["worktree", "list", "--porcelain", "-z"], repoPath);
   if (listing.code !== 0 || listing.timedOut || listing.failedToSpawn) {
     return "unavailable";
   }
-  const worktrees = parsePorcelain(listing.stdout);
+  const worktrees = parsePorcelain(listing.stdout, oidLength);
   if (worktrees === null) {
     return "unavailable";
   }
@@ -307,11 +334,16 @@ async function holders(
   if (common.code !== 0 || common.timedOut || common.failedToSpawn) {
     return "unavailable";
   }
-  const commonOutput = common.stdout.toString("utf8").trim();
-  if (commonOutput.length === 0 || commonOutput.includes("\0") || commonOutput.includes("\n")) {
+  const commonOutput = outputPath(common.stdout.toString("utf8"));
+  if (commonOutput === null) {
     return "unavailable";
   }
   const commonGitDir = path.resolve(repoPath, commonOutput);
+  try {
+    await fs.stat(commonGitDir);
+  } catch {
+    return "unavailable";
+  }
   const rawEntries = await readRawAdminDirs(fs, commonGitDir);
   if (rawEntries === null) {
     return "unavailable";
@@ -324,7 +356,7 @@ async function holders(
       return "unavailable";
     }
     matched.add(entry.worktreePath);
-    const holder = await readAdministrativeHolders(fs, entry.adminDir, targetRef);
+    const holder = await readAdministrativeHolders(fs, entry.adminDir, targetRef, oidLength);
     if (holder !== "clear") {
       return holder;
     }
@@ -334,7 +366,7 @@ async function holders(
   if (main.length !== 1 || main[0]?.bare) {
     return "unavailable";
   }
-  return readAdministrativeHolders(fs, commonGitDir, targetRef);
+  return readAdministrativeHolders(fs, commonGitDir, targetRef, oidLength);
 }
 
 /**
@@ -349,20 +381,7 @@ export async function deleteBranch(
 ): Promise<DeleteBranchOutcome> {
   const targetRef = `refs/heads/${evidence.branch}`;
   const defaultRef = `refs/heads/${evidence.defaultBranch}`;
-  if (
-    !validFullRef(targetRef) ||
-    !validFullRef(defaultRef) ||
-    !validOid(evidence.branchOid) ||
-    !validOid(evidence.defaultOid)
-  ) {
-    return { kind: "refused", reason: "holders-unavailable" };
-  }
-
-  const holder = await holders(runner, repoPath, targetRef, fs);
-  if (holder === "held") {
-    return { kind: "refused", reason: "branch-in-use" };
-  }
-  if (holder === "unavailable") {
+  if (!validFullRef(targetRef) || !validFullRef(defaultRef)) {
     return { kind: "refused", reason: "holders-unavailable" };
   }
 
@@ -374,9 +393,31 @@ export async function deleteBranch(
     return { kind: "refused", reason: "default-branch" };
   }
 
+  const format = await runner.run(["rev-parse", "--show-object-format=storage"], repoPath);
+  if (format.code !== 0 || format.timedOut || format.failedToSpawn) {
+    return { kind: "refused", reason: "holders-unavailable" };
+  }
+  const oidLength = format.stdout.toString("utf8").trim() === "sha1" ? 40 : 64;
+  if (
+    !["sha1", "sha256"].includes(format.stdout.toString("utf8").trim()) ||
+    !validOid(evidence.branchOid, oidLength) ||
+    !validOid(evidence.defaultOid, oidLength)
+  ) {
+    return { kind: "refused", reason: "holders-unavailable" };
+  }
+
+  const holder = await holders(runner, repoPath, targetRef, oidLength, fs);
+  if (holder === "held") {
+    return { kind: "refused", reason: "branch-in-use" };
+  }
+  if (holder === "unavailable") {
+    return { kind: "refused", reason: "holders-unavailable" };
+  }
+
   const transaction = [
     "start",
     `verify ${defaultRef} ${evidence.defaultOid}`,
+    "option no-deref",
     `delete ${targetRef} ${evidence.branchOid}`,
     "commit",
     "",
