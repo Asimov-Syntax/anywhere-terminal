@@ -296,3 +296,20 @@ the extension failed to activate. No suite could catch it, because every suite i
     3. In `src/test/invariants/bundleRequires.test.ts`, remove the witnesses whose subject no longer exists, declaring the suite change with the reason; keep every witness whose subject survives, and keep `parseCount()` asserting the artifact is parsed once.
     4. Run the gate against the real `dist/extension.js` and confirm it still exits 0, and still reports the relative request when the minified UMD shape is appended.
     5. In `asimov/changes/fail-a-build-whose-bundle-cannot-resolve-itself/design.md`, correct D2's claim that externals and builtins keep `vscode` and `node:fs` out of the verdicts — after the deletion no candidate the sweep collects can be either, so neither set changes a verdict any more.
+
+## 10. Round-8 fixes
+
+- [x] 10_1 Close the four accepted round-8 warnings — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 8_4
+  - **Refs**: design.md D2, .reviews/round-8.md
+  - **Acceptance**:
+    - Outcome: An externalized relative request still fails the build
+    - Verify: unit src/test/invariants/bundleRequires.test.ts
+  - **Plan**:
+    1. In `scripts/bundleRequires.mjs`, move the relative test ahead of the externals test in `classify`, so a relative entry in the esbuild `external` list can no longer silence the only class that fails a build (F023) — D2's classification table states no exemption for it.
+    2. In `scripts/bundleRequires.mjs`, give the build root its own name and derivation rather than reusing `resolvesFrom` for the artifact directory in two collectors and its parent in a third, and resolve an absolute literal before the prefix test so a `..` spelling is judged by where it lands (F022, F024).
+    3. In `scripts/bundleRequires.mjs`, replace the three copies of the containment test with one local predicate (F022).
+    4. In `scripts/check-bundle-requires.mjs`, stop rendering every verdict as a `require(...)` call that may not resolve — the absolute class is a plain string literal, not a call (F021).
+    5. In `src/test/invariants/bundleRequires.test.ts`, witness each of the above, and drive `buildMachineLiterals` directly so the exported wrapper has the coverage its own comment claims (F020).
+    6. In `asimov/changes/fail-a-build-whose-bundle-cannot-resolve-itself/design.md`, correct D2's externals paragraph to what is true, and record the residual case-and-flavour limit of the build-root test (F023, F024).
+    7. In `scripts/bundleRequires.d.mts`, keep the declarations in step with the module.

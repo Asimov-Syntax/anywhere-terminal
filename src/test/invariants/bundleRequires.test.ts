@@ -7,6 +7,7 @@
 // test ever editing the build config it audits.
 import { describe, expect, it } from "vitest";
 import {
+  buildMachineLiterals,
   classify,
   declaredExternals,
   exitCodeFor,
@@ -668,5 +669,56 @@ describe("[round-6 F017] a Win32 spelling resolves by its spelling", () => {
   it("still refuses a Win32-spelled traversal out of the artifact", () => {
     const bundle = `var r = require; r(${JSON.stringify("..\\..\\etc\\passwd")});`;
     expect(one(bundle, () => true).why).toContain("outside the packaged");
+  });
+});
+
+// [round-8 F023] `classify` tested the externals set BEFORE the relative class,
+// so a relative entry in esbuild's `external` list — which esbuild matches
+// verbatim — silenced the one class that fails a build. An externalized
+// relative path still has to resolve beside the bundle at runtime, which is
+// exactly the activation failure this gate exists to catch, and D2's own
+// classification table states no exemption for it.
+describe("[round-8 F023] a declared external cannot silence the relative class", () => {
+  const withExternal = (name: string) =>
+    `const c = { outfile: "./dist/extension.js", external: ["vscode", ${JSON.stringify(name)}] };`;
+  const against = (esbuildSource: string, bundle: string) =>
+    unresolvableRequires(bundle, {
+      esbuildSource,
+      outfile: OUT,
+      resolvesFrom: DIST,
+      exists: nowhere,
+      isDirectory: notADirectory,
+      readFile: () => "{}",
+    });
+
+  it("still fails a relative request the config declared external", () => {
+    expect(against(withExternal("./impl/format"), `require("./impl/format")`)).toEqual([
+      expect.objectContaining({ specifier: "./impl/format", severity: "fails" }),
+    ]);
+  });
+
+  it("still passes a bare external, which is what the list is for", () => {
+    expect(against(withExternal("lodash"), `require("vscode");require("lodash")`)).toEqual([]);
+  });
+});
+
+// [round-8 F020] The wrapper layer exists so each collector can be driven
+// alone. This one had no caller and no witness, which made that claim false.
+// [round-8 F024] The prefix test read the literal as written, so a path that
+// walks out of the build root through `..` was reported and one that walks back
+// in was not. It is resolved before it is judged.
+describe("[round-8 F020] the build-machine collector is driven directly", () => {
+  it("keeps a literal under the build root and drops one outside it", () => {
+    const bundle = `var a = "/repo/scripts/tool.js"; var b = "/elsewhere/tool.js"; var c = "./rel";`;
+    expect(buildMachineLiterals(bundle, DIST)).toEqual(["/repo/scripts/tool.js"]);
+  });
+
+  it("does not take a sibling directory that merely shares the prefix", () => {
+    expect(buildMachineLiterals(`var a = "/repository/tool.js";`, DIST)).toEqual([]);
+  });
+
+  it("judges a `..` spelling by where it lands, not by how it reads", () => {
+    expect(buildMachineLiterals(`var a = "/elsewhere/../repo/dist/x.js";`, DIST)).toHaveLength(1);
+    expect(buildMachineLiterals(`var a = "/repo/../elsewhere/secret.js";`, DIST)).toEqual([]);
   });
 });

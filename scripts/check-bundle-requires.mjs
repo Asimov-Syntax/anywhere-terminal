@@ -35,14 +35,19 @@ const bad = unresolvableRequires(bundleSource, {
   resolvesFrom: path.dirname(bundle),
 });
 
-const line = ({ specifier, why }) => `  require(${JSON.stringify(specifier)}) — ${why}`;
+// The specifier, not a call around it: since round 7 the warning class comes
+// from a plain string-literal sweep, so a warned specifier may be a copyright
+// header or a source-map path and never a require at all
+// (.reviews/round-8.md F021). The failing class IS a request, and its own
+// heading says so.
+const line = ({ specifier, why }) => `  ${JSON.stringify(specifier)} — ${why}`;
 const failing = bad.filter((verdict) => verdict.severity === "fails");
 const warning = bad.filter((verdict) => verdict.severity === "warns");
 
 if (warning.length > 0) {
   // Reported without a coverage claim: detection for these classes is known
   // incomplete, so it must not be able to reject a legitimate build.
-  console.warn(`[bundle-requires] warning: ${warning.length} require(s) that may not resolve:`);
+  console.warn(`[bundle-requires] warning: ${warning.length} specifier(s) reported without a coverage claim:`);
   for (const verdict of warning) {
     console.warn(line(verdict));
   }

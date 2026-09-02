@@ -175,14 +175,18 @@ export function buildMachineLiterals(bundleSource, resolvesFrom) {
 }
 
 function machinePathsIn(root, resolvesFrom) {
-  const buildRoot = path.dirname(path.resolve(resolvesFrom));
+  const buildRoot = buildRootFrom(resolvesFrom);
   const seen = new Set();
   walk(root, (node) => {
     if (!ts.isStringLiteralLike(node)) {
       return;
     }
     const text = node.text;
-    if (path.isAbsolute(text) && (text === buildRoot || text.startsWith(buildRoot + path.sep))) {
+    // Resolved before it is judged: a literal that walks out of the build root
+    // through `..` is not under it, and one that walks back in is
+    // (.reviews/round-8.md F024). Case and cross-flavour spellings stay open —
+    // deciding those needs the build host's own folding rules.
+    if (path.isAbsolute(text) && isWithinRoot(path.resolve(text), buildRoot)) {
       seen.add(text);
     }
   });
@@ -295,7 +299,7 @@ function resolveManifest(target, root, { exists, isDirectory, readFile }) {
     return { ok: false, why: `resolves to ${target}, whose package.json declares no main and which has no index` };
   }
   const entry = path.resolve(target, main);
-  if (entry !== root && !entry.startsWith(root + path.sep)) {
+  if (!isWithinRoot(entry, root)) {
     return { ok: false, why: `main "${main}" resolves to ${entry}, which is outside the packaged ${path.basename(root)}/` };
   }
   const file = (p) => exists(p) && !isDirectory(p);
@@ -307,6 +311,30 @@ function resolveManifest(target, root, { exists, isDirectory, readFile }) {
     return { ok: true, why: "resolves through its package.json main" };
   }
   return { ok: false, why: `main "${main}" names ${entry}, which the packaged extension does not carry` };
+}
+
+/**
+ * Is `candidate` `root` itself, or something under it?
+ *
+ * One definition for all three callers. `src/utils/pathBoundary.ts` is the
+ * repository's only definition for `src/`; this is a plain `.mjs` build script
+ * that cannot import from it, so the rule lives here once instead of three
+ * times (.reviews/round-8.md F022).
+ */
+function isWithinRoot(candidate, root) {
+  return candidate === root || candidate.startsWith(root + path.sep);
+}
+
+/**
+ * The directory the build ran in, derived from where the artifact sits.
+ *
+ * `resolvesFrom` is the ARTIFACT directory — where a relative request resolves
+ * against. Its parent is the checkout, which is what an absolute literal has to
+ * name for the bundle to be carrying a path off the build machine. The two are
+ * different roots and each now has its own name (.reviews/round-8.md F022).
+ */
+function buildRootFrom(resolvesFrom) {
+  return path.dirname(path.resolve(resolvesFrom));
 }
 
 /** The Win32 spellings among the relative prefixes. */
@@ -327,7 +355,7 @@ function posixSpelling(specifier) {
 function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) {
   const target = path.resolve(resolvesFrom, posixSpelling(specifier));
   const root = path.resolve(resolvesFrom);
-  const inside = target === root || target.startsWith(root + path.sep);
+  const inside = isWithinRoot(target, root);
   if (!inside) {
     return { ok: false, why: `resolves to ${target}, which is outside the packaged ${path.basename(root)}/` };
   }
@@ -384,6 +412,18 @@ export function classify(specifier, {
   if (BUILTINS.has(specifier)) {
     return { specifier, ok: true, severity: "none", why: "node builtin" };
   }
+  // BEFORE the externals list. esbuild matches an `external` entry verbatim, so
+  // a relative entry there would silence the one class that fails a build —
+  // and an externalized relative path still has to resolve beside the bundle at
+  // runtime, which is the activation failure this gate exists to catch. D2's
+  // classification table states no exemption for it (.reviews/round-8.md F023).
+  //
+  // One predicate decides the class for detection and severity alike
+  // (.reviews/round-6.md F016).
+  if (isRelativeRequest(specifier)) {
+    const shipped = resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile });
+    return { specifier, severity: shipped.ok ? "none" : "fails", ...shipped };
+  }
   if (externals.has(specifier)) {
     return { specifier, ok: true, severity: "none", why: "declared external" };
   }
@@ -396,11 +436,6 @@ export function classify(specifier, {
       severity: "warns",
       why: "absolute path baked into the bundle — it names the build machine",
     };
-  }
-  // One predicate decides the class for detection and severity alike (.reviews/round-6.md F016).
-  if (isRelativeRequest(specifier)) {
-    const shipped = resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile });
-    return { specifier, severity: shipped.ok ? "none" : "fails", ...shipped };
   }
   return {
     specifier,

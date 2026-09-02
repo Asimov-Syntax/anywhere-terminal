@@ -63,6 +63,12 @@ The stated limit: an absolute path from elsewhere on the build machine — `/opt
 recognised, because the gate can only attribute paths it can locate. That is the same class of limit
 D6 already carries, and it is smaller than the 12-warning alternative.
 
+A second, smaller one, from round 8: the literal is `path.resolve`d before the prefix test, so a `..`
+spelling is judged by where it lands rather than by how it reads (F024) — but a case variant or a
+cross-flavour spelling of the build root is not recognised. Deciding those needs the build host's own
+folding rules, which a gate reading a finished artifact does not have. Both are warning-class, so
+neither can reject a build that works.
+
 **The bare class is the cost of this decision, and it is a real loss.** A package that should have
 been bundled and was not will no longer be reported at all. There is no cheap replacement: deciding
 that a string is a bare specifier rather than ordinary text is exactly the question that needed the
@@ -73,12 +79,18 @@ survived seven rounds lived in it.
 
 Externals are still READ FROM `esbuild.js` rather than copied here, by the config object whose
 `outfile` is the extension bundle (D5), because a second hand-maintained list drifts silently.
-Builtins come from `node:module`'s `builtinModules`. Note what the deletion does to them: nothing the
-sweep now collects — a relative literal, or an absolute one under the build root — can be a builtin
-or a declared external, so neither set can change a verdict any more. They remain because `classify`
-is the exported classification function and is still driven directly, and because D5's refusal of an
-unreadable config is a property of the gate independent of what the set is consulted for. Deleting
-them is a further scope cut this change does not make.
+Builtins come from `node:module`'s `builtinModules`.
+
+Their reach after the deletion is narrower than it looks, and round 8 found the first statement of it
+wrong. Nothing the sweep now collects can be a BUILTIN, so that set can no longer change a verdict.
+The externals set can: esbuild matches an `external` entry verbatim and accepts a relative path, so
+`external: ["./impl/format"]` used to turn the one class that FAILS a build into silence
+(.reviews/round-8.md F023). That is not an exemption this table grants, and an externalized relative
+path still has to resolve beside the bundle at runtime — which is the activation failure the whole
+change exists to catch. So the relative class is now decided BEFORE the externals list is consulted,
+and the list keeps only the job it can do honestly: naming a bare request that was deliberately left
+out of the bundle. D5's fail-closed refusal of a config it cannot read is a property of the gate
+independent of all of this.
 
 **Resolution is what the PACKAGED extension could load, not what exists on the build machine**
 (.reviews/round-1.md F001). `scripts/` and `node_modules/` exist in the checkout and not in the VSIX,
