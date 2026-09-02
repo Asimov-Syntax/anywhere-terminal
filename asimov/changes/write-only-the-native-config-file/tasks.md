@@ -71,3 +71,68 @@
     4. Beside the control, state that ticked setup steps and port choices apply to this create only, per design.md D6.
     5. Supply `onProvisionSave` in `createDialogDeps` in `src/webview/worktree/WorktreeController.ts`, converting it into the opening-bound wire message the way `onProvisionSwitch` is converted.
     6. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` so the posted message is asserted, not only the injected callback.
+
+## Wave 2 — round 1 remediation
+
+Fully sequential. Plan attack 2 refuted the earlier `2_1, 2_4 | 2_2 | 2_3` shape: 2_4 changes whether
+2_1's refusal branch is reachable at all, and 2_1 cannot add a refusal reason and stay type-green
+without the exhaustive `Record<NativeConfigRefusal, string>` that 2_2's file owns. Nothing here is
+genuinely parallel, so nothing here pretends to be.
+
+- [ ] 2_1 Take presence from reads already authorized, and pin the ordering it relies on
+  - **Deps**: none
+  - **Refs**: <!-- .reviews/round-1.md F013, F017; design.md D17 -->
+  - **Acceptance**:
+    - Outcome: presence costs no extra provider-file reads
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/readProvisioning.ts`, pass the prepared root and the `authorized` map into `filesPresent` rather than re-reading every provider file (F017).
+    2. Record in the same file that `present` is a candidate and not an authorization — D17 revalidates it at the write, and this task widens the window between snapshot and save.
+    3. Pin the ordering `divergenceOf` relies on — the chosen native adapter precedes its `base` in `DETECTION_ORDER` — with a test in `src/worktree/provisioning/readProvisioning.test.ts` (F013).
+
+- [ ] 2_2 Bind the write to what it checked, and narrow what it rewrites
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-configuration-that-cannot-be-edited-safely-is-refused-rather-than-rewritten, an-existing-configuration-keeps-the-formatting-and-comments-it-had, a-configuration-written-for-the-first-time-names-a-source-that-exists} <!-- design.md D4, D16, D17; .reviews/round-1.md F003, F004, F005, F010, F011, F015 -->
+  - **Acceptance**:
+    - Outcome: a base deleted between the offer and the save refuses the write
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/writeNativeConfig.ts`, move the target `lstat`, the symlink refusal and the mode capture inside `withLock` so the identity the write preserves is the identity the lock covers (F003).
+    2. Narrow array edits to one element — `isArrayInsertion` to add, an index to remove — and apply removals in DESCENDING index order: probed, ascending original indices `1` then `2` over `[a,b,c,d]` removes `b` and `d` (D4).
+    3. Record in the module that deletion may take a comment from the removed element's immediate neighbour; that is the narrowed D4 claim, not an accident.
+    4. Replace the hand-rolled `parseTree`/`getNodeValue` with `providerKit.readJsonc` keeping the errors array (F011), and treat an empty document as an editable empty object rather than `malformed` (F010).
+    5. Add the `unnamed` refusal and confirm the named base still exists inside the lock immediately before writing (D17); add it to the refusal map in `src/providers/WorktreeHost.ts` in the same task, since the `Record<NativeConfigRefusal, string>` is exhaustive.
+    6. Return `wrote: false` rather than creating an `extends`-only document when nothing diverges and the host says no source was taken (D18's writer half).
+    7. Drop `notFound` for the exported `isNotFound` (F015).
+    8. In `src/worktree/provisioning/writeNativeConfig.test.ts`, rewrite the span witness to obtain spans independently of the implementation's key path over a fixture with comments on BOTH neighbours of a removed element (F005), and add a round-trip that reads a written document back through the real `nativeProvider` (F002).
+    9. Record the D16 boundary in the module: the adversarial parent-swap race is NOT closed here and is owned by the change this one depends on.
+
+- [ ] 2_3 Give a refused save its own word, and derive the source change host-side
+  - **Deps**: 2_2
+  - **Refs**: specs/worktree-panel/spec.md#{a-refusal-to-save-says-a-save-was-refused, a-save-that-has-nothing-to-record-writes-nothing} <!-- design.md D13, D18, D19; .reviews/round-1.md F007, F012, F016 -->
+  - **Acceptance**:
+    - Outcome: a locked file reports that the save did not happen
+    - Verify: unit src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. Add `unsaved` to `ProvisionProblem.reason` in `src/types/messages.ts` and map every write refusal but `malformed` onto it in `src/providers/WorktreeHost.ts`, with the cause in `detail` (D13).
+    2. Record the opening's baseline source when the form is first offered and compare it with the source active at save time, in `src/providers/WorktreeHost.ts` — never a webview field (D18).
+    3. Remove `provider` from the `onlyKeys` allowlist on `isKnownSave` and bound `kept` (F012, F016).
+    4. Publish a fresh offer for the LIVE stale-offer rejection only — an unknown repository or an absent reader has no form state to refresh, so those keep returning bare (F007, narrowed by plan attack 2).
+    5. Deliver the latest live switch through the guarded post helper rather than the direct `surface.post`, so a throw cannot strand a form (D19).
+    6. Cover each in `src/providers/WorktreeHost.actions.test.ts`, including a save payload carrying an extra key, and add the wire sample in `src/providers/TerminalViewProvider.worktree.test.ts`.
+
+- [ ] 2_4 Offer the save only where it can be honoured
+  - **Deps**: 2_3
+  - **Refs**: specs/worktree-panel/spec.md#{no-save-is-offered-against-a-source-change-still-in-progress} <!-- design.md D15, D19; .reviews/round-1.md F009, F014 -->
+  - **Acceptance**:
+    - Outcome: taking a source removes the save control until the replacement offer arrives
+    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeCreateDialog.ts`, remove the control while a switch this form issued is unanswered and restore it when an offer with a new id is drawn (D15).
+    2. Stop sending any source-change flag from the form; the host derives it (D18). Update `src/webview/worktree/WorktreeController.ts` accordingly.
+    3. Leave the control out where `onProvisionSave` is absent, matching the rule the control's own comment already applies to a missing offer (F009).
+    4. Give the D6 note an id and point `aria-describedby` at it from the button (F014).
+    5. Render an `unsaved` problem as a save that did not happen rather than a file that could not be read (D13).
+    6. Extend `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts`, including the take-then-configure interleaving.
+
+**Waves**: `2_1 | 2_2 | 2_3 | 2_4`

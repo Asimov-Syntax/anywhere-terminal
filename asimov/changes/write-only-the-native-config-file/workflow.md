@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -140,4 +140,27 @@ Planned at: a82ccc85
   switch handler, `present` filled at every construction site, complete message registration across
   all four lists, no webview string reaching a filesystem destination, permission preservation. The
   blockers are in the seams between those, not in them.
+- Plan attack 2 refuted SEVEN ledger rows and the wave shape. Three refutations share one root:
+  `LockedFile` serializes an inode while every other operation names a string, so a rename-plus-symlink
+  at the resolved spelling redirects the lock, the temporary, the read and the commit — and `withLock`
+  creates the lock BEFORE its callback, so no re-assertion inside it helps. `/dev/fd/<dirfd>/child` is
+  not usable on this host. That needs `openat`/`mkdirat`/`renameat` anchored to a directory descriptor.
+- FOLLOW-UP OWED, needs a PLAN task I did not create: a change owning descriptor-anchored file writing
+  for every `LockedFile` caller, which this change should then depend on. D16 scopes the adversarial
+  parent-swap race OUT of WT-012.5 rather than claiming a close this module cannot implement, which is
+  what makes wave 2 buildable now. I did not add the PLAN task myself — PLAN.md structure is the
+  blueprint's to own and I have permission only for my own task's Status row.
+- I told the user mid-session that injecting `mkdir` through `LockedFileDependencies` made D7
+  implementable. It does not: the lock file is created before the callback, and a second swap remains
+  possible before `readFile`/`link`/`rename`. Corrected to the user and superseded by D16.
+- D4 narrowed on evidence rather than restated: insertion preserves interior comments, deletion does
+  not — deleting index 1 of `/* A */ "a", /* B */ "b", /* C */ "c"` yields `/* B */ "c"`, taking a KEPT
+  element's comment. And removals must be applied in DESCENDING index order; my own probe showed
+  ascending original indices `1` then `2` over `[a,b,c,d]` removing `b` and `d`.
+- D14's `took` was withdrawn entirely, not fixed. A webview boolean is forgeable both ways, the host
+  already admits every switch so it can derive the fact itself, and sticky-across-redraws is wrong for
+  net intent. D18 derives it from the opening's baseline instead, and nothing new goes on the wire.
+- Wave shape refuted too: 2_4 changed whether 2_1's refusal branch was reachable, and 2_1 could not add
+  a refusal reason and stay type-green without the exhaustive refusal Record another task leased.
+  Wave 2 is now fully sequential, which is what the dependencies actually were.
 
