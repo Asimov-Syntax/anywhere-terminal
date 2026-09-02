@@ -81,13 +81,27 @@ export function divergenceOf(
       into.push(entry.path);
     }
   }
+  // Which source, and then which of ITS files.
+  //
+  // A switch re-reads with that provider preferred, so the source the user took
+  // is `active` in the model they are looking at — keying on "not active" would
+  // mean a save right after a switch recorded nothing at all. What makes a
+  // rewrite a no-op is the file already naming this base, and the writer's own
+  // idempotence answers that (design.md D10); it is not this function's to
+  // guess.
+  //
+  // With no source named, the active one is what a first write must record —
+  // `extends` names whatever detection made active. Except the native file
+  // itself: a configuration that extends its own path is self-extension, which
+  // § 3.4 excludes from what `extends` can name.
+  const taken =
+    source === undefined ? model.providers.find((p) => p.active) : model.providers.find((p) => p.id === source);
   // `present[0]`, never `files[0]`: `files` is what the adapter can read, and a
   // provider detected through only the second of them would be given an
   // `extends` naming a file that is not there. An empty `present` names
   // nothing — the provider's file went away between the read and the probe, and
   // there is no truthful answer to give.
-  const taken = source === undefined ? undefined : model.providers.find((p) => p.id === source);
-  const base = taken === undefined || taken.active ? undefined : taken.present[0];
+  const base = taken === undefined || taken.id === "native" ? undefined : taken.present[0];
   return base === undefined ? { exclude, drop } : { exclude, drop, extends: base };
 }
 

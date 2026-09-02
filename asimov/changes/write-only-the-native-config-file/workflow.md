@@ -98,4 +98,16 @@ Planned at: a82ccc85
   breaks a literal across lines, and `-w` does not ignore commas. The claim the record was making is
   nonetheless true, and this is the check that establishes it — stripping whitespace AND commas, all
   three files hash identically to their committed versions, so no assertion in them changed.
+- 1_3 corrected while 1_4 was being wired, and the defect was mine rather than the design's. Its
+  `extends` rule emitted a base only for a provider that is NOT active — but a switch re-reads with
+  that provider preferred, so the source the user took is `active` in the model they are looking at
+  when they press Configure. A save straight after a switch would have recorded nothing, which is the
+  one acceptance clause the switch exists to satisfy. D6's table never carried the clause; tasks.md
+  step 1_3.2 and the code did. The rule is now: the named source, or the active one when none is
+  named, never the native file (self-extension, § 3.4), and never a `present` that is empty. What
+  makes an unchanged base a no-op is the writer's idempotence (D10), not a guess in this function.
+- The corrected test replaced an assertion that PINNED the wrong rule, so the suite would have kept
+  passing over the defect. Re-arming with the old predicate fails two cases; `verify-task` refuses a
+  task already ticked, so 1_3's evidence stamp predates this fix and 1_4's full-suite run is what
+  carries it. Recorded here because the stamp cannot say it.
 

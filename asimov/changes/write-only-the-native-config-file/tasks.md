@@ -38,7 +38,7 @@
     - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
   - **Plan**:
     1. In `src/worktree/provisioning/writeNativeConfig.ts`, export a pure `divergenceOf(model, kept, source)` mapping each unticked `model.entries` member to `exclude` when its `source` is not `.vscode/worktree.json` and to `drop` when it is.
-    2. Set `extends` to `present[0]` of the named provider when `source` names a detected provider that is not the active one, and leave it unset otherwise.
+    2. Set `extends` to `present[0]` of the provider `source` names, or of the active one when `source` is absent, and leave it unset for the native provider and for an empty `present`.
     3. Take ports, setup steps and `model.excluded` no further; design.md D6 states the reason for each.
 
 ## 3. Carrying the choice

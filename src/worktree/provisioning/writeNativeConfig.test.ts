@@ -385,12 +385,39 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set(), "orca").extends).toBe(".worktreeinclude");
   });
 
-  it("names nothing when the taken source is the one already active", () => {
+  it("names the taken source even though the switch already made it active", () => {
+    // A switch re-reads with that provider preferred, so by the time Configure
+    // is pressed the source the user took IS the active one. Keying on "not
+    // active" would make the save record nothing — what makes a rewrite a no-op
+    // is the file already naming this base, which is the writer's job (D10).
+    const m = model({
+      providers: [{ id: "orca", files: ["orca.yaml", ".worktreeinclude"], present: ["orca.yaml"], active: true }],
+    });
+
+    expect(divergenceOf(m, new Set(), "orca").extends).toBe("orca.yaml");
+  });
+
+  it("names what detection made active when the user took no source", () => {
+    // What a first write has to record: `extends` names whatever supplied the
+    // offer, not the entries it resolved to.
     const m = model({
       providers: [{ id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true }],
     });
 
-    expect(divergenceOf(m, new Set(), "asimov").extends).toBeUndefined();
+    expect(divergenceOf(m, new Set()).extends).toBe("asimov/worktree.yaml");
+  });
+
+  it("never names the native file itself, which would be self-extension", () => {
+    // § 3.4 excludes the native file from what `extends` can name: a one-level
+    // resolver would merge the file with itself and duplicate its declarations.
+    const m = model({
+      providers: [
+        { id: "native", files: [NATIVE_PROVIDER_FILE], present: [NATIVE_PROVIDER_FILE], active: true },
+        { id: "orca", files: ["orca.yaml"], present: ["orca.yaml"], active: false },
+      ],
+    });
+
+    expect(divergenceOf(m, new Set()).extends).toBeUndefined();
   });
 
   it("names nothing when the taken source has no file left to name", () => {
