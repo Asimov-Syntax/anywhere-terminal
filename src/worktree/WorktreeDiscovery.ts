@@ -200,10 +200,7 @@ function sameRegistration(left: AuthorizedDirectory, right: AuthorizedDirectory)
   );
 }
 
-export async function listRegisteredRepoWorktrees(
-  root: ResolvedRepo,
-  deps: WorktreeTreeDeps,
-): Promise<RepoListing> {
+export async function listRegisteredRepoWorktrees(root: ResolvedRepo, deps: WorktreeTreeDeps): Promise<RepoListing> {
   const listing = await listRepoWorktrees(root.rootPath, deps);
   if (listing.degraded !== undefined || root.registration === undefined) {
     return listing;
@@ -211,7 +208,12 @@ export async function listRegisteredRepoWorktrees(
   const current = await deps.authorizeCommonDirectory?.(root.repoId).catch(() => undefined);
   return current !== undefined && sameRegistration(root.registration, current)
     ? listing
-    : { worktrees: [], reasons: [], skipped: 0, degraded: "The repository registration changed while listing worktrees." };
+    : {
+        worktrees: [],
+        reasons: [],
+        skipped: 0,
+        degraded: "The repository registration changed while listing worktrees.",
+      };
 }
 
 export interface WorktreeTreeDeps extends WorktreeListingDeps {
@@ -337,9 +339,7 @@ export async function buildWorktreeTreeDetailed(
 
   // Concurrent, but assembled by index: one repo's 10 s timeout must not delay
   // its siblings, and the result order still follows workspace-folder order.
-  const results = await mapBounded(roots, REPO_LISTING_CONCURRENCY, (root) =>
-    listRegisteredRepoWorktrees(root, deps),
-  );
+  const results = await mapBounded(roots, REPO_LISTING_CONCURRENCY, (root) => listRegisteredRepoWorktrees(root, deps));
 
   for (const [index, root] of roots.entries()) {
     const listing = results[index];

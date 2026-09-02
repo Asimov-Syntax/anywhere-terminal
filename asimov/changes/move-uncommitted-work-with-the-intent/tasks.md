@@ -193,4 +193,13 @@
     2. `src/providers/WorktreeHost.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: carry the expected repository registration beside normalized source evidence from redeemed offer through destination capture and migration, stopping indeterminate on any mismatch after the queued rebuild.
     3. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`, `src/extension.worktreeAssembly.test.ts`: bind the registration-aware source probe, destination capture, and migration adapter; prove a raw display versus normalized id nested create reaches the narrow exclusion and only the originally selected repository incarnation reaches the API.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5`
+- [x] 4_6 Conform repository listing hardening to the formatter — verified: pnpm exec biome check src/worktree/WorktreeDiscovery.ts && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
+  - **Deps**: 4_5
+  - **Refs**: design.md D3, D5
+  - **Acceptance**:
+    - Outcome: The repository-registration listing boundary passes the repository formatter
+    - Verify: command pnpm exec biome check src/worktree/WorktreeDiscovery.ts
+  - **Plan**:
+    1. `src/worktree/WorktreeDiscovery.ts`: apply only formatter-equivalent wrapping to the registration-bracketed listing path.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6`
