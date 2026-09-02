@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -39,3 +39,4 @@ Planned at: d9a0d94b
 - 1_3 also corrected a stale line in the same § 7 bullet list: it said what a save reports about an unreleased lock "is NOT settled here (WT-012.22)", which WT-012.22 has since shipped into § 6. Left as-is it would have contradicted the section directly above the new bullet.
 - HANDBACK after round 1. F001 (cleanup unlinks a substituted staging object) is fixed by REUSING `LockedFile.stageReplacement` rather than adding a third ownership check to Cursor's own — which changes D1's mechanism, so it re-earns Gate 2 instead of landing as a fix commit. The miss is instructive and is why reuse won: I hardened the LOCK by reuse in 1_2 and left STAGING duplicated in 1_1, and the gap landed in the duplicate.
 - F002 was confirmed by my own probe at `21a436f1` vs `d9a0d94b`, not taken on the chair's word: absent config parent returned `lock-unavailable` and created nothing before, returns `{installed:true}` and creates `.cursor/hooks.json` after, because `LockedFile.acquireLock` mkdirs recursively and Cursor's own acquisition never did.
+- Verify Gate lint: `pnpm exec biome check src` reports 16 findings, ALL pre-existing at `21a436f1` and none in a file this change touches — `SnapshotPersistence.ts`, `fileTreeRpc.integration.test.ts`, `VaultService.customName.test.ts`, `worktreeFormat.ts`, `AgentHookController.test.ts`, and three webview CSS files. Reproduced on a clean tree at that sha. This change removed one of them: `CursorHookInstaller.test.ts` was in the pre-existing set and is not in the current one.
