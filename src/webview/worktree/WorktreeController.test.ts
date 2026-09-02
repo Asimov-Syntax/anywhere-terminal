@@ -3274,6 +3274,11 @@ describe("a notice outlives the row it was about", () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ canonicalId: worktreeId, orphanedLabel: displayPath });
 
+    h.controller.handleTreeResponse(response());
+    const pending = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ canonicalId: worktreeId, orphanedLabel: displayPath });
+
     h.controller.handleTreeResponse({
       type: "worktreeTreeResponse",
       tree: seeded,
@@ -3306,6 +3311,65 @@ describe("a notice outlives the row it was about", () => {
       { type: "worktreeSetupViewOutput", outputId: "output-1" },
       { type: "worktreeSetupRetry", worktreeId, retryId: "retry-1" },
     ]);
+  });
+
+  it("does not attach an old setup retry result to a recreated aliased row", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    const worktreeId = "/private/var/wt/linked";
+    const displayPath = "/var/wt/linked";
+    const repoId = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+    const seeded = singleRepoTree();
+    const repo = seeded.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    const linked = worktree({ id: worktreeId, displayPath, branch: "feat/sym" });
+    repo.worktrees = [...repo.worktrees, linked];
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleTreeResponse(response());
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      setup: [
+        {
+          id: "old-setup",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "worktree identity changed" },
+        },
+      ],
+    });
+
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    const attached = results.filter((result) => result.worktreeId === worktreeId);
+    expect(attached).toEqual([expect.objectContaining({ action: "create", outcome: "ok" })]);
+    expect(attached[0]).not.toHaveProperty("setup");
+    expect(results.some((result) => result.orphanedLabel === displayPath && result.setup !== undefined)).toBe(true);
   });
 
   it("still reports a removal after the row it removed has gone", () => {

@@ -190,3 +190,14 @@
     2. Use `worktreeId ?? canonicalId ?? orphanedLabel` consistently for provisioning lookup and action-result dedupe.
     3. Add a remove → recreate normalized id with a different display path → provisioning-before-rebuild → row-arrival witness in `src/webview/worktree/WorktreeController.test.ts`, asserting one reattached notice retains output and retry actions.
 
+- [x] 9_1 Keep setup-result generations distinct across intermediate trees — verified: pnpm exec vitest run src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 8_1
+  - **Refs**: design.md D4, D6; .reviews/round-8.md F018
+  - **Acceptance**:
+    - Outcome: Setup notices retain their originating generation across intermediate tree responses
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. In `src/webview/worktree/WorktreeController.ts`, preserve an already-pending create's canonical identity across absent reconciliation while stripping identity only when an attached notice actually departs.
+    2. Keep unmatched setup-only retry updates non-reattachable instead of minting a pending create generation; preserve their visible failure notice without allowing a later recreation to claim it.
+    3. Extend `src/webview/worktree/WorktreeController.test.ts` with pending-create → intermediate absent tree → row arrival and old retry mismatch → departure → recreation witnesses.
+

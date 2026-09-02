@@ -1413,11 +1413,27 @@ export class WorktreeController {
     // worktree made a moment ago is precisely that until the next rebuild lands
     // — so the id-only key missed on every real create, which is what made the
     // service supplying an id (round-2 F017) only half the fix.
-    const existing = this.actionResults.find(
+    const exact = this.actionResults.find(
       (result) => result.action === "create" && actionResultIdentity(result) === msg.worktreeId,
     );
+    const departedLabel = this.departed.get(msg.worktreeId);
+    const departed =
+      exact === undefined && msg.steps === undefined && departedLabel !== undefined
+        ? this.actionResults.find(
+            (result) =>
+              result.action === "create" &&
+              result.worktreeId === undefined &&
+              result.canonicalId === undefined &&
+              result.orphanedLabel === departedLabel,
+          )
+        : undefined;
+    const existing = exact ?? departed;
+    const fallback: WorktreeActionResult =
+      msg.steps === undefined
+        ? { action: "create", orphanedLabel: departedLabel ?? msg.worktreeId, outcome: "ok" }
+        : { action: "create", worktreeId: msg.worktreeId, outcome: "ok" };
     this.showActionResult({
-      ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
+      ...(existing ?? fallback),
       ...(msg.steps === undefined ? {} : { provisioned: msg.steps }),
       ...(msg.ports === undefined ? {} : { ports: msg.ports }),
       ...(msg.portWarnings === undefined ? {} : { portWarnings: msg.portWarnings }),
@@ -1698,14 +1714,18 @@ export class WorktreeController {
       return { ...named, worktreeId };
     }
     const label = result.orphanedLabel ?? this.departed.get(worktreeId);
+    const pendingCanonical = result.worktreeId === undefined ? result.canonicalId : undefined;
     const { canonicalId: _identity, worktreeId: _gone, ...rest } = result;
     return {
       ...rest,
-      // An arriving successful create is a new generation even when an older
-      // row left this id behind in `departed`. Reconciliation passes `present`,
-      // so an older stored notice still loses its identity when its own row
-      // departs and cannot attach to a later recreation.
-      ...(result.action === "create" && present === undefined ? { canonicalId: worktreeId } : {}),
+      // A pending create keeps its identity through any number of tree pushes
+      // that still lack its row. An attached notice has `worktreeId`, so when
+      // that row actually departs reconciliation strips identity instead.
+      ...(pendingCanonical !== undefined
+        ? { canonicalId: pendingCanonical }
+        : result.action === "create" && present === undefined
+          ? { canonicalId: worktreeId }
+          : {}),
       orphanedLabel: label ?? worktreeId,
     };
   }
