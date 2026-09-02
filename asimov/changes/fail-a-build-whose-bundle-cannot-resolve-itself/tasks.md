@@ -262,7 +262,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     3. Witness that a relative-headed template in CALLEE position is still not reported, which is what the membership test is for.
     4. Delete the orphaned doc comment above `RELATIVE_PREFIXES`, left behind when task 6_2 removed `NOT_SPECIFIERS`. It still describes an exemption list "paid for one reviewed entry at a time" that no longer exists.
 
-- [ ] 8_2 Warn on an absolute specifier without a type checker
+- [x] 8_2 Warn on an absolute specifier without a type checker — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 8_1
   - **Refs**: design.md D2
   - **Acceptance**:
@@ -270,8 +270,9 @@ the extension failed to activate. No suite could catch it, because every suite i
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
     1. In `scripts/bundleRequires.mjs`, collect from the string literals the relative sweep already visits only those absolute paths that name the build machine, per design.md D2.
-    2. Witness a build-root literal warned on and the exit code still 0 for a bundle carrying only that.
-    3. Witness that the shapes the real artifact actually carries — a shell path, a lone separator, and a comment block opening with a slash — are NOT reported, since a sweep without that discriminator warns on twelve of them.
+    2. Declare it in `scripts/bundleRequires.d.mts`.
+    3. Witness a build-root literal warned on and the exit code still 0 for a bundle carrying only that.
+    4. Witness that the shapes the real artifact actually carries — a shell path, a lone separator, and a comment block opening with a slash — are NOT reported, since a sweep without that discriminator warns on twelve of them.
 
 - [ ] 8_3 Prove the failing class survives the deletion
   - **Deps**: 8_2

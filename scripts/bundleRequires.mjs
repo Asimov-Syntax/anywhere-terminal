@@ -506,6 +506,36 @@ function templatesIn(root) {
   return [...seen];
 }
 
+/**
+ * Every absolute literal in the bundle that names the BUILD MACHINE.
+ *
+ * Not every absolute literal. Call analysis gave this class its precision by
+ * reading require-call ARGUMENTS, and a literal sweep has none: 12 distinct
+ * literals in the real artifact pass `path.isAbsolute` and not one is a module
+ * request — `/bin/zsh`, `/bin/bash`, `/`, and CSS blocks that open `/*`. So the
+ * predicate is the one D2's wording always named, a path under the build root
+ * (design.md D2). An absolute path from elsewhere on the builder is a stated
+ * limit: the gate can only attribute paths it can locate.
+ */
+export function buildMachineLiterals(bundleSource, resolvesFrom) {
+  return machinePathsIn(parse(bundleSource, "bundle.js"), resolvesFrom);
+}
+
+function machinePathsIn(root, resolvesFrom) {
+  const buildRoot = path.dirname(path.resolve(resolvesFrom));
+  const seen = new Set();
+  walk(root, (node) => {
+    if (!ts.isStringLiteralLike(node)) {
+      return;
+    }
+    const text = node.text;
+    if (path.isAbsolute(text) && (text === buildRoot || text.startsWith(buildRoot + path.sep))) {
+      seen.add(text);
+    }
+  });
+  return [...seen];
+}
+
 /** Every distinct specifier the bundle still requires, in first-seen order. */
 export function requiredSpecifiers(bundleSource) {
   const { checker, root } = checkerFor(bundleSource);
@@ -766,7 +796,11 @@ export function unresolvableRequires(bundleSource, { esbuildSource, outfile, res
   // One AST serves all three collectors; the wrappers above stay as thin
   // string-taking forms so the witnesses can still drive each one alone.
   const { checker, root } = checkerFor(bundleSource);
-  const candidates = new Set([...specifiersIn(root, checker), ...literalsIn(root)]);
+  const candidates = new Set([
+    ...specifiersIn(root, checker),
+    ...literalsIn(root),
+    ...machinePathsIn(root, resolvesFrom),
+  ]);
   const resolved = [...candidates]
     .map((specifier) => classify(specifier, { externals, resolvesFrom, exists, isDirectory, readFile }))
     .filter((verdict) => !verdict.ok);

@@ -35,6 +35,8 @@ export function parseCount(): number;
 export function exitCodeFor(verdicts: readonly Verdict[]): number;
 export function propagationStats(bundleSource: string): { applications: number; distinct: number };
 export function relativeLiterals(bundleSource: string): string[];
+/** Absolute literals that name the build machine, per design.md D2. */
+export function buildMachineLiterals(bundleSource: string, resolvesFrom: string): string[];
 export function relativeTemplates(bundleSource: string): string[];
 export function requiredSpecifiers(bundleSource: string): string[];
 export function declaredExternals(esbuildSource: string, outfile: string): Set<string>;

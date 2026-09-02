@@ -597,6 +597,33 @@ describe("[round-5 D7] a relative request the gate cannot resolve is reported", 
   });
 });
 
+// [round-7 D2] Deleting call analysis costs the absolute warning its precision:
+// it had precision only because it read require-call ARGUMENTS. A path.isAbsolute
+// sweep warns on 12 literals in the real artifact and not one is a module
+// request — /bin/zsh, /bin/bash, / and Monaco CSS blocks opening with /*. The
+// predicate is the one D2's wording always named: a path under the build root.
+describe("[round-7 D2] an absolute path that names the build machine warns", () => {
+  it("reports a literal under the build root", () => {
+    const found = verdicts(`var p = "/repo/dist/impl/format.js";`);
+    expect(found).toEqual([expect.objectContaining({ severity: "warns" })]);
+    expect(found[0]?.why).toContain("build machine");
+  });
+
+  it("does not fail the build over it", () => {
+    expect(exitCodeFor(verdicts(`var p = "/repo/dist/impl/format.js";`))).toBe(0);
+  });
+
+  it("reports one the artifact directory's parent carries", () => {
+    expect(verdicts(`var p = "/repo/scripts/tool.js";`)).toHaveLength(1);
+  });
+
+  it("does not report the shapes the real artifact actually carries", () => {
+    // All three pass path.isAbsolute. None names the build machine.
+    expect(verdicts(`var a = "/bin/zsh"; var b = "/bin/bash"; var c = "/";`)).toEqual([]);
+    expect(verdicts(`var css = "/*--- copyright ---*/\n.x { position: absolute; }";`)).toEqual([]);
+  });
+});
+
 // [round-7 F019] The position test asked the template's IMMEDIATE parent, so one
 // pair of parentheses put a ParenthesizedExpression in between and the request
 // produced no verdict at all. Parentheses are syntax, not a value.
