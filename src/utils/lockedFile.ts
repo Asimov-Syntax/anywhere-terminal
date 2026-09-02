@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
+import { type FileIdentity, fileIdentityOf, sameFileIdentity } from "./authorizedDirectory";
 
 export type Platform = "darwin" | "linux" | "win32";
 
@@ -94,7 +95,7 @@ export class LockedFile {
       `.${path.basename(this.path) || "hooks.json"}.${Buffer.from(this.createRandomBytes(16)).toString("hex")}.tmp`,
     );
     let handle: FileHandle | undefined;
-    let ownedIdentity: { dev: number | bigint; ino: number | bigint } | undefined;
+    let ownedIdentity: FileIdentity | undefined;
     let live = false;
 
     const ownsTemporaryPath = async (): Promise<boolean> => {
@@ -103,7 +104,7 @@ export class LockedFile {
       }
       try {
         const current = await this.fs.lstat(temporaryPath);
-        return !current.isSymbolicLink() && current.isFile() && sameIdentity(ownedIdentity, current);
+        return !current.isSymbolicLink() && current.isFile() && sameFileIdentity(ownedIdentity, current);
       } catch {
         return false;
       }
@@ -134,17 +135,17 @@ export class LockedFile {
         await handle.chmod(mode);
       }
       const opened = await handle.stat();
-      if (!opened.isFile()) {
+      ownedIdentity = fileIdentityOf(opened);
+      if (!opened.isFile() || ownedIdentity === undefined) {
         await discard();
         return undefined;
       }
-      ownedIdentity = { dev: opened.dev, ino: opened.ino };
     } catch {
       if (live && !ownedIdentity) {
         try {
           const opened = await handle?.stat();
           if (opened) {
-            ownedIdentity = { dev: opened.dev, ino: opened.ino };
+            ownedIdentity = fileIdentityOf(opened);
           }
         } catch {
           // No identity means no pathname is authorized for cleanup.
@@ -233,17 +234,21 @@ export class LockedFile {
 
   private async releaseLock(lockPath: string, handle: FileHandle): Promise<boolean> {
     try {
-      const owned = await handle.stat();
+      const opened = await handle.stat();
+      const owned = fileIdentityOf(opened);
+      if (owned === undefined) {
+        return false;
+      }
       let current: Awaited<ReturnType<typeof lstat>>;
       try {
         current = await this.fs.lstat(lockPath);
       } catch (error) {
-        if (isNotFound(error) && owned.nlink === 0) {
+        if (isNotFound(error) && opened.nlink === 0) {
           return true;
         }
         return false;
       }
-      if (!sameIdentity(owned, current)) {
+      if (!sameFileIdentity(owned, current)) {
         return false;
       }
       try {
@@ -258,13 +263,6 @@ export class LockedFile {
       await handle.close().catch(() => undefined);
     }
   }
-}
-
-function sameIdentity(
-  left: { dev: number | bigint; ino: number | bigint },
-  right: { dev: number | bigint; ino: number | bigint },
-): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
 }
 
 export function isAlreadyExists(error: unknown): boolean {

@@ -6,6 +6,7 @@
 
 import * as nodePath from "node:path";
 import type { DebrisAuthorization, DestinationDisposition, WorktreeCreateMode } from "../types/messages";
+import { fileIdentityOf } from "../utils/authorizedDirectory";
 import { isPathInside } from "../utils/pathBoundary";
 
 export interface CreatePathDeps {
@@ -44,10 +45,8 @@ export interface LstatLike {
  * proposal.md:49-50 already declares unsupported, now stated where it bites.
  */
 export function identityOf(stat: LstatLike | null): string | null {
-  if (stat === null || stat.ino === 0) {
-    return null;
-  }
-  return `${stat.dev}:${stat.ino}`;
+  const identity = fileIdentityOf(stat ?? undefined);
+  return identity === undefined ? null : `${identity.dev}:${identity.ino}`;
 }
 
 export interface CreatePathContext {

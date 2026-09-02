@@ -4,7 +4,7 @@ Build the shared authorizer, mint it at the mutation seam, apply it to file prov
 
 ## 1. Directory authority
 
-- [ ] 1_1 Extract one platform-aware component and identity owner
+- [x] 1_1 Extract one platform-aware component and identity owner — verified: pnpm exec vitest run 'src/utils/authorizedDirectory.test.ts' 'src/utils/lockedFile.test.ts' 'src/agentHooks/install/lockedJsonFile.test.ts' 'src/agentHooks/install/ClaudeHookInstaller.test.ts' 'src/worktree/createPath.test.ts' 'src/worktree/gitExclude.test.ts' && pnpm run check-types && pnpm exec vitest run --maxWorkers=4 > /tmp/freeze-identity-recorded.log 2>&1 exit 0
   - **Deps**: none
   - **Refs**: design.md D1, design.md D2, design.md D5
   - **Acceptance**:
