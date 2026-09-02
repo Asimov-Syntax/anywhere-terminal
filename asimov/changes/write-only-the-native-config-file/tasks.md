@@ -206,3 +206,22 @@ genuinely parallel, so nothing here pretends to be.
     2. Witness it with a stable symlinked ancestor: assert the refusal, and that nothing outside was probed or written.
 
 **Waves**: `6_1`
+
+## Wave 7 — round 5 handback
+
+- [ ] 7_1 Ask the reader whether the base is usable, and hold no rule about it here
+  - **Deps**: 6_1
+  - **Refs**: design.md#{d17-presence-is-revalidated-at-the-write-not-trusted-from-the-offer, d13-a-write-that-was-refused-is-reported-in-the-vocabulary-of-writing} <!-- .reviews/round-5.md F025; D2 -->
+  - **Acceptance**:
+    - Outcome: every base the save accepts is one the immediately following read also accepts
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: the writer keeps no base-eligibility clause of its own — no name list, no containment call, no `lstat` standing in for readability
+  - **Plan**:
+    1. Export `baseFor` from `src/worktree/provisioning/readProvisioning.ts`.
+    2. In `src/worktree/provisioning/writeNativeConfig.ts`, replace the membership check, the containment call and the `lstat` probe with one `baseFor`, refusing both of its failures as `unnamed`; add `provider` and a budget to `NativeConfigDeps`.
+    3. Wire them from `createProvisioningDeps()` in `src/extension.ts`, beside the `readProvisioning` wiring.
+    4. Widen the `unnamed` message in `src/providers/WorktreeHost.ts` from absence to usability.
+    5. Witness the agreement directly: for a base over the byte bound, a directory, and an unreadable file, assert the save refuses AND that a real `readProvisioning` of the same repository refuses the same base. Arm each by restoring the `lstat`.
+    6. Keep the round-3 and round-4 witnesses passing — they state the same property through a name and through a symlinked ancestor.
+
+**Waves**: `7_1`

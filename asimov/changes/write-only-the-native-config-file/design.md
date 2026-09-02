@@ -332,8 +332,33 @@ delete the file, save — `divergenceOf` kept the `extends`, the write succeeded
 answered `missingExtends` with no inherited entries. D12 only refuses an ALREADY-empty `present`, and
 the live hole is disappearance **after** the snapshot.
 
-So the base is confirmed to exist immediately before the write, inside the lock, and a base that has
-gone refuses with `unnamed`. The offer's `present` selects a candidate; it never authorizes it.
+So the base is confirmed immediately before the write, inside the lock. The offer's `present`
+selects a candidate; it never authorizes it.
+
+**Confirmed by the reader, not by this module.** "Confirmed" used to mean whatever the writer had
+implemented, and rounds 2 through 5 each found a different clause of it missing — the declared base
+not covered at all, then no validation, then a name with no path, then a path with no readability. A
+contained, correctly named `asimov/worktree.yaml` one byte over `MAX_PROVIDER_BYTES` saved as
+`ok: true` and read back `unreadable`; directories and permission-denied files disagree the same
+way. Each fix was right about the defect in front of it and left the next clause missing, which is
+what four partial reconstructions of one check look like from the inside.
+
+`readProvisioning.ts`'s `baseFor` already performs all of it as one operation: exact membership in
+the framework adapters, resolved containment, and the bounded readable open, with D2 rule 2's
+requirement that the named file itself be readable. It is exported and the writer **calls** it. The
+writer holds no base-eligibility rule of its own — not a clause, not a fallback — for the same
+reason D2 gives about containment: a second answer to a question another module already answers is
+free to disagree with it, and every round of this change is a record of it doing so.
+
+`NativeConfigDeps` therefore gains a `provider: ProviderDeps` and a budget, wired from
+`createProvisioningDeps()` at the same `extension.ts` site that wires `readProvisioning`. That is
+the whole cost, and it buys the property D17 was asserting all along: **a save succeeds only under a
+base the next read will accept.**
+
+Both of `baseFor`'s refusals — the target that names no adapter or is not there, and the one that is
+there and will not read — refuse the save as `unnamed`. Two refusals would be two messages about a
+single fact the user can act on one way, which is the same judgement `assemble` already makes when
+it reports both as `missingExtends`. D13's wording widens from absence to usability accordingly.
 
 ### D18: "A source was taken" is derived by the host, never asserted by the form
 

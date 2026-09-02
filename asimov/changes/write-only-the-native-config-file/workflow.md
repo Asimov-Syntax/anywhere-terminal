@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -32,7 +32,7 @@
 Blueprint: docs/PLAN.md task WT-012.5
 Lane: full (standard) — MEDIUM-HIGH risk: the first control that writes a checked-in file,
 sitting beside files that must stay byte-identical | flags: user-visible-ui, new-api-contract
-Planned at: 1e4c335d
+Planned at: e0c17b04
 - Admission screen: ONE new invariant owner — the writer of `.vscode/worktree.json`. The dialog
   control and the wire message are surfaces on it, and all five PLAN acceptance clauses are
   properties of the same write. One acceptance story, so no split at Size M.
