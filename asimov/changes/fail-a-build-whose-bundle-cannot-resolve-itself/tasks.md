@@ -161,7 +161,7 @@ the extension failed to activate. No suite could catch it, because every suite i
     3. Witness the oracle's counterexample — a relative literal passed through `String.prototype.concat` into `require` — which a role-based exemption would have hidden, as reported.
     4. Witness that the real `dist/extension.js` sweeps clean with no allowlist and no exemption.
 
-- [ ] 6_3 Report bare and absolute findings as warnings that do not fail the build
+- [x] 6_3 Report bare and absolute findings as warnings that do not fail the build — verified: pnpm exec vitest run 'src/test/invariants/bundleRequires.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 6_2
   - **Refs**: design.md D2 § Coverage, .reviews/round-5.md F008, F009, F010
   - **Acceptance**:

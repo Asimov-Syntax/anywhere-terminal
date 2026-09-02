@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   classify,
   declaredExternals,
+  exitCodeFor,
   requiredSpecifiers,
   unresolvableRequires,
 } from "../../../scripts/bundleRequires.mjs";
@@ -475,5 +476,49 @@ describe("[round-4 F006] propagation cost grows with edges, not edges times fact
     const started = Date.now();
     expect(requiredSpecifiers(chain(2000))).toContain("./deep");
     expect(Date.now() - started).toBeLessThan(600);
+  });
+});
+
+// [round-5 F008/F009/F010] Five rounds could not make call detection sound for
+// bare and absolute requests, and PLAN acceptance never asked it to be: it
+// requires a RELATIVE require that will not resolve to fail the build. Those
+// classes keep being reported, but as warnings — an incomplete detector that
+// fails builds can reject a legitimate one for a guarantee the gate no longer
+// makes (design.md D2 § Coverage).
+describe("[round-5 D2] only the relative class fails the build", () => {
+  it("warns on a bare specifier that was never bundled", () => {
+    expect(one(`require("lodash")`)).toMatchObject({ ok: false, severity: "warns" });
+  });
+
+  it("warns on an absolute path baked into the bundle", () => {
+    expect(one(`require("/repo/dist/real.js")`, files("/repo/dist/real.js"))).toMatchObject({
+      ok: false,
+      severity: "warns",
+    });
+  });
+
+  it("fails on a relative request that does not resolve", () => {
+    expect(one(`require("./gone")`)).toMatchObject({ ok: false, severity: "fails" });
+  });
+
+  it("sets severity by specifier class, not by which mechanism found it", () => {
+    // Swept by the literal pass rather than by call detection, still failing.
+    expect(one(`var box = { r: require }; box.r("./gone");`)).toMatchObject({ severity: "fails" });
+  });
+
+  it("exits 0 when only warnings are present", () => {
+    expect(exitCodeFor(verdicts(`require("lodash")`))).toBe(0);
+  });
+
+  it("exits nonzero when a relative request fails", () => {
+    expect(exitCodeFor(verdicts(`require("./gone")`))).not.toBe(0);
+  });
+
+  it("exits nonzero when a failure sits behind warnings", () => {
+    expect(exitCodeFor(verdicts(`require("lodash");require("./gone")`))).not.toBe(0);
+  });
+
+  it("exits 0 when there is nothing to report", () => {
+    expect(exitCodeFor(verdicts(`require("vscode")`))).toBe(0);
   });
 });

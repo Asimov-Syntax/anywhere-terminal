@@ -522,6 +522,18 @@ function resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile
 }
 
 /** Classify one specifier. */
+/**
+ * The exit code the gate reports for a set of verdicts.
+ *
+ * Only the relative class fails a build. Bare and absolute requests are
+ * reported without a coverage claim, so they warn (design.md D2 § Coverage).
+ * Lives here rather than in the CLI so the exit rule itself is testable —
+ * importing the CLI would run the gate.
+ */
+export function exitCodeFor(verdicts) {
+  return verdicts.some((verdict) => verdict.severity === "fails") ? 1 : 0;
+}
+
 export function classify(specifier, {
   externals,
   resolvesFrom,
@@ -530,22 +542,29 @@ export function classify(specifier, {
   readFile = defaultReadFile,
 }) {
   if (BUILTINS.has(specifier)) {
-    return { specifier, ok: true, why: "node builtin" };
+    return { specifier, ok: true, severity: "none", why: "node builtin" };
   }
   if (externals.has(specifier)) {
-    return { specifier, ok: true, why: "declared external" };
+    return { specifier, ok: true, severity: "none", why: "declared external" };
   }
   if (path.isAbsolute(specifier)) {
     // A machine path baked into a shipped bundle is wrong even when it exists
     // on the builder — it names the build machine, not the user's.
-    return { specifier, ok: false, why: "absolute path baked into the bundle — it names the build machine" };
+    return {
+      specifier,
+      ok: false,
+      severity: "warns",
+      why: "absolute path baked into the bundle — it names the build machine",
+    };
   }
   if (specifier.startsWith(".")) {
-    return { specifier, ...resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile }) };
+    const shipped = resolveShipped(specifier, { resolvesFrom, exists, isDirectory, readFile });
+    return { specifier, severity: shipped.ok ? "none" : "fails", ...shipped };
   }
   return {
     specifier,
     ok: false,
+    severity: "warns",
     why: "bare specifier that was never bundled and is not a declared external",
   };
 }
