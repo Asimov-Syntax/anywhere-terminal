@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: docs/PLAN.md task WT-012.19`)_
@@ -67,6 +67,11 @@ Planned at: 5af4d3fd
   also corrected a claim of mine: the changed release path IS reachable from that suite via
   `activate()` → `AgentHookController` uninstalling a disabled agent → `releaseLock`, but it adds no
   filesystem operation and completes before any dialog is touched.
+
+- Review round 1 was a HANDBACK, not a fix loop. Both findings landed on artifacts approved at
+  Gate 2 — F001 needed a changed D4 and a widened requirement, F002 said the requirement's own
+  scenario was wrong — so the cycle closes as `superseded` and Gate 2 was re-earned before any fix
+  edit. Task 1_1 is untouched by both and keeps its evidence; only 1_2 was reopened.
 
 ## Plan attack triage (round 1, `asm-oracle`)
 

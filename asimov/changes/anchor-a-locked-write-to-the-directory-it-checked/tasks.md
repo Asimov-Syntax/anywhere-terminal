@@ -18,15 +18,16 @@
     7. Arm-check by narrowing the identities back to `Number` and by dropping the identity comparison.
   - **Boundary**: do not add directory identity checks — design.md D2 cuts them to WT-012.21
 
-- [x] 1_2 Report a save whose lock could not be released — verified: bun test 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+- [ ] 1_2 Name a lock left behind, on every outcome that took one
   - **Deps**: 1_1
-  - **Refs**: specs/worktree-panel/spec.md#a-save-whose-lock-could-not-be-released-says-so, specs/worktree-panel/spec.md#an-ordinary-save-is-unaffected; design.md D4
+  - **Refs**: specs/worktree-panel/spec.md#a-save-that-left-its-lock-behind-says-so-whatever-else-it-did, specs/worktree-panel/spec.md#an-ordinary-save-is-unaffected; design.md D4
   - **Acceptance**:
-    - Outcome: a save that wrote but could not release its lock reports that, not ordinary success
+    - Outcome: a save that could not release its lock names it, and still says truthfully what it did to the file
     - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
   - **Plan**:
-    1. In `src/worktree/provisioning/writeNativeConfig.ts`, add one outcome to the result vocabulary for a write that landed with the lock unreleased, and pass an `onLockReleaseFailed` that selects it — collecting during the operation and rewriting the returned outcome afterwards, the shape `ClaudeHookInstaller.ts:91-117` already uses.
-    2. Let the type checker enumerate the consumers of that result and fix each.
-    3. In `src/providers/WorktreeHost.ts`, give the new outcome a message that says the write landed and the file may stay locked, and witness it in `src/providers/WorktreeHost.actions.test.ts` — the suite that already owns the refusal messages.
-    4. In `src/worktree/provisioning/writeNativeConfig.test.ts`, add a witness forcing release failure and asserting the distinct outcome, and one asserting an ordinary save still reports success unchanged.
-    5. Arm-check by reverting the callback so the outcome falls back to success.
+    1. In `src/worktree/provisioning/writeNativeConfig.ts`, carry the leaked lock on BOTH arms of `NativeConfigWrite` rather than on the success variant, and fold it in for every outcome that took a lock — collecting during the operation, the shape `ClaudeHookInstaller.ts:91-117` uses.
+    2. Let the type checker enumerate the consumers and fix each.
+    3. In `src/providers/WorktreeHost.ts`, choose the wording from what actually happened — bytes landed, nothing to write, or a refusal keeping its own reason — and name the lock in all three.
+    4. In `src/worktree/provisioning/writeNativeConfig.test.ts`, add a witness per outcome (landed, no-op, refused) asserting BOTH the lock path and the unchanged write verdict, one asserting an ordinary save is untouched, and one asserting a lock already unlinked by someone else is NOT reported.
+    5. Witness the host wording for the three outcomes in `src/providers/WorktreeHost.actions.test.ts`.
+    6. Arm-check each by reverting the field to the success variant and by dropping the `wrote` distinction.

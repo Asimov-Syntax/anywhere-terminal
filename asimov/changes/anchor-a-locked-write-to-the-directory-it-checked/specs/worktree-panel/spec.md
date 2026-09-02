@@ -8,17 +8,25 @@ A write that removes or replaces a file it believes it created SHALL decide that
 identities compared without loss of precision, so that a different file cannot be mistaken for the
 one it owns.
 
-### Requirement: A save whose lock could not be released says so
+### Requirement: A save that left its lock behind says so, whatever else it did
 
-WHERE a save completes its write but cannot release the lock it took, the outcome reported to the
-user SHALL say that the file may stay locked, rather than reporting an ordinary success. A save that
-takes and releases its lock normally SHALL continue to report ordinary success.
+WHERE a save takes a lock and cannot release it, the outcome reported to the user SHALL name the
+lock that is still there, WHETHER OR NOT the save wrote anything and whether or not it refused. What
+the outcome says about the WRITE SHALL remain what actually happened: a save that wrote nothing
+SHALL NOT be described as saved, and a refusal SHALL keep its own reason. A save that releases its
+lock normally SHALL report exactly as it does today.
 
-#### Scenario: The lock is gone when the save tries to release it
+#### Scenario: The lock cannot be removed after the write lands
 
-- **WHEN** the user saves and the lock the save holds is removed by something else before the save
-  releases it
-- **THEN** the save reports that the write landed but the file may stay locked
+- **WHEN** the user saves, the write lands, and removing the lock afterwards is refused by the
+  filesystem
+- **THEN** the save reports that the write landed AND names the lock that is still there
+
+#### Scenario: A refused save leaves its lock behind
+
+- **WHEN** the user saves, the save is refused for its own reason, and removing the lock afterwards
+  is refused by the filesystem
+- **THEN** the save reports that refusal AND names the lock that is still there
 
 ### Requirement: An ordinary save is unaffected
 
