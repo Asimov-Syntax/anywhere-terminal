@@ -91,7 +91,7 @@
     5. `src/extension.ts`: bind the adapter from `src/worktree/migrateChanges.ts` to the shared runner, Git API, filesystem, source authorization, and `Uri.file`, and map its bounded reasons.
     6. `src/extension.worktreeMutations.test.ts` and `src/extension.worktreeAssembly.test.ts`: prove production supplies the binding, forwards exact source evidence and snapshot, proceeds only after correlated `moved`, and reports indeterminate state after create success.
 
-- [ ] 2_3 Carry and render truthful migration uncertainty
+- [x] 2_3 Carry and render truthful migration uncertainty — verified: pnpm exec vitest run 'src/webview/worktree/WorktreeController.test.ts' 'src/webview/worktree/WorktreeView.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=4 exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#an-uncertain-migration-report-claims-only-proven-state <!-- design.md D2, D7 -->
   - **Acceptance**:

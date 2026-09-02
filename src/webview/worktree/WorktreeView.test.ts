@@ -2395,6 +2395,72 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
   });
 
+  it("keeps an uncertain migration successful and states only what is proven", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          migrationIndeterminate:
+            "Migration failed; changes were restored to the source and this is the only report.",
+        },
+      ],
+    });
+
+    const notice = view.element.querySelector(".wt-notice");
+    const text = notice?.textContent ?? "";
+    expect(notice?.className ?? "").toContain("wt-notice--warn");
+    expect(text).toContain("Create done.");
+    expect(text).toContain("Migration may be partial");
+    expect(text).toContain("no provisioning, port allocation, opening, or launch ran afterwards");
+    expect(text).toContain("source worktree");
+    expect(text).toContain("destination worktree");
+    expect(text).toContain("Git stashes");
+    const detail = notice?.querySelector(".wt-reason")?.textContent ?? "";
+    expect(detail).toBe(
+      "Unverified Git integration detail: Migration failed; changes were restored to the source and this is the only report.",
+    );
+    expect(text.replace(detail, "")).not.toMatch(/restor|only report|one place|couldn.t create|migration failed/i);
+  });
+
+  it("redraws when only the migration uncertainty reason changes", () => {
+    const { view } = mount();
+    const result = (migrationIndeterminate: string): WorktreeActionResult => ({
+      action: "create",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      outcome: "ok",
+      migrationIndeterminate,
+    });
+
+    view.setData({ ...populated(), actionResults: [result("first observation")] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("first observation");
+    view.setData({ ...populated(), actionResults: [result("second observation")] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("second observation");
+  });
+
+  it("keeps another post-create failure beside migration uncertainty", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          migrationIndeterminate: "migration evidence changed",
+          openFailed: "no window available",
+        },
+      ],
+    });
+
+    const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
+    expect(text).toContain("migration evidence changed");
+    expect(text).toContain("no window available");
+  });
+
   it("names a branch the removal also deleted", () => {
     const { view } = mount();
     view.setData({

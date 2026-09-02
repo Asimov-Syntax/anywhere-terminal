@@ -386,7 +386,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests, r.ports, r.portWarnings)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.migrationIndeterminate ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests, r.ports, r.portWarnings)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -1520,6 +1520,10 @@ export class WorktreeView {
     if (result.outcome === "ok") {
       const brought = provisionSummary(result.provisioned, result.provisionContests);
       const ported = portSummary(result.ports, result.portWarnings);
+      const migrationDetail =
+        result.migrationIndeterminate === undefined
+          ? undefined
+          : `Unverified Git integration detail: ${result.migrationIndeterminate}`;
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
       // Still a success — the worktree exists — but the notice says plainly
@@ -1533,6 +1537,7 @@ export class WorktreeView {
         // hide that the opt-in did not go through.
         tone:
           result.openFailed === undefined &&
+          result.migrationIndeterminate === undefined &&
           result.branchDelete?.kind !== "refused" &&
           brought?.tone !== "warn" &&
           ported?.tone !== "warn"
@@ -1542,6 +1547,9 @@ export class WorktreeView {
         title: `${titleForAction(result.action)} done.`,
         body: withAbout(
           [
+            result.migrationIndeterminate === undefined
+              ? undefined
+              : "Migration may be partial, so no provisioning, port allocation, opening, or launch ran afterwards. Inspect the source worktree, destination worktree, and Git stashes.",
             result.openFailed === undefined ? undefined : "It could not be opened afterwards.",
             branchDeleteLine(result.branchDelete),
             brought?.body,
@@ -1551,7 +1559,13 @@ export class WorktreeView {
             .join(" ") || undefined,
         ),
         reason:
-          [result.openFailed, branchDeleteReason(result.branchDelete), brought?.reason, ported?.reason]
+          [
+            migrationDetail,
+            result.openFailed,
+            branchDeleteReason(result.branchDelete),
+            brought?.reason,
+            ported?.reason,
+          ]
             .filter((line) => line !== undefined)
             .join("\n") || undefined,
         onDismiss: dismiss,

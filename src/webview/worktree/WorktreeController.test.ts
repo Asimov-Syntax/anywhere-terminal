@@ -2497,6 +2497,34 @@ describe("what a mutation did comes back to the panel", () => {
     ]);
   });
 
+  it("carries migration uncertainty on the successful create result", () => {
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/migrated";
+
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: {
+        kind: "ok",
+        migrationIndeterminate: "the migration result could not be verified",
+        openFailed: "coexisting follow-up",
+      },
+    });
+
+    expect(results(h)).toEqual([
+      expect.objectContaining({
+        action: "create",
+        repoId: REPO,
+        orphanedLabel: worktreeId,
+        outcome: "ok",
+        migrationIndeterminate: "the migration result could not be verified",
+        openFailed: "coexisting follow-up",
+      }),
+    ]);
+  });
+
   it("[round-4 F017] a second create in one repo does not replace the first worktree's notice", () => {
     // Both worktrees are made a moment ago, so neither is in the tree yet and
     // `rescope` drops the `worktreeId` off each notice — leaving the dedupe key

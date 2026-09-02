@@ -1825,6 +1825,9 @@ function toActionResult(msg: WorktreeMutationResultMessage): WorktreeActionResul
         ...scope,
         outcome: "ok",
         ...(msg.result.openFailed === undefined ? {} : { openFailed: msg.result.openFailed }),
+        ...(msg.result.migrationIndeterminate === undefined
+          ? {}
+          : { migrationIndeterminate: msg.result.migrationIndeterminate }),
         ...(msg.result.branchDelete === undefined ? {} : { branchDelete: msg.result.branchDelete }),
       };
     case "indeterminate":

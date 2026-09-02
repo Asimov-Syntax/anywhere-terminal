@@ -2482,7 +2482,12 @@ export interface WorktreeMutationResultMessage {
   /** The row the notice attaches to. Absent for the repo-scoped verbs. */
   worktreeId?: string;
   result:
-    | { kind: "ok"; openFailed?: string; branchDelete?: WorktreeBranchDeleteOutcome }
+    | {
+        kind: "ok";
+        openFailed?: string;
+        branchDelete?: WorktreeBranchDeleteOutcome;
+        migrationIndeterminate?: string;
+      }
     | { kind: "error"; message: string }
     | { kind: "indeterminate"; observed: string }
     | { kind: "unavailable"; unreadable: readonly string[] }

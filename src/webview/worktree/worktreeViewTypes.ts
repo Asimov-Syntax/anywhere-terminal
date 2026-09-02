@@ -150,6 +150,8 @@ export interface WorktreeActionResult {
   canonicalId?: string;
   /** The action succeeded; what it was asked to do next did not. */
   openFailed?: string;
+  /** The checkout exists, but the move's final location could not be established. */
+  migrationIndeterminate?: string;
   /**
    * The opted-in branch delete's own outcome, riding the removal's own
    * result rather than replacing it — a refused branch delete never turns a
