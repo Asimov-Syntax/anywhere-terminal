@@ -68,7 +68,7 @@
     1. In `src/cursor/CursorHookInstaller.ts`, check the configuration file's parent directory before taking the lock and return the `lockUnavailable` value unchanged when it is absent, restoring the policy `LockedFile.acquireLock`'s recursive `mkdir` overrode.
     2. In `src/cursor/CursorHookInstaller.test.ts`, add a witness that `install()` against an absent parent returns `lock-unavailable` with the unresolved paths, and that the parent is still absent afterwards. Add the matching `uninstall()` case.
 
-- [ ] 1_6 Make the hybrid-filesystem guard able to fail
+- [x] 1_6 Make the hybrid-filesystem guard able to fail — verified: pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_4, 1_5
   - **Refs**: design.md D2
   - **Acceptance**:

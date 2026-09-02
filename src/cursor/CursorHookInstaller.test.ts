@@ -5,7 +5,6 @@ import {
   mkdir,
   mkdtemp,
   open,
-  readdir,
   readFile,
   rename,
   rm,
@@ -126,7 +125,20 @@ function windowsMemoryFixture(document: Record<string, unknown>, wrapperContents
       files.set(path, typeof contents === "string" ? contents : Buffer.from(contents).toString("utf8"));
     }),
   };
-  const memoryFs = memoryFsImpl as unknown as NonNullable<CursorHookInstallerDependencies["fs"]> & typeof memoryFsImpl;
+  // Fail fast on anything this double does not implement. `LockedFile` fills
+  // unsupplied operations from the REAL `node:fs/promises` (lockedJsonFile.ts:80),
+  // so an omission would resolve these Windows-shaped paths relative to cwd on the
+  // POSIX host and touch the actual filesystem — silently. Throwing names the
+  // operation instead (review round 1 F003).
+  const sealed = new Proxy(memoryFsImpl, {
+    get(target, property, receiver) {
+      if (property in target || typeof property === "symbol") {
+        return Reflect.get(target, property, receiver);
+      }
+      throw new Error(`memory filesystem does not implement ${String(property)}`);
+    },
+  });
+  const memoryFs = sealed as unknown as NonNullable<CursorHookInstallerDependencies["fs"]> & typeof memoryFsImpl;
   return {
     files,
     memoryFs,
@@ -1090,14 +1102,12 @@ describe("which lock a release removes", () => {
     await expect(readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("never reaches the real filesystem from the in-memory Windows fixture", async () => {
-    const { memoryFs, paths } = windowsMemoryFixture({ version: 1, hooks: {} });
-    const probe = await mkdtemp(join(tmpdir(), "cursor-untouched-"));
-    tempDirectories.push(probe);
+  it("raises for an operation the Windows double does not implement", () => {
+    const { memoryFs } = windowsMemoryFixture({ version: 1, hooks: {} });
 
-    await new CursorHookInstaller(paths, { fs: memoryFs }).install();
-
-    expect(await readdir(probe)).toEqual([]);
+    // The previous guard watched a temp directory the code never touches, so it
+    // passed whether or not a real-filesystem fallthrough existed.
+    expect(() => (memoryFs as unknown as Record<string, unknown>).link).toThrow(/does not implement link/);
   });
 });
 
