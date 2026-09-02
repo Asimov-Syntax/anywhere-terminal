@@ -191,3 +191,18 @@ genuinely parallel, so nothing here pretends to be.
     5. Run `src/utils/resolvedPathBoundary.test.ts` to confirm the wrapper changed no existing answer.
 
 **Waves**: `5_1`
+
+## Wave 6 — round 4 remediation
+
+- [x] 6_1 Authorize the base as a path, not only as a name — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: design.md#{d7-the-parent-is-resolved-once-and-written-through-and-a-symlinked-target-is-refused, d17-presence-is-revalidated-at-the-write-not-trusted-from-the-offer} <!-- .reviews/round-4.md F025 -->
+  - **Acceptance**:
+    - Outcome: a base whose ancestor is a symlink out of the repository is refused and never probed
+    - Verify: unit src/worktree/provisioning/writeNativeConfig.test.ts
+  - **Boundary**: no containment rule of the writer's own — the same resolved boundary the reader routes a base through (D2)
+  - **Plan**:
+    1. In `src/worktree/provisioning/writeNativeConfig.ts`, put the joined base path through the resolved containment boundary after the adapter-name check and before the D17 `lstat`.
+    2. Witness it with a stable symlinked ancestor: assert the refusal, and that nothing outside was probed or written.
+
+**Waves**: `6_1`

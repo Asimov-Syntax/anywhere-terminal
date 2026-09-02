@@ -466,8 +466,22 @@ export async function writeNativeConfig(
         if (!FRAMEWORK_ORDER.some((adapter) => adapter.files.includes(base))) {
           return { ok: false, reason: "unnamed" };
         }
+        // And then as a PATH. The name check proves the spelling is an
+        // adapter's; it proves nothing about where that spelling leads, and
+        // `asimov/` as a symlink out of the checkout leaves
+        // `asimov/worktree.yaml` a well-known name resolving to a file this
+        // repository does not contain. The probe below reported that outside
+        // file's existence, and the save succeeded under a base the next read
+        // refuses (.reviews/round-4.md F025).
+        //
+        // The same resolved boundary the reader routes a base through, not a
+        // rule of this module's own (design.md D2, `baseFor`).
+        const at = path.join(repoRoot, base);
+        if ((await authorizedPathInsideRoot(at, prepared, deps)) === null) {
+          return { ok: false, reason: "unnamed" };
+        }
         try {
-          await deps.lstat(path.join(repoRoot, base));
+          await deps.lstat(at);
         } catch (error) {
           return { ok: false, reason: isNotFound(error) ? "unnamed" : "unwritable" };
         }

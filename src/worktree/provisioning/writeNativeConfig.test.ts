@@ -602,6 +602,36 @@ describe("the base a save records against", () => {
     expect((await fs.lstat(target)).mode & 0o777).toBe(0o600);
   });
 
+  it("refuses a base whose ancestor leaves the repository, however ordinary its name", async () => {
+    // The name check proves the spelling is an adapter's; it proves nothing
+    // about where that spelling leads. `asimov/` as a symlink out of the
+    // checkout leaves `asimov/worktree.yaml` a perfectly well-known name
+    // resolving to a file the repository does not contain — so the probe still
+    // reported an outside path's existence, and the save still succeeded under
+    // a base the next read refuses (.reviews/round-4.md F025). No race: this is
+    // a directory that simply IS a link.
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "wnc-ancestor-"));
+    await fs.writeFile(path.join(outside, "worktree.yaml"), "copy:\n", "utf8");
+    await fs.symlink(outside, path.join(root, "asimov"));
+    await put(`{ "extends": "asimov/worktree.yaml", "copy": [".env"] }\n`);
+    const before = await fs.readFile(target, "utf8");
+    const asked: string[] = [];
+    const watching: NativeConfigDeps = {
+      ...realDeps,
+      lstat: async (p) => {
+        asked.push(p);
+        return fs.lstat(p);
+      },
+    };
+
+    const wrote = await writeNativeConfig(watching, root, div({ exclude: ["dist"] }));
+
+    expect(wrote).toEqual({ ok: false, reason: "unnamed" });
+    expect(asked.filter((p) => p.includes(path.basename(outside)))).toEqual([]);
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+    await fs.rm(outside, { recursive: true, force: true });
+  });
+
   it("refuses a base that names no adapter file without asking the filesystem about it", async () => {
     // `extends` is untrusted repository text. Probing it before establishing
     // that it names an adapter file at all made this confirmation a filesystem

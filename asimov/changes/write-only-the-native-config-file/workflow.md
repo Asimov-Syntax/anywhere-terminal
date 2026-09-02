@@ -238,3 +238,9 @@ Planned at: 1e4c335d
   previous writer returns `ok: true` having written outside the root. The first witness written for
   this task (a counter answering differently the second time) could not fail once the writer stopped
   resolving twice, which is the same defect F019 named one level up.
+- Round-4 reopened F025 on the same line the round-3 fix added: checking that `extends` names an
+  adapter file proves the spelling and not the destination, and `asimov/` as an ordinary symlink out
+  of the checkout leaves `asimov/worktree.yaml` a well-known name resolving outside the repository.
+  The reader had never had this hole — `baseFor` routes the target through `openProviderFile`'s
+  resolved containment — so the writer was reimplementing half of a check it should have been
+  reusing whole. Third time a name-shaped check has stood in for a path-shaped one in this change.
