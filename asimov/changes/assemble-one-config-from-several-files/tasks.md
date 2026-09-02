@@ -170,3 +170,37 @@
     3. `src/worktree/provisioning/readProvisioning.ts`: replace `identityOf` with a key that normalizes lexically and lower-cases only under that predicate. No `realpath`, no `lstat`, no containment call, no bound — the identity path stops touching the filesystem, which is what closes F009, F010 and F011 rather than fixing them.
     4. `src/worktree/provisioning/readProvisioning.test.ts`: the volume fakes go; assert the dot-segment cases on every platform, the case cases per platform answer, and that a read performs NO filesystem call for identity — including for an `exclude` spelled `../outside`, which is F009's witness.
   - **Boundary**: no row's displayed `path` or `source` changes, and nothing on the identity path opens, stats or resolves anything
+
+## 8. Round-7 handback — the keys a file really has, and the fact really found
+
+- [ ] 8_1 Read a JSONC file's keys from its parse tree
+  - **Deps**: none
+  - **Refs**: design.md D12, specs/worktree-panel/spec.md#every-key-a-configuration-declares-is-judged-as-a-key-of-that-file, specs/worktree-panel/spec.md#one-unreadable-part-never-discards-the-rest-of-a-configuration
+  - **Acceptance**:
+    - Outcome: A `__proto__` member supplies nothing the system reads and is reported as a key the system does not read
+    - Verify: unit src/worktree/provisioning/nativeProvider.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/nativeProvider.ts` and `src/worktree/provisioning/vscodeTasksProvider.ts`, build the top-level record from `parseTree`'s member names onto a null-prototype object instead of using `parse()`'s value. Keep the existing error-tolerance: the parser's errors are still reported and the file is still read anyway.
+    2. Put the tree-to-record step in one place both providers call rather than spelling it twice — they are the only two JSONC readers, and a third would want the same guarantee.
+    3. Witness in `src/worktree/provisioning/nativeProvider.test.ts` and `src/worktree/provisioning/vscodeTasksProvider.test.ts` a file whose `__proto__` member carries `extends`, `exclude` and an inline key: nothing is inherited, nothing is removed, no row is added, and the key is reported. Arm the witness by putting `parse()` back and confirming it fails.
+
+- [ ] 8_2 Say that a source was found and could not be read
+  - **Deps**: none
+  - **Refs**: design.md D13, specs/worktree-panel/spec.md#a-source-that-could-not-be-read-is-not-a-source-that-is-absent
+  - **Acceptance**:
+    - Outcome: An `extends` target that is present and unreadable reports the read failure, not a missing file
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. In `src/worktree/provisioning/readProvisioning.ts`, give `baseFor` a result that distinguishes no-adapter-or-absent from present-and-unreadable, and carry `openProviderFile`'s own problem forward for the second rather than minting a new sentence.
+    2. Witness a present `extends` target whose read fails: the reported problem is the unreadable one, `missingExtends` is absent, and the native file's own material is still offered with Create available.
+
+- [ ] 8_3 Compute the contest over the entries the merge kept
+  - **Deps**: 8_1, 8_2
+  - **Refs**: design.md D14
+  - **Acceptance**:
+    - Outcome: No contender group names an entry the assembled model does not carry
+    - Verify: unit src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. Verify against the shipped code first, in `src/worktree/provisioning/readProvisioning.ts`: the groups are already built after the merge, so this task may be a witness in `src/worktree/provisioning/readProvisioning.test.ts` rather than a change. If it is, say so in the commit and do not move code to make the task look like work.
+    2. Witness over the ASSEMBLED model — not one adapter's — that a native spelling superseding an inherited one, and an `exclude` removing a second, leave every group naming only ids the model still carries, and that a group's repository-declared members are exactly the entries whose `source` is the native file.
+

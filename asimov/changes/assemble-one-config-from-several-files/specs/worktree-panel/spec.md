@@ -97,12 +97,25 @@ Two identical commands from two files SHALL both be offered.
 
 ### Requirement: One unreadable part never discards the rest of a configuration
 
-A configuration that is malformed, that holds a key the system does not read, or that names a
-source to build on which is not there SHALL each be reported as a distinct problem naming the file
-and what was lost. None of them SHALL discard the rest of the file.
+A configuration that is malformed, that holds a key the system does not read, that names a source
+to build on which is not there, or that names one which is there and could not be read SHALL each
+be reported as a distinct problem naming the file and what was lost. None of them SHALL discard the
+rest of the file.
 
 WHERE the named source to build on is not there, the repository's own declared material SHALL still
 be offered.
+
+### Requirement: A source that could not be read is not a source that is absent
+
+A named source to build on that was found and could not be read SHALL be reported as unreadable and
+SHALL NOT be reported as one that is not there.
+
+#### Scenario: Naming a source that is there and cannot be read
+
+- **WHEN** the repository's own configuration names a source to build on which the repository does
+  carry, and that file cannot be read
+- **THEN** the section reports that the file could not be read, not that it is missing, and still
+  offers the repository's own declared material
 
 #### Scenario: Naming a source that is not there
 
@@ -116,3 +129,16 @@ be offered.
 - **WHEN** the repository's own configuration holds one key the system does not read alongside keys
   it does
 - **THEN** the section reports that one key and offers every row the other keys declared
+
+### Requirement: Every key a configuration declares is judged as a key of that file
+
+Every key a configuration file declares SHALL be judged as a key of that file, whatever the key is
+named. A name the configuration format's host language gives a meaning of its own SHALL NOT thereby
+supply a value the system reads.
+
+#### Scenario: A key named for a host-language member
+
+- **WHEN** the repository's own configuration declares a key whose name the configuration format's
+  host language gives its own meaning to, and that key holds values the system would otherwise read
+- **THEN** the section reports it as a key the system does not read, and none of the values under it
+  is used to name a source to build on, to remove a row, or to declare one

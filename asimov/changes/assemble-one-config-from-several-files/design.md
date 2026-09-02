@@ -239,11 +239,24 @@ of the change that now owns the harder question.
 own invariant with its own acceptance story, and it consumed four review rounds inside this change
 without closing. It is now a change of its own; this one ships without it and records the residual.
 
-**The residual, stated plainly.** On a case-insensitive POSIX volume — the macOS default — an
+**The residual, and what closed it.** On a case-insensitive POSIX volume — the macOS default — an
 inherited `mixedcase` and a native `MixedCase` are offered as two rows for one file, and `exclude`
-naming either matches only that spelling. The user sees both rows and can act on them. That is
-round-3 F001, reopened deliberately: it is the failure direction that does not silently discard
-something the repository declared.
+naming either matches only that spelling. That was round-3 F001, reopened deliberately here: it is
+the failure direction that does not silently discard something the repository declared.
+
+It is no longer a residual. WT-012.17 and WT-012.18 have both shipped, and between them they own
+the half this change refused to mint. The model now carries a **contender group** over the folding
+key naming every spelling that may be one destination, and recording which of them the repository's
+own file declared; the dialog offers the inherited spelling unticked and says what refuses it, and
+the apply awards the destination to the repository's own declaration or refuses the group entire.
+So the two rows this decision leaves standing are no longer two unexplained rows — they are a
+contest with a stated outcome, which is exactly what "the user sees both rows and can act on them"
+was standing in for.
+
+What this change still owns at that seam is only that the assembled model FEEDS it: a group is
+computed once, after the merge, over the entries actually kept, so an inherited spelling that the
+native file superseded or `exclude` removed is not still contesting a destination nothing will
+write. That is D14.
 
 The one place this decision can still merge wrongly is a Windows directory with per-directory case
 sensitivity turned on, where two real files fold to one row. That is the same exposure `entryGate.ts`
@@ -294,6 +307,79 @@ filesystem at all: round-5 F009 (raw `exclude` spellings reaching `realpath` out
 F010 (the resolution bound) and F011 (the `realpath` contract) all cease to exist rather than being
 fixed.
 
+### D12: a JSONC object is read from the parse TREE, not from the parsed value
+
+`jsonc-parser`'s `parse()` builds its result with ordinary property assignment, so a `"__proto__"`
+member does not become a key — it replaces the object's PROTOTYPE. The parser reports no error,
+`Object.keys` never sees it, and `record.extends` then resolves through the prototype chain. The
+unknown-key report iterates `Object.keys` while `extendsOf`, `excludeOf` and `readInlineKeys` use
+ordinary lookup, so a checked-in file could name a source to build on, remove inherited rows, and
+add setup steps through a key the accepted spec says will be reported (.reviews/round-7.md F012).
+
+Reproduced exactly: `parse('{"__proto__": {"extends": "orca.yaml", "exclude": ["a"]}, "copy": [...]}')`
+returns zero errors, `Object.keys` returns `["copy"]`, `hasOwnProperty("extends")` is false, and
+`record.extends` is `"orca.yaml"`.
+
+Both JSONC providers therefore read `parseTree` and build a **null-prototype record** from the
+member names the tree actually carries:
+
+```ts
+const record: Record<string, unknown> = Object.create(null);
+for (const member of tree.children ?? []) {
+  const name = member.children?.[0]?.value;
+  if (typeof name === "string") {
+    record[name] = getNodeValue(member.children[1]);
+  }
+}
+```
+
+Two properties, and both are required — re-seating alone is not the fix. On a null-prototype record
+`record.extends` is `undefined`, so nothing hidden is consumed; AND `__proto__` is an own key, so it
+reaches the unknown-key report like any other name the system does not read. Copying the parsed
+VALUE onto a null-prototype object gets only the first: the member disappears entirely and the
+accepted requirement "that key SHALL be reported" is quietly broken instead of loudly.
+
+The YAML adapters do not share the defect — their loader materializes `__proto__` as an own key —
+and are not changed. This is not a general "sanitize untrusted input" pass: it is one parser's
+documented construction behaviour, at the two call sites that use that parser.
+
+### D13: a source that is there and could not be read is not a source that is missing
+
+`baseFor` returns `null` for three different facts — the name matches no framework adapter, the
+named file is absent, and the named file is present but could not be read — and its caller reports
+all three as `missingExtends` (.reviews/round-7.md F014). EACCES, ELOOP and a provider-size refusal
+are all told to the user as "that file is not there", which is both false and misdirecting: it is
+the one diagnosis whose repair is "add the file", and adding it is not what is wrong. The same
+file-level problem is meanwhile counted as PRESENCE by `anyFilePresent`, so the provider can be
+offered as switchable in the same section that calls its file missing.
+
+`baseFor` therefore answers which fact it found:
+
+```ts
+type BaseResolution =
+  | { ok: true; adapter: ProviderAdapter; authorized: Authorized }
+  | { ok: false; why: "missing" }
+  | { ok: false; why: "unreadable"; problem: ProvisionProblem };
+```
+
+`missing` covers both no-adapter-match and absence — D2 already merges those deliberately, and
+nothing observable distinguishes them. `unreadable` carries `openProviderFile`'s OWN problem
+forward rather than minting a second sentence about the same file, which is D4b's rule from the
+sibling change applied here: the reason a reader sees is the rule that actually fired.
+
+### D14: the contest is computed after the merge, over the entries that survived it
+
+WT-012.17 and WT-012.18 own what a contested destination MEANS; this change owns only where the
+groups are computed. They are built once, at the end of assembly, from the entries the merge kept —
+after dedupe, after `exclude`, and after the row cap. Building them earlier would let a spelling the
+native file superseded, or one `exclude` removed, go on contesting a destination that nothing will
+write, and the dialog would offer a refusal note for a row that is not in the offer.
+
+Which member is the repository's own is read from the entry's `source`, the field D-`source`-is-never-
+rewritten already guarantees is the file that declared it. So the two halves compose without a
+second notion of provenance: one field says who declared a row, and the contest reports which of its
+members that field names.
+
 ## Obligation ledger
 
 Dispositions were written by the plan attack. Two rows were narrowed and one added in response.
@@ -309,6 +395,9 @@ Dispositions were written by the plan attack. Two rows were narrowed and one add
 | Setup steps are neither deduped nor reordered | The offered steps are the base's in file order, then the native's in file order, duplicates intact | A `Set` or a path-keyed map used for setup as it is for entries | Test: identical command in both files; assert two rows and their order | supported |
 | `exclude` never silently removes a row the native file itself declared | An excluded path matching an inline entry leaves the row and reports a problem | Applying `exclude` after dedupe, where the surviving native entry is indistinguishable from an inherited one | Test declaring and excluding the same path; assert the row survives, one problem names it, and `excluded` does not list the superseded inherited copy (D10) | supported |
 | A missing `extends` target does not discard the inline keys | The native model is offered in full alongside a `missingExtends` problem | An early return on the failed resolution, before the inline keys are parsed | Test: `extends` naming an absent file plus inline `copy`; assert the row, the problem, and that Create stays available | supported |
+| No value the system reads comes from a key that is not an own key of the file | For every JSONC provider file, every value consumed by `extendsOf`, `excludeOf` and `readInlineKeys` corresponds to a member the file's parse tree carries, and every member it carries is either read or reported | A `"__proto__"` member, which `parse()` applies to the prototype: consumed by ordinary lookup, invisible to `Object.keys`, and therefore never reported | Test on both JSONC providers: a file whose `__proto__` member holds `extends`, `exclude` and an inline key — assert no source is built on, no row is removed, no row is added, and the key IS reported as one the system does not read. Arm it by reverting to `parse()` | unresolved — closed by task 8_1 |
+| A diagnosis names the fact that was actually found | For every `extends` target, the reported problem distinguishes absent-or-unmatched from present-and-unreadable | `baseFor` collapsing every non-`text` open to `null`, which reports EACCES, ELOOP and a size refusal as a missing file while `anyFilePresent` counts the same file as present | Test: `extends` naming a present file whose read fails — assert the reported problem is the unreadable one `openProviderFile` produced, that it is NOT `missingExtends`, and that the native file's own material is still offered | unresolved — closed by task 8_2 |
+| A contest names only rows the offer actually carries | For every group in `contenders`, every member id is an id in `entries` | Computing the groups before dedupe, `exclude` or the row cap, which leaves a superseded or removed spelling contesting a destination nothing will write | Test: a native spelling superseding an inherited one, and an `exclude` removing a second — assert no group names an id absent from `entries`, over the ASSEMBLED model rather than a single adapter's | unresolved — closed by task 8_3 |
 | Nothing on this path executes or writes | No read-path module imports anything that runs a command or mutates the filesystem | A new module added to the directory and left off `readOnly.test.ts`'s lists | `readOnly.test.ts`, whose completeness check fails on an unlisted module — the new native module must be added to `READ_PATH` | supported |
 
 ## Risk Map
