@@ -44,12 +44,24 @@ What the gate classifies afterwards:
 |---|---|---|
 | Relative (`./…`, `../…`, `.\…`, `..\…`) | **fail unless it resolves to a shipped file** | D6's literal sweep |
 | A relative-headed template in a call argument | **fail** | D7's template pass |
-| Absolute (`/…`) | **warn** | A `path.isAbsolute` test over the same literals D6 already visits |
+| Absolute, under the build root | **warn** | A prefix test over the same literals D6 already visits |
+| Absolute, anywhere else | *not reported* | — |
 | A bare specifier | *not reported* | — |
 
-The absolute warning survives because it costs a predicate over literals the sweep visits anyway: no
-checker, no fixed point, no ceiling. A machine path baked into a shipped bundle still names the build
-machine, and that is worth a line of output.
+The absolute warning survives, but NARROWED, and the narrowing is forced. The old pass had precision
+only because it looked at require-call ARGUMENTS; a literal sweep has none. Measured on the real
+artifact: 12 distinct literals pass `path.isAbsolute`, and not one is a module request — `/bin/zsh`,
+`/bin/bash`, `/`, and Monaco CSS blocks that begin `/*`. A `path.isAbsolute` sweep would emit 12 false
+warnings on every clean build, which is a gate that cries wolf.
+
+So the predicate becomes what D2's own wording always said: an absolute literal that **names the build
+machine**, tested as a prefix against the build root derived from `resolvesFrom`. On today's artifact
+that reports **zero**, so the signal is kept and the noise is not. `path.isAbsolute` was only ever an
+over-broad proxy for the real question.
+
+The stated limit: an absolute path from elsewhere on the build machine — `/opt/homebrew/...` — is not
+recognised, because the gate can only attribute paths it can locate. That is the same class of limit
+D6 already carries, and it is smaller than the 12-warning alternative.
 
 **The bare class is the cost of this decision, and it is a real loss.** A package that should have
 been bundled and was not will no longer be reported at all. There is no cheap replacement: deciding

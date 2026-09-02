@@ -269,8 +269,9 @@ the extension failed to activate. No suite could catch it, because every suite i
     - Outcome: An absolute path present in the bundle is reported as a warning
     - Verify: unit src/test/invariants/bundleRequires.test.ts
   - **Plan**:
-    1. In `scripts/bundleRequires.mjs`, collect absolute specifiers from the string literals the relative sweep already visits, so the warning needs no call analysis.
-    2. Witness an absolute literal warned on, the exit code still 0 for a bundle carrying only that, and a builtin and a declared external still unreported.
+    1. In `scripts/bundleRequires.mjs`, collect from the string literals the relative sweep already visits only those absolute paths that name the build machine, per design.md D2.
+    2. Witness a build-root literal warned on and the exit code still 0 for a bundle carrying only that.
+    3. Witness that the shapes the real artifact actually carries — a shell path, a lone separator, and a comment block opening with a slash — are NOT reported, since a sweep without that discriminator warns on twelve of them.
 
 - [ ] 8_3 Prove the failing class survives the deletion
   - **Deps**: 8_2
