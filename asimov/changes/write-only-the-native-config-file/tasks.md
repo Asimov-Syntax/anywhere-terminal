@@ -79,7 +79,7 @@ Fully sequential. Plan attack 2 refuted the earlier `2_1, 2_4 | 2_2 | 2_3` shape
 without the exhaustive `Record<NativeConfigRefusal, string>` that 2_2's file owns. Nothing here is
 genuinely parallel, so nothing here pretends to be.
 
-- [ ] 2_1 Take presence from reads already authorized, and pin the ordering it relies on
+- [x] 2_1 Take presence from reads already authorized, and pin the ordering it relies on — verified: pnpm exec vitest run 'src/worktree/provisioning/readProvisioning.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: <!-- .reviews/round-1.md F013, F017; design.md D17 -->
   - **Acceptance**:

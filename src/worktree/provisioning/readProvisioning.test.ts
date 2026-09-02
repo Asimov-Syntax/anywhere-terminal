@@ -1222,3 +1222,77 @@ describe("[D14] a contest names only rows the offer actually carries", () => {
     expect(model.contenders[0]?.natives.length).toBe(1);
   });
 });
+
+describe("[F017] presence costs no extra provider-file reads", () => {
+  /** Wraps a repo's deps, counting every provider-file read. */
+  function counted(spec: Parameters<typeof fs>[0]) {
+    const inner = fs(spec);
+    const reads: string[] = [];
+    const deps: ProviderDeps = {
+      ...inner,
+      readFile: async (p) => {
+        reads.push(p);
+        return inner.readFile(p);
+      },
+    };
+    return { deps, reads };
+  }
+
+  it("opens a detected-but-not-chosen provider's file once, not once per probe", async () => {
+    // Detection asks "is orca here at all" and presence asks "which of orca's
+    // files are here". Before F017 those were two independent opens of the same
+    // bytes; they now share one pass's map.
+    //
+    // The CHOSEN adapter is deliberately not covered by this: its own `read`
+    // opens its file without publishing what it authorized, so presence probes
+    // it a second time. Threading authorizations out of every adapter is a
+    // different change, and the residue is asserted below rather than hidden.
+    const { deps, reads } = counted({
+      native: `{ "copy": [".env"] }`,
+      asimov: ASIMOV_YAML,
+      orcaYaml: ORCA_YAML,
+    });
+
+    const model = await readProvisioning(deps, ROOT);
+    const count = (p: string) => reads.filter((r) => r === `${ROOT}/${p}`).length;
+
+    expect(model.providers.map((p) => p.id).sort()).toEqual(["asimov", "native", "orca"]);
+    expect(count(ASIMOV_PROVIDER_FILE), "asimov probed twice").toBe(1);
+    expect(count(ORCA_YAML_FILE), "orca probed twice").toBe(1);
+    // The residue, stated: the winner is read by its adapter and probed once.
+    expect(count(NATIVE_PROVIDER_FILE)).toBe(2);
+  });
+
+  // There is deliberately NO test here for the prepared root that `openOnce`
+  // threads through. One was written and deleted: arming it — making every
+  // probe resolve the root itself — left it passing, so it discriminated
+  // nothing. The shared `opens` map is what actually delivers F017 and is
+  // arm-checked above; the prepared root is a correctness belt whose separable
+  // effect this level cannot observe, and a green assertion that cannot fail
+  // would have claimed otherwise.
+
+  it("still reports presence per file, not per provider", async () => {
+    // The saving must not cost the answer: orca declares two independently
+    // optional files and only one is here, which is exactly what `present`
+    // exists to distinguish (D11).
+    const { deps } = counted({ native: `{ "extends": "asimov/worktree.yaml" }`, asimov: ASIMOV_YAML, orcaInclude: "" });
+
+    const model = await readProvisioning(deps, ROOT);
+
+    expect(model.providers.find((p) => p.id === "orca")?.present).toEqual([ORCA_INCLUDE_FILE]);
+  });
+});
+
+describe("[F013] the native adapter leads detection", () => {
+  it("puts native before every framework source it can build on", () => {
+    // `divergenceOf` names the ACTIVE provider, and assembly marks both the
+    // native winner and the base it resolved active. That only picks the native
+    // one first because detection order puts it first — an ordering fact doing
+    // load-bearing work with nothing pinning it until now.
+    const ids = DETECTION_ORDER.map((a) => a.id);
+
+    expect(ids[0]).toBe("native");
+    expect(ids).toContain("asimov");
+    expect(ids).toContain("orca");
+  });
+});
