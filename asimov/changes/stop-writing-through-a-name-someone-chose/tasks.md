@@ -77,3 +77,28 @@
   - **Plan**:
     1. In `src/cursor/CursorHookInstaller.test.ts`, replace the temp-directory guard with a fail-fast double: wrap the memory filesystem so any property the fixture does not implement throws naming the operation, rather than being filled from the real `node:fs/promises` at `lockedJsonFile.ts:80`.
     2. In the same test file, add a witness that the wrapper throws for a deliberately omitted operation, so the guard itself is shown to fail when it should.
+
+## 3. What round 2 sent back
+
+- [ ] 1_7 Decline to create the parent, rather than checking for it
+  - **Deps**: 1_6
+  - **Refs**: design.md D2
+  - **Acceptance**:
+    - Outcome: A parent removed between the check and the lock is not recreated
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts src/agentHooks/install/lockedJsonFile.test.ts
+  - **Plan**:
+    1. In `src/agentHooks/install/lockedJsonFile.ts`, add `createParent?: boolean` to `LockedFileDependencies`, defaulting to `true` so `ClaudeHookInstaller` and `writeNativeConfig` keep their current behaviour.
+    2. In the same file, skip the `mkdir(dirname, { recursive: true })` in both `acquireLock` and `stageReplacement` when that option is `false`.
+    3. In `src/cursor/CursorHookInstaller.ts`, pass `createParent: false` from the `locked()` helper and DELETE the parent `stat` precheck in `withLock` — with no creation, the exclusive open returns `ENOENT` and `acquireLock` already answers `undefined`.
+    4. In `src/cursor/CursorHookInstaller.test.ts`, add a witness that removes the parent directory between the acquisition attempt and the open, asserting the result is `lock-unavailable` and the parent is still absent.
+    5. In `src/agentHooks/install/lockedJsonFile.test.ts`, add a witness that the default still creates a missing parent, so the two existing consumers are pinned.
+
+- [ ] 1_8 Make the double's omissions throw on the path production takes
+  - **Deps**: 1_7
+  - **Refs**: design.md D2
+  - **Acceptance**:
+    - Outcome: An unmodelled operation fails the test instead of reaching the real filesystem
+    - Verify: command pnpm exec vitest run src/cursor/CursorHookInstaller.test.ts
+  - **Plan**:
+    1. In `src/cursor/CursorHookInstaller.test.ts`, replace the `Proxy` with explicit throwing stubs as own properties for every `LockedFileSystem` operation the fixture does not model, so a spread copies them instead of dropping them.
+    2. In the same test file, replace the direct-property-read witness with one that omits a modelled operation and drives `CursorHookInstaller.install()`, asserting the throw names the operation — the arm-check runs through production, not against the fixture object.
