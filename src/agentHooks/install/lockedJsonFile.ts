@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { posix, win32 } from "node:path";
+import { type OpenLike, openRegularFile } from "../../utils/regularFileRead";
 
 export type Platform = "darwin" | "linux" | "win32";
 
@@ -201,14 +202,31 @@ export class LockedFile {
   }
 
   /** `undefined` for a file that is not there — every other read failure throws. */
+  /**
+   * The current contents, or `undefined` when there is no file.
+   *
+   * Read through `openRegularFile` rather than `readFile`, because this call
+   * happens under the lock: `readFile` on a named pipe with no writer never
+   * returns, so the lock would never reach its release and every later holder
+   * would time out acquiring it. The type comes from the OPENED handle, so a
+   * caller that observed the path a moment ago is not trusting that observation
+   * — there is no window between the check and the read
+   * (`open-a-provider-file-without-waiting-on-it` design.md D4).
+   */
   public async readText(): Promise<string | undefined> {
+    let handle: FileHandle;
     try {
-      return await this.fs.readFile(this.path, "utf8");
+      handle = await openRegularFile(this.path, this.fs.open as OpenLike);
     } catch (error) {
       if (isNotFound(error)) {
         return undefined;
       }
       throw error;
+    }
+    try {
+      return await handle.readFile("utf8");
+    } finally {
+      await handle.close().catch(() => {});
     }
   }
 

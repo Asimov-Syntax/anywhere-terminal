@@ -26,7 +26,7 @@
     3. Assert `readProvisioning(createProvisioningDeps(), root)` settles, that a problem with reason `unreadable` names the base, and that the model carries no entry inherited from it — the empty-configuration defeater in design.md's ledger.
     4. Race the call against a timer, skip on win32 with a comment saying why, and arm-check by restoring the plain `"r"` open.
 
-- [ ] 1_3 Read a locked file through the helper, so the lock is never held on a wait
+- [x] 1_3 Read a locked file through the helper, so the lock is never held on a wait — verified: pnpm exec vitest run 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1, 1_2
   - **Refs**: specs/worktree-panel/spec.md#a-refused-save-leaves-the-next-save-able-to-run; design.md D4
   - **Acceptance**:

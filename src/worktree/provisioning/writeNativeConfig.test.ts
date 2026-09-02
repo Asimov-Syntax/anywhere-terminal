@@ -5,9 +5,11 @@
 // models badly, and modelling them badly is how a witness passes over a broken
 // implementation.
 
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { parse as parseJsonc } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LockedFileDependencies } from "../../agentHooks/install/lockedJsonFile";
@@ -890,5 +892,72 @@ describe("what the selection diverges to", () => {
 
     expect(divergenceOf(m, new Set(), false).extends).toBeUndefined();
     expect(divergenceOf(model(), new Set(), false).extends).toBeUndefined();
+  });
+});
+
+// Against a REAL filesystem and a real lock, because the failure this covers is
+// a syscall that never returns: the lock is taken, the read waits forever, and
+// `withLock` cannot reach its release. A fake read models that away.
+describe("a target that is not an ordinary file", () => {
+  const posixOnly = process.platform === "win32" ? it.skip : it;
+
+  const lockOf = (at: string) => `${at}.anywhere-terminal.lock`;
+
+  async function raced<T>(work: Promise<T>): Promise<T | "waited"> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<"waited">((resolve) => {
+          timer = setTimeout(() => resolve("waited"), 3000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  posixOnly("refuses a pipe already there, and leaves the next save able to run", async () => {
+    await fs.rm(target, { force: true });
+    await promisify(execFile)("mkfifo", [target]);
+
+    const first = await raced(writeNativeConfig(realDeps, root, div({ exclude: ["dist"] })));
+    const second = await raced(writeNativeConfig(realDeps, root, div({ exclude: ["dist"] })));
+
+    expect(first).not.toBe("waited");
+    expect(second).not.toBe("waited");
+    // The second call is the whole point: a stranded lock answers `unavailable`
+    // for every later save, which is a persistent denial rather than a refusal.
+    expect(second).not.toEqual({ ok: false, reason: "unavailable" });
+    await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // The race the plan attack found, and the reason this bound lives in the open
+  // rather than in a check before it: a target that IS a regular file when the
+  // writer observes it, and a pipe by the time the read opens it. A file-type
+  // test taken from the path cannot close this window; taking the type from the
+  // opened handle means there is no window (design.md D4).
+  posixOnly("refuses a pipe that replaced the target after it was observed", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+    const deps: NativeConfigDeps = {
+      ...realDeps,
+      // Matched on the basename: the writer resolves the directory first, so on
+      // a host where the temporary root is reached through a symlink the path it
+      // hands us is not the spelling this suite holds.
+      lstat: async (p) => {
+        const stat = await fs.lstat(p);
+        if (path.basename(p) === path.basename(target)) {
+          await fs.rm(p, { force: true });
+          await promisify(execFile)("mkfifo", [p]);
+        }
+        return stat;
+      },
+    };
+
+    const wrote = await raced(writeNativeConfig(deps, root, div({ exclude: ["dist"] })));
+
+    expect(wrote).not.toBe("waited");
+    expect(wrote).toEqual({ ok: false, reason: "unwritable" });
+    await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
