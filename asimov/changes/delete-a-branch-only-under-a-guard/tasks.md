@@ -110,7 +110,7 @@
     2. In `src/worktree/worktreeMutationService.ts`, take the guard's OIDs from that returned evidence and use the fresh assessment only to refuse.
     3. Witness that a branch which moved between issue and redemption is refused rather than deleted at its new OID.
 
-- [ ] 4_4 Read every holder git registers, and refuse on doubt
+- [x] 4_4 Read every holder git registers, and refuse on doubt — verified: pnpm exec vitest run 'src/worktree/deleteBranch.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 2_1
   - **Refs**: design.md D7, D8, D9; specs/worktree-panel/spec.md#a-branch-in-use-or-the-default-branch-is-never-deleted
   - **Acceptance**:

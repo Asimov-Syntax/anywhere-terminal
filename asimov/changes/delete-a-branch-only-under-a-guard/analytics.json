@@ -258,10 +258,14 @@
         {
           "phase": "build",
           "from": 1788308034967
+        },
+        {
+          "phase": "plan",
+          "from": 1788309223525
         }
       ],
       "firstAt": 1788306331878,
-      "lastAt": 1788307858246,
+      "lastAt": 1788309200065,
       "buckets": [
         {
           "runtime": "claude",
@@ -292,6 +296,60 @@
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
           "cacheReadTokens": 11916288,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "main",
+          "model": "gpt-5.6-sol",
+          "messages": 55,
+          "inputTokens": 228614,
+          "outputTokens": 19267,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 5395968,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "asm-oracle",
+          "model": "gpt-5.6-sol",
+          "messages": 12,
+          "inputTokens": 62253,
+          "outputTokens": 3533,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 466432,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "asm-finder",
+          "model": "gpt-5.6-luna",
+          "messages": 8,
+          "inputTokens": 25009,
+          "outputTokens": 1261,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 41472,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
