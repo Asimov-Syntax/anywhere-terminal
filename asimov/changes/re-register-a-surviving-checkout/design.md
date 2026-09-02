@@ -1,9 +1,11 @@
 # Design: re-register-a-surviving-checkout
 
-The wire already carries adopt. `WorktreeCreateMode` has an `adopt` variant with `adoptPath` and
-`expectedBranchOid`, `ResolvedMode` has `adopt`, and `intentFor` already maps adopt to
-`mustExistAsDirectory`. What is missing is a second detector, an executor, and the form's action —
-`sourceOf` still throws for adopt, and the dialog falls back to a fresh create.
+The wire carries adopt on the SUBMIT half only. `WorktreeCreateMode` has an `adopt` variant with
+`adoptPath` and `expectedBranchOid`, and `intentFor` maps adopt to `mustExistAsDirectory` — but
+`ResolvedMode.adopt` carries `adoptPath` alone, so the form cannot build the submit mode from a
+resolution. The resolution half is the first thing this change closes. After that: a second detector,
+an executor, and the form's action — `sourceOf` still throws for adopt, and the dialog falls back to a
+fresh create.
 
 ## Decisions
 
@@ -41,26 +43,44 @@ Neither detector knows the branch tip — case A's probe is path-scoped and case
 HEAD left. `answerCreateProbe` fills `expectedBranchOid` from the ref enumeration it already holds,
 once, for both cases. A candidate whose tip the enumeration does not carry is not offered as adopt.
 
-### D4: The entry is reconstructed under an exclusively created directory, with a recorded undo
+### D4: The entry is reconstructed gitdir-first, under an identity that is re-checked
 
 ```
-mkdir <common>/worktrees/<id>          ← exclusive; ENOTEMPTY/EEXIST mints the next id
 read  <wt>/.git                        ← the bytes to restore
+mkdir <common>/worktrees/<id>          ← exclusive; EEXIST mints the next id
+lstat <common>/worktrees/<id>          ← record dev/ino — the entry's IDENTITY
+write <common>/worktrees/<id>/gitdir   = "<wt>/.git\n"          ← FIRST
 write <common>/worktrees/<id>/commondir = "../.."
 write <common>/worktrees/<id>/HEAD     = "ref: refs/heads/<branch>\n"
-write <common>/worktrees/<id>/gitdir   = "<wt>/.git\n"
-write <wt>/.git                        = "gitdir: <common>/worktrees/<id>\n"   ← last
+lstat <common>/worktrees/<id>          ← identity unchanged, or refuse
+write <wt>/.git                        = "gitdir: <common>/worktrees/<id>\n"   ← LAST
 git worktree repair <wt>
+git -C <wt> rev-parse HEAD             ← == expectedBranchOid, or undo (D5)
 git -C <wt> reset --mixed
 ```
 
-`<wt>/.git` is written **last** on purpose: until it points at the new entry, the entry is inert —
-`git worktree list` does not report a worktree whose directory does not link back, so every earlier
-failure is invisible to the repository rather than half-visible.
+**`gitdir` is written first, and this is the fix for a real race.** `git worktree prune` removes an
+administrative entry whose `gitdir` file is missing — verified on git 2.50.1, which reported
+`Removing worktrees/<id>: gitdir file does not exist` for both an empty entry directory and one
+holding `commondir` and `HEAD`. A concurrent `git worktree add` then mints the same id and writes its
+own entry there, and our remaining writes land inside somebody else's registration. `mkdir` being
+exclusive says nothing about the interval after it. Writing `gitdir` first closes that interval:
+`<wt>/.git` already exists (it is the stale link the detector read), so the entry immediately names an
+existing path and prune passes over it.
 
-Undo is `rm -rf <common>/worktrees/<id>` plus restoring the recorded `<wt>/.git` bytes. It runs on
-every failure after the `mkdir`, including a failed `repair` and a failed `reset`. Nothing inside the
-working tree is in the undo, because nothing inside it was written.
+**`<wt>/.git` is still written last.** Verified on 2.50.1: an entry whose `gitdir` names a `.git` that
+exists but points at a different administrative directory is omitted from `git worktree list
+--porcelain` and is not pruned. So between `gitdir` and the final write the entry is inert — neither
+listed nor collected.
+
+**The identity re-check is not a precheck.** Node exposes no `openat`/`renameat` (WT-012.19), so an
+entry directory cannot be held open and written through. `lstat` at `{ bigint: true }` before and
+after the three writes, compared through `src/utils/fileIdentity.ts`, is what this repository already
+uses for exactly this shape, and it converts a substitution from silent into refused.
+
+Undo is: re-`lstat` the entry, refuse to remove anything whose identity moved, otherwise remove it and
+restore the recorded `<wt>/.git` bytes. `adoptWorktree` returns the undo as a handle on SUCCESS too,
+because D5's post-write conflict check runs at the caller and needs it.
 
 `reset --mixed` is not cleanup. The index lived in the deleted directory; until it is rebuilt every
 tracked file reports as both deleted and untracked. It writes the index and touches no file
@@ -75,13 +95,30 @@ check and git says nothing. So adopt reads `git worktree list --porcelain` itsel
   confirmation path, nothing written. This is a refusal in the sense of worktree-removal.md § 2.2.
 - **After** `repair`: exactly one non-prunable record holds the branch, and its path is the adopted
   directory. Two → undo (D4) and report refused.
+- **The registration state is re-established too**, not carried from the probe: `probeAdopt` is re-run
+  against `adoptPath` inside the body, and anything but `adopt` refuses. Without it an external process
+  that restores the old administrative directory during the user's pause is adopted over — the
+  selected-branch guard does not see it, because that restored entry may be detached or on another
+  branch. This is the same discipline reattach already applies at
+  `src/worktree/worktreeMutationService.ts:789-818`.
 
-The second read is what closes the window the first cannot: the mutation coordinator serializes this
-extension's own mutations per repository, but an external `git worktree add` is not serialized by it.
-Reading afterwards and undoing turns an unobservable race into an observable refusal.
+**What the second read closes, and what it does not.** The mutation coordinator serializes this
+extension's own mutations per repository; an external `git worktree add` is not serialized by it, and
+git does not serialize it either — two concurrent `git worktree add <path> <existing-branch>` runs
+were observed on 2.50.1 to BOTH exit 0 and produce two symbolic HEADs naming the same branch. So no
+client can promise global mutual exclusion on a branch, and this change does not.
 
-The tip is re-checked in the same body: `git rev-parse <branch>` against `expectedBranchOid`, and a
-mismatch refuses rather than attaching the checkout to a commit the user was never shown.
+The claim is therefore narrower, and it is the one the blueprint actually asks for: adoption never
+proceeds against a claim it can observe, and it withdraws from one that appears while it works. An
+external add that materializes after the post-read leaves the same two-holder state a plain
+`git worktree add` leaves, with the same absence of a warning. Adopt is at parity with the supported
+command rather than worse than it, and the ledger row says exactly that.
+
+**The tip guard is a post-check, not a pre-check.** `git rev-parse <branch>` before the write is
+defeated by an `update-ref` landing between the read and the symbolic-HEAD write. So the guard is
+read AFTER `repair`, from inside the worktree — `git -C <wt> rev-parse HEAD` — against
+`expectedBranchOid`; a mismatch undoes and refuses. The pre-read stays, because refusing early is
+cheaper, but it is not what the claim rests on.
 
 ### D6: Adopt refuses the base ref and the destination control
 
@@ -98,7 +135,13 @@ explicit that an unrun recipe is not a failed one, and a fabricated failure reas
 nobody established.
 
 This is the dependency WT-012.15 already declares on WT-012.14, expressed as one predicate rather than
-as a wait. Flipping it when the Windows RESULT block lands is a one-line change plus its test.
+as a wait.
+
+**The flip is owned, not left hanging.** WT-012.14's acceptance already ends "whichever holds is
+written into the design"; this predicate is that writing. Its two outcomes are named there rather than
+left to whoever notices: a PASS sets the default true, a FAIL leaves it false and replaces the reason
+with the captured failure — never with "unverified", which is only correct while the recipe is unrun.
+WT-012.15 ships the predicate and its two witnessed arms; WT-012.14 ships the value.
 
 The gate is a parameter with a default, not a bare `process.platform` read at the call site, so both
 arms are witnessable from either platform — the shape `readFlags` uses in `src/utils/regularFileRead.ts`.
@@ -117,20 +160,20 @@ is reachable by every other git process on the machine.
 
 | Claim | Semantics | Defeater | Witness | Disposition |
 |---|---|---|---|---|
-| No two worktrees hold one branch | After any adoption reports success, exactly one non-prunable record in `git worktree list --porcelain` names the branch | An external `git worktree add <other> <branch>` lands between our pre-read and our write | The post-`repair` listing re-read (D5); two records → undo and report refused. Integration test drives the interleaving by running `worktree add` between the two reads | supported |
-| The working tree is not modified | Every file under the adopted directory keeps its content and mtime across the adoption | `reset --mixed` degrading to `--hard`; `repair` rewriting content | Integration test hashing every file plus mtime before and after, on a real repository with a dirty tree | supported |
-| A failed adoption leaves nothing behind | On any failure, no administrative entry exists for the directory and `<wt>/.git` holds its original bytes | A failure between the `mkdir` and the `<wt>/.git` write; a failure of the undo itself | Unit test injecting a failure at each of the six steps and asserting the entry directory is absent and the `.git` bytes match | supported |
-| The branch is at the tip the user was shown | The adopted worktree's branch resolves to `expectedBranchOid` at the moment the entry is written | The branch moves during the user's pause | `git rev-parse <branch>` re-read in the mutation body, compared to `expectedBranchOid`, refusing on mismatch (D5) | supported |
-| A live registration is never adopted over | A directory whose administrative entry exists never reaches adopt | An administrative directory that exists but cannot be read, misread as gone | `readGitLink`/`adminDirExists` already fail closed — `unreadable` declines rather than adopting (`src/worktree/reattachProbe.ts`). Reused unchanged, with a unit test for the unreadable arm on the new detector | supported |
-| The entry id names no existing entry | `<common>/worktrees/<id>` is created by this adoption and by nothing else | Two adoptions, or an adoption and a `git worktree add`, minting the same id | `mkdir` without recursion is `O_CREAT｜O_EXCL` for directories: it fails `EEXIST` on any pre-existing entry, and the id advances. No pre-check, so there is no window between deciding and acting | supported |
+| Adoption never adds a claim to a branch it can see claimed | At the pre-read and again at the post-read, no non-prunable record other than the adopted path names the branch; a claim seen at either point refuses or undoes | An external `git worktree add` that lands after the post-read. Not defeatable by any client: two concurrent adds against one existing branch were both observed to exit 0 on git 2.50.1, so git itself does not exclude them | Integration test driving the add BETWEEN the two reads (undo path) and BEFORE the pre-read (refusal path). The residual after the post-read is stated in D5 as parity with `git worktree add`, and is the state the blueprint's own guard describes | supported |
+| The adopted working tree is not modified | Every path under `<wt>` except `<wt>/.git` keeps its bytes and mtime; `<wt>/.git` holds exactly the new `gitdir:` line and nothing else | `reset --mixed` degrading to `--hard`; `repair` rewriting content | Integration test hashing every path under `<wt>` except `<wt>/.git`, with mtimes, on a real repository holding a dirty tracked file and an untracked file — plus a separate assertion on `<wt>/.git`'s exact new content | supported |
+| A failed adoption is either undone or reported unfinished | On any failure the entry is removed and `<wt>/.git` restored; where the undo ITSELF fails, the outcome names the entry path and the `.git` state left behind rather than reporting a create | A failure inside the undo — the entry removal, or the `.git` restore | Unit test injecting a failure at each reconstruction step AND at each undo step, asserting the restored state in the first case and the naming of what was left in the second | supported |
+| The branch is at the tip the user was shown | After `repair`, `git -C <wt> rev-parse HEAD` equals `expectedBranchOid` | An `update-ref` between the pre-read and the symbolic-HEAD write — which is why the pre-read is not the guard | The post-`repair` read (D5), with a unit test moving the branch between the two reads and asserting undo + refusal | supported |
+| A live registration is never adopted over | At the moment of the write, `<wt>/.git` names an administrative directory that does not exist | An external process restoring the old administrative directory during the user's pause, possibly detached or on another branch, which the branch guard would not catch | `probeAdopt` re-run inside the mutation body against `adoptPath` (D5); anything but `adopt` refuses. Unit test restoring the admin directory between resolution and mutation | supported |
+| The entry written is the entry created | The three entry files land inside the directory this adoption created, identified by dev/ino rather than by pathname | `git worktree prune` removing an entry whose `gitdir` is missing, then an external add reusing the id — observed on 2.50.1 | `gitdir` written first so prune passes over the entry (D4, verified), plus an identity re-check through `src/utils/fileIdentity.ts` before the final write and before the undo's removal | supported |
 
 ## Risk Map
 
 | Component | Risk | Mitigation |
 |---|---|---|
-| `adoptWorktree` | A partial reconstruction leaves the repository listing a broken worktree | `<wt>/.git` written last (D4); undo on every post-`mkdir` failure; unit test per injected step |
+| `adoptWorktree` | A partial reconstruction leaves the repository listing a broken worktree | `gitdir` first and `<wt>/.git` last (D4, both verified on 2.50.1); identity re-check before the final write; undo on every post-`mkdir` failure, with an undo that fails naming what it left |
 | `answerCreateProbe` | A second filesystem read per settled edit, on the create path with a dialog waiting | Runs only for an `occupiedCandidate` the derivation already produced, on a branch the enumeration already named — the common path adds no I/O, matching D2/D3 of resolve-a-selection-before-the-create-runs |
-| Branch-claim guard | The pre-read is a claim about a past instant | Post-write re-read with undo (D5), not a longer lock |
+| Branch-claim guard | The pre-read is a claim about a past instant, and git excludes nothing globally | Post-write re-read with undo (D5). The residual past the post-read is parity with `git worktree add`, stated rather than mitigated |
 | `createWorktree` | Adopt entering the create-path validation, which refuses an occupied destination | Adopt leaves before `validateCreatePath`, exactly as reattach does (`src/worktree/worktreeMutationService.ts:769`) |
 | Windows | Offering an unverified reconstruction that half-works | D7 withholds the mode; WT-012.14 supplies the evidence that flips it |
 | `WorktreeCreateDialog` | A silent render regression in a mode nobody exercises by hand | The mode's offer, its refused controls, and its declaration are unit-tested in the dialog's own suite |

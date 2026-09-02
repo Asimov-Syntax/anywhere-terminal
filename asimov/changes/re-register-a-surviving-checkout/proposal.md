@@ -33,8 +33,8 @@ M
 
 ### Must not
 
-- Write a single byte inside the adopted working tree
-- Let two administrative entries claim one branch, in any interleaving
+- Write a single byte inside the adopted working tree. `<wt>/.git` is not inside it — that link file IS the adoption, and it is the one path under the directory that changes
+- Let two administrative entries claim one branch through any interleaving adoption can observe. Global exclusion is not on offer: two concurrent `git worktree add` runs against one branch both succeed on git 2.50.1, so no client provides it and this one claims parity, not more
 - Refuse adopt on Windows on the grounds that the reconstruction fails there — it has not been run
 - Reach for `git worktree add --force` against an occupied destination
 

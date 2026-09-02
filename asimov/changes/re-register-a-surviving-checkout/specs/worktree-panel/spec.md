@@ -28,7 +28,7 @@ WHERE an adoption is authorized, the panel SHALL attach the surviving directory 
 branch so that it is listed by git, holds that branch, survives a prune, and can commit into the
 repository; and SHALL report only the directory's genuine working-tree state rather than every
 tracked file as deleted. No file inside the adopted directory SHALL be created, modified, or removed
-by the adoption.
+by the adoption. The directory's `.git` entry is the one path the adoption replaces.
 
 #### Scenario: The adopted checkout is a worktree again
 
@@ -39,21 +39,50 @@ by the adoption.
 #### Scenario: The content is untouched
 
 - **WHEN** an adoption completes
-- **THEN** every file under the adopted directory has the content and the modification time it had
-  before the adoption
+- **THEN** every path under the adopted directory other than its `.git` entry has the content and the
+  modification time it had before the adoption
 
 ### Requirement: A branch a live worktree holds is never adopted onto
 
 WHERE any live worktree of the repository holds the selected branch, the panel SHALL refuse the
 adoption before writing anything, with no confirmation path past the refusal. The check SHALL be made
 against git's own listing at the moment of the write, not against the listing the resolution was
-built from.
+built from, and SHALL be made again after the registration is written — where a second holder is found
+then, the adoption SHALL be undone and reported as refused rather than as a create.
 
 #### Scenario: The branch is claimed while the user decides
 
 - **WHEN** another worktree takes the selected branch between the resolution and the authorization
 - **THEN** the adoption is refused, nothing is written, and the refusal names the directory holding
   the branch
+
+#### Scenario: The branch is claimed while the adoption runs
+
+- **WHEN** another worktree takes the selected branch after the adoption's own check and before it
+  finishes
+- **THEN** the registration the adoption wrote is removed and the result is reported as a refusal
+
+### Requirement: An adoption attaches the branch at the tip it promised
+
+WHERE the branch moves between the offer and the write, the panel SHALL undo the adoption and report a
+refusal rather than attaching the checkout to a commit the user was not shown. The tip SHALL be read
+from the adopted worktree after its registration is written.
+
+#### Scenario: The branch moves during the adoption
+
+- **WHEN** the selected branch is updated while the adoption is running
+- **THEN** the registration is removed and the result names the tip mismatch
+
+### Requirement: An adoption re-establishes what it was offered on
+
+WHERE the directory's administrative entry exists again at the moment of the write, the panel SHALL
+refuse the adoption rather than overwrite the registration, whatever branch that registration names.
+
+#### Scenario: The registration comes back during the pause
+
+- **WHEN** the surviving directory's administrative entry is restored between the resolution and the
+  authorization
+- **THEN** the adoption is refused and the directory's `.git` entry is left as it was found
 
 ### Requirement: Adoption states what it cannot restore before it is authorized
 
@@ -71,14 +100,19 @@ did not survive and are not recovered. These SHALL be stated rather than probed.
 
 WHERE any step of an adoption fails, the panel SHALL leave no administrative entry behind, SHALL
 restore the directory's `.git` entry to the bytes it held, and SHALL report the failure rather than a
-create. WHERE the branch is found to be claimed after the entry was written, the entry SHALL be
-removed and the adoption reported as refused.
+create. WHERE the undo itself cannot complete, the panel SHALL report what was left behind and where,
+rather than reporting either a create or a clean failure.
 
 #### Scenario: A failed reconstruction is not a half-registration
 
 - **WHEN** a write or a git step of the adoption fails
 - **THEN** the repository lists no worktree at that directory, the directory's `.git` entry holds
   what it held before, and the result is reported as a failure
+
+#### Scenario: An undo that cannot finish says so
+
+- **WHEN** the adoption fails and its own undo cannot remove the entry or restore the `.git` entry
+- **THEN** the result names the entry directory and the state the `.git` entry was left in
 
 ### Requirement: Adoption is offered only where the reconstruction has been verified
 
