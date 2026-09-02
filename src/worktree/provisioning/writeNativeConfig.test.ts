@@ -965,3 +965,78 @@ describe("a target that is not an ordinary file", () => {
     await expect(fs.stat(lockOf(target))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
+
+describe("a save that may have left a lock in the way", () => {
+  /** Refuses to remove the lock, and nothing else — the one release we can vouch for. */
+  const stuck = {
+    fs: {
+      unlink: async (p: unknown) => {
+        if (String(p).endsWith(".lock")) {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        }
+      },
+    },
+  };
+
+  /** The lock's name identifies a different file — never ours to speak about. */
+  const notOurs = {
+    fs: {
+      lstat: (async (p: string, o?: { bigint?: boolean }) =>
+        String(p).endsWith(".lock")
+          ? {
+              dev: o?.bigint ? 1n : 1,
+              ino: o?.bigint ? 4242n : 4242,
+              nlink: o?.bigint ? 1n : 1,
+              isFile: () => true,
+              isSymbolicLink: () => false,
+            }
+          : fs.lstat(p, o as never)) as never,
+    },
+  };
+
+  it("says so when the write landed", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+
+    const wrote = await writeNativeConfig({ ...realDeps, locked: stuck }, root, div({ exclude: ["node_modules"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true, mayStillBeLocked: true });
+  });
+
+  it("says so without claiming a write, when there was nothing to write", async () => {
+    await put(`{ "exclude": ["node_modules"] }\n`);
+
+    const wrote = await writeNativeConfig({ ...realDeps, locked: stuck }, root, div({ exclude: ["node_modules"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: false, mayStillBeLocked: true });
+  });
+
+  it("says so while keeping a refusal's own reason", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+
+    const wrote = await writeNativeConfig(
+      { ...realDeps, locked: { ...stuck, rename: async () => Promise.reject(new Error("EXDEV")) } },
+      root,
+      div({ exclude: ["node_modules"] }),
+    );
+
+    expect(wrote).toEqual({ ok: false, reason: "unwritable", mayStillBeLocked: true });
+  });
+
+  // A lock we cannot vouch for is not a lock we tell the user about. The name
+  // belongs to something else, so there is nothing here for them to wait on.
+  it("says nothing when the lock's name is not ours", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+
+    const wrote = await writeNativeConfig({ ...realDeps, locked: notOurs }, root, div({ exclude: ["node_modules"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+  });
+
+  it("says nothing for an ordinary save", async () => {
+    await put(`{ "copy": [".env"] }\n`);
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+  });
+});

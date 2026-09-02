@@ -18,7 +18,7 @@
     7. Arm-check each by collapsing its row into the neighbouring disposition.
   - **Boundary**: no age-based or staleness-based lock reclamation, and no repair of a substituted name
 
-- [ ] 1_2 Carry a lock the user may hit out of the write
+- [x] 1_2 Carry a lock the user may hit out of the write — verified: bun test 'src/worktree/provisioning/writeNativeConfig.test.ts' && pnpm run check-types && pnpm exec biome check src/utils/fileIdentity.ts src/utils/regularFileRead.ts src/agentHooks/install src/worktree/provisioning && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#no-lock-is-offered-to-the-user-as-a-file-to-delete; design.md D3, D5
   - **Acceptance**:

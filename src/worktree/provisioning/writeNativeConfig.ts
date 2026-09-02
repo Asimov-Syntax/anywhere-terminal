@@ -44,9 +44,25 @@ export interface NativeConfigDivergence {
   readonly tookSource: boolean;
 }
 
+/**
+ * The save took a lock and may not have got rid of it.
+ *
+ * A flag, NOT a pathname. The wire carries no identity, and a person acts on
+ * what it says minutes later — by which time the name can have been rebound, so
+ * "remove this file" is advice that can delete a live lock belonging to someone
+ * else. Set only for the releases this process can vouch for (design.md D1, D3).
+ *
+ * Orthogonal to the outcome, because the release runs after ANY outcome that
+ * acquired the lock — hanging it off success alone loses it exactly on the
+ * refusal paths, where the next save is already going to struggle.
+ */
+interface MayStillBeLocked {
+  readonly mayStillBeLocked?: true;
+}
+
 export type NativeConfigWrite =
-  | { readonly ok: true; readonly wrote: boolean }
-  | { readonly ok: false; readonly reason: NativeConfigRefusal };
+  | ({ readonly ok: true; readonly wrote: boolean } & MayStillBeLocked)
+  | ({ readonly ok: false; readonly reason: NativeConfigRefusal } & MayStillBeLocked);
 
 /**
  * Why a save did not happen.
@@ -402,7 +418,8 @@ export async function writeNativeConfig(
   const target = path.join(here, path.basename(NATIVE_PROVIDER_FILE));
 
   const file = new LockedFile(target, deps.locked);
-  return file.withLock<NativeConfigWrite>(
+  let inTheWay = false;
+  const written = await file.withLock<NativeConfigWrite>(
     async () => {
       // Inside the lock, not before it — the whole read-modify-write, and that
       // includes deciding WHAT is being written to. A symlink verdict or a mode
@@ -520,5 +537,9 @@ export async function writeNativeConfig(
     },
     { ok: false, reason: "unavailable" },
     { ok: false, reason: "unwritable" },
+    (_lockPath, release) => {
+      inTheWay = release === "stuck" || release === "movedAway";
+    },
   );
+  return inTheWay ? { ...written, mayStillBeLocked: true } : written;
 }
