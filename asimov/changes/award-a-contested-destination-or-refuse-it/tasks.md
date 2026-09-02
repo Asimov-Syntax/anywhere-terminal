@@ -157,7 +157,7 @@
 
 ## 9. Out-of-band handback — a member's refusal is not a destination reading
 
-- [ ] 9_1 Say which kind of refusal the entry gate produced
+- [x] 9_1 Say which kind of refusal the entry gate produced — verified: pnpm exec vitest run 'src/worktree/provisioning/entryGate.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: design.md D3a
   - **Acceptance**:

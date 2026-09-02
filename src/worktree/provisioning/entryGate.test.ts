@@ -300,3 +300,42 @@ describe("[round-5 F028] a Win32 alias is folded where Win32 decides, not everyw
     expect((await admitEntry(entry("PNPM-LOCK.YAML"), await gate(deps), deps)).ok).toBe(false);
   });
 });
+
+// [OOB-F016 / D3a] A refusal reached before the gate touched anything says
+// nothing about the destination — it is a fact about the entry's NAME or about
+// this member's own MODE. Only the containment check reads the filesystem, and
+// only it can establish that the destination was not absent. The orchestration
+// needs the two apart: collapsing them let one member's material rule prove a
+// shared destination occupied and refuse an admissible member beside it.
+describe("[OOB-F016] a refusal says whether it observed the destination", () => {
+  it("observed nothing when the name itself was refused", async () => {
+    for (const spelling of ["/etc/passwd", "cfg\\app.json"]) {
+      const verdict = await verdictFor(entry(spelling));
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.observedDestination).toBe(false);
+      }
+    }
+  });
+
+  it("observed nothing when this member's own material rule refused", async () => {
+    for (const e of [entry("pnpm-lock.yaml"), entry("node_modules", "link")]) {
+      const verdict = await verdictFor(e);
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.observedDestination).toBe(false);
+      }
+    }
+  });
+
+  it("observed the destination when containment refused, on either side", async () => {
+    const escapes = [fs({ "/repo/escape": "/outside" }), fs({ "/wt/feature/escape": "/outside" })];
+    for (const deps of escapes) {
+      const verdict = await verdictFor(entry("escape/secret"), deps);
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.observedDestination).toBe(true);
+      }
+    }
+  });
+});
