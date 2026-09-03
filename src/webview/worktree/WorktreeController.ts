@@ -15,6 +15,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeDestinationPickedMessage,
   WorktreeMigrationOfferMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
@@ -390,6 +391,7 @@ export class WorktreeController {
   private applyPullRequests: ((repoId: string, offer: WorktreePullRequestOffer) => void) | null = null;
   private applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | null = null;
   private applyDebrisAuthorization: ((answer: WorktreeDebrisAuthorizedMessage) => void) | null = null;
+  private applyDestinationPicked: ((answer: WorktreeDestinationPickedMessage) => void) | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
@@ -538,6 +540,7 @@ export class WorktreeController {
             query: selection.branch,
             ...(selection.base === undefined ? {} : { base: selection.base }),
             ...(selection.candidatePath === undefined ? {} : { candidatePath: selection.candidatePath }),
+            ...(selection.useChosenFolder === undefined ? {} : { useChosenFolder: selection.useChosenFolder }),
           });
         },
         bindDefaults: (apply) => {
@@ -599,6 +602,14 @@ export class WorktreeController {
         },
         bindDebrisAuthorization: (apply) => {
           this.applyDebrisAuthorization = apply;
+        },
+        // The opening rides here the way every other create request's does, so
+        // the form states no identity of its own (design.md D2).
+        onPickDestination: ({ repoId }) => {
+          deps.postMessage({ type: "worktreePickDestination", repoId, token: this.refsToken });
+        },
+        bindDestinationPicked: (apply) => {
+          this.applyDestinationPicked = apply;
         },
       }),
       onLaunchSubmit: (request) => {
@@ -1382,6 +1393,21 @@ export class WorktreeController {
       return;
     }
     this.applyDebrisAuthorization?.(msg);
+  }
+
+  /**
+   * The folder the user picked in the host's dialog.
+   *
+   * Dropped on the token like every other create-dialog answer: a folder picked
+   * for a PREVIOUS opening states nothing in this one. This is the only place
+   * that decides whether an answer belongs to the live form — the dialog
+   * applies whatever reaches it.
+   */
+  handleDestinationPicked(msg: WorktreeDestinationPickedMessage): void {
+    if (msg.token !== this.refsToken) {
+      return;
+    }
+    this.applyDestinationPicked?.(msg);
   }
 
   /**

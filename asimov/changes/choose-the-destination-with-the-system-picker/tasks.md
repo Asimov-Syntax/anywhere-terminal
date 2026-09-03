@@ -42,7 +42,7 @@
     4. Same file — that a pick records against the live opening and that a dropped answer records nothing.
     5. `src/types/messages.contract.test.ts` — the wire's own witness for the added field.
 
-- [ ] 2_2 State the chosen folder from the create form, and show what it resolves to
+- [x] 2_2 State the chosen folder from the create form, and show what it resolves to — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 2_1, 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker,only-a-folder-this-extension-offered-is-derived-under}; design.md D1, D2, D3, D6
   - **Boundary**: No path composed or sent by the webview, no persistence of a chosen folder, no caller setting the override input's value directly, and no change to how a destination is shortened or displayed

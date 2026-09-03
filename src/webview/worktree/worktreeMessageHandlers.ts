@@ -24,6 +24,7 @@ export type WorktreeDelegatedHandlers = Pick<
   | "onWorktreePullRequests"
   | "onWorktreeCreateResolution"
   | "onWorktreeDebrisAuthorized"
+  | "onWorktreeDestinationPicked"
   | "onWorktreeMutationResult"
   | "onWorktreeProvisionResult"
   | "onWorktreeRemoveAssessment"
@@ -60,6 +61,7 @@ export function worktreeDelegatedHandlers(
     onWorktreePullRequests: (msg) => controller()?.handlePullRequests(msg),
     onWorktreeCreateResolution: (msg) => controller()?.handleCreateResolution(msg),
     onWorktreeDebrisAuthorized: (msg) => controller()?.handleDebrisAuthorized(msg),
+    onWorktreeDestinationPicked: (msg) => controller()?.handleDestinationPicked(msg),
     onWorktreeMutationResult: (msg) => controller()?.handleMutationResult(msg),
     onWorktreeProvisionResult: (msg) => controller()?.handleProvisionResult(msg),
     onWorktreeRemoveAssessment: (msg) => controller()?.handleRemoveAssessment(msg),

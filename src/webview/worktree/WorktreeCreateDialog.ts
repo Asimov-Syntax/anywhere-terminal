@@ -20,6 +20,7 @@ import type {
   ResolvedMode,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeDestinationPickedMessage,
 } from "../../types/messages";
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { attachTooltip } from "../ui/Tooltip";
@@ -195,6 +196,8 @@ export interface CreateSelection {
   base?: ProbeBase;
   /** Present only where the user typed over the derived destination. */
   candidatePath?: string;
+  /** Present only where the host still holds a folder this form chose. */
+  useChosenFolder?: true;
 }
 
 export interface WorktreeCreateDialogDeps {
@@ -291,6 +294,24 @@ export interface WorktreeCreateDialogDeps {
    * the offer is not rendered at all.
    */
   bindDebrisAuthorization?: (apply: (answer: WorktreeDebrisAuthorizedMessage) => void) => void;
+  /**
+   * Ask the host to open the system folder picker for this form.
+   *
+   * Carries the repository and nothing else: the opening is the owner's, added
+   * where every other create request's is, so this form states no identity of
+   * its own and no second place decides whether an answer belongs here
+   * (design.md D2).
+   */
+  onPickDestination?: (request: { repoId: string }) => void;
+  /**
+   * Receive the function that applies a picked folder.
+   *
+   * Paired with `onPickDestination` for the same reason `bindDebrisAuthorization`
+   * is paired with `onAuthorizeDebris`: without both, no answer can arrive, and
+   * an action that cannot be answered is a control that does nothing — so it is
+   * not rendered at all.
+   */
+  bindDestinationPicked?: (apply: (answer: WorktreeDestinationPickedMessage) => void) => void;
   onSubmit: (draft: WorktreeCreateDraft) => void;
   onCancel?: () => void;
 }
@@ -983,6 +1004,14 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** True until the user edits the path themselves; after that we stop deriving it. */
   let pathIsDerived = true;
   /**
+   * The destination is derived inside a folder the HOST offered this form.
+   *
+   * A flag, never a path: the form has no folder to hold that the host did not
+   * give it, and sending one back would create a webview-supplied path to
+   * resolve (design.md D5). Withdrawn by typing and by switching repository.
+   */
+  let usingChosen = false;
+  /**
    * The destination the user typed — the QUESTION, never the answer (D8).
    *
    * `draft.path` is what the form states and submits, and once a resolution has
@@ -1246,7 +1275,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       if (listOpen) {
         renderList();
       }
-      syncDerived(true);
+      stateDestination({ kind: "repoChanged" });
     });
     repoField.append(repoSelect, repoHint);
     shell.dialog.appendChild(repoField);
@@ -1307,6 +1336,59 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     "Detaching checks the worktree out at a commit without creating a branch. Work there belongs to no branch until you make one, so it is for looking at a past state rather than building on it.",
   );
 
+  /**
+   * The one place a stated destination becomes form state.
+   *
+   * Three states and every edge between them (design.md D6): the destination is
+   * derived under the configured root, derived inside a folder the host offered
+   * this form, or typed. `pathIsDerived` stays true in the middle one — the
+   * destination IS derived, just from a different root — so the field keeps
+   * showing the host's answer.
+   *
+   * What the form submits is NOT read from the input: `selection()` reads
+   * `pathIsDerived`, `supplied` and `usingChosen`, and `syncDerived` re-derives
+   * over the input whenever the caret is elsewhere — which after a picker it
+   * always is. So a caller that assigned `pathInput.value` would be silently
+   * overwritten and would compose a create stating nothing at all.
+   *
+   * Clearing the field is not an override of "nowhere" — it is withdrawing the
+   * override.
+   */
+  const stateDestination = (
+    next: { kind: "typed"; path: string } | { kind: "chosen" } | { kind: "repoChanged" },
+    fromInput = false,
+  ): void => {
+    if (next.kind === "chosen") {
+      // No path is held. The form states that it is using the folder; only the
+      // host knows which folder that is, and only the host says what it derives
+      // to (D5). Any typed override is withdrawn — the two are never both live.
+      usingChosen = true;
+      supplied = "";
+      pathIsDerived = true;
+    } else if (next.kind === "typed") {
+      // A typed path names a destination outright, so it retires the folder.
+      usingChosen = false;
+      supplied = next.path;
+      pathIsDerived = next.path.trim() === "";
+      if (!fromInput) {
+        pathInput.value = next.path;
+      }
+    } else {
+      // The form is form-wide across repositories while the host's record is per
+      // repository, so a flag carried across a switch would ask the new
+      // repository to use a folder only its predecessor was given — and it would
+      // fall back to its configured root in silence. A typed override is not
+      // withdrawn here: it names a path, and a path means the same thing in
+      // either repository.
+      usingChosen = false;
+    }
+    // Typing is settled by the field's own `change`; a chosen folder and a
+    // repository switch have no such event and nothing more is coming, so each
+    // IS the settled edit. Left unsettled, the host is never asked and Create
+    // stays disabled waiting for an answer nobody requested.
+    syncDerived(!fromInput);
+  };
+
   const baseField = field("Base ref", "wt-base", true);
   const baseInput = document.createElement("input");
   baseInput.className = "wt-input wt-input--mono";
@@ -1334,7 +1416,29 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   pathInput.className = "wt-input wt-input--mono";
   pathInput.id = "wt-path";
   pathInput.type = "text";
-  pathField.appendChild(pathInput);
+  // The input and the action sit on one line: the action states a destination
+  // into that field, so putting it anywhere else would read as a second way to
+  // say a different thing.
+  const pathRow = document.createElement("div");
+  pathRow.className = "wt-path-row";
+  pathRow.appendChild(pathInput);
+  // Rendered only when it can be answered. `onPickDestination` without
+  // `bindDestinationPicked` is a button whose reply reaches nobody.
+  const pickDestination =
+    deps.onPickDestination !== undefined && deps.bindDestinationPicked !== undefined
+      ? document.createElement("button")
+      : undefined;
+  if (pickDestination !== undefined) {
+    pickDestination.type = "button";
+    pickDestination.className = "wt-path-pick";
+    pickDestination.textContent = "Choose…";
+    pickDestination.title = "Pick the folder this worktree is created in.";
+    pickDestination.addEventListener("click", () => {
+      deps.onPickDestination?.({ repoId: currentRepo().repoId });
+    });
+    pathRow.appendChild(pickDestination);
+  }
+  pathField.appendChild(pathRow);
   explain(
     labelOf(pathField),
     "The folder this worktree is created in. Left empty it goes to the location shown above, derived from the branch name; a value here overrides that for this create only.",
@@ -2002,7 +2106,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * field the form could change without the host ever hearing about it.
    */
   const askKey = (s: CreateSelection): string =>
-    JSON.stringify([s.repoId, s.branch, s.base ?? null, s.candidatePath ?? null]);
+    JSON.stringify([s.repoId, s.branch, s.base ?? null, s.candidatePath ?? null, s.useChosenFolder ?? false]);
 
   /** True while a destination request has no answer yet. Submit waits for it. */
   let outstanding = false;
@@ -2140,6 +2244,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // coming back, and sending it would pin the resolution to the value it
       // just produced instead of letting it re-derive.
       ...(pathIsDerived || supplied.trim().length === 0 ? {} : { candidatePath: supplied }),
+      // Never both: typing withdraws the folder and choosing withdraws the
+      // typed path, so the host's tie-break is unreachable from this form.
+      ...(usingChosen ? { useChosenFolder: true as const } : {}),
     };
   }
 
@@ -2551,6 +2658,13 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     baseNote.textContent = baseRefused ?? "";
     const destRefused = DEST_REFUSED_BY[draft.branchMode];
     pathInput.disabled = destRefused !== undefined;
+    // The action shares the override's own availability. `reattach` and `adopt`
+    // withdraw the override because those modes do not let the user choose a
+    // target, and an action that stayed live there would offer a destination
+    // the form has withdrawn (design.md D1).
+    if (pickDestination !== undefined) {
+      pickDestination.disabled = destRefused !== undefined;
+    }
     pathNote.hidden = destRefused === undefined;
     pathNote.textContent = destRefused ?? "";
     if (destRefused !== undefined) {
@@ -2839,14 +2953,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   baseInput.addEventListener("input", () => syncDerived());
   baseInput.addEventListener("change", edited);
   pathInput.addEventListener("change", edited);
-  pathInput.addEventListener("input", () => {
-    // Clearing the field is not an override of "nowhere" — it is withdrawing the
-    // override. One-way, the face showed a derivation that had been switched off
-    // and Create was disabled with the explaining control behind the disclosure.
-    pathIsDerived = pathInput.value.trim() === "";
-    supplied = pathInput.value;
-    syncDerived();
-  });
+  pathInput.addEventListener("input", () => stateDestination({ kind: "typed", path: pathInput.value }, true));
   shell.dialog.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
       ev.preventDefault();
@@ -2856,6 +2963,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
   // A fresh answer replaces the repo's seed and re-renders. Only the path the
   // user has not typed over moves — an edited path is theirs.
+  // One transition, not a second one: the picked folder is stated exactly as a
+  // typed one is. The controller has already dropped an answer for any opening
+  // but this form's, so there is no second place deciding that here.
+  deps.bindDestinationPicked?.(() => {
+    // The answer's path is not read. It is the host's own folder coming back,
+    // and the host is what derives inside it — taking the path here would put a
+    // webview-composed destination on the wire (design.md D1, D5). The
+    // controller has already dropped an answer for any opening but this form's.
+    stateDestination({ kind: "chosen" });
+  });
+
   deps.bindDefaults?.((next) => {
     // Replies race the typing that produced them. An answer for a branch the
     // form has already moved past would put a destination on screen that no

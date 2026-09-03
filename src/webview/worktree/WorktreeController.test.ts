@@ -2111,6 +2111,74 @@ describe("the create a toolbar with no repository opens", () => {
     expect(answers).toHaveLength(1);
   });
 
+  it("[2_2] asks the host for a folder, carrying the opening the form belongs to", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const deps = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { onPickDestination(r: { repoId: string }): void } } };
+      }
+    ).view.deps.createDialogDeps();
+
+    deps.onPickDestination({ repoId: REPO_A });
+
+    expect(h.posts.find((m) => m.type === "worktreePickDestination")).toMatchObject({
+      repoId: REPO_A,
+      token: 1,
+    });
+  });
+
+  it("[2_2] drops a folder picked for a PREVIOUS opening", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const answers: unknown[] = [];
+    (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { bindDestinationPicked(fn: (a: unknown) => void): void } } };
+      }
+    ).view.deps
+      .createDialogDeps()
+      .bindDestinationPicked((a) => answers.push(a));
+
+    // Token 1 is this opening; the second opening moves it to 2, and a folder
+    // picked for 1 states nothing in the form now on screen.
+    h.controller.openCreate();
+    h.controller.handleDestinationPicked({
+      type: "worktreeDestinationPicked",
+      repoId: REPO_A,
+      token: 1,
+      path: "/stale/choice",
+    });
+    expect(answers, "a superseded pick reached the form").toEqual([]);
+
+    h.controller.handleDestinationPicked({
+      type: "worktreeDestinationPicked",
+      repoId: REPO_A,
+      token: 2,
+      path: "/live/choice",
+    });
+    expect(answers).toHaveLength(1);
+  });
+
+  it("[2_2] forwards the chosen-folder flag onto the probe, and nothing else", () => {
+    // A flag the form states but the controller never posts is a field the
+    // host's answer cannot be about — the destination would silently stay under
+    // the configured root while the form believed it had said otherwise.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const deps = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { onSelectionChange(s: unknown): void } } };
+      }
+    ).view.deps.createDialogDeps();
+
+    deps.onSelectionChange({ repoId: REPO_A, branch: "feature", useChosenFolder: true });
+
+    const probe = h.posts.filter((m) => m.type === "worktreeCreateProbe").at(-1);
+    expect(probe).toMatchObject({ repoId: REPO_A, query: "feature", useChosenFolder: true });
+    expect(probe).not.toHaveProperty("candidatePath");
+  });
+
   it("[1_7] submits the disposition the form settled on, and free where it settled on none", () => {
     const h = mount();
     const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;

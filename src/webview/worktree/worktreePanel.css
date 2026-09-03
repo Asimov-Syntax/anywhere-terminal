@@ -1586,3 +1586,32 @@
   line-height: 1.35;
   color: var(--vscode-descriptionForeground);
 }
+
+/* The override and the action that states one sit on a single line: the action
+   writes into that field, so a separate row would read as a second way to say a
+   different thing. */
+.wt-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.wt-path-row .wt-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wt-path-pick {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+  border-radius: 2px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.wt-path-pick:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

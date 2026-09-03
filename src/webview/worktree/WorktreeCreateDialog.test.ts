@@ -11,7 +11,9 @@ import type {
   ProvisionModel,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeDestinationPickedMessage,
 } from "../../types/messages";
+import type { CreateSelection } from "./WorktreeCreateDialog";
 import { openWorktreeCreateDialog, sanitizeBranchForPath } from "./WorktreeCreateDialog";
 import {
   createDefaults,
@@ -5393,5 +5395,215 @@ describe("workspace package suggestions in the form", () => {
     // A nested secret is no less a secret: consent is still per row.
     expect(web?.querySelector<HTMLInputElement>(".wt-brow-cb")?.checked).toBe(false);
     expect(server?.querySelector<HTMLInputElement>(".wt-brow-cb")?.checked).toBe(false);
+  });
+});
+
+// design.md D6 — the destination is derived, derived inside a folder the host
+// offered this form, or typed. What matters is every EDGE between those three:
+// the form must never state two of them at once, and must never keep the flag
+// after the record it names has stopped applying.
+describe("create worktree — choosing the folder the worktree is created in", () => {
+  const CHOSEN = "/elsewhere/trees/mine";
+
+  /** Create, by its label — `.wt-btn--primary` matches an earlier button too. */
+  const create = (host: HTMLElement): HTMLButtonElement => {
+    const btn = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      /create worktree/i.test(b.textContent ?? ""),
+    );
+    if (btn === undefined) {
+      throw new Error("the form has no Create button");
+    }
+    return btn;
+  };
+
+  function withPicker(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
+    let apply: ((answer: WorktreeDestinationPickedMessage) => void) | undefined;
+    let resolve: ((resolution: WorktreeCreateResolutionMessage) => void) | undefined;
+    const asked: string[] = [];
+    const selections: CreateSelection[] = [];
+    const h = open({
+      onSelectionChange: (s) => {
+        selections.push(s);
+      },
+      onPickDestination: ({ repoId }) => {
+        asked.push(repoId);
+      },
+      bindDestinationPicked: (fn) => {
+        apply = fn;
+      },
+      bindResolution: (fn) => {
+        resolve = fn;
+      },
+      ...over,
+    });
+    return {
+      ...h,
+      asked,
+      selections,
+      /** The selection the form most recently asked the host about. */
+      latest: () => selections.at(-1),
+      pick: () => h.host.querySelector<HTMLButtonElement>(".wt-path-pick"),
+      answer: (path = CHOSEN) => {
+        apply?.({ type: "worktreeDestinationPicked", repoId: createDefaults().repoId, token: 1, path });
+      },
+      path: () => h.q<HTMLInputElement>("#wt-path"),
+      /**
+       * Type INTO the destination and settle it.
+       *
+       * The form asks the host on settled edits only, so a bare `input` leaves
+       * the previous selection standing and a test reading `latest()` would be
+       * asserting on the state before its own edit.
+       */
+      typeDestination: (value: string) => {
+        const el = h.q<HTMLInputElement>("#wt-path");
+        type(el, value);
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      submit: () => create(h.host).click(),
+      /** Put the form into a mode the host resolved, which is the only way in. */
+      resolveAs: (mode: WorktreeCreateResolutionMessage["mode"]) =>
+        resolve?.({
+          type: "worktreeCreateResolution",
+          repoId: createDefaults().repoId,
+          token: 1,
+          seq: 0,
+          query: "feature",
+          freePath: "/trees/repo-feature",
+          mode,
+        }),
+    };
+  }
+
+  it("[2_2] asks the host, carrying the repository and nothing else", () => {
+    const h = withPicker();
+
+    h.pick()?.click();
+
+    expect(h.asked).toEqual([createDefaults().repoId]);
+    h.dispose();
+  });
+
+  it("[2_2] states the flag and no path once a folder is chosen", () => {
+    // The answer's path is deliberately not read. The form says it is using the
+    // folder; the host is what knows which folder and what it derives to.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.answer();
+
+    expect(h.latest()?.useChosenFolder).toBe(true);
+    expect(h.latest()?.candidatePath).toBeUndefined();
+    h.dispose();
+  });
+
+  it("[2_2] asks the host again for a folder it has not asked about", () => {
+    // The key that decides whether to ask must cover the flag, or choosing a
+    // folder is a selection the form believes it has already asked about and
+    // the destination never changes.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    const before = h.selections.length;
+    h.pick()?.click();
+    h.answer();
+
+    expect(h.selections.length).toBeGreaterThan(before);
+    h.dispose();
+  });
+
+  it("[2_2] withdraws the folder when a destination is typed", () => {
+    // Never both: a typed path names a destination outright, and two statements
+    // of one destination is the split this form exists to stop making.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.answer();
+    h.typeDestination("/typed/elsewhere");
+
+    expect(h.latest()?.useChosenFolder).toBeUndefined();
+    expect(h.latest()?.candidatePath).toBe("/typed/elsewhere");
+    h.dispose();
+  });
+
+  it("[2_2] states neither once the destination is cleared", () => {
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.answer();
+    h.typeDestination("/typed/elsewhere");
+    h.typeDestination("");
+
+    expect(h.latest()?.useChosenFolder).toBeUndefined();
+    expect(h.latest()?.candidatePath).toBeUndefined();
+    h.dispose();
+  });
+
+  it("[2_2] withdraws the folder when the repository changes", () => {
+    // The form is form-wide across repositories while the host's record is per
+    // repository, so carrying the flag over would ask the new repository to use
+    // a folder only its predecessor was given — and it would fall back to its
+    // configured root in silence.
+    const h = withPicker({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
+    });
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.answer();
+    expect(h.latest()?.useChosenFolder).toBe(true);
+
+    const repoSelect = h.q<HTMLSelectElement>("#wt-repo-select");
+    repoSelect.value = "/other/.git";
+    repoSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(h.latest()?.repoId).toBe("/other/.git");
+    expect(h.latest()?.useChosenFolder).toBeUndefined();
+    h.dispose();
+  });
+
+  it("[2_2] changes nothing when the picker is cancelled", () => {
+    // Cancel produces no answer at all, so the form must be exactly what it was.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    const before = h.latest();
+    h.pick()?.click();
+
+    expect(h.latest()).toEqual(before);
+    expect(h.latest()?.useChosenFolder).toBeUndefined();
+    h.dispose();
+  });
+
+  it("[2_2] submits nothing while the chosen folder has no answer yet", () => {
+    // Between a pick and the host's resolution the field still holds the
+    // predecessor's path. That is a pending state, not a destination — Create
+    // must not compose a create against a destination the form has moved past.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.answer();
+    h.submit();
+
+    expect(h.submitted).toEqual([]);
+    h.dispose();
+  });
+
+  it("[2_2] offers no action where the destination override is withdrawn", () => {
+    // `reattach` and `adopt` withdraw the override because those modes do not
+    // let the user choose a target, and an action that stayed live there would
+    // offer a destination the form has already withdrawn.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.resolveAs({ kind: "adopt", adoptPath: "/trees/repo-feature", expectedBranchOid: "oid-feature" });
+
+    expect(h.path().disabled, "the setup never reached a mode that withdraws it").toBe(true);
+    expect(h.pick()?.disabled).toBe(true);
+    h.dispose();
+  });
+
+  it("[2_2] renders no action where an answer could never arrive", () => {
+    // `onPickDestination` without `bindDestinationPicked` is a button whose
+    // reply reaches nobody, which is a control that does nothing.
+    const h = open({ onPickDestination: () => {} });
+
+    expect(h.host.querySelector(".wt-path-pick")).toBeNull();
+    h.dispose();
   });
 });
