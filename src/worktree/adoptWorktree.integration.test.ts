@@ -41,6 +41,9 @@ const realFs: AdoptFs = {
   writeFile: async (p, data) => {
     fs.writeFileSync(p, data, "utf8");
   },
+  createFile: async (p, data) => {
+    fs.writeFileSync(p, data, { encoding: "utf8", flag: "wx" });
+  },
   removeFile: async (p) => {
     fs.rmSync(p, { force: true });
   },
@@ -55,6 +58,14 @@ let tmp: string;
 /** The surviving checkout: a real worktree whose administrative entry was deleted. */
 let survivor: string;
 let commonDir: string;
+/** The administrative directory the survivor's link still names — deleted in setup. */
+let staleGitdir: string;
+
+/** The `gitdir:` a surviving checkout still points at, read from git's own link file. */
+function staleOf(worktreePath: string): string {
+  const link = fs.readFileSync(path.join(worktreePath, ".git"), "utf8");
+  return link.slice("gitdir: ".length).trim();
+}
 
 function git(args: string[], cwd = repo): string {
   return fixture.git(args, cwd);
@@ -108,6 +119,7 @@ beforeEach(() => {
 
   survivor = path.join(tmp, "survivor");
   git(["worktree", "add", "-q", "-b", "survivor", survivor]);
+  staleGitdir = staleOf(survivor);
   // What the panel is actually looking at: a directory git has FORGOTTEN. The
   // entry is deleted and pruned, so no registration is left to repair — which
   // is exactly why `git worktree repair` cannot recover this on its own.
@@ -125,7 +137,7 @@ describe("what git does with a reconstructed entry", () => {
 
     return adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor" },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
       realFs,
     ).then((result) => {
       expect(result).toMatchObject({ ok: true });
@@ -140,7 +152,7 @@ describe("what git does with a reconstructed entry", () => {
   });
 
   it("accepts a commit that lands in the repository", async () => {
-    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor" }, realFs);
+    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir }, realFs);
 
     fs.writeFileSync(path.join(survivor, "added.txt"), "from the adopted tree\n");
     git(["add", "added.txt"], survivor);
@@ -157,7 +169,7 @@ describe("what git does with a reconstructed entry", () => {
     fs.writeFileSync(path.join(survivor, "README.md"), "edited before the adoption\n");
     fs.writeFileSync(path.join(survivor, "untracked.txt"), "never added\n");
 
-    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor" }, realFs);
+    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir }, realFs);
 
     const status = git(["status", "--porcelain"], survivor)
       .split("\n")
@@ -176,7 +188,7 @@ describe("what git does with a reconstructed entry", () => {
 
     const result = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor" },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
       realFs,
     );
     expect(result).toMatchObject({ ok: true });
@@ -201,7 +213,7 @@ describe("what git does with a reconstructed entry", () => {
 
     const result = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor" },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
       realFs,
     );
     // The reconstruction itself does not read the listing — the service's guards
@@ -276,7 +288,7 @@ describe("what git does with a reconstructed entry", () => {
 
     const result = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: "--force", branch: "survivor" },
+      { repoPath: repo, commonDir, worktreePath: "--force", branch: "survivor", staleGitdir },
       realFs,
     );
 
@@ -292,6 +304,7 @@ describe("what git does with a reconstructed entry", () => {
     const other = path.join(tmp, "other", "survivor");
     fs.mkdirSync(path.dirname(other), { recursive: true });
     git(["worktree", "add", "-q", "-b", "second", other]);
+    const staleOther = staleOf(other);
     fs.rmSync(path.join(commonDir, "worktrees", "survivor1"), { recursive: true, force: true });
     // git names the second entry `survivor1`; whatever it chose, clear every
     // entry so both directories are forgotten.
@@ -302,12 +315,12 @@ describe("what git does with a reconstructed entry", () => {
 
     const first = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor" },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
       realFs,
     );
     const second = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: other, branch: "second" },
+      { repoPath: repo, commonDir, worktreePath: other, branch: "second", staleGitdir: staleOther },
       realFs,
     );
 

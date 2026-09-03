@@ -21,7 +21,13 @@ function deps(over: Partial<AdoptProbeDeps> = {}): AdoptProbeDeps {
 
 describe("probeAdopt", () => {
   it("answers adopt for a checkout whose administrative directory is gone", async () => {
-    expect(await probeAdopt({ candidatePath: "/wt/survivor", commonDir: COMMON }, deps())).toEqual({ kind: "adopt", adoptPath: "/wt/survivor" });
+    expect(await probeAdopt({ candidatePath: "/wt/survivor", commonDir: COMMON }, deps())).toEqual({
+      kind: "adopt",
+      adoptPath: "/wt/survivor",
+      // Carried, because the reconstruction re-reads THIS path at its own write
+      // boundary rather than parsing the link a second time (F006).
+      staleGitdir: `${COMMON}/worktrees/gone`,
+    });
   });
 
   it("declines while the administrative directory is still there", async () => {
@@ -156,7 +162,7 @@ describe("probeAdopt binds the surviving checkout to this repository", () => {
       deps({ readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/../worktrees/gone" }) }),
     );
 
-    expect(verdict).toEqual({ kind: "adopt", adoptPath: "/wt/survivor" });
+    expect(verdict).toMatchObject({ kind: "adopt", adoptPath: "/wt/survivor" });
   });
 
   it("proves the repository before it asks whether the entry is gone", async () => {

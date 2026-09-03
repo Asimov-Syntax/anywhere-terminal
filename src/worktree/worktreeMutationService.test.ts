@@ -20,6 +20,8 @@ import {
 } from "./worktreeMutationService";
 
 const REPO = "/repo/.git";
+/** The administrative directory a surviving checkout still names, proven absent. */
+const STALE_GITDIR = `${REPO}/worktrees/gone`;
 /** Git reports this one with a trailing slash, so id and path differ. */
 const RAW_ID = "/repo-wt/raw";
 const RAW_PATH = "/repo-wt/raw/";
@@ -107,7 +109,7 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     corroborateRepair: async ({ repairPath }) => ({ kind: "offer", repairPath, expectedOid: "oid-1" }),
     listWorktrees: async () => [{ displayPath: "/repo-wt/stale", branch: "feat", prunable: true }],
     // A surviving checkout git has forgotten, unless a test moves one of these.
-    corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt" as const, adoptPath: candidatePath }),
+    corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt" as const, adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
     reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
     readHeadAt: async () => "oid-tip",
     pathDeps: {
@@ -1726,7 +1728,7 @@ describe("re-registering a surviving checkout", () => {
       },
       corroborateAdopt: async (input) => {
         over.asked?.push(input);
-        return over.verdict ?? { kind: "adopt", adoptPath: input.candidatePath };
+        return over.verdict ?? { kind: "adopt", adoptPath: input.candidatePath, staleGitdir: STALE_GITDIR };
       },
       readHeadAt: async () => (over.head === undefined ? TIP : over.head),
       reconstructEntry: async () =>
@@ -1905,7 +1907,7 @@ describe("re-registering a surviving checkout", () => {
 
   it("writes nothing when the directory is gone", async () => {
     const h = harness({
-      corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+      corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
       readHeadAt: async () => TIP,
       reconstructEntry: async () => {
         throw new Error("the reconstruction ran against a directory that is gone");

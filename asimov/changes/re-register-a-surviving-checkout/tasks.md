@@ -146,14 +146,17 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     3. `src/providers/WorktreeHost.actions.test.ts` — a substituted path, branch or tip refuses and says so, and the legitimate submission still runs.
     4. `src/extension.worktreeAssembly.test.ts` — the assembled repair submits the resolution the host published rather than a hand-built one, which is what the rule now requires of the panel.
 
-- [ ] 2_4 Make the reconstruction non-destructive under substitution and leave nothing behind
+- [x] 2_4 Make the reconstruction non-destructive under substitution and leave nothing behind — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts src/worktree/adoptProbe.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 2_3
-  - **Refs**: specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-adoption-re-establishes-what-it-was-offered-on}; design.md D4, D5; `.reviews/round-1.md` F004, F005, F006
+  - **Refs**: specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-adoption-re-establishes-what-it-was-offered-on}; design.md D4, D5; `.reviews/round-1.md` F004, F005, F006, F011
   - **Acceptance**:
     - Outcome: A failed reconstruction leaves no entry and reports whatever it could not remove
-    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts src/worktree/adoptProbe.test.ts
   - **Plan**:
-    1. `src/worktree/adoptWorktree.ts` — every entry file is written exclusively, so a directory substituted after the `mkdir` is never truncated; a failure after the `mkdir` removes the entry and reports what it could not remove (F004, F005).
-    2. `src/worktree/adoptWorktree.ts` — the final `<wt>/.git` write is conditional: the link is re-read immediately before it and the write is refused unless it still holds the stale bytes the adoption was offered on (F006).
-    3. `src/worktree/adoptWorktree.test.ts` — a substituted entry directory and a post-`mkdir` identity failure each leave no entry and report the residue.
-    4. `src/worktree/adoptWorktree.integration.test.ts` — a registration restored between the probe and the write leaves the directory's `.git` as it was found.
+    1. `src/worktree/adoptProbe.ts` and `src/worktree/worktreeMutationService.ts` — the adopt verdict carries the stale gitdir it proved absent, and the reconstruction is given that exact path rather than parsing the link a second time.
+    2. `src/worktree/adoptWorktree.ts` — the three entry files are created exclusively, so a directory substituted after the `mkdir` is never truncated; an entry this adoption cannot prove it owns is reported as residue rather than as a clean withdrawal (F004, F005).
+    3. `src/worktree/adoptWorktree.ts` — the final `<wt>/.git` write is conditional: the link must still hold the bytes the adoption was offered on and the stale administrative directory must still be absent, both read immediately before it (F006).
+    4. `src/worktree/adoptWorktree.ts` — a failure to create the entry says which failure it was; only the loop running out of candidates reports that no name was available (F011).
+    5. `src/worktree/adoptWorktree.test.ts`, `src/worktree/worktreeMutationService.test.ts` and `src/providers/WorktreeHost.actions.test.ts` — a substituted entry, a post-`mkdir` identity failure, a restored registration and a restored link each leave the destination as found and report what was left.
+    6. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository, the adoption still lists and commits, and a link replaced between the probe and the write is not overwritten.
+    7. `src/extension.ts` — the production filesystem supplies the exclusive create and the directory-existence read the reconstruction now asks for.

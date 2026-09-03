@@ -32,7 +32,17 @@ export interface AdoptProbeDeps {
  * over one would overwrite a live registration.
  */
 export type AdoptVerdict =
-  | { kind: "adopt"; adoptPath: string }
+  | {
+      kind: "adopt";
+      adoptPath: string;
+      /**
+       * The administrative directory the surviving link names, proven absent
+       * here. Carried so the reconstruction re-reads THIS path immediately
+       * before its own write rather than parsing the link a second time and
+       * risking a different answer about one file (round-1 F006).
+       */
+      staleGitdir: string;
+    }
   | { kind: "declined"; because: "notAPrunedCheckout" | "unreadable" | "anotherRepository" };
 
 /** The candidate, and the repository the adoption would re-register it into. */
@@ -100,5 +110,7 @@ export async function probeAdopt(subject: AdoptSubject, deps: AdoptProbeDeps): P
     // is what keeps the one unreadable arm from becoming the adopt arm.
     return { kind: "declined", because: "unreadable" };
   }
-  return exists ? { kind: "declined", because: "notAPrunedCheckout" } : { kind: "adopt", adoptPath: candidatePath };
+  return exists
+    ? { kind: "declined", because: "notAPrunedCheckout" }
+    : { kind: "adopt", adoptPath: candidatePath, staleGitdir: link.gitdir };
 }

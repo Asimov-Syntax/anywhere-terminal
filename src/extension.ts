@@ -915,6 +915,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         throw error;
       }),
     writeFile: (path, data) => fsp.writeFile(path, data, "utf8"),
+    // `wx` — the entry's own files are CREATED, never truncated. An ordinary
+    // write into a directory another process put there after our `mkdir` would
+    // overwrite its registration before the identity re-check sees it
+    // (round-1 F005).
+    createFile: (path, data) => fsp.writeFile(path, data, { encoding: "utf8", flag: "wx" }),
     removeFile: (path) => fsp.rm(path, { force: true }),
     removeDir: (path) => fsp.rm(path, { recursive: true, force: true }),
   };

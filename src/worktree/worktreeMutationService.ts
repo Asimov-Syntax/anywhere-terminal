@@ -897,6 +897,10 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 commonDir,
                 worktreePath: adoptPath,
                 branch: mode.branch,
+                // The path the corroboration just proved absent, carried rather
+                // than re-derived: the reconstruction re-reads it at its own
+                // write boundary, and two readings of one link could disagree.
+                staleGitdir: verdict.staleGitdir,
               });
               if (!written.ok) {
                 return fail(`${written.message}${residueNote(written.leftBehind)}`);

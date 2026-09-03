@@ -7,7 +7,7 @@
 // consulted. So the entry is reconstructed by hand and then handed to git's own
 // repair — four small files, and nothing written inside the working tree.
 
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { type FileIdentity, sameIdentity } from "../utils/fileIdentity";
 import { readsAsFlag } from "../utils/readsAsFlag";
 import type { GitCommandRunner } from "./gitCommandRunner";
@@ -22,6 +22,15 @@ export interface AdoptRequest {
   worktreePath: string;
   /** The branch the reconstructed `HEAD` will name. It must already exist (D2). */
   branch: string;
+  /**
+   * The administrative directory the surviving link still names.
+   *
+   * Proven absent by the probe that offered this adoption, and re-read here
+   * immediately before the write that makes the adoption real: several awaits
+   * separate the two, and a registration restored inside that window is a live
+   * one this adoption must not overwrite (round-1 F006).
+   */
+  staleGitdir: string;
 }
 
 /** The filesystem this needs, injected so every failure below is witnessable. */
@@ -43,6 +52,15 @@ export interface AdoptFs {
   /** `null` when the file is not there — an absent link is restored as absent. */
   readFile(path: string): Promise<string | null>;
   writeFile(path: string, data: string): Promise<void>;
+  /**
+   * Exclusive create — `wx`, so it fails `EEXIST` rather than truncating.
+   *
+   * The entry's own files go through this and never through `writeFile`: the
+   * `mkdir` claims the directory only at that instant, and an ordinary write
+   * into a directory another process has since put there overwrites ITS
+   * registration before the identity re-check can notice (round-1 F005).
+   */
+  createFile(path: string, data: string): Promise<void>;
   /** Remove the link this adoption wrote where the directory had none before. */
   removeFile(path: string): Promise<void>;
   /** Recursive removal of the entry directory this adoption created. */
@@ -113,8 +131,8 @@ export async function adoptWorktree(
   const originalLink = await fs.readFile(linkPath).catch(() => null);
 
   const created = await createEntry(request, fs);
-  if (created === undefined) {
-    return { ok: false, message: "No unused administrative entry name was available." };
+  if (!created.ok) {
+    return { ok: false, message: created.message };
   }
   const { entryPath, id, identity } = created;
 
@@ -123,12 +141,18 @@ export async function adoptWorktree(
     // whose `gitdir` is missing and an external `add` can mint the same id, so
     // removing by pathname alone could delete a registration we never made.
     let stillOurs = false;
+    // An entry that is GONE leaves nothing behind; one this adoption cannot
+    // prove it owns belongs to another process and is left where it is — AND
+    // said. Folding the two into "not ours, so nothing to remove" reported a
+    // clean withdrawal over a foreign directory this run had written into
+    // (round-1 F005).
+    let vanished = false;
     try {
       stillOurs = sameIdentity(await fs.identify(entryPath), identity);
-    } catch {
-      stillOurs = false;
+    } catch (error) {
+      vanished = readsAsAbsent(error);
     }
-    let removed = !stillOurs;
+    let removed = vanished;
     if (stillOurs) {
       removed = await fs
         .removeDir(entryPath)
@@ -148,9 +172,9 @@ export async function adoptWorktree(
     // `gitdir` FIRST. `git worktree prune` removes an entry whose gitdir file is
     // missing, and the link it names already exists, so from this write onwards
     // the entry survives a concurrent prune (design.md D4).
-    await fs.writeFile(`${entryPath}/gitdir`, `${linkPath}\n`);
-    await fs.writeFile(`${entryPath}/commondir`, COMMON_DIR_ROUTE);
-    await fs.writeFile(`${entryPath}/HEAD`, `ref: refs/heads/${request.branch}\n`);
+    await fs.createFile(`${entryPath}/gitdir`, `${linkPath}\n`);
+    await fs.createFile(`${entryPath}/commondir`, COMMON_DIR_ROUTE);
+    await fs.createFile(`${entryPath}/HEAD`, `ref: refs/heads/${request.branch}\n`);
   } catch (error) {
     return failed(reasonOf(error));
   }
@@ -168,7 +192,32 @@ export async function adoptWorktree(
 
   // LAST. Until this lands the entry links nowhere, so git neither lists it nor
   // collects it, and every failure above is invisible to the repository.
+  //
+  // And conditional, because this write is the adoption: the caller's
+  // corroboration is several awaits behind it, and in that interval another git
+  // process can restore the administrative directory this link still names.
+  // Both halves are re-read here — the link's own bytes, and the target's
+  // absence — so a registration that came back is refused rather than replaced
+  // (round-1 F006). Node exposes no descriptor-relative write, so this is a
+  // read-then-write and not an atomic claim; what it removes is the whole
+  // window from the caller's probe to here, leaving only the instant between
+  // these reads and the write itself.
   try {
+    if ((await fs.readFile(linkPath)) !== originalLink) {
+      return failed("That directory's git link changed while it was being re-registered.");
+    }
+    // A registration for THIS checkout, back at the path the stale link named.
+    // Existence alone would not say that: the forgotten entry's name is the one
+    // `createEntry` claims first, so in the ordinary case that path IS this
+    // adoption's own new entry, and a repository with two same-named checkouts
+    // can have another worktree legitimately holding it. What settles it is
+    // whose link the entry there points at.
+    if (resolve(request.staleGitdir) !== resolve(entryPath)) {
+      const claim = await fs.readFile(`${request.staleGitdir}/gitdir`);
+      if (claim !== null && claim.trim() === linkPath) {
+        return failed("That directory is registered with git again, so it was not re-registered.");
+      }
+    }
     await fs.writeFile(linkPath, `gitdir: ${entryPath}\n`);
   } catch (error) {
     return failed(reasonOf(error));
@@ -194,16 +243,16 @@ export async function adoptWorktree(
  * there. No pre-check: a check followed by a create is a window, and the create
  * alone answers the same question without one.
  */
-async function createEntry(
-  request: AdoptRequest,
-  fs: AdoptFs,
-): Promise<{ entryPath: string; id: string; identity: FileIdentity } | undefined> {
+async function createEntry(request: AdoptRequest, fs: AdoptFs): Promise<CreatedEntry> {
   const stem = basename(request.worktreePath);
   const parent = `${request.commonDir}/worktrees`;
   try {
     await fs.ensureDir(parent);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Said as itself. A permission wall and a hundred taken names are different
+    // problems with different recoveries, and both used to report the second
+    // one (round-1 F011).
+    return { ok: false, message: `The administrative directory could not be prepared: ${reasonOf(error)}` };
   }
   for (let attempt = 1; attempt <= MAX_ID_ATTEMPTS; attempt++) {
     const id = attempt === 1 ? stem : `${stem}-${attempt}`;
@@ -216,18 +265,29 @@ async function createEntry(
       // retrying it ninety-nine times ends in a message about names being
       // unavailable that says the wrong thing about what went wrong.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        return undefined;
+        return { ok: false, message: `The administrative entry could not be created: ${reasonOf(error)}` };
       }
       continue;
     }
     try {
-      return { entryPath, id, identity: await fs.identify(entryPath) };
-    } catch {
-      return undefined;
+      return { ok: true, entryPath, id, identity: await fs.identify(entryPath) };
+    } catch (error) {
+      // The directory EXISTS and this adoption made it. Reported with the path,
+      // because nothing below can reach an entry whose identity was never
+      // captured — the undo is built from it (round-1 F004).
+      return {
+        ok: false,
+        message: `The administrative entry at ${entryPath} was created but could not be read back: ${reasonOf(error)}`,
+        leftBehind: { entryPath, worktreeLinkRestored: true },
+      };
     }
   }
-  return undefined;
+  return { ok: false, message: "No unused administrative entry name was available." };
 }
+
+type CreatedEntry =
+  | { ok: true; entryPath: string; id: string; identity: FileIdentity }
+  | { ok: false; message: string; leftBehind?: AdoptResidue };
 
 /** Put the worktree's link back, including putting an absent one back as absent. */
 async function restoreLink(fs: AdoptFs, linkPath: string, original: string | null): Promise<boolean> {
@@ -244,6 +304,12 @@ async function restoreLink(fs: AdoptFs, linkPath: string, original: string | nul
     .writeFile(linkPath, original)
     .then(() => true)
     .catch(() => false);
+}
+
+/** The one errno that MEANS the path is not there. Everything else is an unread answer. */
+function readsAsAbsent(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 function reasonOf(error: unknown): string {

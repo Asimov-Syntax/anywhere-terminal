@@ -12,6 +12,8 @@ const COMMON = "/repo/.git";
 const WT = "/wt/survivor";
 const ENTRY = `${COMMON}/worktrees/survivor`;
 const ORIGINAL_LINK = "gitdir: /repo/.git/worktrees/gone\n";
+/** The administrative directory that link still names — proven absent by the probe. */
+const STALE = `${COMMON}/worktrees/gone`;
 
 function ok(stdout = ""): GitCommandResult {
   return { code: 0, stdout: Buffer.from(stdout, "utf8"), stderr: "", timedOut: false, failedToSpawn: false };
@@ -63,6 +65,13 @@ function fsOf(over: Partial<AdoptFs> = {}) {
       files.set(p, data);
       writes.push(`write ${p}`);
     },
+    createFile: async (p, data) => {
+      if (files.has(p)) {
+        throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      }
+      files.set(p, data);
+      writes.push(`write ${p}`);
+    },
     removeFile: async (p) => {
       files.delete(p);
       writes.push(`unlink ${p}`);
@@ -75,7 +84,7 @@ function fsOf(over: Partial<AdoptFs> = {}) {
   return { fs: { ...base, ...over }, writes, files, dirs, identities };
 }
 
-const request = { repoPath: "/repo", commonDir: COMMON, worktreePath: WT, branch: "feat/x" };
+const request = { repoPath: "/repo", commonDir: COMMON, worktreePath: WT, branch: "feat/x", staleGitdir: STALE };
 
 describe("adoptWorktree", () => {
   it("writes gitdir first, so a prune never sees an entry it would collect", async () => {
@@ -182,6 +191,12 @@ describe("adoptWorktree", () => {
           throw new Error("ENOSPC");
         }
         return store.fs.writeFile(p, data);
+      },
+      createFile: async (p, data) => {
+        if (p === failing) {
+          throw new Error("ENOSPC");
+        }
+        return store.fs.createFile(p, data);
       },
     };
 
@@ -324,5 +339,169 @@ describe("adoptWorktree", () => {
 
     expect(calls[0]?.cwd).toBe("/repo");
     expect(calls[1]?.cwd).toBe(WT);
+  });
+});
+
+describe("adoptWorktree cannot write through a directory it does not own", () => {
+  // The three entry files were ordinary truncating writes, so a directory
+  // removed and recreated between the `mkdir` and them was not detected before
+  // its `gitdir`, `commondir` and `HEAD` had already been overwritten — the
+  // exact cross-process damage the identity check exists to prevent (F005).
+  it("refuses rather than truncating a replacement entry's own files", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    store.files.set(`${ENTRY}/gitdir`, "someone else\n");
+    const result = await adoptWorktree(runner, { ...request }, store.fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.files.get(`${ENTRY}/gitdir`), "a foreign registration was overwritten").toBe("someone else\n");
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+  });
+
+  it("reports the entry it could not prove it owns rather than a clean withdrawal", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    let reads = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      identify: async () => {
+        reads += 1;
+        return reads === 1 ? { dev: 1n, ino: 7n } : { dev: 1n, ino: 8n };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    // A directory another process owns is left where it is AND said. Reporting
+    // nothing left behind was the reading that made the damage invisible.
+    expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: ENTRY } });
+  });
+
+  it("removes nothing and reports nothing when the entry is already gone", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    let reads = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      identify: async (p) => {
+        reads += 1;
+        if (reads === 1) {
+          return store.fs.identify(p);
+        }
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
+  });
+});
+
+describe("adoptWorktree writes the link only while it is still the one it was offered", () => {
+  // Several awaits separate the caller's corroboration from this write, and the
+  // write is what makes the adoption real. A registration restored inside that
+  // window would otherwise have its live link replaced (F006).
+  it("refuses when the worktree's link changed while the entry was being written", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    let reads = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      readFile: async (p) => {
+        reads += 1;
+        return reads === 1 ? ORIGINAL_LINK : "gitdir: /repo/.git/worktrees/restored\n";
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.files.get(`${WT}/.git`), "a link nobody proved was ours was overwritten").toBe(ORIGINAL_LINK);
+  });
+
+  it("refuses when the registration it was offered against came back", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    // The entry at the stale path names THIS checkout's link — the definition
+    // of "the registration came back", and the one state adopting over would
+    // leave the repository with two entries claiming one directory.
+    store.files.set(`${STALE}/gitdir`, `${WT}/.git\n`);
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+
+  it("proceeds when the stale path holds a registration for some other checkout", async () => {
+    // Two checkouts of one repository can share a basename, so the stale path
+    // can be legitimately occupied by an entry that has nothing to do with this
+    // directory. Refusing on mere existence would decline that adoption.
+    const { runner } = runnerOf();
+    const store = fsOf();
+    store.files.set(`${STALE}/gitdir`, "/wt/somebody-else/.git\n");
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("refuses rather than assuming absence when that read cannot be made", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    let reads = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      readFile: async (p) => {
+        reads += 1;
+        if (reads > 1) {
+          throw new Error("EACCES");
+        }
+        return store.fs.readFile(p);
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+  });
+});
+
+describe("adoptWorktree says which failure stopped it", () => {
+  // A permission wall and a hundred taken names are different problems with
+  // different recoveries, and both reported the second one (F011).
+  it("names the failure rather than reporting that no name was available", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      mkdir: async () => {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { message: string }).message).toContain("permission denied");
+  });
+
+  it("still reports exhaustion when every name really is taken", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      mkdir: async () => {
+        throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect((result as { message: string }).message).toContain("No unused administrative entry name");
   });
 });
