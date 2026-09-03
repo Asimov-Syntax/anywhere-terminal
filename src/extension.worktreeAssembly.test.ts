@@ -1308,7 +1308,15 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
       throw new Error("no prune confirmation was offered");
     }
     confirm.click();
-    await settle();
+    // The condition the assertion below reads, not a pump count. `settle()`
+    // returns on DOM and argv quiescence, and the mutation awaits a dry-run
+    // RECOUNT before it issues the real prune — so quiescence lands while the
+    // only prune on the wire is still the dry run, and the assertion reads a
+    // wire the work had not reached yet.
+    await settleUntil(
+      () => gitCalls("prune").some((a) => !a.includes("--dry-run")),
+      "the confirmed prune to reach git",
+    );
     expect(gitCalls("prune").some((a) => !a.includes("--dry-run"))).toBe(true);
   });
 
@@ -2825,7 +2833,13 @@ describe("the invariants that span the host and the webview", () => {
     expect(pathInput.value, "the answer overwrote the candidate").toBe(taken);
     const shown = displayedDestination();
     clickCreate();
-    await settle();
+    // The call the assertions below read. `settle()` returns on DOM and argv
+    // quiescence, and the create crosses an await in which the host paints
+    // nothing — so quiescence lands before `worktree add` reaches argv at all.
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "worktree" && c.args[1] === "add"),
+      "the create command to reach git",
+    );
 
     expect(shown).toBe(derived);
     expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({ path: derived });

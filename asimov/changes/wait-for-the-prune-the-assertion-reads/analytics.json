@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "wait-for-the-prune-the-assertion-reads"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788460962238,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788460962238,
+          "to": 1788461687660
+        }
+      ],
+      "phases": [
+        {
+          "phase": "build",
+          "from": 1788460962238
+        },
+        {
+          "phase": "plan",
+          "from": 1788461438067
+        }
+      ],
+      "firstAt": 1788460962238,
+      "lastAt": 1788461637994,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "build",
+          "agent": "asm-review-master",
+          "model": "gpt-5.6-sol",
+          "messages": 1,
+          "inputTokens": 5232,
+          "outputTokens": 1090,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 212224,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-master",
+          "model": "gpt-5.6-sol",
+          "messages": 1,
+          "inputTokens": 8123,
+          "outputTokens": 192,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 24832,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}
