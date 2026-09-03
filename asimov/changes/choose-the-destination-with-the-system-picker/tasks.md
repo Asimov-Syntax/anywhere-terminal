@@ -15,7 +15,7 @@
     5. `src/providers/TerminalViewProvider.worktree.test.ts` — extend the exhaustive inbound sample record the new request type obliges.
     6. `src/extension.worktreeActions.test.ts` — its harness builds a complete `WorktreeActionDeps`, so the new capability is a required member there.
 
-- [ ] 1_2 Route the answer to the webview that asked
+- [x] 1_2 Route the answer to the webview that asked — verified: pnpm exec vitest run src/webview/messaging/MessageRouter.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2
   - **Boundary**: No handling of the reply's meaning here — routing only, and no second place that decides whether an opening matches

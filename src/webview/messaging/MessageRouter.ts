@@ -50,6 +50,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeDestinationPickedMessage,
   WorktreeMigrationOfferMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
@@ -134,6 +135,7 @@ export interface MessageHandlers {
   onWorktreeRefs?(msg: WorktreeRefsMessage): void;
   onWorktreePullRequests?(msg: WorktreePullRequestsMessage): void;
   onWorktreeCreateResolution?(msg: WorktreeCreateResolutionMessage): void;
+  onWorktreeDestinationPicked?(msg: WorktreeDestinationPickedMessage): void;
   /** Whether a destination may be cleared, answered to the request that named it. */
   onWorktreeDebrisAuthorized?(msg: WorktreeDebrisAuthorizedMessage): void;
   /** What a mutation this surface started actually did. */
@@ -307,6 +309,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeCreateResolution":
         handlers.onWorktreeCreateResolution?.(msg);
+        break;
+      case "worktreeDestinationPicked":
+        handlers.onWorktreeDestinationPicked?.(msg);
         break;
       case "worktreeDebrisAuthorized":
         handlers.onWorktreeDebrisAuthorized?.(msg);

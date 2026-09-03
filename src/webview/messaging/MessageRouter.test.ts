@@ -266,6 +266,31 @@ describe("the worktree create dialog's answers reach the controller", () => {
     expect(onWorktreeCreateResolution).toHaveBeenCalledWith(msg);
   });
 
+  // Same fourth quarter as above: a reply the host posts and nothing routes is
+  // a wire that is green in every module test and dark in production.
+  it("[1_2] routes the picked destination", () => {
+    const onWorktreeDestinationPicked = vi.fn();
+    const dispatch = createMessageRouter({ ...createMockHandlers(), onWorktreeDestinationPicked });
+    const msg = {
+      type: "worktreeDestinationPicked",
+      repoId: "/repo/.git",
+      token: 3,
+      path: "/elsewhere/trees",
+    } as const;
+
+    dispatch(msg);
+
+    expect(onWorktreeDestinationPicked).toHaveBeenCalledWith(msg);
+  });
+
+  it("[1_2] leaves an unhandled picked destination alone rather than throwing", () => {
+    const dispatch = createMessageRouter(createMockHandlers());
+
+    expect(() =>
+      dispatch({ type: "worktreeDestinationPicked", repoId: "/repo/.git", token: 1, path: "/elsewhere" }),
+    ).not.toThrow();
+  });
+
   it("leaves an unhandled create resolution alone rather than throwing", () => {
     const dispatch = createMessageRouter(createMockHandlers());
 
