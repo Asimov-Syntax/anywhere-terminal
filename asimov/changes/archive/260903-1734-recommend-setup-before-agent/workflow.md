@@ -12,18 +12,19 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [-] Review done — one localized webview default plus its hint, no escalation flag, 7603/7603 with seven new witnesses covering every arm of the choice
+- [x] Gate: implementation approved _(fastlane)_
+- [-] Blueprint sync complete — no blueprint for this change
+Verify gate: lint's one error is the pre-existing format diagnostic in `src/agentHooks/AgentHookController.test.ts`, untouched here.
 Validate warning triaged (rejected): the long requirement is the inherited four-bullet contract from the accepted spec, not new fusion; the added sequencing rule was split into its own requirement.
 Must not: change the wire meaning of `waitForSetup`, the host's execution order, or a setup row's own default-unchecked state; never silently re-gate a user who asked for overlap.`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -32,6 +33,7 @@ Must not: change the wire meaning of `waitForSetup`, the host's execution order,
 <!-- Blueprint source, lane, and the SHA the plan is written against below. Optional: one-line orphan decisions only — scope boundaries, deviations, rejected alternatives with no home elsewhere. -->
 
 Blueprint: none
+Verify gate: lint's one error is the pre-existing format diagnostic in `src/agentHooks/AgentHookController.test.ts`, untouched here.
 Validate warning triaged (rejected): the long requirement is the inherited four-bullet contract from the accepted spec, not new fusion; the added sequencing rule was split into its own requirement.
 Must not: change the wire meaning of `waitForSetup`, the host's execution order, or a setup row's own default-unchecked state; never silently re-gate a user who asked for overlap.
 Lane: light

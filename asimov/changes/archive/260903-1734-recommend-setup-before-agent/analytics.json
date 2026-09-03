@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "recommend-setup-before-agent"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788456634719,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788456634719,
+          "to": 1788456862095
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788456634719
+        }
+      ],
+      "firstAt": 1788456634719,
+      "lastAt": 1788456634719,
+      "buckets": []
+    }
+  ]
+}
