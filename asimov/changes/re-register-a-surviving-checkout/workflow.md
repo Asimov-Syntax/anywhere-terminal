@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved — no fork; § 2.4 fixes the mechanism and the wire fixes the shape _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_

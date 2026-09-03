@@ -201,3 +201,33 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     6. `src/worktree/adoptWorktree.test.ts` — the fake's own store is what the assertions read, so a link the undo overwrites is visible; a substituted link, an unreadable link and a failure before the final write each leave the destination as found.
     7. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository, a link replaced during a failing adoption keeps the replacement.
     8. `src/worktree/reattachProbe.test.ts`, `src/worktree/adoptProbe.test.ts`, `src/worktree/worktreeMutationService.test.ts` and `src/providers/WorktreeHost.actions.test.ts` — the bytes travel unchanged from the read to the request.
+
+## 6. Close review round 3 — bind the link's writes to the object that was proved
+
+- [ ] 4_1 Hold one handle on the worktree's link, and write only through it
+  - **Deps**: 3_1
+  - **Refs**: design.md D9, D4; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-undo-restores-only-the-git-entry-the-adoption-itself-replaced, an-adoption-that-cannot-establish-the-git-entry-says-so-rather-than-reporting-a-clean-failure}; `.reviews/round-3.md` F005, F006, F012; `src/utils/regularFileRead.ts`; `src/utils/fileIdentity.ts`
+  - **Acceptance**:
+    - Outcome: A `.git` entry another writer replaced keeps its bytes through the adoption and its undo
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — `AdoptFs` gains `openLink` returning a handle with `identity`, `readAt`, `truncate`, `writeAt` and `close`; the link's `readFile`/`writeFile`/`removeFile` retire with the pathname writes they served.
+    2. `src/worktree/adoptWorktree.ts` — the handle opens before the `mkdir` and is NOT closed in a `finally`: it is carried on the result, closed by `undo()` as its last act, and by a new `release()` on the ok result. D5's post-write withdrawals run at the caller, so a handle closed on return would leave them `EBADF` (oracle finding 1).
+    3. `src/worktree/adoptWorktree.ts` — both proofs read at an explicit position 0, never sequentially: `FileHandle.readFile` reads from the current offset, so a second sequential read returns zero bytes and would refuse every ordinary adoption (oracle finding 6).
+    4. `src/worktree/adoptWorktree.ts` — the claim is `truncate(0)` then a write looped to completion; a fulfilled SHORT write is a failure, not an established link (oracle finding 4). Path-vs-handle identity is compared immediately before and after it.
+    5. `src/worktree/adoptWorktree.ts` — a failed or short claim write re-writes `staleLink` through the same handle; a failed recovery reports a residue naming the directory and the unknown content.
+    6. `src/worktree/adoptWorktree.ts` — the undo owns the link when it RESOLVES to the entry this adoption created, not when its bytes match: `git worktree repair` rewrites our own link into relative form under `worktree.useRelativePaths`, and every D5 undo runs after repair (oracle finding 3).
+    7. `src/extension.ts` — `nodeAdoptFs.openLink` opens `O_RDWR` with `O_NOFOLLOW` where defined, degrading as `src/utils/regularFileRead.ts` already does, and refuses a handle whose `fstat` is not a regular file.
+    8. `src/worktree/adoptWorktree.test.ts` — the fake models an inode table: paths map to inode objects with their own identity and bytes, a handle captures one inode at open, and every operation through it still reaches the captured inode after the path has been replaced. Cases: a different-inode replacement survives the claim write AND the undo, asserted on the old inode as well as the path so a write to the detached inode is visible; a same-inode in-place rewrite, asserting the documented parity rather than a guarantee; a repair that normalizes to a relative link, asserting the undo still restores; a short write; a truncate-then-reject with a recovery that succeeds and one that fails; a `close()`d handle rejecting, so the deferred-undo path is armed. Each guard arm-checked by reverting it.
+
+- [ ] 4_2 Report a link the adoption could not establish, and release the handle the caller accepts
+  - **Deps**: 4_1
+  - **Refs**: design.md D9; specs/worktree-panel/spec.md#an-adoption-that-cannot-establish-the-git-entry-says-so-rather-than-reporting-a-clean-failure; `.reviews/round-3.md` F012
+  - **Acceptance**:
+    - Outcome: The reported failure names which of the three states the `.git` entry was left in
+    - Verify: command pnpm exec vitest run src/worktree/worktreeMutationService.test.ts src/worktree/adoptWorktree.integration.test.ts
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts` — `residueNote` renders the third state; a residue with no entry left behind still reports, because an unknown link is not a clean withdrawal.
+    2. `src/worktree/worktreeMutationService.ts` — the success return calls `release()`; today it returns without disposing anything the reconstruction handed back.
+    3. `src/worktree/worktreeMutationService.test.ts` — each of the three states produces its own message, and an accepted adoption releases.
+    4. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository: a link replaced during a failing adoption keeps the replacement and the outcome says so rather than claiming a restore; and an adoption in a repository with `worktree.useRelativePaths` set still withdraws cleanly when the branch claim is taken after the write.

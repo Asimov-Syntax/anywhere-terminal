@@ -86,8 +86,9 @@ after the three writes, compared through `src/utils/fileIdentity.ts`, is what th
 uses for exactly this shape, and it converts a substitution from silent into refused.
 
 Undo is: re-`lstat` the entry, refuse to remove anything whose identity moved, otherwise remove it and
-restore the recorded `<wt>/.git` bytes. `adoptWorktree` returns the undo as a handle on SUCCESS too,
-because D5's post-write conflict check runs at the caller and needs it.
+restore the recorded `<wt>/.git` bytes **through the handle D9 pins**, never by pathname.
+`adoptWorktree` returns the undo as a handle on SUCCESS too, because D5's post-write conflict check
+runs at the caller and needs it.
 
 `reset --mixed` is not cleanup. The index lived in the deleted directory; until it is rebuilt every
 tracked file reports as both deleted and untracked. It writes the index and touches no file
@@ -160,6 +161,97 @@ state) are a fixed list stated in the confirmation. None can be probed after the
 that held the evidence is what was deleted — and a check that cannot fail is worse than a stated
 limitation (worktree-create.md § 2.4).
 
+### D9: `<wt>/.git` is written through one pinned handle, and the claim is narrowed to what git itself permits
+
+Rounds 1 through 3 attacked the same defect three times without naming it: this code proves things
+about a PATH and then writes to that path BY NAME. Byte comparison (round 2) narrowed the window; it
+cannot close it, because the second read and the write are still two separate resolutions of the same
+name. So the name is resolved once, and the claim is then cut down to what a client can actually
+promise.
+
+**What no client can promise here, evidenced rather than assumed.** `git worktree repair` writes
+`<wt>/.git` through git's own `write_file_buf`, which opens `O_WRONLY | O_CREAT | O_TRUNC` and
+rewrites the EXISTING inode in place (git 2.50.1 `wrapper.c:682-688`, called from
+`worktree.c:887-890`). It takes no lock on that file. So a same-inode writer is not an adversarial
+schedule — it is git's ordinary behavior, and nothing this process holds can exclude it: not a handle,
+not a byte comparison, not an identity check. This is the same shape D5 already established for the
+branch claim, where two concurrent `git worktree add` runs against one existing branch were both
+observed to exit 0. **The claim is therefore parity with `git worktree repair`, not exclusion of it**,
+and the ledger rows say so rather than promising a guarantee this file cannot keep. Our own instances
+need no mechanism for this: the mutation coordinator already serializes them per repository (D5).
+
+**What the handle does buy, stated at its real size.** `<wt>/.git` is opened `O_RDWR` (no `O_TRUNC`,
+`O_NOFOLLOW` where the platform defines it) once, before the `mkdir`, and held. Every read and write
+of that file goes through it. A writer that REPLACES the file — `rename`, or `unlink`+`create`, which
+is what a careful writer and every atomic-save library does — gives the path a new inode while our
+handle keeps the old one, so our write cannot land on the replacement. That is a real subset of the
+destructive case F005 and F006 each described, and it is the subset a second careful process
+produces. The subset it does not cover is the in-place writer above.
+
+```
+open   <wt>/.git  O_RDWR|O_NOFOLLOW    ← the ONE resolution of this name
+fstat  handle                           ← isFile(), and the identity later checks compare to
+read   handle at position 0             ← == staleLink, or refuse before anything is created
+   … the entry is built (D4) …
+read   handle at position 0             ← still the bytes we proved
+lstat  <wt>/.git  == fstat(handle)      ← the name still means our object
+truncate handle 0 ; write handle ourLink at 0, to completion
+lstat  <wt>/.git  == fstat(handle)      ← our write landed at the name, not on a detached inode
+```
+
+**Reads are positioned, never sequential.** `FileHandle.readFile` reads from the handle's CURRENT
+offset, so a second `readFile` on one handle returns zero bytes — which this design would read as an
+empty link and refuse every ordinary adoption on its second proof. Both reads pass an explicit
+position of 0.
+
+**Writes are accounted to completion.** `FileHandle.write` fulfills with `bytesWritten` and is not
+required to have written the whole string. A fulfilled short write leaves a partial `.git` that both
+identity checks accept, so the write loops until every byte is written and a fulfilled-but-short write
+is a failure like any other. Without this the F012 arm below is unreachable in exactly the case it
+was written for.
+
+**Ownership is "the link resolves to OUR entry", not byte equality.** Byte equality was the round-2
+answer and it is wrong for a reason that has nothing to do with races: with `worktree.useRelativePaths`
+set, `git worktree repair` legitimately rewrites the link we just wrote into relative form (git 2.50.1
+`worktree.c:875-876, 1085-1090`). The undos D5 reaches — the branch-claim contender and the tip
+mismatch — all run AFTER `repair`, so byte equality would report our own link as a stranger's on the
+common failure path and leave `<wt>/.git` naming an entry the undo then removed. So the undo parses
+the current link with the same grammar the detector uses and asks whether it resolves to the entry
+directory this adoption created, identified by dev/ino. A link that does not is left alone and
+reported as found.
+
+**The handle outlives the function, because the undo does.** `adoptWorktree` returns its undo on
+SUCCESS — D5's post-write branch and tip checks run at the caller and both can withdraw — so closing
+the handle in a `finally` would hand back an undo that can only fail `EBADF` or reopen by name and
+lose the pin. The result carries the handle instead: `undo()` closes it as its last act, and the ok
+result gains `release()` for the caller that accepts the adoption, which
+`src/worktree/worktreeMutationService.ts:930-940` must call on the success return it currently takes
+without disposing anything.
+
+**A write that begins and does not finish is a third outcome, not a clean failure.** `truncate(0)`
+then a complete `write` through the handle: if either fails, `staleLink` is re-written through the
+same handle. That recovery is an opportunity and not a guarantee — `ENOSPC`, `EIO` and a revoked
+handle commonly reject it too, so the unknown-content outcome is an expected result for those causes
+rather than an exotic one, and it names the directory. Reporting it as an ordinary failure is what
+round 3's F012 falsified: the message told the user nothing had changed while `.git` was empty.
+
+Ordering is `truncate` then `write` rather than write-then-truncate: a short write over longer old
+bytes leaves a valid first line followed by a fragment of the old one, and git's `read_gitfile_gently`
+accepts that first line — a file that reads as VALID and names the wrong administrative directory is
+worse than one that reads as empty. Neither ordering is atomic, and a temp-file-plus-`rename` was
+rejected for making it worse: `rename` replaces whatever is at the name, so it would clobber a
+different-inode replacement unconditionally — trading a detectable failure for an undetectable one.
+
+**The identity comparison is an endpoint check and is documented as one.** It answers "does this name
+resolve to this handle's object now?" at two instants. It does not linearize the interval between
+them: an A→B→A substitution passes both, and `src/utils/fileIdentity.ts` already records that the
+predicate is bounded by inode reuse and by the file id Windows does not guarantee unique on ReFS.
+Adopt is withheld on win32 until WT-012.14 (D7), where `O_NOFOLLOW` is additionally a no-op — libuv
+defines `UV_FS_O_NOFOLLOW` as 0 — so the leaf-symlink refusal there rests on the `fstat` regular-file
+test alone. Supported filesystems are the local ones git itself supports; a filesystem synthesizing
+unstable `dev`/`ino` degrades this check to nothing, and that is stated rather than mitigated.
+
+
 ## Obligation ledger
 
 The mutable resource is the repository's own administrative directory, which outlives the request and
@@ -167,17 +259,19 @@ is reachable by every other git process on the machine.
 
 | Claim | Semantics | Defeater | Witness | Disposition |
 |---|---|---|---|---|
-| Adoption never adds a claim to a branch it can see claimed | At the pre-read and again at the post-read, no non-prunable record other than the adopted path names the branch; a claim seen at either point refuses or undoes | An external `git worktree add` that lands after the post-read. Not defeatable by any client: two concurrent adds against one existing branch were both observed to exit 0 on git 2.50.1, so git itself does not exclude them | Integration test driving the add BETWEEN the two reads (undo path) and BEFORE the pre-read (refusal path). The residual after the post-read is stated in D5 as parity with `git worktree add`, and is the state the blueprint's own guard describes | supported |
+| Adoption never adds a claim to a branch it can see claimed | At the pre-read and again at the post-read, no non-prunable record other than the adopted path names the branch; a claim seen at either point refuses, or withdraws — and where the withdrawal cannot complete, the outcome says the claim is still there rather than reporting a refusal that cleaned up | An external `git worktree add` after the post-read — not defeatable by any client, since two concurrent adds against one existing branch both exit 0 on git 2.50.1. And a withdrawal that cannot finish: an undo whose `removeDir` fails, or whose handle was closed before the caller reached it (oracle finding 1 — the success path closed the handle in a `finally` while `undo` is returned to the caller and invoked at `worktreeMutationService.ts:919`) | Integration test driving the add BETWEEN the two reads (undo path) and BEFORE the pre-read (refusal path); unit test failing `removeDir` on the post-read withdrawal and asserting the message names the surviving entry. The handle is carried on the result and closed by `undo()`/`release()`, so the deferred withdrawal is reachable at all. The residual after the post-read is D5's stated parity with `git worktree add` | supported |
 | The adopted working tree is not modified | Every path under `<wt>` except `<wt>/.git` keeps its bytes and mtime; `<wt>/.git` holds exactly the new `gitdir:` line and nothing else | `reset --mixed` degrading to `--hard`; `repair` rewriting content | Integration test hashing every path under `<wt>` except `<wt>/.git`, with mtimes, on a real repository holding a dirty tracked file and an untracked file — plus a separate assertion on `<wt>/.git`'s exact new content | supported |
-| A failed adoption is either undone or reported unfinished | On any failure the entry is removed and `<wt>/.git` restored; where the undo ITSELF fails, the outcome names the entry path and the `.git` state left behind rather than reporting a create | A failure inside the undo — the entry removal, or the `.git` restore | Unit test injecting a failure at each reconstruction step AND at each undo step, asserting the restored state in the first case and the naming of what was left in the second | supported |
+| A failed adoption is either undone or reported unfinished | On any failure the entry is removed, and `<wt>/.git` is restored WHERE the link there still RESOLVES to the entry this adoption created (D9); where it resolves elsewhere it is left untouched and reported as found; where the undo itself fails, the outcome names the entry path and the state left behind rather than reporting a create | A different-inode replacement between our write and the undo (round-2 F005, round-3 F005) — closed by the handle pin. `git worktree repair` rewriting our own link into relative form under `worktree.useRelativePaths`, which byte equality would misread as a stranger's on the COMMON post-repair undo paths (oracle finding 3) — closed by resolving the link instead of comparing bytes. NOT closed: an in-place same-inode writer, which is git's own `write_file_buf` behavior and excludable by nothing (oracle finding 2) | Unit tests injecting a failure at each reconstruction and each undo step; a replacement made THROUGH the fake's inode table between the write and the undo, asserting the replacement survives and the outcome reports left-as-found; a repair that normalizes the link to relative form, asserting the undo still recognises and restores it. Arm-checks revert each guard. The same-inode residual is stated in D9 as parity, not mitigated | supported |
 | The branch is at the tip the user was shown | After `repair`, `git -C <wt> rev-parse HEAD` equals `expectedBranchOid` | An `update-ref` between the pre-read and the symbolic-HEAD write — which is why the pre-read is not the guard | The post-`repair` read (D5), with a unit test moving the branch between the two reads and asserting undo + refusal | supported |
-| A live registration is never adopted over | At the moment of the write, `<wt>/.git` names an administrative directory that does not exist | An external process restoring the old administrative directory during the user's pause, possibly detached or on another branch, which the branch guard would not catch | `probeAdopt` re-run inside the mutation body against `adoptPath` (D5); anything but `adopt` refuses. Unit test restoring the admin directory between resolution and mutation | supported |
+| A live registration is never adopted over by any writer this process can distinguish | The write lands on the object `<wt>/.git` was opened as, that object held `staleLink` at the last read, the administrative directory it names is still absent, and the name still resolves to that object afterwards — or the adoption refuses. Against an in-place writer of the same inode this is parity with `git worktree repair`, which takes no lock and truncates in place, and NOT exclusion | An external process restoring the administrative directory during the user's pause (closed by re-running `probeAdopt` in the body, D5); a different-inode replacement of the link (closed by the handle pin); an A→B→A substitution across the two identity samples, and an in-place rewrite of the pinned inode — neither closed, both stated (oracle findings 2 and 5) | `probeAdopt` re-run inside the mutation body against `adoptPath` (D5); the handle pin with pre- and post-write identity comparison. Unit tests: restore the admin directory between resolution and mutation; replace the link through the inode table between the final read and the write, asserting the replacement's bytes are intact and the adoption refused. The unclosed residual is evidenced against git 2.50.1 `wrapper.c:682-688` rather than asserted away | supported |
+| A link write that does not finish is reported as unestablished | The claim write loops until every byte is written; where `truncate` or `write` fails, or fulfils SHORT, the adoption re-writes `staleLink` through the same handle; if that also fails the outcome names the directory and states the link's content is unknown — never a failure that changed nothing | Round-3 F012: `fs.writeFile` opens `w`, truncating before the first byte, so a rejection left `.git` empty while the ownership flag was false and the undo walked away. And oracle finding 4: `FileHandle.write` fulfils with `bytesWritten` and need not have written the whole string, so a short write leaves a partial link that BOTH identity checks accept and the rejection arm never sees | Unit tests: a fake `write` that truncates then rejects; a fake `write` that fulfils with a byte count short of the string, asserting it is treated as failure and not as an established link; a recovery that succeeds, asserting the stale bytes are back; a recovery that also fails, asserting the outcome names the directory and the unknown state and that no entry survives | supported |
 | The entry written is the entry created | The three entry files land inside the directory this adoption created, identified by dev/ino rather than by pathname | `git worktree prune` removing an entry whose `gitdir` is missing, then an external add reusing the id — observed on 2.50.1 | `gitdir` written first so prune passes over the entry (D4, verified), plus an identity re-check through `src/utils/fileIdentity.ts` before the final write and before the undo's removal | supported |
 
 ## Risk Map
 
 | Component | Risk | Mitigation |
 |---|---|---|
+| `adoptWorktree` | A write addressed by pathname lands on an object it never proved | One `O_RDWR` handle on `<wt>/.git` held across the reconstruction, with `fstat`-vs-`lstat` identity compared before and after the write (D9). Reads and writes of that file go through the handle and nowhere else |
 | `adoptWorktree` | A partial reconstruction leaves the repository listing a broken worktree | `gitdir` first and `<wt>/.git` last (D4, both verified on 2.50.1); identity re-check before the final write; undo on every post-`mkdir` failure, with an undo that fails naming what it left |
 | `answerCreateProbe` | A second filesystem read per settled edit, on the create path with a dialog waiting | Runs only for an `occupiedCandidate` the derivation already produced, on a branch the enumeration already named — the common path adds no I/O, matching D2/D3 of resolve-a-selection-before-the-create-runs |
 | Branch-claim guard | The pre-read is a claim about a past instant, and git excludes nothing globally | Post-write re-read with undo (D5). The residual past the post-read is parity with `git worktree add`, stated rather than mitigated |

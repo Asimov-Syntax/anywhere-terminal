@@ -114,6 +114,30 @@ rather than reporting either a create or a clean failure.
 - **WHEN** the adoption fails and its own undo cannot remove the entry or restore the `.git` entry
 - **THEN** the result names the entry directory and the state the `.git` entry was left in
 
+### Requirement: An undo restores only the `.git` entry the adoption itself replaced
+
+WHERE the entry at that path is no longer the file the adoption wrote, or no longer names the
+administrative entry the adoption created, the panel SHALL leave it untouched and report it as left
+as found.
+
+#### Scenario: Another process's registration is not withdrawn by our undo
+
+- **WHEN** the adoption fails after something else has replaced the directory's `.git` entry
+- **THEN** that entry keeps the bytes that other writer put there, and the result reports it as left
+  as found rather than as restored
+
+### Requirement: An adoption that cannot establish the `.git` entry says so rather than reporting a clean failure
+
+WHERE the write of the directory's `.git` entry does not complete, the panel SHALL report the entry's
+state as unestablished and name the directory, rather than reporting a failure whose stated effect is
+that nothing was changed.
+
+#### Scenario: The link write fails partway
+
+- **WHEN** the write that re-points the directory's `.git` entry begins and does not complete
+- **THEN** the result names that directory and states that its `.git` entry could not be left in a
+  known state, and no administrative entry is left behind
+
 ### Requirement: Adoption is offered only where the reconstruction has been verified
 
 WHERE the reconstruction has not been executed and recorded on the running platform, the panel SHALL
