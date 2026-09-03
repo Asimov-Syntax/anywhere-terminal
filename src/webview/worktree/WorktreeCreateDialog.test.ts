@@ -3,6 +3,9 @@
 // The create form, against docs/ui/worktree.html § 9 (default) and § 10 (invalid
 // branch, collided path, agent picker expanded).
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ProvisionModel,
@@ -5282,5 +5285,29 @@ describe("[round-8 F018/F019] a note names the declarations that are actually ke
 
     expect(shownNotes(host)).toEqual(["refused while MIXEDCASE is selected"]);
     expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied · 4 spellings may be one file");
+  });
+});
+
+describe("provisioning save action weight", () => {
+  // jsdom loads no stylesheet, so the rules are read from source. These three
+  // classes carried no rule at all, which left the save wearing the browser's
+  // default button — the heaviest control on a form whose decision is Create.
+  const css = (): string =>
+    fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "worktreePanel.css"), "utf8");
+  const ruleOf = (sheet: string, selector: string): string | undefined =>
+    new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(sheet)?.[1];
+
+  it("[1_1] paints the save as a secondary button", () => {
+    const rule = ruleOf(css(), ".wt-bring-save");
+    expect(rule, "no save button rule").toBeTruthy();
+    expect(rule).toContain("--vscode-button-secondaryBackground");
+    expect(rule).toMatch(/font-size:/);
+  });
+
+  it("[1_1] stacks the note below the save rather than beside it", () => {
+    const rule = ruleOf(css(), ".wt-bring-save-row");
+    expect(rule, "no save row rule").toBeTruthy();
+    expect(rule).toContain("flex-direction: column");
+    expect(ruleOf(css(), ".wt-bring-save-note"), "no save note rule").toBeTruthy();
   });
 });

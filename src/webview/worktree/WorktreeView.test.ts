@@ -3916,6 +3916,22 @@ describe("the unbranched-repository state", () => {
     expect([...host.querySelectorAll(".vault-empty")].every((e) => e.classList.contains("wt-empty-inline"))).toBe(true);
   });
 
+  it("[1_1] offers the inline create as a secondary action, not the panel's primary button", () => {
+    // jsdom loads no stylesheet, so the rule is read from source. The shared
+    // atom paints itself with the primary button token; inline in the tree it is
+    // one offer among the rows it sits between, and wearing the panel's only
+    // primary paint made it read as the surface's decision.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, "worktreePanel.css"), "utf8");
+    const rule = /\.wt-empty-inline \.vault-empty-action\s*\{([^}]*)\}/.exec(css)?.[1];
+    expect(rule, "no inline empty-action rule").toBeTruthy();
+    expect(rule).toContain("--vscode-button-secondaryBackground");
+    // The override has to WIN over the atom's own `background`, which the
+    // scoped selector's higher specificity gives it — but only while the
+    // property is actually restated here.
+    expect(rule).toMatch(/\bbackground:/);
+  });
+
   it("[1_3] a repository with a second worktree is not unbranched", () => {
     const { host } = show(
       repoTree({

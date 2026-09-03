@@ -1513,6 +1513,60 @@
   display: none;
 }
 
+/* Inline in the tree the offer is one of several, not the panel's decision, so
+   it surrenders the primary paint the shared atom carries. Restated rather than
+   inherited: the atom sets `background` itself, and only a scoped rule that
+   names the property again outranks it. */
+.wt-empty-inline .vault-empty-action {
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.wt-empty-inline .vault-empty-action:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+
+/* Saving defaults is an aside to a form whose decision is Create, so it reads as
+   one: a quiet button with its caveat stacked beneath, never a second call to
+   action competing with the primary. Without these rules the button fell back to
+   the browser default, which is the heaviest control on the form. */
+.wt-bring-save-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+.wt-bring-save {
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+  border-radius: 2px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.wt-bring-save:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.wt-bring-save:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.wt-bring-save-note {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 /* Keep the decision and its blocker visible while the form body scrolls. */
 .wt-dialog-actions {
   position: sticky;
