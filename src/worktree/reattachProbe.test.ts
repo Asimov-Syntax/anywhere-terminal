@@ -237,3 +237,21 @@ describe("readGitLink follows git's own gitfile grammar", () => {
     expect(verdict).toEqual({ kind: "declined", because: "unreadable" });
   });
 });
+
+describe("probeReattach does not read a failed check as a gone directory", () => {
+  // The adopt REPORT is what this arm produces, and adoption overwrites the
+  // `.git` it was reported for. A `stat` that failed is not a directory that is
+  // gone, and reporting one as the other hands adoption a live registration
+  // (round-1 F003, at the boundary beside the one the finding named).
+  it("declines when the administrative directory cannot be read", async () => {
+    const verdict = await probeReattach(SUBJECT, {
+      readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/stale" }),
+      adminDirExists: async () => {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      },
+      headOid: async () => "abc123",
+    });
+
+    expect(verdict).toEqual({ kind: "declined", because: "unreadable" });
+  });
+});

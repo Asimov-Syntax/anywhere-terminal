@@ -848,6 +848,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * (round-1 B1). Declared rather than assigned so `mutations()`, defined
    * above and called lazily, can reach it.
    */
+  /**
+   * Is this the one errno that MEANS the path is not there?
+   *
+   * Every other failure — a permission wall, an I/O error, a stale mount — is
+   * the absence of an ANSWER, and both probes have a separate verdict for that.
+   * Folding them into `false` made an unreadable administrative directory prove
+   * the registration was gone, which is the adopt arm (round-1 F003).
+   */
+  const readsAsAbsent = (error: unknown): boolean => {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR";
+  };
+
+  /** Shared by both probes, so neither can read a failed check as a gone directory. */
+  const adminDirIsThere = async (gitdir: string): Promise<boolean> => {
+    try {
+      return (await fsp.stat(gitdir)).isDirectory();
+    } catch (error) {
+      if (readsAsAbsent(error)) {
+        return false;
+      }
+      // Thrown, not answered: both probes catch this and reply `unreadable`,
+      // which is the one verdict that must not become "gone".
+      throw error;
+    }
+  };
+
   async function corroborateRepair({
     repoPath,
     branch,
@@ -871,7 +898,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             lstat: (p) => fsp.lstat(p).catch(() => null),
             readFile: (p) => fsp.readFile(p, "utf8").catch(() => null),
           }),
-        adminDirExists: async (gitdir) => (await fsp.stat(gitdir).catch(() => null))?.isDirectory() === true,
+        // The SAME rule the adopt reader uses. Two readers of one directory
+        // that disagree about what a failed read means is how one arm reports
+        // a forgotten checkout the other refuses (round-1 F003).
+        adminDirExists: adminDirIsThere,
         headOid: (worktreePath) => worktreeHeadOid(worktreeTreeDeps.runner, worktreePath),
       },
     );
@@ -916,37 +946,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     removeDir: (path) => fsp.rm(path, { recursive: true, force: true }),
   };
 
-  /**
-   * Is this the one errno that MEANS the path is not there?
-   *
-   * Every other failure — a permission wall, an I/O error, a stale mount — is
-   * the absence of an ANSWER, and both probes have a separate verdict for that.
-   * Folding them into `false` made an unreadable administrative directory prove
-   * the registration was gone, which is the adopt arm (round-1 F003).
-   */
-  const readsAsAbsent = (error: unknown): boolean => {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code === "ENOENT" || code === "ENOTDIR";
-  };
-
   const gitEntryReads = {
     readGitLink: (worktreePath: string) =>
       readGitLink(worktreePath, {
         lstat: (p: string) => fsp.lstat(p).catch(() => null),
         readFile: (p: string) => fsp.readFile(p, "utf8").catch(() => null),
       }),
-    adminDirExists: async (gitdir: string) => {
-      try {
-        return (await fsp.stat(gitdir)).isDirectory();
-      } catch (error) {
-        if (readsAsAbsent(error)) {
-          return false;
-        }
-        // Thrown, not answered: both probes catch this and reply `unreadable`,
-        // which is the one verdict that must not become "gone".
-        throw error;
-      }
-    },
+    adminDirExists: adminDirIsThere,
   };
 
   // `gh` is the forge client (design.md D1). One runner, built here, so the

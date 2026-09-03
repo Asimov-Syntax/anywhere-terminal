@@ -172,3 +172,14 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. `src/worktree/worktreeMutationService.ts` and `src/extension.ts` — the tip guard has one owner, so the service's separate post-success read is retired with its dependency.
     3. `src/webview/worktree/WorktreeCreateDialog.ts` — a refs reply that arrives after a resolution does not replace the branch mode that resolution set, while the typed branch is still the one it answered (F008).
     4. `src/worktree/adoptWorktree.test.ts`, `src/worktree/worktreeMutationService.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` — a moved tip leaves no entry and no index rebuild, and a late refs reply leaves the destination control refused.
+
+- [x] 2_6 Apply the absence rule at the other boundary that reads the same directory — verified: pnpm exec vitest run src/worktree/reattachProbe.test.ts src/worktree/adoptProbe.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 2_5
+  - **Refs**: `.reviews/round-1.md` F003
+  - **Acceptance**:
+    - Outcome: Neither probe's administrative-directory read reports absence for a failure that is not one
+    - Verify: command pnpm exec vitest run src/worktree/reattachProbe.test.ts src/worktree/adoptProbe.test.ts
+  - **Plan**:
+    1. `src/extension.ts` — the reattach corroboration's `adminDirExists` uses the same errno rule the adopt one does; the two readers of one directory cannot disagree about what a failed read means. Found by the fix-delta audit: F003 named the adopt adapter, and the reattach adapter beside it reports the same false absence — which now reaches adopt, because a reattach that finds the directory gone REPORTS adopt.
+    2. `src/worktree/reattachProbe.ts` — `probeReattach` answers rather than throws when that read fails, on the rule the rest of the module already follows.
+    3. `src/worktree/reattachProbe.test.ts` — an unreadable administrative directory declines rather than being reported as a forgotten checkout.

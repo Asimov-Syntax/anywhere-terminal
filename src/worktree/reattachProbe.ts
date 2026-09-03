@@ -72,7 +72,17 @@ export async function probeReattach(subject: ReattachSubject, deps: ReattachProb
     return { kind: "declined", because: "notALinkedWorktree" };
   }
 
-  if (!(await deps.adminDirExists(link.gitdir))) {
+  let gone: boolean;
+  try {
+    gone = !(await deps.adminDirExists(link.gitdir));
+  } catch {
+    // A failed existence check is not an absent directory, and this arm
+    // REPORTS adopt — which is authority to overwrite the `.git` it was
+    // reported for. Answering rather than throwing is the rule the rest of this
+    // module follows (round-1 F003).
+    return { kind: "declined", because: "unreadable" };
+  }
+  if (gone) {
     return { kind: "adopt", adoptPath: subject.repairPath };
   }
 
