@@ -1014,7 +1014,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(openReport, "the blocked notice offered no report opener").toBeDefined();
 
     openReport?.click();
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the report to open");
     expect(document.querySelector('[role="dialog"]'), "the notice action opened no report").not.toBeNull();
     expect(gitCalls("remove"), "opening the report reached git").toEqual([]);
 
@@ -1186,7 +1186,13 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     branch.value = "feat/login";
     branch.dispatchEvent(new Event("input", { bubbles: true }));
     branch.dispatchEvent(new Event("change", { bubbles: true }));
-    await settle();
+    await settleUntil(
+      () =>
+        [...document.querySelectorAll<HTMLButtonElement>("button")].some(
+          (b) => /create worktree/i.test(b.textContent ?? "") && !b.disabled,
+        ),
+      "the create button to become submittable",
+    );
 
     const create = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
       /create worktree/i.test(b.textContent ?? ""),
@@ -1278,7 +1284,16 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
       () => outbound.some((message) => message.type === "worktreeCreate"),
       "the migration create request",
     );
-    await settle();
+    // Not the add: this test asserts on what the MIGRATION did afterwards, and
+    // both branches have a different last observable.
+    await settleUntil(
+      () =>
+        gitCalls("add").length === 1 &&
+        (exclusionFails
+          ? document.body.textContent?.includes("Migration may be partial") === true
+          : migrationEvents.includes("migrate-changes")),
+      "the create and the migration outcome it reports",
+    );
 
     expect(outbound.find((message) => message.type === "worktreeCreate")).toMatchObject({
       path: destination,
@@ -1298,7 +1313,13 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     prunableRow = true;
     await assemble();
     clickItem(openMenu("feature"), /prune/i);
-    await settle();
+    await settleUntil(
+      () =>
+        [...document.querySelectorAll<HTMLButtonElement>("button")].some((b) =>
+          /^Prune \d+$/.test(b.textContent ?? ""),
+        ),
+      "the prune confirmation to be offered",
+    );
     // D13: the number is confirmed before the repository is touched.
     expect(gitCalls("prune")).toEqual([]);
     const confirm = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
@@ -1323,7 +1344,15 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
   it("offers Create, and the item opens a form the host has resolved a path for", async () => {
     await assemble();
     clickItem(openMenu("feature"), /new worktree/i);
-    await settle();
+    await settleUntil(
+      () =>
+        [
+          ...(document
+            .querySelector(".wt-create-dialog, [role='dialog']")
+            ?.querySelectorAll<HTMLInputElement>("input") ?? []),
+        ].some((i) => i.value.startsWith("/")),
+      "the dialog and the destination the host supplied it",
+    );
     // B1: the callback existed and nothing rendered an item for it, so no test
     // that called the callback directly could see the action was unreachable.
     const dialog = document.querySelector(".wt-create-dialog, [role='dialog']");
@@ -1405,10 +1434,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
       throw new Error("the launch dialog has no start button");
     }
     start.click();
-    await settleUntil(
-      () => launched.length > 0,
-      "the agent to launch",
-    );
+    await settleUntil(() => launched.length > 0, "the agent to launch");
 
     // The real registry template, the real builder: a positional prompt for
     // Claude, and the worktree the menu was opened on as the directory.
@@ -1509,10 +1535,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     card?.click();
     await settle();
     clickItem(openMenu("worktree walk"), /resume session here/i);
-    await settleUntil(
-      () => launched.length > 0,
-      "the resumed session to launch",
-    );
+    await settleUntil(() => launched.length > 0, "the resumed session to launch");
 
     expect(launched).toEqual([
       expect.objectContaining({
@@ -1789,7 +1812,10 @@ describe("the invariants that span the host and the webview", () => {
     // A second form. Superseding is the host's job and 2_1 owns it; what this
     // walk adds is that the panel refuses the first one even so.
     clickItem(openMenu("feature"), /new worktree/i);
-    await settle();
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow-code").length > 0,
+      "the live opening's provisioning rows",
+    );
     expect(
       [...document.querySelectorAll(".wt-bring-box .wt-brow-code")].map((e) => e.textContent),
       "the live opening was never answered, so the replay below proves nothing",
@@ -2511,10 +2537,7 @@ describe("the invariants that span the host and the webview", () => {
     // offer shipped dark with a green suite (.reviews/round-1.md B1).
     await assemble();
     clickItem(openMenu("feature"), /new worktree/i);
-    await settleUntil(
-      () => argv.some((c) => c.args[0] === "for-each-ref"),
-      "the ref read to reach git",
-    );
+    await settleUntil(() => argv.some((c) => c.args[0] === "for-each-ref"), "the ref read to reach git");
 
     const reads = argv.filter((c) => c.args[0] === "for-each-ref");
     expect(reads).toHaveLength(1);
@@ -2541,7 +2564,10 @@ describe("the invariants that span the host and the webview", () => {
     }
     branch.focus();
     branch.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-    await settle();
+    await settleUntil(
+      () => document.querySelectorAll("#wt-branch-list [role='option'][data-pr='42']").length === 1,
+      "the branch list to hold the forge's answer too",
+    );
 
     const rows = [...document.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']")];
     // `pr-42` sits between the refs and create-new because the same assembly
@@ -2574,7 +2600,10 @@ describe("the invariants that span the host and the webview", () => {
     }
     branch.focus();
     branch.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-    await settle();
+    await settleUntil(
+      () => document.querySelectorAll("#wt-branch-list [role='option'][data-pr='42']").length === 1,
+      "the branch list to hold the forge's answer too",
+    );
 
     const rows = [...document.querySelectorAll<HTMLElement>("#wt-branch-list [role='option']")];
     // § 4.1's order, end to end: refs, then the pull request, then create-new.
@@ -3084,7 +3113,7 @@ describe("the invariants that span the host and the webview", () => {
     );
     expect(force, "the blocked removal offered no way to confirm").toBeDefined();
     force?.click();
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the confirmation dialog");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
 
     // A second file appears between the confirmation being shown and being answered.
@@ -3139,7 +3168,13 @@ describe("the invariants that span the host and the webview", () => {
     );
     expect(force, "an idle agent should leave the removal merely confirmable").toBeDefined();
     force?.click();
-    await settle();
+    await settleUntil(
+      () =>
+        [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].some((b) =>
+          /force remove/i.test(b.textContent ?? ""),
+        ),
+      "the dialog to offer the force",
+    );
     const confirm = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find((b) =>
       /force remove/i.test(b.textContent ?? ""),
     );
@@ -3155,7 +3190,14 @@ describe("the invariants that span the host and the webview", () => {
     await settle();
 
     confirm?.click();
-    await settle();
+    // The dialog closing is not the end of it — the refusal affordance is what
+    // the assertions below read, and it renders after the host has re-checked.
+    await settleUntil(
+      () =>
+        document.querySelector('[role="dialog"]') === null &&
+        [...document.querySelectorAll<HTMLElement>("button")].some((b) => /force remove/i.test(b.textContent ?? "")),
+      "the dialog to close and the refusal affordance to render",
+    );
 
     // The force never reaches git: the agent that started working turned a CONFIRMABLE
     // removal into a REFUSED one under the open dialog.
@@ -3168,7 +3210,10 @@ describe("the invariants that span the host and the webview", () => {
     );
     expect(reopen, "the refusal offered no way to see the reason").toBeDefined();
     reopen?.click();
-    await settle();
+    await settleUntil(
+      () => document.body.textContent?.includes("out from under a working agent") === true,
+      "the reason the refusal gives",
+    );
     expect(document.body.textContent).toContain("out from under a working agent");
     const retry = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
       /force remove/i.test(b.textContent ?? ""),
