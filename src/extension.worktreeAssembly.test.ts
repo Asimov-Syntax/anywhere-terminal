@@ -679,6 +679,15 @@ async function settleUntil(ready: () => boolean, what: string): Promise<void> {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/**
+ * The create's own notices. The panel carries unrelated ones in this assembly,
+ * so both the wait and the count have to name the create's rather than take
+ * `.wt-notice` as a proxy for it.
+ */
+function createNotices(): Element[] {
+  return [...document.querySelectorAll(".wt-notice")].filter((n) => (n.textContent ?? "").includes("Create done."));
+}
+
 /** Open the row's context menu the way a user does, and return its items. */
 function openMenu(rowText: string): HTMLElement[] {
   const rows = [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')];
@@ -1558,21 +1567,20 @@ describe("the invariants that span the host and the webview", () => {
     [...document.querySelectorAll<HTMLButtonElement>("button")]
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
-    await settleUntil(
-      () => document.querySelectorAll(".wt-notice").length > 0,
-      "the create to report something back to the panel",
-    );
+    // The CREATE's notice, not any notice. This assembly also carries an
+    // unrelated "not being watched" one, which was already on screen before the
+    // click — so `.wt-notice` being non-empty was satisfied without the create
+    // having reported anything, and the count below then read zero. It held
+    // under a quiet run and failed under load, which is the shape of a wait on
+    // the wrong condition rather than a wait that is too short.
+    await settleUntil(() => createNotices().length > 0, "the create to report something back to the panel");
     await settle();
 
     // The file actually arrived, through the production binding.
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
     // ONE notice. Two means the provisioning message found no create to land on
     // and made its own — which is what shipped.
-    // ONE create notice. The panel also carries an unrelated "not being watched"
-    // notice in this assembly, so the count is taken over the create's own.
-    const notices = [...document.querySelectorAll(".wt-notice")].filter((n) =>
-      (n.textContent ?? "").includes("Create done."),
-    );
+    const notices = createNotices();
     expect(notices).toHaveLength(1);
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
   });
