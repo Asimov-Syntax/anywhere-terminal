@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "wait-for-the-git-call-each-assertion-reads"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788463849757,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788463849757,
+          "to": 1788463913708
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788463849757
+        }
+      ],
+      "firstAt": 1788463849757,
+      "lastAt": 1788463849757,
+      "buckets": []
+    }
+  ]
+}

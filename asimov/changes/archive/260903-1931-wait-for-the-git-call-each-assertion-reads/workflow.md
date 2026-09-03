@@ -12,16 +12,16 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [-] Review done — test-only diff in one file, no production change, no escalation flag; an independent adversarial second opinion audited all eleven predicates against the assertions each test reads and found none that can be satisfied while a later-asserted effect is still pending
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — `Blueprint: none` _(`[-]` + reason only when `Blueprint: none`)_
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -42,3 +42,5 @@ Scope: only waits immediately followed by an assertion reading `argv` or `launch
 Inventory correction: the first pass claimed nine conversions and had converted eight; the second opinion counted the diff and found the `lock` and `unlock` waits at `:1166` and `:1174` still bare though they qualify. Ten sites are converted now.
 Own regression, caught by this task's own verify: waiting on `gitCalls("add")` at `:1471` returned BEFORE the launch the same test asserts on, so the launch landed inside the next test and failed it on the previous test's entry. `settleUntil` returns the moment its predicate holds, so the predicate must be the LAST observable a test's assertions read, not the first. Two predicates are compound for that reason (`:1477` add-and-launch, `:3000` repair-and-reported-outcome).
 Follow-up, not fixed here: `src/worktree/deleteBranch.test.ts:187` creates a real repository and runs many synchronous git processes on vitest's default 5 s per-test timeout, while `gitCommandRunner` allows any single command 10 s (`gitCommandRunner.ts:9-10`). It timed out on two consecutive verifies of this task and is green on a clean tree at HEAD and twice on this tree outside `verify-task`; no code, module-state, git-lock, or temp-path mechanism connects it to this diff. The smallest honest fix is a ~15 s timeout on that one test, above the runner's own bound — it belongs to whoever owns that file, not to this lease.
+
+Verify gate: check-types clean; 7639/7639 across 295 files; `biome check src` reports 13 diagnostics, identical at this change's base and none in the touched file. `deleteBranch.test.ts:187` passed on the verifying run; the follow-up above stands regardless, since its 5 s budget is below the 10 s its own runner allows one command.
