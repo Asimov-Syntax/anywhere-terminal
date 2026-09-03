@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.15
 Lane: full (standard) — writes into git's administrative directory; the guard git cannot supply is silent when it fails | flags: security-privacy, cross-boundary
-Planned at: 0215afec
+Planned at: 81e9136b
 - No fork at Gate 1: the wire already carries adopt end to end (`WorktreeCreateMode.adopt`, `ResolvedMode.adopt`, `intentFor`'s `mustExistAsDirectory`), and § 2.4 fixes the mechanism. What was missing is a detector, an executor and the form's action.
 - WT-012.14 is NOT waited on. Its answer decides one predicate (design.md D7), so the capability is built now and the Windows arm is a defaulted parameter both platforms can witness. Withholding an unverified mode is what WT-012.14's own acceptance asks for; claiming it fails there is what it forbids.
 - Adopt is offered only where the selected branch exists (D2). A surviving checkout plus a branch nobody has made has no ref to attach to and no tip to promise, so that destination stays occupied and the suffixed fresh path stands.
@@ -74,3 +74,4 @@ Planned at: 0215afec
 - Round-6 handback, cycle 2 closed under thrash-stop option 1. F005 six appearances / five fix attempts; the chair reached option 1 independently. Reopening Gate 2: D4's undo stops claiming an absolute and joins D5/D9 in stating a residual, and the visible-link read — the source of F005 in rounds 5 and 6 — is DELETED rather than re-guarded, since it exists only to rescue the non-restored outcomes and those now retain the entry unconditionally. F015 gives `putLink` three outcomes so a refusal that mutated nothing stops being reported as unvouchable content.
 - Knowledge candidate: `git worktree prune` DELETES an administrative entry whose `gitdir` file is missing even while a surviving `<wt>/.git` still names it, leaving that link dangling — and it never collects an entry whose `gitdir` names a path that exists. | Surprise: I spent six review rounds defending an invariant ("never leave `<wt>/.git` naming a directory that does not exist") that git itself violates routinely, and the state I was avoiding is the precondition this very change was built to recover from. | Evidence: verified on git 2.50.1 in /tmp; tabulated at design.md D4. | Consumer: plan | Action: before defending an invariant about git's own administrative directory, reproduce what git does to that state unasked — the correct claim is usually about the destination's recoverability, not about an instant.
 - Round-6 handback applied. The oracle REFUTED both amended ledger rows, and the second refutation is why the design changed direction rather than being patched: `nlink === 0` is positive evidence the link was replaced, and my first amendment collapsed it with `nlink > 1` into one "nothing happened" outcome that then authorised deleting the entry. Chasing that led to the git probe above, which showed the retain-the-entry rule I had just written was the worse of the two failures — a leak nothing collects, accumulating per retry. The withdrawal now removes its own entry unconditionally and reads no pathname, so F005's mechanism is deleted rather than guarded a sixth time.
+- Verify Gate after 7_1: check-types clean, 7224 tests / 287 files, biome clean on every file this change touches, `verify-status` exit 0. Arm-check over all 10 guards including the new rule itself — reintroducing the undo's pathname read fails the zero-reads witness. One guard was vacuous on the first pass (the open's `nlink === 0` refusal was indistinguishable from the alias refusal except by its message) and now has a message witness; that is the SIXTH vacuous witness this cycle.

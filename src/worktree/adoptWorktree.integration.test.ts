@@ -17,8 +17,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRepoFixture, type RepoFixture } from "../test/fixtures/repoFixture";
+import { probeAdopt } from "./adoptProbe";
 import { type AdoptFs, adoptWorktree } from "./adoptWorktree";
 import { createGitCommandRunner } from "./gitCommandRunner";
+import { readGitLink } from "./reattachProbe";
 
 const runner = createGitCommandRunner();
 
@@ -613,5 +615,65 @@ describe("a second name that appears after the claim", () => {
     // And the undo left it holding what the claim wrote, rather than reaching
     // through it to a file outside the checkout.
     expect(fs.readFileSync(alias, "utf8")).toBe(`gitdir: ${path.join(commonDir, "worktrees", "survivor")}\n`);
+  });
+});
+
+// The withdrawal's success criterion, stated as an END STATE rather than as a
+// guard. Rounds 2 through 6 each proved an internal step of the undo and the
+// next round found the step that step did not cover; what actually has to be
+// true is that a failed attempt leaves the directory exactly as adoptable as it
+// found it, and that is observable from outside (round-6 F005, design.md D4).
+describe("a withdrawn adoption leaves the directory adoptable again", () => {
+  it("offers the same directory as adopt on a retry, with nothing left in worktrees/", async () => {
+    const before = fs.existsSync(path.join(commonDir, "worktrees"))
+      ? fs.readdirSync(path.join(commonDir, "worktrees"))
+      : [];
+
+    // `repair` fails, so the adoption withdraws after it has built the entry and
+    // written the link — the deepest point the undo has to unwind from.
+    const failing = {
+      run: async (args: readonly string[], cwd: string) =>
+        args[1] === "repair"
+          ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false }
+          : runner.run(args, cwd),
+    };
+
+    const result = await adoptWorktree(
+      failing,
+      {
+        repoPath: repo,
+        commonDir,
+        worktreePath: survivor,
+        branch: "survivor",
+        staleGitdir,
+        staleLink,
+        expectedBranchOid: tipOf("survivor"),
+      },
+      realFs,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+
+    // Nothing of the attempt is left for git to trip over — and unlike a unit
+    // assertion on `removeDir`, this reads the directory git itself reads.
+    const after = fs.existsSync(path.join(commonDir, "worktrees"))
+      ? fs.readdirSync(path.join(commonDir, "worktrees"))
+      : [];
+    expect(after).toEqual(before);
+    expect(listed()).not.toContain(survivor);
+
+    // And the destination is back in the state the detector recognises: a
+    // populated checkout whose `.git` names an administrative entry that is gone.
+    expect(linkOf(survivor)).toBe(staleLink);
+    expect(fs.existsSync(staleGitdir)).toBe(false);
+    const verdict = await probeAdopt(
+      { candidatePath: survivor, commonDir },
+      {
+        readGitLink: (p) =>
+          readGitLink(p, { lstat: fs.promises.lstat, readFile: (f) => fs.promises.readFile(f, "utf8") }),
+        adminDirExists: async (p) => fs.existsSync(p),
+      },
+    );
+    expect(verdict).toMatchObject({ kind: "adopt", adoptPath: survivor });
   });
 });

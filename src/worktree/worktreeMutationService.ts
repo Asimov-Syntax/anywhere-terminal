@@ -240,6 +240,10 @@ function residueNote(residue: AdoptResidue | undefined, adoptPath: string): stri
   // failure: the claim write began and the bytes that were there could not be
   // put back, so `<wt>/.git` names nothing anybody can act on. It is reported
   // whether or not an entry was left behind (round-3 F012).
+  //
+  // `entryPath` is non-null only where `removeDir` actually FAILED. The undo no
+  // longer retains an entry on purpose, so "could not be removed" below says
+  // what happened rather than covering for a deliberate choice (round-6 F005).
   const link =
     residue.link === "restored"
       ? "its own .git entry was restored"

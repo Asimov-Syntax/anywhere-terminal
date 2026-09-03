@@ -53,6 +53,8 @@ function fsOf(over: Partial<AdoptFs> = {}) {
   /** inode id → how many names reach it. A hard link is a second name, not a copy. */
   const names = new Map<bigint, number>();
   const writes: string[] = [];
+  /** Every path read BY NAME. The undo must not appear in here at all. */
+  const reads: string[] = [];
   const identities = new Map<string, { dev: bigint; ino: bigint }>();
   let nextIno = 1n;
   let closed = false;
@@ -130,7 +132,10 @@ function fsOf(over: Partial<AdoptFs> = {}) {
         },
       };
     },
-    readFile: async (p) => bytesAt(p),
+    readFile: async (p) => {
+      reads.push(p);
+      return bytesAt(p);
+    },
     createFile: async (p, data) => {
       if (at.has(p)) {
         throw Object.assign(new Error("exists"), { code: "EEXIST" });
@@ -157,6 +162,7 @@ function fsOf(over: Partial<AdoptFs> = {}) {
   return {
     fs: { ...base, ...over },
     writes,
+    reads,
     files,
     dirs,
     identities,
@@ -168,8 +174,20 @@ function fsOf(over: Partial<AdoptFs> = {}) {
       }
       names.set(ino, (names.get(ino) ?? 1) + 1);
     },
-    /** Another writer REPLACES the link — `rename` or unlink+create. New inode. */
-    replaceLink: (data: string) => put(`${WT}/.git`, data),
+    /**
+     * Another writer REPLACES the link — `rename` or unlink+create. New inode,
+     * and the OLD one loses the name it had: an open descriptor is then the last
+     * reference to an object `nlink` reports as 0. Modelling that drop is what
+     * lets a test see the difference between "somebody aliased our file" and
+     * "somebody took our file away" (round-6, oracle B1).
+     */
+    replaceLink: (data: string) => {
+      const old = at.get(`${WT}/.git`);
+      if (old !== undefined) {
+        names.set(old, Math.max(0, (names.get(old) ?? 1) - 1));
+      }
+      return put(`${WT}/.git`, data);
+    },
     /** Another writer TRUNCATES the link in place — what git's own writer does. */
     rewriteLinkInPlace: (data: string) => {
       const ino = at.get(`${WT}/.git`);
@@ -860,9 +878,12 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
 
     expect(store.linkBytes(), "another process's registration was overwritten").toBe(REPLACEMENT);
     expect(result).toMatchObject({ ok: false, leftBehind: { link: "leftAsFound" } });
-    // And not merely "the name still reads right": the object this adoption
-    // held was not written either, so the restore did not go somewhere unread.
-    expect(ours !== undefined && store.inodeBytes(ours)).not.toBe(ORIGINAL_LINK);
+    // And not merely "the name still reads right". Once the fake models the
+    // replacement DROPPING the old name, the detached object reports `nlink` 0
+    // and the claim is refused before it mutates anything — so this object holds
+    // exactly what it always held, and no write ever reached it (oracle B1).
+    expect(ours !== undefined && store.inodeBytes(ours)).toBe(ORIGINAL_LINK);
+    expect(store.writes.filter((w) => w.endsWith(`${WT}/.git`))).toEqual([]);
   });
 
   it("does not touch the link at all when it fails before installing its own", async () => {
@@ -1164,7 +1185,9 @@ describe("adoptWorktree withdraws in an order that leaves no dangling link", () 
   });
 });
 
-describe("adoptWorktree does not remove an entry something else is pointing at", () => {
+describe("adoptWorktree's withdrawal does not consult the link's name", () => {
+  const TAKEN_OVER = "gitdir: /repo/.git/worktrees/taken-over\n";
+
   function failingRepair() {
     return runnerOf((args) =>
       args[1] === "repair"
@@ -1173,10 +1196,154 @@ describe("adoptWorktree does not remove an entry something else is pointing at",
     );
   }
 
-  // Round 4 separated the link's outcome from the entry's removal, and round 5
-  // found them disagreeing: the link is correctly left as somebody else's, and
-  // the entry it names is deleted a few lines later anyway.
-  it("keeps the entry when a foreign link names it, and says so", async () => {
+  // The rule itself, witnessed as an ABSENCE. Rounds 5 and 6 both turned on a
+  // pathname read inside the undo whose answer expired before the `removeDir`;
+  // the fix is that the read is gone, and only counting reads can prove a read
+  // is gone. Asserting on the outcome alone would pass with the read restored.
+  it("reads the checkout's git link by name zero times while withdrawing", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.reads.filter((p) => p === `${WT}/.git`)).toEqual([]);
+  });
+
+  // The same distinction at the OPEN. Both counts refuse, so only the message
+  // separates them — and a user told "also reachable under another name" about a
+  // link somebody deleted is being told the wrong thing to go look at.
+  it("says the link was taken away, not aliased, when it is already nameless at the open", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        return { ...handle, identity: async () => ({ ...(await handle.identity()), nlink: 0 }) };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toContain("was replaced before the adoption began");
+    expect(store.writes, "something was created before the link was proved").toEqual([]);
+  });
+
+  // Oracle B1: `nlink` 0 and `nlink` 2 both refused the write and were reported
+  // identically, but zero is positive evidence the link was TAKEN AWAY.
+  it("reports a link that was replaced before the claim as left as found, and still withdraws", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    let sampled = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      // The replacement lands AFTER the pre-write identity sample and before the
+      // write reaches for the descriptor — oracle B1's exact schedule. Landing it
+      // any earlier is caught by the identity comparison instead, which would
+      // make this a witness for a guard it was not written for.
+      identify: async (p) => {
+        const seen = await store.fs.identify(p);
+        if (p === `${WT}/.git`) {
+          sampled += 1;
+          if (sampled === 1) {
+            store.replaceLink(TAKEN_OVER);
+          }
+        }
+        return seen;
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: null, link: "leftAsFound" } });
+    expect(store.linkBytes(), "the replacement was overwritten").toBe(TAKEN_OVER);
+    expect(store.dirs.has(ENTRY), "the entry this adoption made was left for nothing to collect").toBe(false);
+  });
+
+  // POSIX: an unsuccessful `ftruncate` leaves the file unaffected, which is what
+  // lets a rejected truncate be classified as "nothing happened". The seam is
+  // injected, so the guarantee is checked here rather than assumed of the double.
+  it("treats a rejecting truncate as a write that never began", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        return {
+          ...handle,
+          truncate: async () => {
+            throw new Error("EROFS");
+          },
+        };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.linkBytes(), "a refused truncate changed the file").toBe(ORIGINAL_LINK);
+    // Nothing was installed, so there is no residue to report at all — the
+    // failure changed nothing and the entry went by the ordinary path.
+    expect(result.ok === false && result.leftBehind).toBeUndefined();
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+
+  // Round-6 F016: every late-alias witness so far aliased AFTER a successful
+  // claim. This one fails the claim first, so the recovery is what meets it.
+  it("will not rewrite an alias that appears before the failed claim's recovery", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    let wrote = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        return {
+          ...handle,
+          writeAt: async (data, position) => {
+            wrote += 1;
+            if (wrote === 1) {
+              // The claim truncated and then failed; the alias lands before the
+              // recovery reaches for the same descriptor.
+              store.hardLinkTheLink();
+              throw new Error("EIO");
+            }
+            return handle.writeAt(data, position);
+          },
+        };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    // The recovery refused on the second name, so the aliased object still holds
+    // what the truncate left — not the stale bytes written through an alias.
+    expect(result.ok === false && result.leftBehind?.link).toBe("unknown");
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+});
+
+describe("adoptWorktree withdraws the entry it created whatever the link says", () => {
+  function failingRepair() {
+    return runnerOf((args) =>
+      args[1] === "repair"
+        ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false }
+        : ok(`${TIP}\n`),
+    );
+  }
+
+  // Rounds 4 and 5 made the removal depend on what the visible link named, and
+  // round 6 found the schedule where that read expires before the `removeDir`.
+  // The dependency is gone, and this is the case it used to protect: the entry
+  // is removed even though a replacement link names it. Verified on git 2.50.1,
+  // that leaves the destination in the state `probeAdopt` recognises and that
+  // `git worktree prune` produces unasked — whereas RETAINING it leaves a
+  // directory `git worktree list` omits and `prune` never collects.
+  it("removes the entry even when a foreign link names it", async () => {
     const { runner } = failingRepair();
     const store = fsOf();
     const fs: AdoptFs = {
@@ -1201,8 +1368,10 @@ describe("adoptWorktree does not remove an entry something else is pointing at",
 
     const result = await adoptWorktree(runner, request, fs);
 
-    expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: ENTRY, link: "leftAsFound" } });
-    expect(store.dirs.has(ENTRY), "the entry the visible link names was removed under it").toBe(true);
+    expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: null, link: "leftAsFound" } });
+    expect(store.dirs.has(ENTRY), "an entry nothing will ever collect was left behind").toBe(false);
+    // The replacement's bytes are untouched — the undo refuses to write a link
+    // it does not own, which is a separate rule from whether the entry goes.
     expect(store.linkBytes()).toBe(`gitdir: ${ENTRY}\n`);
   });
 
@@ -1237,6 +1406,10 @@ describe("adoptWorktree does not remove an entry something else is pointing at",
     // The restore did not happen, and the outcome says so rather than claiming
     // a withdrawal that rewrote a file outside the checkout.
     expect(store.linkBytes(), "the aliased object was rewritten by the undo").toBe(`gitdir: ${ENTRY}\n`);
+    // `unknown`, and deliberately so: the alias refusal spared the aliased file
+    // but the link still holds THIS adoption's claim, which is neither restored
+    // nor as found. The `notWritten` outcome maps to "as found" only at the
+    // claim, where nothing had been installed yet (round-6 F015).
     expect(result.ok === false && result.leftBehind?.link).toBe("unknown");
   });
 });

@@ -157,6 +157,16 @@ export interface AdoptResidue {
  */
 export type AdoptLinkState = "restored" | "leftAsFound" | "unknown";
 
+/**
+ * What one write through the pinned handle did to the file.
+ *
+ * Three, not two: a boolean could not separate a refusal that mutated nothing
+ * from a write that truncated and then failed, so the first was reported as
+ * content nobody can vouch for (round-6 F015). Only `unknown` means the bytes
+ * are in doubt.
+ */
+type WriteOutcome = "wrote" | "notWritten" | "unknown";
+
 export type AdoptResult =
   | {
       ok: true;
@@ -223,14 +233,21 @@ export async function adoptWorktree(
     };
   }
   /**
-   * Exactly one name for the object we are about to truncate.
+   * How many names the object we are about to truncate still has.
    *
-   * Observable in the `fstat` already taken, so unlike the in-place writer this
-   * is a boundary that CAN be held — and this repository already holds it, at
-   * `src/agentHooks/install/lockedJsonFile.ts`. What stays open is an alias made
-   * after the last check, the same instant the identity comparison cannot cover.
+   * Read as a COUNT rather than a yes/no, because zero and two mean opposite
+   * things and the boolean this used to be reported them identically. Two is an
+   * alias: truncating would rewrite a file outside the checkout (round-4 F013).
+   * Zero is positive evidence the link was REPLACED — our handle is the last
+   * reference to an object no name reaches, so this adoption is not the link and
+   * cannot become it (round-6, oracle B1). Observable in the `fstat` already
+   * taken, the same boundary `src/agentHooks/install/lockedJsonFile.ts` holds.
+   * What stays open is an alias made after the last check.
    */
-  const oneName = async (): Promise<boolean> => BigInt((await link.identity()).nlink) === 1n;
+  const nameCount = async (): Promise<bigint> => BigInt((await link.identity()).nlink);
+
+  /** Set where a write found the pinned object nameless. The link stopped being ours. */
+  let linkLost = false;
 
   /** Nothing has been created yet, so a refusal here is just a closed handle. */
   const refuse = async (message: string): Promise<AdoptResult> => {
@@ -245,7 +262,11 @@ export async function adoptWorktree(
   // live registration (round-2 F006).
   let opening: string;
   try {
-    if (!(await oneName())) {
+    const names = await nameCount();
+    if (names === 0n) {
+      return refuse("That directory's git link was replaced before the adoption began, so nothing was written.");
+    }
+    if (names !== 1n) {
       return refuse("That directory's git link is also reachable under another name, so nothing was written.");
     }
     opening = await link.readAt(0);
@@ -282,30 +303,51 @@ export async function adoptWorktree(
    * — a link that reads as VALID and names the wrong administrative directory
    * is worse than one that reads as empty (design.md D9).
    */
-  const putLink = async (data: string): Promise<boolean> => {
+  const putLink = async (data: string): Promise<WriteOutcome> => {
     const bytes = Buffer.from(data, "utf8");
+    // Counted HERE, not at the callers. This has three of them — the claim, the
+    // failed-claim recovery and the undo's restore — and a guard written at the
+    // claim site covered one: an alias made after a successful claim was
+    // rewritten by both of the others (round-5 F013).
+    let names: bigint;
     try {
-      // Counted HERE, not at the callers. This has three of them — the claim,
-      // the failed-claim recovery and the undo's restore — and a guard written
-      // at the claim site covered one: an alias made after a successful claim
-      // was rewritten by both of the others (round-5 F013).
-      if (!(await oneName())) {
-        return false;
-      }
+      names = await nameCount();
+    } catch {
+      return "notWritten";
+    }
+    if (names === 0n) {
+      linkLost = true;
+      return "notWritten";
+    }
+    if (names !== 1n) {
+      return "notWritten";
+    }
+    // Separated from the loop on a documented guarantee: POSIX specifies that an
+    // unsuccessful `ftruncate` leaves the file unaffected, so a rejection here
+    // has changed nothing and saying otherwise would report unvouchable content
+    // for a write that never began (round-6 F015). `LinkHandle.truncate` states
+    // that contract, because this classification rests on it.
+    try {
       await link.truncate(0);
+    } catch {
+      return "notWritten";
+    }
+    // Past the truncate, every exit is `unknown`: the file is empty and only a
+    // completed write puts it right.
+    try {
       let at = 0;
       while (at < bytes.byteLength) {
         const wrote = await link.writeAt(bytes.subarray(at), at);
         // A fulfilled write of nothing is not progress, and looping on it is a
         // hang rather than an error. `write` may legitimately fulfil short.
         if (wrote <= 0) {
-          return false;
+          return "unknown";
         }
         at += wrote;
       }
-      return true;
+      return "wrote";
     } catch {
-      return false;
+      return "unknown";
     }
   };
 
@@ -360,7 +402,17 @@ export async function adoptWorktree(
     if (contentUnknown) {
       state = "unknown";
     } else if (installed) {
-      state = !(await stillOurLink()) ? "leftAsFound" : (await putLink(request.staleLink)) ? "restored" : "unknown";
+      if (!(await stillOurLink())) {
+        state = "leftAsFound";
+      } else {
+        // `notWritten` does NOT mean "as found" here, and the mapping is
+        // deliberately not the claim's. At the claim a refusal means the link
+        // was never touched; at the RESTORE this adoption has already installed
+        // its own bytes, so a refusal leaves OUR link in place — which is
+        // neither the bytes it was found with nor a withdrawal, and the caller
+        // must not be told the destination was put back.
+        state = (await putLink(request.staleLink)) === "wrote" ? "restored" : "unknown";
+      }
       // Proved on BOTH sides of the write. The sample before it expires the
       // moment it returns, and while the handle keeps the restore off anyone
       // else's file, a restore that landed on a detached object must not be
@@ -369,37 +421,27 @@ export async function adoptWorktree(
         state = "leftAsFound";
       }
     }
-
-    // The one rule, applied: the entry goes only if nothing SOMEBODY ELSE put
-    // there is depending on it. Read BY PATHNAME, which is right here and
-    // nowhere else in this file — the question is exactly "what does that name
-    // say now", and the answer decides only whether we DELETE something of our
-    // own, never what we overwrite.
-    //
-    // The restored case is deliberately not this case. The stale link names the
-    // administrative directory git had already forgotten, and after a pruned
-    // checkout that is the very path `createEntry` claims first — so a correct
-    // restore leaves the link naming this entry, and removing it is what puts
-    // the directory back in the forgotten state the adoption found it in. What
-    // must not happen is removing an entry a link this adoption did NOT write
-    // is pointing at (round-5 F005).
-    if (state !== "restored") {
-      let named = true;
-      try {
-        const visible = await fs.readFile(linkPath);
-        const target = visible === null ? null : gitdirOf(visible, request.worktreePath);
-        named = target !== null && resolve(target) === resolve(entryPath);
-      } catch {
-        // Unreadable is not "nothing points at it". Keeping the entry is the
-        // answer that cannot strand a link.
-        named = true;
-      }
-      if (named) {
-        await link.close().catch(() => {});
-        return { entryPath, link: state };
-      }
+    // Observed at ANY write: the pinned object had no name, so whatever
+    // `<wt>/.git` reaches now is not the file this adoption was working on and
+    // no outcome of ours may claim it was restored (oracle B1).
+    if (linkLost) {
+      state = "leftAsFound";
     }
 
+    // And the entry goes REGARDLESS of what the link says — there is no pathname
+    // read here at all.
+    //
+    // Rounds 2 through 6 each made this removal conditional on a fact about
+    // `<wt>/.git`, and each time the next round found the schedule where the
+    // fact expired between the check and the `removeDir`; nothing in Node
+    // couples them (WT-012.19). The conditional was also defending the wrong
+    // state. Verified on git 2.50.1: a `<wt>/.git` naming an entry that is gone
+    // is exactly what `probeAdopt` recognises and what `git worktree prune`
+    // itself produces unasked, and a retry re-offers adopt — whereas an entry
+    // RETAINED here is listed by nothing and collected by nothing, accumulating
+    // one directory per attempt because the retry takes `EEXIST` and mints the
+    // next id. So the withdrawal returns the destination to the state adopt
+    // recognises, and the entry it created always goes (D4).
     // Identity first, and it is the whole point: `prune` can remove an entry
     // whose `gitdir` is missing and an external `add` can mint the same id, so
     // removing by pathname alone could delete a registration we never made.
@@ -487,12 +529,19 @@ export async function adoptWorktree(
     if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
       return failed("That directory's git link was replaced while it was being re-registered.");
     }
-    if (!(await putLink(ourLink))) {
+    const claimed = await putLink(ourLink);
+    if (claimed !== "wrote") {
       // Begun and not finished. The handle is still open, so the old bytes can
       // be put back where a pathname write had nothing left to try; if THAT
       // fails the content is nobody's guess and the caller must say so rather
       // than report a failure that changed nothing (round-3 F012).
-      contentUnknown = !(await putLink(request.staleLink));
+      //
+      // A claim that never began is NOT that case. It leaves the link as found
+      // and withdraws by the ordinary path, where reporting it as unvouchable
+      // content used to strand a live registration (round-6 F015).
+      if (claimed === "unknown") {
+        contentUnknown = (await putLink(request.staleLink)) !== "wrote";
+      }
       return failed("That directory's git link could not be written.");
     }
     installed = true;

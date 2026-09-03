@@ -274,7 +274,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 > while the dangling link it avoids is the state `probeAdopt` exists to recover from and `git worktree
 > prune` produces unasked (design.md D4, table).
 
-- [ ] 7_1 Remove the entry this adoption created whatever the link says, and split the link count
+- [x] 7_1 Remove the entry this adoption created whatever the link says, and split the link count — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 6_1
   - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, a-withdrawal-states-what-it-could-not-put-back, an-adoption-that-cannot-establish-the-git-entry-says-so-rather-than-reporting-a-clean-failure}; `.reviews/round-6.md` F005, F015, F016
   - **Acceptance**:

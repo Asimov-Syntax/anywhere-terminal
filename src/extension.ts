@@ -964,6 +964,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
           return buffer.subarray(0, bytesRead).toString("utf8");
         },
+        // POSIX specifies that an unsuccessful `ftruncate` leaves the file
+        // unaffected, and `adoptWorktree` classifies a rejection here as a write
+        // that never began on exactly that guarantee (design.md D9). An
+        // implementation of this seam that mutates and THEN rejects would break a
+        // contract the type cannot express, so it is stated here and asserted in
+        // the suite rather than assumed of the double.
         truncate: (length) => handle.truncate(length),
         writeAt: async (data, position) => (await handle.write(data, 0, data.byteLength, position)).bytesWritten,
         close: () => handle.close(),
