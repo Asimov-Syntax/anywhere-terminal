@@ -61,6 +61,8 @@ import { VaultCacheStore } from "./vault/VaultCacheStore";
 import { VaultCustomNameRegistry } from "./vault/VaultCustomNameRegistry";
 import { VaultLauncher } from "./vault/VaultLauncher";
 import { VaultService } from "./vault/VaultService";
+import { probeAdopt } from "./worktree/adoptProbe";
+import { type AdoptFs, adoptWorktree } from "./worktree/adoptWorktree";
 import { afterDelay } from "./worktree/deadline";
 import { rosterFromDetail } from "./worktree/delegations";
 import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
@@ -78,7 +80,6 @@ import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
 import { writeNativeConfig } from "./worktree/provisioning/writeNativeConfig";
-import { probeAdopt } from "./worktree/adoptProbe";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { branchDeleteOfferFor, checksFor } from "./worktree/removalChecks";
 import { readPullRequests } from "./worktree/repoPullRequests";
@@ -633,6 +634,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         repoPath: bindings.repoPath,
         assessRemoval: bindings.assessRemoval,
         corroborateRepair,
+        // The SAME probe that offered the adoption, so the offer and the
+        // mutation cannot disagree about what was checked (design.md D5).
+        corroborateAdopt: ({ candidatePath }) => probeAdopt(candidatePath, gitEntryReads),
+        commonDirOf: async (repoPath) => {
+          const read = await worktreeTreeDeps.runner.run(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            repoPath,
+          );
+          if (read.code !== 0 || read.timedOut || read.failedToSpawn) {
+            return null;
+          }
+          const value = read.stdout.toString("utf8").trim();
+          return value.length > 0 ? value : null;
+        },
+        reconstructEntry: (request) => adoptWorktree(worktreeTreeDeps.runner, request, nodeAdoptFs),
+        readHeadAt: async (worktreePath) => {
+          const read = await worktreeTreeDeps.runner.run(["rev-parse", "HEAD"], worktreePath);
+          if (read.code !== 0 || read.timedOut || read.failedToSpawn) {
+            return null;
+          }
+          const value = read.stdout.toString("utf8").trim();
+          return value.length > 0 ? value : null;
+        },
         // The SAME listing the tree is built from — it negotiates `-z` through
         // the capability probe, so the listing that offers a repair and the one
         // that confirms it cannot parse the same path differently (round-1 W5).
@@ -879,6 +903,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * here so the two answers about one `.git` cannot come from two differently
    * built readers.
    */
+  /**
+   * The reconstruction's filesystem, as production gets it.
+   *
+   * `mkdir` is deliberately NON-recursive: `EEXIST` on a directory already
+   * there is what mints the next entry id, and a recursive call would answer
+   * success for one this adoption does not own (design.md D4).
+   */
+  const nodeAdoptFs: AdoptFs = {
+    mkdir: (path) => fsp.mkdir(path).then(() => {}),
+    identify: (path) => fsp.lstat(path, { bigint: true }),
+    readFile: (path) => fsp.readFile(path, "utf8").catch(() => null),
+    writeFile: (path, data) => fsp.writeFile(path, data, "utf8"),
+    removeFile: (path) => fsp.rm(path, { force: true }),
+    removeDir: (path) => fsp.rm(path, { recursive: true, force: true }),
+  };
+
   const gitEntryReads = {
     readGitLink: (worktreePath: string) =>
       readGitLink(worktreePath, {

@@ -19,6 +19,8 @@ import type {
   WorktreeCreateMode,
 } from "../types/messages";
 import { normalizePathForCompare } from "../utils/pathBoundary";
+import type { AdoptVerdict } from "./adoptProbe";
+import type { AdoptRequest, AdoptResidue, AdoptResult } from "./adoptWorktree";
 import { type ClearDebrisDeps, clearDebris, nodeClearDebrisDeps } from "./clearDebris";
 import { type CreatePathContext, type CreatePathDeps, identityOf, intentFor, validateCreatePath } from "./createPath";
 import {
@@ -186,6 +188,52 @@ async function holdsStaleRegistration(
   return false;
 }
 
+/**
+ * The live worktree holding this branch somewhere OTHER than the adopted path,
+ * or undefined when none does.
+ *
+ * Prunable records are excluded on the same rule the resolution follows: a
+ * registration git itself calls stale is not a claim on the branch. The adopted
+ * path is excluded because after the reconstruction it is the holder, and the
+ * post-read asks this same question again.
+ */
+async function liveHolderOf(
+  records: readonly RepairListingRecord[],
+  branch: string,
+  adoptPath: string,
+  normalize: (raw: string) => Promise<string | null>,
+): Promise<string | undefined> {
+  const target = normalizePathForCompare(adoptPath);
+  for (const record of records) {
+    if (record.prunable || record.branch !== branch) {
+      continue;
+    }
+    const resolved = await normalize(record.displayPath);
+    if (resolved === null || normalizePathForCompare(resolved) !== target) {
+      return record.displayPath;
+    }
+  }
+  return undefined;
+}
+
+/** Why a re-corroborated adoption was refused, in the user's terms. */
+function adoptDeclineReason(verdict: AdoptVerdict): string {
+  return verdict.kind === "declined" && verdict.because === "unreadable"
+    ? "That directory's git link could not be read, so nothing was re-registered."
+    : "That directory is registered with git again, so it is no longer the forgotten checkout that was offered.";
+}
+
+/** What an undo could not put back, said rather than folded into a plain failure. */
+function residueNote(residue: AdoptResidue | undefined): string {
+  if (residue === undefined) {
+    return "";
+  }
+  const link = residue.worktreeLinkRestored
+    ? "its own .git entry was restored"
+    : "its .git entry was NOT restored and still points at that directory";
+  return ` The administrative entry at ${residue.entryPath} could not be removed, and ${link}.`;
+}
+
 /** Why a re-corroborated repair was refused, in the user's terms. */
 function declineReason(verdict: ReattachVerdict): string {
   if (verdict.kind === "adopt") {
@@ -278,6 +326,39 @@ export interface MutationServiceDeps {
    * HEAD reads is how they would drift (round-1 B1).
    */
   corroborateRepair(input: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict>;
+  /**
+   * D5's re-probe, through the SAME probe that offered the adoption.
+   *
+   * The user's decision sits between the offer and this mutation, and an
+   * administrative entry restored inside that window is a registration this
+   * adoption would otherwise overwrite — whatever branch it names.
+   */
+  corroborateAdopt(input: { candidatePath: string }): Promise<AdoptVerdict>;
+  /**
+   * `$GIT_COMMON_DIR` for the repository, absolute. The entry is created under
+   * its `worktrees/`, and there is nowhere else it could go.
+   *
+   * `null` is indeterminate rather than "no common dir": a reconstruction into
+   * a guessed path would write git's own bookkeeping somewhere git does not read.
+   */
+  commonDirOf(repoPath: string): Promise<string | null>;
+  /**
+   * Reconstruct the administrative entry, and hand back its undo.
+   *
+   * Injected rather than called directly so every failure inside it — and every
+   * failure of its own undo — is witnessable from this module's tests, which is
+   * where the guards that call the undo live.
+   */
+  reconstructEntry(request: AdoptRequest): Promise<AdoptResult>;
+  /**
+   * The commit the adopted worktree's HEAD names, read from INSIDE it after the
+   * repair (D5).
+   *
+   * The pre-read cannot carry this claim: an `update-ref` landing between the
+   * enumeration and the symbolic-HEAD write defeats it, so the guard is a read
+   * of the state the adoption actually produced.
+   */
+  readHeadAt(worktreePath: string): Promise<string | null>;
   /**
    * The repository's worktrees, from the listing that negotiates `-z`.
    *
@@ -757,6 +838,111 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       // Reported after the create's own outcome, never in place of it: the
       // worktree exists whether or not a window opened (round-3 W7).
       let openFailure: string | null = null;
+
+      // Adopt leaves before the create-path check, for the reason reattach does
+      // and one more: `validateCreatePath` refuses an occupied destination, and
+      // the surviving checkout IS the destination. An adoption creates nothing —
+      // it writes the administrative entry git will not write (design.md D4).
+      if (request.mode.kind === "adopt") {
+        // BEFORE the branch, on the rule the repair above follows: a clearance
+        // carried into an adoption would report a successful re-registration
+        // while the directory it promised to clear is the one just adopted.
+        if (request.disposition.kind === "debris") {
+          deps.report(
+            fail("An adoption re-registers the directory it was offered on, so this create will not run."),
+            request.origin,
+          );
+          return;
+        }
+        const mode = request.mode;
+        return coordinator
+          .run<string, MutationOutcome>(request.repoId, {
+            resolve: async () => deps.repoPath(request.repoId),
+            body: async (repoPath) => {
+              const adoptPath = await deps.pathDeps.normalize(mode.adoptPath);
+              const stat = adoptPath === null ? null : await deps.pathDeps.lstat(adoptPath);
+              if (adoptPath === null || stat === null || stat.isSymbolicLink() || !stat.isDirectory()) {
+                return fail("That directory is gone, so there is nothing to re-register.");
+              }
+              // The branch claim, at the moment of the write rather than from
+              // the listing the resolution was built on. Two concurrent
+              // `git worktree add` against one existing branch were both
+              // observed to exit 0, so git itself excludes nothing globally —
+              // this is parity with `add`, read as late as a client can read it.
+              const before = await deps.listWorktrees(repoPath);
+              if (before === null) {
+                return { kind: "unavailable", verb: "create", repoId: request.repoId, unreadable: ["prunable"] };
+              }
+              const holder = await liveHolderOf(before, mode.branch, adoptPath, deps.pathDeps.normalize);
+              if (holder !== undefined) {
+                // No confirmation path past it: a second checkout of one branch
+                // is what git refuses, and forcing it is not this action's to offer.
+                return fail(`${holder} already has ${mode.branch} checked out, so it cannot be re-registered here.`);
+              }
+              // D5's re-probe. An entry restored during the user's pause is a
+              // registration this adoption would overwrite, and the branch check
+              // above would not catch one that is detached or on another branch.
+              const verdict = await deps.corroborateAdopt({ candidatePath: adoptPath });
+              if (verdict.kind !== "adopt") {
+                return fail(adoptDeclineReason(verdict));
+              }
+              const commonDir = await deps.commonDirOf(repoPath);
+              if (commonDir === null) {
+                return { kind: "unavailable", verb: "create", repoId: request.repoId, unreadable: ["prunable"] };
+              }
+              const written = await deps.reconstructEntry({
+                repoPath,
+                commonDir,
+                worktreePath: adoptPath,
+                branch: mode.branch,
+              });
+              if (!written.ok) {
+                return fail(`${written.message}${residueNote(written.leftBehind)}`);
+              }
+              /** Withdraw the registration, and say what the withdrawal could not put back. */
+              const withdraw = async (why: string): Promise<MutationOutcome> =>
+                fail(`${why}${residueNote(await written.undo())}`);
+              // The tip the user was PROMISED, read from inside the worktree
+              // after the repair. The pre-read cannot carry this claim (D5).
+              const head = await deps.readHeadAt(adoptPath);
+              if (head !== mode.expectedBranchOid) {
+                return withdraw(
+                  `That branch has moved since it was offered, so ${adoptPath} was not re-registered on it.`,
+                );
+              }
+              // And the branch claim again, because the window this closes is
+              // the one between the pre-read and the write. Exactly one
+              // non-prunable record, and it is the adopted path.
+              const after = await deps.listWorktrees(repoPath);
+              if (after === null) {
+                return withdraw("The repository's worktrees could not be read after the re-registration.");
+              }
+              const contender = await liveHolderOf(after, mode.branch, adoptPath, deps.pathDeps.normalize);
+              if (contender !== undefined) {
+                return withdraw(`${contender} took ${mode.branch} while it was being re-registered.`);
+              }
+              const proof = await recordFor(after, adoptPath, mode.branch, deps.pathDeps.normalize);
+              if (proof === undefined || proof.prunable) {
+                return withdraw(`Git does not report ${adoptPath} as a worktree of this repository.`);
+              }
+              await deps.afterCreate(adoptPath, request.afterCreate, request.origin).catch((error: unknown) => {
+                const reason = messageOf(error);
+                openFailure = request.afterCreate.kind === "agent" ? `Agent did not start: ${reason}` : reason;
+              });
+              return {
+                kind: "ok",
+                verb: "create",
+                repoId: request.repoId,
+                ...(openFailure === null ? {} : { openFailed: openFailure }),
+                ...(request.afterCreate.kind === "terminal" ? { openTerminalAt: adoptPath } : {}),
+              };
+            },
+          })
+          .then(
+            (outcome) => deps.report(outcome, request.origin),
+            (error: unknown) => deps.report(fail(messageOf(error)), request.origin),
+          );
+      }
 
       // Reattach leaves before the create-path check, not inside it.
       //

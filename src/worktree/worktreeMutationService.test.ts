@@ -5,6 +5,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { BranchDeleteRequest, ProvisionStepResult } from "../types/messages";
+import type { AdoptVerdict } from "./adoptProbe";
+import type { AdoptResidue, AdoptResult } from "./adoptWorktree";
 import type { ClearDebrisDeps } from "./clearDebris";
 import { createDebrisAuthorizationStore, type DebrisAuthorizationStore } from "./debrisAuthorization";
 import type { GitCommandResult, GitCommandRunner } from "./gitCommandRunner";
@@ -104,6 +106,11 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     // moves one of these. Both are what D3 re-establishes at the mutation.
     corroborateRepair: async ({ repairPath }) => ({ kind: "offer", repairPath, expectedOid: "oid-1" }),
     listWorktrees: async () => [{ displayPath: "/repo-wt/stale", branch: "feat", prunable: true }],
+    // A surviving checkout git has forgotten, unless a test moves one of these.
+    corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt" as const, adoptPath: candidatePath }),
+    commonDirOf: async () => "/repo/.git",
+    reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
+    readHeadAt: async () => "oid-tip",
     pathDeps: {
       platform: "darwin",
       lstat: async () => null,
@@ -1678,6 +1685,268 @@ describe("reattach repairs in place, and re-checks the pause", () => {
 
     expect(h.runner.run).not.toHaveBeenCalled();
     expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+  });
+});
+
+// ── Adopting a checkout git has forgotten (design.md D4, D5) ───────────────
+
+describe("re-registering a surviving checkout", () => {
+  const SURVIVOR = "/repo-wt/survivor";
+  const TIP = "oid-tip";
+
+  function adoptHarness(
+    over: {
+      /** Non-prunable records the listing carries, per read. */
+      liveBefore?: readonly { displayPath: string; branch?: string }[];
+      liveAfter?: readonly { displayPath: string; branch?: string }[];
+      /** The adopted path is absent from the post-read listing. */
+      unregisteredAfter?: boolean;
+      /** The post-read still calls the adopted path stale. */
+      prunableAfter?: boolean;
+      listing?: null;
+      verdict?: AdoptVerdict;
+      commonDir?: string | null;
+      head?: string | null;
+      reconstruct?: AdoptResult;
+      undone?: AdoptResidue | undefined;
+      /** Records each call of the undo the reconstruction handed back. */
+      undos?: string[];
+    } = {},
+  ) {
+    let reads = 0;
+    const adopted = { displayPath: SURVIVOR, branch: "feat", prunable: over.prunableAfter === true };
+    return harness({
+      listWorktrees: async () => {
+        reads += 1;
+        if (over.listing === null) {
+          return null;
+        }
+        const live = (reads === 1 ? over.liveBefore : over.liveAfter) ?? [];
+        const others = live.map((r) => ({ branch: "feat", ...r, prunable: false }));
+        return reads === 1 ? others : over.unregisteredAfter === true ? others : [...others, adopted];
+      },
+      corroborateAdopt: async ({ candidatePath }) => over.verdict ?? { kind: "adopt", adoptPath: candidatePath },
+      commonDirOf: async () => (over.commonDir === undefined ? "/repo/.git" : over.commonDir),
+      readHeadAt: async () => (over.head === undefined ? TIP : over.head),
+      reconstructEntry: async () =>
+        over.reconstruct ?? {
+          ok: true,
+          id: "survivor",
+          undo: async () => {
+            over.undos?.push("undo");
+            return over.undone;
+          },
+        },
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 9 }),
+        readdir: async () => ["src"],
+        normalize: async (raw) => raw,
+      },
+    });
+  }
+
+  async function adopt(h: ReturnType<typeof harness>, expectedBranchOid = TIP): Promise<void> {
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: SURVIVOR,
+      afterCreate: { kind: "none" },
+      mode: { kind: "adopt", branch: "feat", adoptPath: SURVIVOR, expectedBranchOid },
+      disposition: { kind: "free" },
+    });
+  }
+
+  it("re-registers the directory it was offered on, and reports a create", async () => {
+    const h = adoptHarness();
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "ok", verb: "create" });
+  });
+
+  it("never reaches the create-path check, which refuses an occupied destination", async () => {
+    // The surviving checkout IS the destination, so `validateCreatePath` would
+    // refuse every adoption — the reason reattach leaves early too, and one
+    // more besides.
+    const h = adoptHarness();
+    await adopt(h);
+
+    // A refusal from that check reads as an error naming the directory; a
+    // create outcome is the evidence it was never consulted.
+    expect(h.outcomes[0]).toMatchObject({ kind: "ok" });
+  });
+
+  it("refuses an adoption carrying a clearance, rather than adopting and leaving the debris", async () => {
+    // The clearance would be for the directory being re-registered, so acting on
+    // it would delete the work the adoption exists to keep.
+    const h = adoptHarness();
+    await h.service.createWorktree({
+      repoId: REPO,
+      path: SURVIVOR,
+      afterCreate: { kind: "none" },
+      mode: { kind: "adopt", branch: "feat", adoptPath: SURVIVOR, expectedBranchOid: TIP },
+      disposition: { kind: "debris", authorization: { path: SURVIVOR, fingerprint: "fp" } },
+    });
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+    expect((h.outcomes[0] as { message: string }).message).toContain("re-registers");
+  });
+
+  it("refuses before writing when a live worktree already holds the branch", async () => {
+    const undos: string[] = [];
+    const h = adoptHarness({ liveBefore: [{ displayPath: "/repo-wt/other" }], undos });
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+    // The directory holding it, named — a refusal the user cannot act on is a
+    // refusal that says nothing.
+    expect((h.outcomes[0] as { message: string }).message).toContain("/repo-wt/other");
+    // Nothing was written, so there is nothing to undo.
+    expect(undos).toEqual([]);
+  });
+
+  it("undoes the registration when the branch is taken while the adoption runs", async () => {
+    // The window the pre-read cannot close: git excludes nothing globally, so
+    // the post-read is the only place a second holder can be seen at all.
+    const undos: string[] = [];
+    const h = adoptHarness({ liveAfter: [{ displayPath: "/repo-wt/other" }], undos });
+    await adopt(h);
+
+    expect(undos).toEqual(["undo"]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+    expect((h.outcomes[0] as { message: string }).message).toContain("/repo-wt/other");
+  });
+
+  it("refuses when the administrative entry came back during the pause", async () => {
+    // Whatever branch that registration names: an entry restored in the window
+    // is one this adoption would overwrite, and the branch check above would
+    // not catch a detached one.
+    const h = adoptHarness({ verdict: { kind: "declined", because: "notAPrunedCheckout" } });
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+    expect((h.outcomes[0] as { message: string }).message).toContain("registered with git again");
+  });
+
+  it("says the link could not be read, rather than that the entry came back", async () => {
+    const h = adoptHarness({ verdict: { kind: "declined", because: "unreadable" } });
+    await adopt(h);
+
+    expect((h.outcomes[0] as { message: string }).message).toContain("could not be read");
+  });
+
+  it("undoes the registration when the branch moved between the offer and the write", async () => {
+    const undos: string[] = [];
+    const h = adoptHarness({ head: "oid-moved", undos });
+    await adopt(h);
+
+    expect(undos).toEqual(["undo"]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+    expect((h.outcomes[0] as { message: string }).message).toContain("moved");
+  });
+
+  it("undoes the registration when git does not report the adopted path as a worktree", async () => {
+    const undos: string[] = [];
+    const h = adoptHarness({ unregisteredAfter: true, undos });
+    await adopt(h);
+
+    expect(undos).toEqual(["undo"]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+  });
+
+  it("undoes the registration when git still calls the adopted path stale", async () => {
+    // Exit 0 from `repair` is not the claim; the listing is. A registration that
+    // is still prunable is one the reconstruction did not take.
+    const undos: string[] = [];
+    const h = adoptHarness({ prunableAfter: true, undos });
+    await adopt(h);
+
+    expect(undos).toEqual(["undo"]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+  });
+
+  it("names what an undo could not put back, rather than reporting a clean failure", async () => {
+    // A plain failure would send the user looking for a directory that is still
+    // registered; reporting a create would be worse.
+    const h = adoptHarness({
+      head: "oid-moved",
+      undone: { entryPath: "/repo/.git/worktrees/survivor", worktreeLinkRestored: false },
+    });
+    await adopt(h);
+
+    const message = (h.outcomes[0] as { message: string }).message;
+    expect(message).toContain("/repo/.git/worktrees/survivor");
+    expect(message).toContain("NOT restored");
+  });
+
+  it("names what a failed reconstruction left behind", async () => {
+    const h = adoptHarness({
+      reconstruct: {
+        ok: false,
+        message: "The administrative entry could not be written.",
+        leftBehind: { entryPath: "/repo/.git/worktrees/survivor", worktreeLinkRestored: true },
+      },
+    });
+    await adopt(h);
+
+    const message = (h.outcomes[0] as { message: string }).message;
+    expect(message).toContain("could not be written");
+    expect(message).toContain("/repo/.git/worktrees/survivor");
+    expect(message).toContain("was restored");
+  });
+
+  it("reports a plain failure, and no residue, for a reconstruction that undid itself", async () => {
+    const h = adoptHarness({ reconstruct: { ok: false, message: "That path reads as a git option." } });
+    await adopt(h);
+
+    const message = (h.outcomes[0] as { message: string }).message;
+    expect(message).toBe("That path reads as a git option.");
+  });
+
+  it("writes nothing when the directory is gone", async () => {
+    const h = harness({
+      corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+      commonDirOf: async () => "/repo/.git",
+      readHeadAt: async () => TIP,
+      reconstructEntry: async () => {
+        throw new Error("the reconstruction ran against a directory that is gone");
+      },
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => null,
+        readdir: async () => null,
+        normalize: async (raw) => raw,
+      },
+    });
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+  });
+
+  it("writes nothing when the common directory cannot be read", async () => {
+    // A reconstruction into a guessed path would write git's own bookkeeping
+    // somewhere git does not read — indeterminate, never a default.
+    const h = adoptHarness({ commonDir: null });
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable" });
+  });
+
+  it("undoes the registration when the tip cannot be read at all", async () => {
+    // An unreadable HEAD is not a matching one. Treating it as a pass would
+    // attach the checkout to a commit nobody verified.
+    const undos: string[] = [];
+    const h = adoptHarness({ head: null, undos });
+    await adopt(h);
+
+    expect(undos).toEqual(["undo"]);
+    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
+  });
+
+  it("is indeterminate rather than refused when the listing cannot be read", async () => {
+    const h = adoptHarness({ listing: null });
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable" });
   });
 });
 

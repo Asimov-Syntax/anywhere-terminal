@@ -78,7 +78,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     6. `src/extension.ts` — supply `probeAdopt` to `createWorktreeHost`, built from the same `readGitLink` and `adminDirExists` the existing `corroborateRepair` already constructs. Without it the option is undefined in the shipped extension and adopt is dark however well the host is tested — the failure shape a past review round already caught for the provisioning offer.
   - **Boundary**: The prunable detector stays where it is — `probeReattach` keeps producing the listed case's adopt.
 
-- [ ] 1_5 Execute adopt behind the claim refusal, the re-probe and the post-write tip check
+- [x] 1_5 Execute adopt behind the claim refusal, the re-probe and the post-write tip check — verified: pnpm exec vitest run src/worktree/worktreeMutationService.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-branch-a-live-worktree-holds-is-never-adopted-onto, an-adoption-attaches-the-branch-at-the-tip-it-promised, an-adoption-re-establishes-what-it-was-offered-on, an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it}; design.md D5
   - **Acceptance**:
