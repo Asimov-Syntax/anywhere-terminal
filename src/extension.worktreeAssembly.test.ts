@@ -1163,7 +1163,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
   it("locks, and then unlocks, from the same item", async () => {
     await assemble();
     clickItem(openMenu("feature"), /lock/i);
-    await settle();
+    await settleUntil(() => gitCalls("lock").length > 0, "the lock to reach git");
     expect(gitCalls("lock").map((a) => a.slice(0, 3))).toEqual([["worktree", "lock", LINKED]]);
   });
 
@@ -1171,7 +1171,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     lockedRow = true;
     await assemble();
     clickItem(openMenu("feature"), /unlock/i);
-    await settle();
+    await settleUntil(() => gitCalls("unlock").length > 0, "the unlock to reach git");
     expect(gitCalls("unlock")).toEqual([["worktree", "unlock", LINKED]]);
   });
 
@@ -1405,7 +1405,10 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
       throw new Error("the launch dialog has no start button");
     }
     start.click();
-    await settle();
+    await settleUntil(
+      () => launched.length > 0,
+      "the agent to launch",
+    );
 
     // The real registry template, the real builder: a positional prompt for
     // Claude, and the worktree the menu was opened on as the directory.
@@ -1468,7 +1471,13 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
       /create worktree/i.test(b.textContent ?? ""),
     );
     create?.click();
-    await settle();
+    // The predicate must be the LAST thing the assertions read, not the first:
+    // waiting only for the add returns before the launch, and the launch then
+    // lands inside the next test.
+    await settleUntil(
+      () => gitCalls("add").length > 0 && launched.length > 0,
+      "the create to reach git and the agent to launch",
+    );
 
     // Order matters: git first, and the launch only against the path it made.
     const added = gitCalls("add");
@@ -1500,7 +1509,10 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     card?.click();
     await settle();
     clickItem(openMenu("worktree walk"), /resume session here/i);
-    await settle();
+    await settleUntil(
+      () => launched.length > 0,
+      "the resumed session to launch",
+    );
 
     expect(launched).toEqual([
       expect.objectContaining({
@@ -2499,7 +2511,10 @@ describe("the invariants that span the host and the webview", () => {
     // offer shipped dark with a green suite (.reviews/round-1.md B1).
     await assemble();
     clickItem(openMenu("feature"), /new worktree/i);
-    await settle();
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "for-each-ref"),
+      "the ref read to reach git",
+    );
 
     const reads = argv.filter((c) => c.args[0] === "for-each-ref");
     expect(reads).toHaveLength(1);
@@ -2714,7 +2729,10 @@ describe("the invariants that span the host and the webview", () => {
     expect(shown, "the form stated no destination, so the rest proves nothing").toBeTruthy();
 
     clickCreate();
-    await settle();
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "worktree" && c.args[1] === "add"),
+      "the create to reach git",
+    );
 
     expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({
       path: shown,
@@ -2745,7 +2763,10 @@ describe("the invariants that span the host and the webview", () => {
 
     const shown = displayedDestination();
     clickCreate();
-    await settle();
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "worktree" && c.args[1] === "repair"),
+      "the repair to reach git",
+    );
 
     expect(shown).toBe(LINKED);
     expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({
@@ -2787,7 +2808,10 @@ describe("the invariants that span the host and the webview", () => {
     const shown = displayedDestination();
     expect(shown).toBe(mine);
     clickCreate();
-    await settle();
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "worktree" && c.args[1] === "add"),
+      "the create to reach git",
+    );
 
     expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({ path: mine });
     const added = argv.map((c) => c.args).find((a) => a[0] === "worktree" && a[1] === "add");
@@ -2971,7 +2995,14 @@ describe("the invariants that span the host and the webview", () => {
       disposition: { kind: "free" },
       afterCreate: { kind: "none" },
     } as never);
-    await settle();
+    // The result is posted only after git returns, so waiting on the repair
+    // argv alone lands before the assertion below can read the outcome.
+    await settleUntil(
+      () =>
+        argv.some((c) => c.args[0] === "worktree" && c.args[1] === "repair") &&
+        posted.some((m) => m.type === "worktreeMutationResult"),
+      "the repair and its reported outcome",
+    );
 
     const issued = argv.map((c) => c.args);
     expect(issued.some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
@@ -3064,7 +3095,12 @@ describe("the invariants that span the host and the webview", () => {
     expect(confirm, "the dialog offered no confirm button").toBeDefined();
     typeConfirmation("feature");
     confirm?.click();
-    await settle();
+    // The re-prompt is the last thing this test reads, and it arrives only
+    // after the host has re-counted — several awaits past quiescence.
+    await settleUntil(
+      () => document.body.textContent?.includes("changed since you confirmed") === true,
+      "the re-prompt explaining why the force was not spent",
+    );
 
     // The force the user authorized was for the set they were SHOWN. It is not
     // spent on a set that grew underneath it — and the user is told why, rather
