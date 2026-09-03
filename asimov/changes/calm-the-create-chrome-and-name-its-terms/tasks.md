@@ -13,7 +13,7 @@
 
 ## 2. Say what a term means where it is used
 
-- [ ] 2_1 Name the disclosure and explain the git terms of art
+- [x] 2_1 Name the disclosure and explain the git terms of art — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-disclosure-names-what-it-hides,a-term-of-art-carries-its-own-explanation}
   - **Boundary**: No new control, no change to any default, and no explanation that requires opening a second surface to read

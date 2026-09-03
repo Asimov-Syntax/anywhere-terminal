@@ -1256,6 +1256,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // Only `detached` lives here now. New-versus-existing is the combobox's, and
   // one wire value never takes two sources (D4): a control that also wrote
   // `branchMode` would disagree with the row the user picked.
+  /**
+   * A git term of art, explained where it is used. `title` is the hover; the
+   * same words go on `aria-description` because a screen reader announces
+   * `title` only for a control it can focus, and two of these three sit on a
+   * plain `<label>`.
+   */
+  const explain = (el: HTMLElement | null, text: string): void => {
+    if (!el) return;
+    el.setAttribute("title", text);
+    el.setAttribute("aria-description", text);
+  };
+  const labelOf = (wrap: HTMLElement): HTMLElement | null => wrap.querySelector(".wt-flabel");
+
   const modeField = field("Branch source");
   const detachToggle = document.createElement("button");
   detachToggle.type = "button";
@@ -1287,6 +1300,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     syncDerived(true);
   });
   modeField.appendChild(detachToggle);
+  explain(
+    detachToggle,
+    "Detaching checks the worktree out at a commit without creating a branch. Work there belongs to no branch until you make one, so it is for looking at a past state rather than building on it.",
+  );
 
   const baseField = field("Base ref", "wt-base", true);
   const baseInput = document.createElement("input");
@@ -1295,6 +1312,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   baseInput.type = "text";
   baseInput.placeholder = "HEAD";
   baseField.appendChild(baseInput);
+  explain(
+    labelOf(baseField),
+    "The base ref is the commit the new branch starts from — a branch name, a tag, or a commit id. Left empty it starts from HEAD, the commit this repository is on now.",
+  );
   // Disabled, never hidden (D5): a field that vanishes when the mode changes
   // reads as a bug, and a base ref silently ignored is what § 2.1 forbids.
   const baseNote = document.createElement("p");
@@ -1312,6 +1333,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   pathInput.id = "wt-path";
   pathInput.type = "text";
   pathField.appendChild(pathInput);
+  explain(
+    labelOf(pathField),
+    "The folder this worktree is created in. Left empty it goes to the location shown above, derived from the branch name; a value here overrides that for this create only.",
+  );
   // The same rule the base ref carries, for the same reason: a mode whose
   // target is not the user's to choose says so rather than accepting a value it
   // will not use. A repair acts on the registration's own directory, and an
@@ -1823,7 +1848,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   advToggle.id = "wt-advanced-toggle";
   advToggle.setAttribute("aria-expanded", "false");
   advToggle.setAttribute("aria-controls", "wt-advanced-body");
-  advToggle.textContent = "Advanced";
+  // "Advanced" says who the contents are for, not what they are, so a user has
+  // to open it to find out whether it holds anything they wanted. Naming the
+  // three inputs lets them decide without opening it.
+  advToggle.textContent = "Branch source, base ref, and location";
   const advBody = document.createElement("div");
   advBody.className = "wt-advanced-body";
   advBody.id = "wt-advanced-body";

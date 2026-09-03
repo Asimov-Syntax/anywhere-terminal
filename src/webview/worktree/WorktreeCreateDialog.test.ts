@@ -5311,3 +5311,53 @@ describe("provisioning save action weight", () => {
     expect(ruleOf(css(), ".wt-bring-save-note"), "no save note rule").toBeTruthy();
   });
 });
+
+describe("terms the form uses", () => {
+  const openAdvanced = (host: HTMLElement): void => {
+    host.querySelector<HTMLButtonElement>("#wt-advanced-toggle")?.click();
+  };
+
+  it("[2_1] names what the disclosure holds instead of calling it Advanced", () => {
+    const { host } = open();
+    const toggle = host.querySelector<HTMLButtonElement>("#wt-advanced-toggle");
+    expect(toggle).toBeTruthy();
+    // "Advanced" tells a user the contents are for someone else, not what they
+    // are. Naming the three inputs lets them decide without opening it.
+    expect(toggle?.textContent).not.toBe("Advanced");
+    expect(toggle?.textContent?.toLowerCase()).toContain("branch source");
+    expect(toggle?.textContent?.toLowerCase()).toContain("base ref");
+    expect(toggle?.textContent?.toLowerCase()).toContain("location");
+  });
+
+  it("[2_1] explains each git term of art on hover and to assistive technology", () => {
+    const { host } = open();
+    openAdvanced(host);
+    const explained = [
+      { sel: "#wt-detached", term: "detach" },
+      { sel: 'label[for="wt-base"]', term: "base ref" },
+      { sel: 'label[for="wt-path"]', term: "location" },
+    ];
+    for (const { sel, term } of explained) {
+      const el = host.querySelector<HTMLElement>(sel);
+      expect(el, `missing ${sel}`).toBeTruthy();
+      const title = el?.getAttribute("title") ?? "";
+      // Long enough to be a sentence rather than a restatement of the label.
+      expect(title.length, `${term} has no explanation`).toBeGreaterThan(24);
+      // The same words reach a screen reader, which never sees `title` on a
+      // non-interactive label.
+      expect(el?.getAttribute("aria-description") ?? el?.getAttribute("aria-label") ?? "").toContain(
+        title.slice(0, 20),
+      );
+    }
+  });
+
+  it("[2_1] changes no draft value by explaining a term", () => {
+    const { host, submitted } = open();
+    openAdvanced(host);
+    for (const sel of ["#wt-detached", 'label[for="wt-base"]', 'label[for="wt-path"]']) {
+      host.querySelector<HTMLElement>(sel)?.getAttribute("title");
+    }
+    expect(submitted).toHaveLength(0);
+    expect(host.querySelector<HTMLButtonElement>("#wt-detached")?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
