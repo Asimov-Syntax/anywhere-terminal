@@ -11,7 +11,7 @@
     1. `src/types/messages.ts` and `src/types/messages.contract.test.ts` — add a bounded suggestion explanation to host-issued entry and setup rows without adding webview request authority.
     2. `src/worktree/provisioning/suggestProvisioning.ts`, `src/worktree/provisioning/suggestProvisioning.test.ts`, `src/worktree/provisioning/readProvisioning.ts`, `src/worktree/provisioning/readProvisioning.test.ts`, `src/worktree/provisioning/readOnly.test.ts` and `src/worktree/provisioning/provisioningDeps.ts` — detect only fixed regular root names through the required typed stat dependency (D1), with integration witnesses that fallback runs when every provider is absent and never over an empty or unreadable present provider.
 
-- [ ] 1_2 Save only positive suggested file consent
+- [x] 1_2 Save only positive suggested file consent — verified: pnpm exec vitest run src/worktree/provisioning/offerStore.test.ts src/worktree/provisioning/writeNativeConfig.test.ts src/providers/WorktreeHost.actions.test.ts && pnpm run check-types && pnpm exec vitest run src/worktree/provisioning/offerStore.test.ts src/worktree/provisioning/writeNativeConfig.test.ts src/providers/WorktreeHost.actions.test.ts exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{saving-suggestions-records-positive-file-consent-but-never-setup-consent,a-saved-configuration-replaces-fallback-suggestions,a-configuration-written-for-the-first-time-names-a-source-that-exists,a-save-that-has-nothing-to-record-writes-nothing}; design.md D2, D3
   - **Boundary**: No setup persistence, framework-file write, stale offer redemption, or change to existing exclusion semantics

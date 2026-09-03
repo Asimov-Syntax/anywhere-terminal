@@ -4186,6 +4186,54 @@ describe("[D8] a save is recorded in one file, under the order a switch obeys", 
     h.dispose();
   });
 
+  it("saves a ticked suggestion as a copy addition and reoffers the saved configuration", async () => {
+    const SUGGESTIONS: ProvisionModel = {
+      entries: [{ id: "i1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: "root file" }],
+      setup: [{ id: "i2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "lockfile" }],
+      ports: [],
+      providers: [],
+      excluded: [],
+      contenders: [],
+      problems: [],
+    };
+    const SAVED: ProvisionModel = {
+      entries: [{ id: "i3", path: ".env.local", mode: "copy", source: ".vscode/worktree.json" }],
+      setup: [],
+      ports: [],
+      providers: [
+        { id: "native", files: [".vscode/worktree.json"], present: [".vscode/worktree.json"], active: true },
+      ],
+      excluded: [],
+      contenders: [],
+      problems: [],
+    };
+    let saved = false;
+    const h = await opened({
+      read: async () => (saved ? SAVED : SUGGESTIONS),
+      write: async () => {
+        saved = true;
+        return { ok: true, wrote: true };
+      },
+    });
+    // Non-vacuous: the suggestion rows were actually offered before the save.
+    const offeredBefore = (offersIn(h.view).at(-1) as { model: ProvisionModel }).model;
+    expect(offeredBefore.entries.map((e) => e.suggestion)).toEqual(["root file"]);
+    expect(offeredBefore.setup.map((s) => s.suggestion)).toEqual(["lockfile"]);
+
+    // The setup suggestion stays unticked; only the file is kept.
+    h.host.handleMessage(h.view, save({ offerId: liveOffer(h.view), kept: [shownId(h.view, ".env.local")] }));
+    await settle();
+
+    expect(h.seen[0]?.divergence.addCopy).toEqual([".env.local"]);
+    expect(h.seen[0]?.divergence.exclude).toEqual([]);
+    // The re-offer is the saved configuration: the copy returns as a native
+    // configured entry and no fallback suggestion, setup included, survives.
+    const reoffered = (offersIn(h.view).at(-1) as { model: ProvisionModel }).model;
+    expect(reoffered.entries.map((e) => [e.path, e.suggestion])).toEqual([[".env.local", undefined]]);
+    expect(reoffered.setup).toEqual([]);
+    h.dispose();
+  });
+
   it("writes nothing for an offer id this form was never issued", async () => {
     const h = await opened();
 

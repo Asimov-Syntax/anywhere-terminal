@@ -26,6 +26,12 @@ export interface NativeConfigDivergence {
   readonly exclude: readonly string[];
   /** Paths the native file declares inline and the user cleared, to remove from `copy`/`link`. */
   readonly drop: readonly string[];
+  /**
+   * Selected fallback suggestions to append to `copy` — the one positive
+   * consent a suggestion can become (suggest-worktree-initialization D3).
+   * Optional so a divergence recorded before suggestions existed still reads.
+   */
+  readonly addCopy?: readonly string[];
   /** The present file to build on. */
   readonly extends?: string;
   /**
@@ -123,7 +129,17 @@ export function divergenceOf(
 ): NativeConfigDivergence {
   const exclude: string[] = [];
   const drop: string[] = [];
+  const addCopy: string[] = [];
   for (const entry of model.entries) {
+    // A suggestion is consent, never preference: unticked is nothing at all —
+    // not an exclusion — and ticked is a positive copy request
+    // (suggest-worktree-initialization D3).
+    if (entry.suggestion !== undefined) {
+      if (kept.has(entry.id) && !addCopy.includes(entry.path)) {
+        addCopy.push(entry.path);
+      }
+      continue;
+    }
     if (kept.has(entry.id)) {
       continue;
     }
@@ -158,7 +174,7 @@ export function divergenceOf(
   // be named is the state D12 refuses, and the writer is where the document
   // being created is known.
   const unnamedSource = inherited && base === undefined;
-  const rest = { exclude, drop, unnamedSource, tookSource };
+  const rest = { exclude, drop, addCopy, unnamedSource, tookSource };
   return base === undefined ? rest : { ...rest, extends: base };
 }
 
@@ -322,7 +338,14 @@ function planEdits(text: string, divergence: NativeConfigDivergence): Planned | 
 
   for (const key of ["copy", "link"] as const) {
     const declared = held[key] as unknown[] | undefined;
+    // One edit per key, removals and additions together, because `applyEdit`
+    // verifies the key against ONE `whole` afterwards — two edits on `copy`
+    // would each carry a different truth about it.
+    const adds = key === "copy" ? (divergence.addCopy ?? []).filter((p) => !(declared ?? []).includes(p)) : [];
     if (declared === undefined) {
+      if (adds.length > 0) {
+        edits.push({ key, ops: [{ path: [key], value: adds }], whole: adds });
+      }
       continue;
     }
     const ops: Op[] = [];
@@ -332,12 +355,14 @@ function planEdits(text: string, divergence: NativeConfigDivergence): Planned | 
         ops.push({ path: [key, index], value: undefined });
       }
     }
+    const survivors = declared.filter((at) => !(typeof at === "string" && divergence.drop.includes(at)));
+    // Appended AFTER the removals run, so the insertion index is the shrunk
+    // array's — `applyEdit` applies ops in order.
+    for (const [offset, p] of adds.entries()) {
+      ops.push({ path: [key, survivors.length + offset], value: p, insert: true });
+    }
     if (ops.length > 0) {
-      edits.push({
-        key,
-        ops,
-        whole: declared.filter((at) => !(typeof at === "string" && divergence.drop.includes(at))),
-      });
+      edits.push({ key, ops, whole: [...survivors, ...adds] });
     }
   }
 

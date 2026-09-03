@@ -747,6 +747,7 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set(["e2"]), false)).toEqual({
       exclude: ["node_modules"],
       drop: [],
+      addCopy: [],
       unnamedSource: false,
       tookSource: false,
     });
@@ -763,6 +764,7 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set(), false)).toEqual({
       exclude: [],
       drop: [".env.local"],
+      addCopy: [],
       unnamedSource: false,
       tookSource: false,
     });
@@ -774,6 +776,7 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set(["e1"]), false)).toEqual({
       exclude: [],
       drop: [],
+      addCopy: [],
       unnamedSource: false,
       tookSource: false,
     });
@@ -793,6 +796,7 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(m, new Set(), false)).toEqual({
       exclude: [],
       drop: [],
+      addCopy: [],
       unnamedSource: false,
       tookSource: false,
     });
@@ -877,6 +881,7 @@ describe("what the selection diverges to", () => {
     expect(divergenceOf(model(), new Set(), true)).toEqual({
       exclude: [],
       drop: [],
+      addCopy: [],
       unnamedSource: false,
       tookSource: true,
     });
@@ -1038,5 +1043,105 @@ describe("a save that may have left a lock in the way", () => {
     const wrote = await writeNativeConfig(realDeps, root, div({ exclude: ["node_modules"] }));
 
     expect(wrote).toEqual({ ok: true, wrote: true });
+  });
+});
+
+describe("a suggestion is consent to record, never a preference (suggest-worktree-initialization D3)", () => {
+  const SUGGESTED: ProvisionModel = {
+    entries: [
+      { id: "s1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: "root file" },
+      { id: "s2", path: ".envrc", mode: "copy", source: ".envrc", suggestion: "root file" },
+    ],
+    setup: [{ id: "s3", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "lockfile" }],
+    ports: [],
+    providers: [],
+    excluded: [],
+    contenders: [],
+    problems: [],
+  };
+
+  it("derives nothing at all from untouched suggestions", () => {
+    // The smallest failure this guards: an unchecked `.env` suggestion becoming
+    // `exclude: [".env"]` — a preference nobody expressed.
+    expect(divergenceOf(SUGGESTED, new Set(), false)).toEqual({
+      exclude: [],
+      drop: [],
+      addCopy: [],
+      unnamedSource: false,
+      tookSource: false,
+    });
+  });
+
+  it("turns only the ticked suggested file into a copy addition; setup never enters", () => {
+    const d = divergenceOf(SUGGESTED, new Set(["s1", "s3"]), false);
+
+    expect(d.addCopy).toEqual([".env.local"]);
+    expect(d.exclude).toEqual([]);
+    expect(d.drop).toEqual([]);
+    expect(JSON.stringify(d)).not.toContain("pnpm install");
+  });
+
+  it("creates the first configuration from a saved suggestion, inline and without extends", async () => {
+    const wrote = await writeNativeConfig(realDeps, root, div({ addCopy: [".env.local"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    expect(JSON.parse(await fs.readFile(target, "utf8"))).toEqual({ copy: [".env.local"] });
+  });
+
+  it("appends a saved suggestion to an existing copy list without restyling it", async () => {
+    await put('{\n  // keep\n  "copy": [\n    ".env"\n  ]\n}\n');
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ addCopy: [".env.local"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    const after = await fs.readFile(target, "utf8");
+    expect(after).toContain("// keep");
+    expect(parseJsonc(after)).toEqual({ copy: [".env", ".env.local"] });
+  });
+
+  it("records a copy it already holds exactly once", async () => {
+    await put('{ "copy": [".env.local"] }\n');
+    const before = await fs.readFile(target, "utf8");
+
+    const wrote = await writeNativeConfig(realDeps, root, div({ addCopy: [".env.local"] }));
+
+    expect(wrote).toEqual({ ok: true, wrote: false });
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+  });
+
+  it("a saved suggestion becomes the provisioning source, and every suggestion disappears", async () => {
+    await fs.writeFile(path.join(root, ".env.local"), "SECRET=1\n", "utf8");
+    await fs.writeFile(path.join(root, "pnpm-lock.yaml"), "", "utf8");
+    const before = await readProvisioning(createProvisioningDeps(), root);
+    // The witness is non-vacuous only if the suggestions were actually offered.
+    expect(before.entries.map((e) => e.path)).toEqual([".env.local"]);
+    expect(before.setup.map((s) => s.script)).toEqual(["pnpm install"]);
+    const envId = before.entries[0]?.id ?? "";
+
+    const wrote = await writeNativeConfig(realDeps, root, divergenceOf(before, new Set([envId]), false));
+    const after = await readProvisioning(createProvisioningDeps(), root);
+
+    expect(wrote).toEqual({ ok: true, wrote: true });
+    // The saved copy returns as a native configured entry — no suggestion
+    // marker, so it starts checked like any configured row.
+    expect(after.entries.map((e) => [e.path, e.source, e.suggestion])).toEqual([
+      [".env.local", NATIVE_PROVIDER_FILE, undefined],
+    ]);
+    // The unsaved setup suggestion does not survive the save: the native file
+    // now governs, and fallback authority ended with the configuration-free
+    // state (spec: a saved configuration replaces fallback suggestions).
+    expect(after.setup).toEqual([]);
+    expect(after.providers.map((p) => [p.id, p.active])).toEqual([["native", true]]);
+  });
+
+  it("an untouched suggestion set saved writes no file", async () => {
+    await fs.writeFile(path.join(root, ".env.local"), "SECRET=1\n", "utf8");
+    const before = await readProvisioning(createProvisioningDeps(), root);
+    expect(before.entries).toHaveLength(1);
+
+    const wrote = await writeNativeConfig(realDeps, root, divergenceOf(before, new Set(), false));
+
+    expect(wrote).toEqual({ ok: true, wrote: false });
+    await expect(fs.lstat(target)).rejects.toThrow();
   });
 });

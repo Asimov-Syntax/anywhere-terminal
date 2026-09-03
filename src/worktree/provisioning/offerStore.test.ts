@@ -87,6 +87,25 @@ describe("createProvisionOfferStore", () => {
     expect((group?.natives ?? []).every((id) => group?.members.includes(id))).toBe(true);
   });
 
+  it("retains a row's suggestion explanation while replacing its id", () => {
+    // The explanation is what makes a fallback row opt-in and explained; a
+    // remint that dropped it would render an unexplained pre-checked row.
+    const store = createProvisionOfferStore();
+    const offer = store.issue(A, {
+      ...model(".env.local"),
+      entries: [{ id: "i1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: "root file" }],
+      setup: [
+        { id: "i2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "lockfile" },
+      ],
+      providers: [],
+    });
+
+    expect(offer.model.entries[0]).toMatchObject({ suggestion: "root file" });
+    expect(offer.model.setup[0]).toMatchObject({ suggestion: "lockfile" });
+    expect(offer.model.entries[0]?.id).not.toBe("i1");
+    expect(offer.model.setup[0]?.id).not.toBe("i2");
+  });
+
   it("offers both members of a contender group rather than withholding either", () => {
     // The alternative D3 rejected was to offer NEITHER member of a pair that
     // could not be told apart. The host redeems a selection by filtering the
