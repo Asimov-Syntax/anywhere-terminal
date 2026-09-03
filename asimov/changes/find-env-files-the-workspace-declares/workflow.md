@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -42,3 +42,13 @@ Verify gate: 7621/7621 twice; the one biome error is `src/agentHooks/AgentHookCo
 
 Handback (round 4, 2026-09-04): review round 4 sustained F002 on two further boundaries and F007 on drive-qualified spellings. F002 is the same invariant on its third fix attempt (rounds 1, 3, 4), which is the thrash-stop condition, and the chair reached the same conclusion independently. Taken as option 1 — designed fix — under the user's standing grant to replan without being asked. D6 and D7 added; the Implement gates whose evidence the redesign invalidates were unticked; task 3_1 owns the invariant. Rounds do not reset: the next review is cycle 3's discovery round.
 Repair: the Blueprint-sync checkbox line had the Notes block spliced into it since scaffolding; restored to the template text.
+
+Verify gate (2026-09-04): observed at 67d48740 on a clean tree — 7690/7690, type check clean, bundle
+and I10 gates green, and Biome's 18 diagnostics identical file-for-file to a detached worktree at
+7abcebf7. It could not be run any earlier: the tree carried the picker change's uncommitted work,
+whose own assembly witness was red, so any full-suite run would have been evidence about that diff
+rather than this one. `verify-status` exits 0 with all three tasks stamped.
+Outstanding: review round 5. Round 4 closed BLOCK, and its two sustained findings were fixed by the
+D6/D7 classifier landed as 73da233a under option 1 of the thrash stop. Round 4 consumed the
+once-per-change `--extend`, so round 5 must be relayed with `--user-approved '<the user's verbatim
+words>'`.
