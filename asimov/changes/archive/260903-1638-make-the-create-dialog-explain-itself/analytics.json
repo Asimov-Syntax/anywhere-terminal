@@ -14,7 +14,7 @@
       "windows": [
         {
           "from": 1788446397740,
-          "to": null
+          "to": 1788453504190
         }
       ],
       "phases": [
@@ -32,7 +32,7 @@
         }
       ],
       "firstAt": 1788446397740,
-      "lastAt": 1788453078713,
+      "lastAt": 1788453502028,
       "buckets": [
         {
           "runtime": "claude",
@@ -75,12 +75,12 @@
           "phase": "plan",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 50,
-          "inputTokens": 389306,
-          "outputTokens": 18301,
+          "messages": 72,
+          "inputTokens": 586613,
+          "outputTokens": 30814,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 15667968,
+          "cacheReadTokens": 19541632,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
