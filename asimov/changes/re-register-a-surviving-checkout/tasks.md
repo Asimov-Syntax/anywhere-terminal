@@ -235,3 +235,19 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. `src/worktree/worktreeMutationService.ts` — the success return calls `release()`; today it returns without disposing anything the reconstruction handed back.
     3. `src/worktree/worktreeMutationService.test.ts` — each of the three states produces its own message, and an accepted adoption releases.
     4. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository: a link replaced during a failing adoption keeps the replacement and the outcome says so rather than claiming a restore; and an adoption in a repository with `worktree.useRelativePaths` set still withdraws cleanly when the branch claim is taken after the write.
+
+## 7. Close review round 4 — the undo's order, and the object's one name
+
+- [ ] 5_1 Put the link back before the entry goes, and refuse an object with a second name
+  - **Deps**: 4_2
+  - **Refs**: design.md D9, D4; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-undo-restores-only-the-git-entry-the-adoption-itself-replaced}; `.reviews/round-4.md` F005, F013, F014; `src/agentHooks/install/lockedJsonFile.ts`
+  - **Acceptance**:
+    - Outcome: No instant of a withdrawal leaves the checkout's `.git` naming a directory that is gone
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — the undo restores the link first and removes the entry after, so an interrupted withdrawal is never a checkout pointing at nothing (F005).
+    2. `src/worktree/adoptWorktree.ts` — the restore's identity proof is taken again AFTER the write; a divergence reports `leftAsFound` rather than a restore that went to a detached object (F005).
+    3. `src/worktree/adoptWorktree.ts` — `LinkHandle.identity` carries `nlink`; a pinned object with more than one name is refused at the open and again before the claim (F013).
+    4. `src/extension.ts` and `src/worktree/adoptWorktree.integration.test.ts` — the real adapter reports `nlink` from the `fstat` it already takes, and a real hard link to `<wt>/.git` is refused with the alias's bytes intact.
+    5. `src/worktree/adoptWorktree.test.ts` — the opening-read case drives the HANDLE's `readAt`, not the retired `readFile`, and asserts nothing was created, spawned or written (F014); plus the replacement-between-the-restore's-samples case and a multiply-linked inode. Each guard arm-checked.
+    6. `src/worktree/adoptWorktree.ts` — the duplicated undo comment left by 4_1 goes.

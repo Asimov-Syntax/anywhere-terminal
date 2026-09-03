@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -63,3 +63,5 @@ Planned at: 0215afec
 - The first full-suite run of the gate failed one test and the immediate re-run passed 7209/7209; the failure is the load flake this file already documents, not this delta.
 - `git worktree repair` normalising a link was CONFIRMED against real git, not taken from the oracle's reading: a hand-built entry of exactly this adoption's shape under `worktree.useRelativePaths` made repair report `.git file absolute/relative path mismatch` and rewrite `<wt>/.git` to `gitdir: ../repo/...`. The integration case asserts that premise before it asserts the undo, because a version of git that stopped normalising would otherwise let it pass for no reason.
 - One planned guard turned out vacuous and the witness was fixed rather than the guard dropped: the pre-write identity check could be removed and every test still passed, because the post-write check refuses the same case. What separates them is whether the adoption TRUNCATED an object it had already been told was no longer the link, so the case now reads the detached inode.
+- Round-4 handback. F005's invariant survived a third attempt, so no third patch: D4's undo ORDER is amended (link back before the entry goes, so no instant of a withdrawal leaves `<wt>/.git` naming a directory that is gone) and D9 gains the `nlink` boundary. F013 is the one round-4 finding that is neither a race nor a residual — a hard-linked `.git` is observable in the `fstat` already taken, and this repo already refuses on it at `lockedJsonFile.ts`, so not checking it was a miss rather than a stated limit.
+- F014 was the SECOND vacuous witness found this cycle (after the pre-write identity one I caught myself): the opening-read case still overrode `AdoptFs.readFile`, which 4_1 stopped using for the link, so it failed later at the stale-entry read and its end-state assertions passed anyway. Both were witnesses that survived removing the guard they were named for; the lesson is that moving a read to a new seam silently unarms every test that injected at the old one.
