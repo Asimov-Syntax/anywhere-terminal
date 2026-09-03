@@ -204,3 +204,51 @@ The remedy for all three is one mechanism rather than three patches: the corrobo
 exact gitfile bytes it verified, reconstruction refuses unless both its reads match those bytes, and
 undo touches the link only after this adoption has installed its own and only while the bytes on
 disk are still the ones it wrote.
+
+## Fix-delta audit (author, before the verification round)
+
+One mechanism, not three patches. The corroborated gitfile BYTES now travel with the verdict
+(`AdoptVerdict.staleLink`, from `GitLink.file.raw` — the same read that resolved the path), and
+`adoptWorktree` compares both of its reads of `<wt>/.git` against them rather than against each
+other. Ownership of the link is explicit: a boolean set only after the final write lands.
+
+| Finding | Where it closes | Witness |
+|---|---|---|
+| F003 | `adoptWorktree.ts` — the opening read refuses on rejection AND on bytes that differ, before the `mkdir`; `extension.ts` — an existing non-directory at the gitdir is unreadable | "refuses before creating anything when the link cannot be read" and "writes nothing at all when the link is gone by the time it looks", both asserting no entry was created |
+| F005 | `adoptWorktree.ts` — undo leaves the link alone until `installed`, then restores only while the bytes are still `ourLink` | three cases, plus one against a real repository where the link is replaced through the real filesystem during a failing `repair` |
+| F006 | `adoptWorktree.ts` — both reads compare to `request.staleLink` | "refuses before creating anything when a live registration was restored first" |
+
+**The round's criticism of my own witness was correct and is fixed at the root.** The round-1 test
+returned alternate bytes from the reader without changing the fake's store, so an overwrite was
+invisible to it. Every case in this delta drives the substitution THROUGH the store (`store.files.set`
+inside a wrapped `createFile`/`writeFile`) and asserts against the store afterwards. Arm-checked by
+reverting the `installed` guard to an unconditional restore: 3 of the new cases fail.
+
+**Witnesses re-checked for falsification by this delta**: D4's write order and the tip guard's
+position (argv order still asserted); D4's undo contract (its meaning narrowed — restoring is now
+conditional, and the residue arm reports `worktreeLinkRestored: false` where it previously reported
+success); the "content is untouched" and "mints a second entry name" integration witnesses (green
+against a real repository); `gate:fs-deletion`; `build:check-requires`.
+
+**One test was superseded rather than weakened**: "restores an absent link as absent rather than
+inventing one" asserted behavior this delta removes on purpose — an adoption is offered ON a link,
+so a directory that no longer has one is refused before anything is created. It is replaced by
+"writes nothing at all when the link is gone by the time it looks", which asserts strictly more (no
+entry, and the link still absent).
+
+## Impact manifest (for the verification round)
+
+- **`GitLink.file` gained `raw`** — consumers: `probeReattach` (unchanged behavior), `probeAdopt`
+  (carries it into the verdict), and every fake that constructs a `file` link.
+- **`AdoptVerdict.adopt` gained `staleLink`; `AdoptRequest` gained `staleLink`** — one production
+  producer (`extension.ts` → `probeAdopt`), one production consumer (`worktreeMutationService`'s
+  adopt branch), one real-filesystem consumer (the integration suite reads the bytes from git's own
+  link file rather than reconstructing them).
+- **`adoptWorktree` now refuses three states it previously proceeded through** — an unreadable link,
+  an absent link, and a link whose bytes moved. Each returns before `createEntry`, so no entry, no
+  git command and no undo runs; the mutation service reports them on its existing failure arm.
+- **The undo's post-conditions changed** — a refused adoption that never installed its link reports
+  `worktreeLinkRestored: true` with nothing written, and one that cannot reclaim its own link
+  reports residue. `residueNote` in the mutation service already renders both.
+- **Error handling**: `adminDirIsThere` now throws for an existing non-directory. Both probes catch
+  and answer `unreadable`; `corroborate`/`corroborateAdopt` in the host both `.catch(() => undefined)`.
