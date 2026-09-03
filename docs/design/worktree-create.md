@@ -195,12 +195,14 @@ The administrative entry is therefore **reconstructed**, then handed to git's ow
 
 | Step | Effect |
 |---|---|
-| Write `<wt>/.git` containing `gitdir: <common>/worktrees/<id>` | The checkout can find the repository |
-| Write `worktrees/<id>/gitdir` containing `<wt>/.git` | The repository can find the checkout |
+| Write `worktrees/<id>/locked` | **First.** An exclusive create publishes a zero-length inode before its bytes land, so an entry under construction is briefly indistinguishable from the malformed one `prune` collects. `should_prune_worktree` consults `locked` before anything else, which closes that whole interval. This is git's own order: `worktree add` writes `locked` before `gitdir` (2.50.1 `builtin/worktree.c:490-508`) |
+| Write `worktrees/<id>/gitdir` containing `<wt>/.git`, through a descriptor held from its creation | The repository can find the checkout. The descriptor is held because the withdrawal empties this file rather than deleting the directory around it |
 | Write `worktrees/<id>/commondir` containing `../..` | Resolves `$GIT_COMMON_DIR` |
 | Write `worktrees/<id>/HEAD` — `ref: refs/heads/<branch>`, or the OID when detached | Without it the entry is not a repository at all |
+| Write `<wt>/.git` containing `gitdir: <common>/worktrees/<id>` | **Last.** Until it lands the entry links nowhere, so git neither lists it nor collects it and every failure above is invisible to the repository |
 | `git worktree repair <path>` | Normalises the recorded paths git itself would have written |
 | `git -C <path> reset --mixed` | Rebuilds the per-worktree index from HEAD |
+| Unlink `worktrees/<id>/locked` | **Last of all**, and only while the entry is still provably this adoption's: the entry becomes an ordinary registration |
 
 `reset --mixed` is **not optional and not cosmetic**. The index lived in the deleted directory, so
 until it is rebuilt every tracked file reports as both deleted and untracked — a working tree that
@@ -236,8 +238,18 @@ the new `.git`, then `reset --mixed`, reaches the same end state through support
 inherits git's already-checked-out guard for free. It is rejected because it relocates every file
 twice: slow over a large dependency tree, a copy rather than a rename across filesystems, and an
 interruption leaves content in two places — manufacturing precisely the debris state § 2.2 exists to
-clean up. Reconstruction writes four small files, touches nothing inside the working tree, and is
-undone by deleting the entry.
+clean up. Reconstruction writes five small files and touches nothing inside the working tree.
+
+**A withdrawal deletes nothing.** It empties `worktrees/<id>/gitdir` through the descriptor held since
+that file was created, then drops the `locked` marker — which is what re-admits the entry to
+`git worktree prune`, and the only act in the withdrawal that addresses a name at all. Deleting the
+entry directory was tried and abandoned: proving a directory by inode and then removing it by pathname
+is a check-then-mutate pair Node cannot couple, and handing the deletion to `git worktree prune` moves
+the same pair into git, which resolves the entry name a second time inside `delete_git_dir()` with no
+recheck (2.50.1 `worktree.c:919-963`). So the entry is left in the state git's own collection takes
+it from — omitted from `git worktree list` meanwhile — and the withdrawal names it only where it could
+not hand it over. The residual is that entries accumulate where no prune is ever run; a single later
+prune recovers all of them.
 
 ## 3. Defaults and path derivation
 
@@ -472,7 +484,7 @@ thing this dialog creates. An issue does not.
 | Fresh | `git worktree add -b <branch> <path> [<baseRef>]` |
 | Reuse | `git worktree add <path> <branch>` |
 | Reattach | `git worktree repair <path>` — **never** `worktree add`, which refuses a non-empty destination |
-| Adopt | Write `gitdir` / `commondir` / `HEAD` and the worktree `.git`, then `git worktree repair <path>`, then `git -C <path> reset --mixed`. Refused outright if any live worktree holds the branch (§ 2.4) |
+| Adopt | Write `locked` / `gitdir` / `commondir` / `HEAD` and the worktree `.git`, then `git worktree repair <path>`, then `git -C <path> reset --mixed`, then drop `locked`. Refused outright if any live worktree holds the branch (§ 2.4) |
 | Detached at a ref | `git worktree add --detach <path> <baseRef>` |
 
 No `--force`. If the branch is already checked out in another worktree, git refuses and its
