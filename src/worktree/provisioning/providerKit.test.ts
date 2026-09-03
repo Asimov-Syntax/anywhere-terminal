@@ -18,6 +18,7 @@ import {
   type ProviderContext,
   type ProviderDeps,
   problem,
+  readInlineKeys,
   refusal,
   scanNames,
 } from "./providerKit";
@@ -121,6 +122,37 @@ describe("the kit stamps the provider that called it", () => {
     await entriesFor(["shared"], "link", ROOT, opened.root, deps, ids(), draft);
 
     expect(draft.entries.map((e) => e.source)).toEqual([".orca/orca.yaml", ".worktreeinclude"]);
+  });
+
+  it("refuses non-portable and reserved port environment names before offering them", async () => {
+    const deps = fs({ files: { [`${ROOT}/${ORCA.file}`]: "" } });
+    const opened = await openProviderFile(deps, ROOT, ORCA);
+    if (opened.kind !== "text") {
+      throw new Error(`expected the file to open, got ${opened.kind}`);
+    }
+    const draft = newDraft(ORCA);
+
+    await readInlineKeys(
+      {
+        ports: {
+          APP_PORT: null,
+          "BAD-NAME": null,
+          "1PORT": null,
+          ANYWHERE_TERMINAL_WORKTREE_PATH: null,
+          aSiMoV_ChAnGe_Id: null,
+        },
+      },
+      new Set(["ports"]),
+      ROOT,
+      opened.root,
+      deps,
+      ids(),
+      draft,
+    );
+
+    expect(draft.ports.map((port) => port.name)).toEqual(["APP_PORT"]);
+    expect(draft.problems).toHaveLength(4);
+    expect(draft.problems.map((entry) => entry.reason)).toEqual(["malformed", "malformed", "malformed", "malformed"]);
   });
 });
 

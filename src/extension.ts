@@ -28,7 +28,7 @@ import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalPanelSerializer } from "./providers/TerminalPanelSerializer";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
 import { VaultWatchCoordinator } from "./providers/VaultWatchCoordinator";
-import { createWorktreeHost, type WorktreeActions } from "./providers/WorktreeHost";
+import { createWorktreeHost, type WorktreeActions, type WorktreeSurface } from "./providers/WorktreeHost";
 import { loadNodePty } from "./pty/PtyManager";
 import type { MessageSender } from "./session/OutputBuffer";
 import { createPaneEvidenceStore } from "./session/PaneEvidenceStore";
@@ -46,10 +46,11 @@ import { PtyLoadError } from "./types/errors";
 import type {
   ExtensionToWebViewMessage,
   ProvisionResultContest,
+  ProvisionSetupResult,
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
-import { authorizeDirectory, directoryStillAuthorized } from "./utils/authorizedDirectory";
+import { type AuthorizedDirectory, authorizeDirectory, directoryStillAuthorized } from "./utils/authorizedDirectory";
 import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
@@ -80,7 +81,10 @@ import { nodeApplyFsDeps } from "./worktree/provisioning/applyEntries";
 import { applyProvisioning, failEveryEntry } from "./worktree/provisioning/applyProvisioning";
 import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
+import { writeProvisionManifest } from "./worktree/provisioning/provisionManifest";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
+import { runSetup } from "./worktree/provisioning/setupRunner";
+import { SetupTerminal } from "./worktree/provisioning/setupTerminal";
 import { writeNativeConfig } from "./worktree/provisioning/writeNativeConfig";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { branchDeleteOfferFor, checksFor } from "./worktree/removalChecks";
@@ -585,6 +589,58 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * creates.
    */
   const provisionContests = new Map<string, readonly ProvisionResultContest[]>();
+  const setupOutputs = new Map<
+    string,
+    {
+      worktreeId: string;
+      authorization: AuthorizedDirectory;
+      setup: readonly ProvisionSetupResult[];
+      origin: WorktreeSurface;
+      terminal: SetupTerminal;
+    }
+  >();
+  const setupOutputByWorktree = new Map<string, string>();
+  const setupSurfaceIds = new WeakMap<WorktreeSurface, string>();
+  const setupSurfaceId = (surface: WorktreeSurface): string => {
+    const existing = setupSurfaceIds.get(surface);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = crypto.randomUUID();
+    setupSurfaceIds.set(surface, created);
+    return created;
+  };
+  const retireSetupOutput = (worktreeId: string, expectedOutputId?: string): boolean => {
+    const outputId = setupOutputByWorktree.get(worktreeId);
+    if (outputId === undefined || (expectedOutputId !== undefined && outputId !== expectedOutputId)) {
+      return false;
+    }
+    setupOutputByWorktree.delete(worktreeId);
+    const output = setupOutputs.get(outputId);
+    setupOutputs.delete(outputId);
+    output?.terminal.dispose();
+    return true;
+  };
+  const retainSetupOutput = (
+    worktreeId: string,
+    outputId: string,
+    authorization: AuthorizedDirectory,
+    setup: readonly ProvisionSetupResult[],
+    origin: WorktreeSurface,
+    terminal: SetupTerminal,
+  ): void => {
+    retireSetupOutput(worktreeId);
+    setupOutputByWorktree.set(worktreeId, outputId);
+    setupOutputs.set(outputId, { worktreeId, authorization, setup, origin, terminal });
+  };
+  const reconcileSetupOutputs = (presentWorktreeIds: readonly string[]): void => {
+    const present = new Set(presentWorktreeIds);
+    for (const worktreeId of setupOutputByWorktree.keys()) {
+      if (!present.has(worktreeId)) {
+        retireSetupOutput(worktreeId);
+      }
+    }
+  };
   /** Read once and forgotten — a create that never reports leaves nothing behind. */
   const takeContests = (worktreePath: string): { contests?: readonly ProvisionResultContest[] } => {
     const contests = provisionContests.get(worktreePath);
@@ -665,6 +721,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               };
             },
           }),
+        runSetup: async (input, origin) => {
+          const terminal = new SetupTerminal();
+          const result = await runSetup(input, { terminal });
+          if (origin === undefined) {
+            return result;
+          }
+          const outputId = terminal.outputId(setupSurfaceId(origin));
+          retainSetupOutput(input.worktreeId, outputId, input.authorization, result.steps, origin, terminal);
+          return { ...result, outputId };
+        },
+        writeProvisionManifest: (worktreePath, steps, ports, setup) =>
+          writeProvisionManifest(worktreePath, steps, ports, setup, {
+            run: (args, cwd, runOptions) => worktreeTreeDeps.runner.run(args, cwd, runOptions),
+            lstat: (target) => fsp.lstat(target),
+          }),
+        reportProvisioning: (outcome, origin) => worktreeHost.reportProvisioning?.(origin ?? null, outcome),
+        retireSetupOutput,
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
@@ -781,6 +854,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     ...(outcome.provision.portWarnings === undefined
                       ? {}
                       : { portWarnings: outcome.provision.portWarnings }),
+                    ...(outcome.provision.setup === undefined ? {} : { setup: outcome.provision.setup }),
+                    ...(outcome.provision.setupOutputId === undefined
+                      ? {}
+                      : { setupOutputId: outcome.provision.setupOutputId }),
+                    ...(outcome.provision.setupRetryId === undefined
+                      ? {}
+                      : { setupRetryId: outcome.provision.setupRetryId }),
+                    ...(outcome.provision.manifestWarning === undefined
+                      ? {}
+                      : { manifestWarning: outcome.provision.manifestWarning }),
                     ...takeContests(outcome.provision.path),
                   },
                 }
@@ -1318,6 +1401,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // The mutating half. Every one re-resolves its own target on the far side
       // of a forced rebuild, so none of them takes a path (round-1 B1, B2).
       createWorktree: (request) => mutations().createWorktree(request),
+      retrySetup: (target, retryId) => mutations().retrySetup(target, retryId),
+      viewSetupOutput: async (outputId, origin) => {
+        const output = setupOutputs.get(outputId);
+        if (output === undefined) {
+          return;
+        }
+        const authorized = await directoryStillAuthorized(output.authorization);
+        if (setupOutputs.get(outputId) !== output || setupOutputByWorktree.get(output.worktreeId) !== outputId) {
+          return;
+        }
+        if (!authorized) {
+          if (!retireSetupOutput(output.worktreeId, outputId)) {
+            return;
+          }
+          worktreeHost.reportProvisioning?.(output.origin, {
+            type: "worktreeProvisionResult",
+            worktreeId: output.worktreeId,
+            setup: output.setup,
+          });
+          return;
+        }
+        output.terminal.reveal(outputId, setupSurfaceId(origin));
+      },
       // Resolution only — the surface that asked owns the pane it opens in.
       startAgent: (agent, cwd, opts) => vaultLauncher.startAgent(agent, cwd, opts),
       // The same answer the panel is given, so the host admits a launch against
@@ -1343,7 +1449,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       pruneRepo: (repoId, confirmedCount, origin) => mutations().pruneRepo(repoId, confirmedCount, origin),
       // Called after every authoritative rebuild, so a worktree that vanished
       // by any route drops whatever confirmation it was holding (D15).
-      reconcileFingerprints: (present) => mutations().reconcileFingerprints(present),
+      reconcileFingerprints: (present) => {
+        mutations().reconcileFingerprints(present);
+        reconcileSetupOutputs(present);
+      },
     },
   });
   context.subscriptions.push(worktreeHost);

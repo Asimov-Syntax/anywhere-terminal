@@ -412,6 +412,15 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
     offerId: "o1",
     kept: ["i1"],
   },
+  worktreeSetupRetry: {
+    type: "worktreeSetupRetry",
+    worktreeId: "/repo-wt/feat",
+    retryId: "retry-1",
+  },
+  worktreeSetupViewOutput: {
+    type: "worktreeSetupViewOutput",
+    outputId: "output-1",
+  },
   requestWorktreeRefs: { type: "requestWorktreeRefs", repoId: "/repo/.git", token: 1 },
   worktreeCreateProbe: { type: "worktreeCreateProbe", repoId: "/repo/.git", token: 1, query: "feat" },
   worktreeAuthorizeDebris: {

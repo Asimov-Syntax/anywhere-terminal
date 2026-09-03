@@ -178,6 +178,8 @@ export interface WorktreeViewDeps {
    * resolve first — re-running either would be guessing.
    */
   onRetryAction?: (result: WorktreeActionResult) => void;
+  onRetrySetup?: (result: WorktreeActionResult) => void;
+  onViewSetupOutput?: (result: WorktreeActionResult) => void;
   /**
    * A dialog is being opened. Every opener below calls it, including the
    * blocked notice's own — a guard the controller clears is not cleared when
@@ -386,7 +388,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.migrationIndeterminate ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests, r.ports, r.portWarnings)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.migrationIndeterminate ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -1524,6 +1526,15 @@ export class WorktreeView {
         result.migrationIndeterminate === undefined
           ? undefined
           : `Unverified Git integration detail: ${result.migrationIndeterminate}`;
+      const setup = setupSummary(result.setup);
+      const setupActions = [
+        ...(result.setupOutputId === undefined || this.deps.onViewSetupOutput === undefined
+          ? []
+          : [{ label: "View output", onClick: () => this.deps.onViewSetupOutput?.(result) }]),
+        ...(result.worktreeId === undefined || result.setupRetryId === undefined || this.deps.onRetrySetup === undefined
+          ? []
+          : [{ label: "Retry setup", onClick: () => this.deps.onRetrySetup?.(result) }]),
+      ];
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
       // Still a success — the worktree exists — but the notice says plainly
@@ -1540,7 +1551,9 @@ export class WorktreeView {
           result.migrationIndeterminate === undefined &&
           result.branchDelete?.kind !== "refused" &&
           brought?.tone !== "warn" &&
-          ported?.tone !== "warn"
+          ported?.tone !== "warn" &&
+          setup?.tone !== "warn" &&
+          result.manifestWarning === undefined
             ? "neutral"
             : "warn",
         live: "status",
@@ -1554,14 +1567,24 @@ export class WorktreeView {
             branchDeleteLine(result.branchDelete),
             brought?.body,
             ported?.body,
+            setup?.body,
+            result.manifestWarning,
           ]
             .filter((line) => line !== undefined)
             .join(" ") || undefined,
         ),
         reason:
-          [migrationDetail, result.openFailed, branchDeleteReason(result.branchDelete), brought?.reason, ported?.reason]
+          [
+            migrationDetail,
+            result.openFailed,
+            branchDeleteReason(result.branchDelete),
+            brought?.reason,
+            ported?.reason,
+            setup?.reason,
+          ]
             .filter((line) => line !== undefined)
             .join("\n") || undefined,
+        actions: setupActions.length === 0 ? undefined : setupActions,
         onDismiss: dismiss,
       });
     }
@@ -1852,15 +1875,42 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
  * Every outcome, in order — a run where one entry turned from `copied` to
  * `refused` must not compare equal to the run before it.
  */
-function provisionKey(
-  steps: readonly ProvisionStepResult[] | undefined,
-  contests: readonly ProvisionResultContest[] | undefined,
-  ports: WorktreeActionResult["ports"],
-  warnings: WorktreeActionResult["portWarnings"],
-): string {
-  // Structural, over exactly what the two provisioning summaries read. Free
-  // text in a delimiter-joined key can collide and leave a stale notice.
-  return JSON.stringify([steps ?? [], contests ?? [], ports ?? [], warnings ?? []]);
+function provisionKey(result: WorktreeActionResult): string {
+  // Structural, over exactly what the provisioning summaries and actions read.
+  return JSON.stringify([
+    result.provisioned ?? [],
+    result.provisionContests ?? [],
+    result.ports ?? [],
+    result.portWarnings ?? [],
+    result.setup ?? [],
+    result.setupOutputId ?? null,
+    result.setupRetryId ?? null,
+    result.manifestWarning ?? null,
+  ]);
+}
+
+function setupSummary(
+  setup: WorktreeActionResult["setup"],
+): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
+  if (setup === undefined || setup.length === 0) {
+    return undefined;
+  }
+  const ok = setup.filter((step) => step.outcome.kind === "ok");
+  const failed = setup.filter((step) => step.outcome.kind === "failed");
+  const skipped = setup.filter((step) => step.outcome.kind === "skipped");
+  const body = [
+    `${ok.length} of ${setup.length} setup steps completed.`,
+    ...(failed.length === 0 ? [] : [`${failed.length} failed.`]),
+    ...(skipped.length === 0 ? [] : [`${skipped.length} skipped.`]),
+  ].join(" ");
+  const reasons = [...failed, ...skipped].map(
+    (step) => `${step.script}: ${"reason" in step.outcome ? step.outcome.reason : step.outcome.kind}`,
+  );
+  return {
+    body,
+    tone: failed.length === 0 && skipped.length === 0 ? "neutral" : "warn",
+    ...(reasons.length === 0 ? {} : { reason: reasons.join("\n") }),
+  };
 }
 
 function portSummary(

@@ -691,6 +691,112 @@ describe("a create that cannot name a posture cannot be submitted", () => {
   });
 });
 
+describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
+  /** The default offer's one setup row: last among entries, ports, then setup. */
+  function setupRow(host: HTMLElement): HTMLInputElement {
+    const cb = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).at(-1);
+    if (!cb) {
+      throw new Error("expected a setup row");
+    }
+    return cb;
+  }
+
+  function tick(cb: HTMLInputElement, checked: boolean): void {
+    cb.checked = checked;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function chooseAgent(q: <T extends HTMLElement>(sel: string) => T): void {
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+  }
+
+  /** Opened with the offer channel wired, so a replacement can be pushed later. */
+  function withOffer(over: Parameters<typeof provisionOffer>[0] = {}) {
+    let applyOffer: ((repoId: string, offer: WorktreeProvisionOffer) => void) | undefined;
+    const h = open({
+      bindProvisioning: (apply) => {
+        applyOffer = apply;
+      },
+    });
+    applyOffer?.(REPO_ID, provisionOffer(over));
+    return {
+      ...h,
+      offer: (next: Parameters<typeof provisionOffer>[0] = {}) => applyOffer?.(REPO_ID, provisionOffer(next)),
+    };
+  }
+
+  it("renders off, and stays off, by default", () => {
+    const { q } = withOffer();
+    chooseAgent(q);
+    expect(q<HTMLInputElement>("#wt-wait-setup").checked).toBe(false);
+  });
+
+  it("stays hidden for a create that does not launch an agent", () => {
+    const { q } = withOffer();
+    expect(q<HTMLElement>(".wt-wait-setup").hidden).toBe(true);
+  });
+
+  it("is visible but disabled while the selection has no setup step", () => {
+    const { q } = withOffer();
+    chooseAgent(q);
+    expect(q<HTMLElement>(".wt-wait-setup").hidden).toBe(false);
+    expect(q<HTMLInputElement>("#wt-wait-setup").disabled).toBe(true);
+  });
+
+  it("enables once a setup step is selected", () => {
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    tick(setupRow(host), true);
+    expect(q<HTMLInputElement>("#wt-wait-setup").disabled).toBe(false);
+  });
+
+  it("disables again, and drops its own check, when the setup step is deselected", () => {
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    const setup = setupRow(host);
+    tick(setup, true);
+    const wait = q<HTMLInputElement>("#wt-wait-setup");
+    tick(wait, true);
+    tick(setup, false);
+    expect(wait.disabled).toBe(true);
+    expect(wait.checked).toBe(false);
+  });
+
+  it("disables again when a replacement offer selects no setup step", () => {
+    const { q, host, offer } = withOffer();
+    chooseAgent(q);
+    tick(setupRow(host), true);
+    expect(q<HTMLInputElement>("#wt-wait-setup").disabled).toBe(false);
+
+    offer({ offerId: "provision-2" });
+    expect(q<HTMLInputElement>("#wt-wait-setup").disabled).toBe(true);
+  });
+
+  it("never changes a setup row's own default-unchecked state", () => {
+    const { host } = withOffer();
+    expect(setupRow(host).checked).toBe(false);
+  });
+
+  it("carries the checked value for an agent create", () => {
+    const { q, host, submitted } = withOffer();
+    chooseAgent(q);
+    tick(setupRow(host), true);
+    tick(q<HTMLInputElement>("#wt-wait-setup"), true);
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]?.waitForSetup).toBe(true);
+  });
+
+  it("carries nothing on a create that does not launch an agent", () => {
+    const { q, submitted } = withOffer();
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+    expect(submitted[0]).not.toHaveProperty("waitForSetup");
+  });
+});
+
 describe("round-1 review fixes", () => {
   const FULL_A = "/trees/repo-a-feat-x";
   const FULL_B = "/trees/repo-b-feat-x";

@@ -1491,6 +1491,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       bringSum.textContent = bringSummary(drawnModel, ticked);
       syncYieldNotes(ticked);
     }
+    syncWaitForSetup();
   });
 
   /**
@@ -1558,6 +1559,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       saveRow.remove();
       drawnOfferId = null;
       drawnModel = null;
+      syncWaitForSetup();
       return;
     }
     // `syncDerived` runs on every keystroke, and rebuilding there reset every
@@ -1649,6 +1651,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // and a switch row is an offer rather than something this worktree gets —
     // so a present source declaring nothing still says what the worktree lacks.
     bringEmpty.hidden = rows.length + offer.model.problems.length > 0;
+    // A replacement offer starts a fresh ticked set (or reuses a prior visit's),
+    // never the superseded offer's — so a replacement that selects no setup step
+    // must re-disable the wait control rather than leave it armed for a
+    // selection that no longer exists.
+    syncWaitForSetup();
   }
 
   // ── After creating ──────────────────────────────────────────────────────
@@ -1684,6 +1691,54 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const agentBox = createWorktreeAgentBox(currentRepo().agents, () => syncDerived());
   agentBox.setVisible(false);
   shell.dialog.appendChild(agentBox.element);
+
+  // ── Wait-for-setup — beside the agent controls, never inside them ───────
+  // Its own control, not a field on `agentBox`: it is about SETUP sequencing,
+  // not about the agent's own posture, and the two must stay two facts
+  // (design.md D6). Visible only while an agent launch is chosen; disabled
+  // whenever the current offer selection has no setup step ticked (spec
+  // `agent-startup-honours-the-setup-wait-choice`). Off by default and never
+  // pre-ticked — this never touches a setup row's own default-unchecked state.
+  const waitField = document.createElement("div");
+  waitField.className = "wt-wait-setup";
+  waitField.hidden = true;
+  const waitLabel = document.createElement("label");
+  waitLabel.htmlFor = "wt-wait-setup";
+  const waitBox = document.createElement("input");
+  waitBox.type = "checkbox";
+  waitBox.id = "wt-wait-setup";
+  const waitText = document.createElement("span");
+  waitText.textContent = "Wait for setup to finish before starting the agent";
+  waitLabel.append(waitBox, waitText);
+  waitField.appendChild(waitLabel);
+  shell.dialog.appendChild(waitField);
+
+  /** The setup steps currently selected in the drawn offer, if any. */
+  function hasSelectedSetup(): boolean {
+    if (drawnOfferId === null || drawnModel === null) {
+      return false;
+    }
+    const ticked = checkedByOffer.get(drawnOfferId);
+    return ticked !== undefined && drawnModel.setup.some((step) => ticked.has(step.id));
+  }
+
+  /**
+   * Re-decide visibility and enablement from the agent choice and the current
+   * setup selection. Called wherever either can have changed: the after-choice
+   * toggle, a full re-derive (repo switch, offer replacement), and a tick
+   * inside the bring-over section.
+   *
+   * Unchecked along with disabled, not merely disabled-and-stale: a wait this
+   * control cannot be seen to be armed for must not silently keep armed.
+   */
+  function syncWaitForSetup(): void {
+    waitField.hidden = afterChoice !== "agent";
+    const selected = hasSelectedSetup();
+    waitBox.disabled = !selected;
+    if (!selected) {
+      waitBox.checked = false;
+    }
+  }
 
   // ── Advanced — collapsed, and out of the focus order while it is ────────
   // The same reveal idiom the agent block uses: a toggle carrying `aria-expanded`
@@ -1763,6 +1818,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       ...(disposition === undefined ? {} : { disposition }),
       ...(provision === undefined ? {} : { provision }),
       ...(migrateChanges === undefined ? {} : { migrateChanges }),
+      // Only where the control was actually offered — a non-agent create never
+      // showed this choice, so nothing here is carried for it.
+      ...(afterChoice === "agent" ? { waitForSetup: waitBox.checked } : {}),
     });
     disposeAll();
   }
@@ -2353,6 +2411,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     repoHint.textContent = repo.mainPath;
     syncBringOver(repo.provisioning);
     syncMigration(repo.migration);
+    syncWaitForSetup();
 
     const detached = draft.branchMode === "detached";
     nameInput.disabled = detached;

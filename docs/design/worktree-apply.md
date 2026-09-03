@@ -153,7 +153,9 @@ theirs, because a partially ported worktree is more useful than none.
 Commands run sequentially in the new worktree's directory, every one of them through a shell —
 including the steps a `tasks.json` entry supplied, which reach here as ordinary shell steps
 ([worktree-provisioning.md](worktree-provisioning.md) § 3.3). argv is never assembled by string
-concatenation; the command is passed as the shell's single script argument.
+concatenation. POSIX uses the detected login shell plus `-c` and the exact script as one argument;
+Windows uses PowerShell `-EncodedCommand` with the exact UTF-16LE script payload. No step uses
+`shell: true`, provider-specific dispatch, or the VS Code task system.
 
 Running them through the VS Code task system instead was designed and then measured out: a task
 scoped to a directory that is not an open workspace folder runs in the window's opened folder
@@ -164,22 +166,31 @@ consent to run a command a checked-in file supplied. Persisting a per-repository
 here" trust decision is a reasonable future addition and is explicitly **not** designed here —
 until it is, the checkbox starts off every time.
 
-Environment: the process environment plus `ANYWHERE_TERMINAL_WORKTREE_PATH`,
-`ANYWHERE_TERMINAL_MAIN_PATH`, and `ANYWHERE_TERMINAL_BRANCH`. Where the asimov adapter supplied
-the model, `ASIMOV_WORKTREE_PATH`, `ASIMOV_MAIN_ROOT` and `ASIMOV_BRANCH` are set to the same three
-values, because a repo's setup script was written against those names. `ASIMOV_CHANGE_ID` is
-**deliberately not set**: this model has no value to put in it, and inventing one would make a
-worktree created here look like a change created by the asimov tooling.
+Environment: the process environment plus every authoritative allocated/reused port under its
+configured name, then `ANYWHERE_TERMINAL_WORKTREE_PATH`, `ANYWHERE_TERMINAL_MAIN_PATH`, and
+`ANYWHERE_TERMINAL_BRANCH`. A port is offerable only when its name is a portable environment
+identifier outside the case-insensitive `ANYWHERE_TERMINAL_` and `ASIMOV_` namespaces, so provider
+input cannot replace host identity. Where the asimov adapter supplied the model,
+`ASIMOV_WORKTREE_PATH`, `ASIMOV_MAIN_ROOT` and `ASIMOV_BRANCH` are set to the same three values,
+because a repo's setup script was written against those names. `ASIMOV_CHANGE_ID` is deliberately
+not set: this model has no value to put in it, and inventing one would make a worktree created here
+look like a change created by the asimov tooling.
 
 Setup may run **concurrently with** `openAfter` or be gated ahead of it, per
 [worktree-create.md](worktree-create.md) § 6. Copy, link and ports never are — they always complete
 first.
 
-Cancellation, timeout, and where output goes belong to the existing mutation budget, for every
-step ([worktree-actions.md](worktree-actions.md) § 3.6) — there is no second owner now that no
-step reaches the task system.
-Retry state lives with the worktree row and does not survive a host restart — a retry offered
-after a restart would be offering to re-run a model the host no longer holds (§ 4.0).
+One run owns one setup terminal and at most one live shell child. The latest 1 MiB of output is
+retained as bounded UTF-8 byte chunks; live writes are emitted in UTF-8-safe batches bounded by
+8 ms or 64 KiB. Closing the terminal and one aggregate two-hour deadline cancel terminal opening,
+directory-authority checks, pre-spawn admission, and child exit. Cancellation settles before a
+best-effort PTY kill, so an immediate kill-triggered exit cannot turn timeout or close into success.
+
+Failed output is revealed through an opaque, originating-surface capability. Reveal rechecks the
+original directory authority; retry, replacement, disappearance, or mismatch retires the handle
+and disposes its terminal. Retry state likewise lives with the worktree row and does not survive a
+host restart — a retry after restart would offer to run a model the host no longer holds (§ 4.0).
+It rotates on use, rechecks the original worktree identity, and re-runs setup only.
 
 A non-zero exit stops the remaining steps and is reported. It does **not** stop the copy and link
 results from standing, and it does not affect the worktree.
@@ -200,9 +211,10 @@ behind is reported for what it is, not flattened into "nothing happened".
 
 ### 2.6 The manifest — what this worktree was set up with
 
-Applying writes a **manifest** into the new worktree's administrative directory
-(`.git/worktrees/<id>/anywhere-terminal-provision.json`, which git itself deletes when the worktree
-is removed). It records, for one create:
+Every successful fresh create, including an empty selection, writes a **manifest** into the new
+worktree's administrative directory (`.git/worktrees/<id>/anywhere-terminal-provision.json`, which
+git itself deletes when the worktree is removed). The administrative directory is authorized and
+rechecked around one atomic mode-`0600` replacement. It records, for one create:
 
 ```ts
 interface ProvisionManifest {
@@ -216,16 +228,13 @@ interface ProvisionManifest {
 }
 ```
 
-It exists because two later claims are otherwise unsupportable across a host restart:
+It exists so removal can name what this extension provisioned — "the 4 files this worktree was set
+up with" rather than "1.2 GB of ignored content" ([worktree-removal.md](worktree-removal.md) § 2.3).
+After a restart there is nothing else to derive that description from. A setup retry replaces the
+same record with its latest outcomes while preserving the original material and port results.
 
-- **Removal naming what this extension provisioned** — "the 4 files this worktree was set up with"
-  rather than "1.2 GB of ignored content" ([worktree-removal.md](worktree-removal.md) § 2.3). After
-  a restart there is nothing else to derive that from.
-- **A retry that knows what already succeeded.** Without the manifest, a retry after a restart is
-  offering to re-run a model the host no longer holds.
-
-The manifest is a **record, not an authority**: it is never used to decide what to delete, only to
-describe. A missing or unreadable manifest degrades every claim that depends on it to "could not be
+The manifest is a **record, not an authority**: it is never read to authorize setup, retry, or
+deletion. A missing or unreadable manifest degrades every claim that depends on it to "could not be
 determined" — it never blocks a removal and never causes one.
 
 Living in the administrative directory is deliberate. It is outside the working tree, so it never

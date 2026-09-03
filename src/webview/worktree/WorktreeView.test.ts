@@ -2820,6 +2820,83 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("5185");
   });
 
+  it("reports failed and skipped setup on its worktree row with output and retry actions", () => {
+    const viewOutput = vi.fn();
+    const retrySetup = vi.fn();
+    const { view } = mount({ onViewSetupOutput: viewOutput, onRetrySetup: retrySetup });
+    const result: WorktreeActionResult = {
+      action: "create",
+      worktreeId: PANEL_WT,
+      outcome: "ok",
+      setup: [
+        { id: "s1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "ok" } },
+        {
+          id: "s2",
+          source: "asimov/worktree.yaml",
+          script: "pnpm build",
+          outcome: { kind: "failed", reason: "exited with code 1" },
+        },
+        {
+          id: "s3",
+          source: "asimov/worktree.yaml",
+          script: "pnpm seed",
+          outcome: { kind: "skipped", reason: "previous setup step failed" },
+        },
+      ],
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+      manifestWarning: "The provisioning manifest could not be written.",
+    };
+    view.setData({ ...populated(), actionResults: [result] });
+
+    const notice = view.element.querySelector<HTMLElement>(".wt-notice");
+    expect(notice?.textContent ?? "").toContain("1 of 3 setup steps completed");
+    expect(notice?.textContent ?? "").toContain("1 failed");
+    expect(notice?.textContent ?? "").toContain("1 skipped");
+    expect(notice?.textContent ?? "").toContain("pnpm build: exited with code 1");
+    expect(notice?.textContent ?? "").toContain("provisioning manifest could not be written");
+    const buttons = [...(notice?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    buttons.find((button) => button.textContent === "View output")?.click();
+    buttons.find((button) => button.textContent === "Retry setup")?.click();
+    expect(viewOutput).toHaveBeenCalledWith(result);
+    expect(retrySetup).toHaveBeenCalledWith(result);
+    expect(notice?.className).toContain("wt-notice--warn");
+  });
+
+  it("replaces failed setup with retry success and removes retry", () => {
+    const { view } = mount({ onViewSetupOutput: () => {}, onRetrySetup: () => {} });
+    const result = (ok: boolean): WorktreeActionResult => ({
+      action: "create",
+      worktreeId: PANEL_WT,
+      outcome: "ok",
+      setup: [
+        {
+          id: "s1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: ok ? { kind: "ok" } : { kind: "failed", reason: "exit 1" },
+        },
+      ],
+      setupOutputId: ok ? "output-2" : "output-1",
+      ...(ok ? {} : { setupRetryId: "retry-1" }),
+    });
+
+    view.setData({ ...populated(), actionResults: [result(false)] });
+    expect(view.element.textContent ?? "").toContain("0 of 1 setup steps completed");
+    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "Retry setup")).toBe(
+      true,
+    );
+
+    view.setData({ ...populated(), actionResults: [result(true)] });
+    expect(view.element.textContent ?? "").toContain("1 of 1 setup steps completed");
+    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "Retry setup")).toBe(
+      false,
+    );
+    expect([...view.element.querySelectorAll("button")].some((button) => button.textContent === "View output")).toBe(
+      true,
+    );
+  });
+
   it("[F005] says nothing about provisioning on a create that provisioned nothing", () => {
     const { view } = mount();
     view.setData({

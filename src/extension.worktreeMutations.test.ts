@@ -14,6 +14,53 @@ import type { BranchDeleteRequest } from "./types/messages";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import type { MutationOutcome, MutationServiceDeps } from "./worktree/worktreeMutationService";
 
+const setupAssembly = vi.hoisted(() => ({
+  runs: [] as unknown[],
+  manifests: [] as unknown[],
+  reveals: [] as unknown[],
+  disposals: [] as number[],
+  terminalSequence: 0,
+  authorized: true as boolean | Promise<boolean>,
+}));
+
+vi.mock("./worktree/provisioning/setupRunner", () => ({
+  runSetup: async (input: { steps: readonly { id: string; source: string; script: string }[] }) => {
+    setupAssembly.runs.push(input);
+    return {
+      succeeded: false,
+      steps: input.steps.map((step) => ({ ...step, outcome: { kind: "failed" as const, reason: "test failure" } })),
+    };
+  },
+}));
+
+vi.mock("./worktree/provisioning/setupTerminal", () => ({
+  SetupTerminal: class {
+    readonly sequence = ++setupAssembly.terminalSequence;
+    outputId(origin: string): string {
+      return `output-${this.sequence}:${origin}`;
+    }
+    reveal(outputId: string, origin: string): boolean {
+      setupAssembly.reveals.push({ outputId, origin });
+      return true;
+    }
+    dispose(): void {
+      setupAssembly.disposals.push(this.sequence);
+    }
+  },
+}));
+
+vi.mock("./utils/authorizedDirectory", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./utils/authorizedDirectory")>();
+  return { ...real, directoryStillAuthorized: async () => setupAssembly.authorized };
+});
+
+vi.mock("./worktree/provisioning/provisionManifest", () => ({
+  writeProvisionManifest: async (...args: unknown[]) => {
+    setupAssembly.manifests.push(args);
+    return {};
+  },
+}));
+
 const received: {
   actions?: WorktreeActions;
   previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
@@ -97,6 +144,12 @@ beforeEach(() => {
   received.actions = undefined;
   received.deps = undefined;
   received.reports = [];
+  setupAssembly.runs = [];
+  setupAssembly.manifests = [];
+  setupAssembly.reveals = [];
+  setupAssembly.disposals = [];
+  setupAssembly.terminalSequence = 0;
+  setupAssembly.authorized = true;
   forceUndegraded = false;
   observations = [];
   migrationCalls.length = 0;
@@ -169,6 +222,8 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.actions?.lockWorktree).toBe("function");
     expect(typeof received.actions?.unlockWorktree).toBe("function");
     expect(typeof received.actions?.pruneRepo).toBe("function");
+    expect(typeof received.actions?.retrySetup).toBe("function");
+    expect(typeof received.actions?.viewSetupOutput).toBe("function");
     // Round-10 B8: the coordinator's last check before a destructive command is
     // only as real as production supplying what it asks. The service is built
     // lazily, so something has to ask for it first.
@@ -242,6 +297,166 @@ describe("the shipped extension supplies its mutating capabilities", () => {
       relativePath: "new",
     });
     expect(received.deps?.migrationGitExcludeDirFor("/repo/.git", "/linked/source", "/repo/wt/new")).toBeNull();
+    expect(typeof received.deps?.runSetup).toBe("function");
+    expect(typeof received.deps?.writeProvisionManifest).toBe("function");
+    expect(typeof received.deps?.reportProvisioning).toBe("function");
+  });
+
+  it("binds setup output, manifest writing, and provisioning-only reporting", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    const posted: unknown[] = [];
+    const origin: WorktreeSurface = { isReady: () => true, post: (message) => posted.push(message) };
+    const setup = [{ id: "s1", source: "asimov/worktree.yaml", kind: "shell" as const, script: "pnpm install" }];
+    const authorization = { path: "/repo/wt", platform: "linux" as const, components: [] };
+
+    const result = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: { APP_PORT: 5184 },
+        authorization,
+      },
+      origin,
+    );
+    await received.deps?.writeProvisionManifest?.("/repo/wt", [], [], result?.steps ?? []);
+    received.deps?.reportProvisioning?.(
+      {
+        type: "worktreeProvisionResult",
+        worktreeId: "/repo/wt",
+        setup: result?.steps ?? [],
+        setupOutputId: result?.outputId,
+      },
+      origin,
+    );
+    await received.actions?.viewSetupOutput?.(result?.outputId ?? "", origin);
+
+    expect(setupAssembly.runs).toHaveLength(1);
+    expect(setupAssembly.manifests).toHaveLength(1);
+    expect(setupAssembly.reveals).toEqual([expect.objectContaining({ outputId: result?.outputId })]);
+    expect(posted).toEqual([expect.objectContaining({ type: "worktreeProvisionResult", worktreeId: "/repo/wt" })]);
+
+    const replacement = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    expect(setupAssembly.disposals).toEqual([1]);
+    await received.actions?.viewSetupOutput?.(result?.outputId ?? "", origin);
+    expect(setupAssembly.reveals).toHaveLength(1);
+
+    received.deps?.retireSetupOutput?.("/repo/wt");
+    expect(setupAssembly.disposals).toEqual([1, 2]);
+
+    const stale = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    setupAssembly.authorized = false;
+    await received.actions?.viewSetupOutput?.(stale?.outputId ?? "", origin);
+    expect(setupAssembly.reveals).toHaveLength(1);
+    expect(setupAssembly.disposals).toEqual([1, 2, 3]);
+    expect(posted.at(-1)).toMatchObject({
+      type: "worktreeProvisionResult",
+      worktreeId: "/repo/wt",
+      setup: expect.any(Array),
+    });
+    expect(posted.at(-1)).not.toHaveProperty("setupOutputId");
+    expect(posted.at(-1)).not.toHaveProperty("setupRetryId");
+
+    setupAssembly.authorized = true;
+    await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: setup,
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    received.actions?.reconcileFingerprints?.([]);
+    expect(setupAssembly.disposals).toEqual([1, 2, 3, 4]);
+    expect(replacement?.outputId).not.toBe(result?.outputId);
+  });
+
+  it("does not let a stale reveal retire a newer output generation", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+    const posted: unknown[] = [];
+    const origin: WorktreeSurface = { isReady: () => true, post: (message) => posted.push(message) };
+    const authorization = { path: "/repo/wt", platform: "linux" as const, components: [] };
+    let resolveAuthorization: ((authorized: boolean) => void) | undefined;
+    setupAssembly.authorized = new Promise<boolean>((resolve) => {
+      resolveAuthorization = resolve;
+    });
+
+    const stale = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: [{ id: "old", source: "asimov/worktree.yaml", kind: "shell", script: "old" }],
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+    const reveal = received.actions?.viewSetupOutput?.(stale?.outputId ?? "", origin);
+    const current = await received.deps?.runSetup?.(
+      {
+        repoId: "/repo/.git",
+        mainPath: "/repo",
+        worktreeId: "/repo/wt",
+        worktreePath: "/repo/wt",
+        branch: "feat",
+        steps: [{ id: "new", source: "asimov/worktree.yaml", kind: "shell", script: "new" }],
+        asimovEnvironment: true,
+        ports: {},
+        authorization,
+      },
+      origin,
+    );
+
+    resolveAuthorization?.(false);
+    await reveal;
+    expect(setupAssembly.disposals).toEqual([1]);
+    expect(posted).toEqual([]);
+
+    setupAssembly.authorized = true;
+    await received.actions?.viewSetupOutput?.(current?.outputId ?? "", origin);
+    expect(setupAssembly.reveals).toEqual([expect.objectContaining({ outputId: current?.outputId })]);
   });
 });
 

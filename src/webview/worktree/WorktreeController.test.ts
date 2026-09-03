@@ -1192,6 +1192,40 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       },
     ]);
   });
+
+  it("carries the draft's own wait-for-setup choice onto the agent's afterCreate", () => {
+    // WT-012.11 (3_2): the dialog carries the visible, off-by-default wait
+    // choice on its draft; this is where it becomes the wire value the setup
+    // sequencing (WT-012.11 3_3) reads, rather than a fixed `false` no create
+    // could ever turn on.
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "existing",
+      branchName: "feat",
+      baseRef: "",
+      path: "/wt",
+      openAfter: "agent",
+      agentId: "claude",
+      waitForSetup: true,
+    });
+
+    expect(h.posts).toEqual([
+      {
+        type: "worktreeCreate",
+        repoId: "/repo/.git",
+        opening: 1,
+        path: "/wt",
+        mode: { kind: "reuse", branch: "feat" },
+        disposition: { kind: "free" },
+        afterCreate: { kind: "agent", waitForSetup: true, agent: "claude" },
+      },
+    ]);
+  });
 });
 
 describe("the launch entry paths WT-005.3 supplies", () => {
@@ -2629,6 +2663,85 @@ describe("what a mutation did comes back to the panel", () => {
     });
   });
 
+  it("merges a setup-only retry update without dropping material, ports, or contest membership", () => {
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/validator";
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" }, contest: 0 }],
+      ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5184 } }],
+      contests: [{ members: [{ id: "i1", path: ".env", source: "asimov/worktree.yaml" }] }],
+      setup: [
+        {
+          id: "s1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "exit 1" },
+        },
+      ],
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      setup: [
+        {
+          id: "s1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "rebuild failed" },
+        },
+      ],
+    });
+
+    expect(results(h)[0]).toMatchObject({
+      provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" }, contest: 0 }],
+      ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5184 } }],
+      provisionContests: [{ members: [{ id: "i1", path: ".env", source: "asimov/worktree.yaml" }] }],
+      setup: [{ id: "s1", outcome: { kind: "failed", reason: "rebuild failed" } }],
+    });
+    expect(results(h)[0]?.setupRetryId).toBeUndefined();
+  });
+
+  it("posts only opaque setup output and retry actions", () => {
+    const h = ready();
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            onRetrySetup(result: WorktreeActionResult): void;
+            onViewSetupOutput(result: WorktreeActionResult): void;
+          };
+        };
+      }
+    ).view.deps;
+    h.posts.length = 0;
+    const result: WorktreeActionResult = {
+      action: "create",
+      worktreeId: "/wt/feature",
+      outcome: "ok",
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    };
+
+    deps.onViewSetupOutput(result);
+    deps.onRetrySetup(result);
+
+    expect(h.posts).toEqual([
+      { type: "worktreeSetupViewOutput", outputId: "output-1" },
+      { type: "worktreeSetupRetry", worktreeId: "/wt/feature", retryId: "retry-1" },
+    ]);
+  });
+
   it("[round-5 F017] gives the notice its row back once the rebuild carries it", () => {
     // The round-4 fix keyed dedupe on the canonical identity and left the move
     // one-way: `rescope` drops `worktreeId` and then returns immediately for
@@ -3354,6 +3467,152 @@ describe("a notice outlives the row it was about", () => {
     });
     const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
     expect(results[0]?.orphanedLabel).toBe("/var/wt/linked");
+  });
+
+  it("keeps recreated setup results on an aliased row through its arrival", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    const worktreeId = "/private/var/wt/linked";
+    const displayPath = "/var/wt/linked";
+    const repoId = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+    const seeded = singleRepoTree();
+    const repo = seeded.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    const linked = worktree({ id: worktreeId, displayPath, branch: "feat/sym" });
+    repo.worktrees = [...repo.worktrees, linked];
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    h.controller.handleTreeResponse(response());
+
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      steps: [],
+      ports: [],
+      setup: [
+        {
+          id: "setup-1",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "exit 1" },
+        },
+      ],
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ canonicalId: worktreeId, orphanedLabel: displayPath });
+
+    h.controller.handleTreeResponse(response());
+    const pending = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ canonicalId: worktreeId, orphanedLabel: displayPath });
+
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    const attached = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    expect(attached).toHaveLength(1);
+    expect(attached[0]).toMatchObject({
+      action: "create",
+      worktreeId,
+      setupOutputId: "output-1",
+      setupRetryId: "retry-1",
+    });
+    expect(attached[0]).not.toHaveProperty("orphanedLabel");
+
+    const deps = (
+      h.controller as unknown as {
+        view: {
+          deps: {
+            onRetrySetup(result: WorktreeActionResult): void;
+            onViewSetupOutput(result: WorktreeActionResult): void;
+          };
+        };
+      }
+    ).view.deps;
+    h.posts.length = 0;
+    deps.onViewSetupOutput(attached[0] as WorktreeActionResult);
+    deps.onRetrySetup(attached[0] as WorktreeActionResult);
+    expect(h.posts).toEqual([
+      { type: "worktreeSetupViewOutput", outputId: "output-1" },
+      { type: "worktreeSetupRetry", worktreeId, retryId: "retry-1" },
+    ]);
+  });
+
+  it("does not attach an old setup retry result to a recreated aliased row", () => {
+    const h = mount();
+    h.controller.setVisible(true);
+    const worktreeId = "/private/var/wt/linked";
+    const displayPath = "/var/wt/linked";
+    const repoId = "/Users/dev/Projects/ai-oss/anywhere-terminal/.git";
+    const seeded = singleRepoTree();
+    const repo = seeded.repos[0];
+    if (!repo) {
+      throw new Error("fixture lost its repo");
+    }
+    const linked = worktree({ id: worktreeId, displayPath, branch: "feat/sym" });
+    repo.worktrees = [...repo.worktrees, linked];
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleTreeResponse(response());
+    h.controller.handleProvisionResult({
+      type: "worktreeProvisionResult",
+      worktreeId,
+      setup: [
+        {
+          id: "old-setup",
+          source: "asimov/worktree.yaml",
+          script: "pnpm install",
+          outcome: { kind: "failed", reason: "worktree identity changed" },
+        },
+      ],
+    });
+
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId,
+      worktreeId,
+      result: { kind: "ok" },
+    });
+    h.controller.handleTreeResponse({
+      type: "worktreeTreeResponse",
+      tree: seeded,
+      presence: singleRepoPresence(1_000_000),
+    });
+
+    const results = (h.controller as unknown as { actionResults: WorktreeActionResult[] }).actionResults;
+    const attached = results.filter((result) => result.worktreeId === worktreeId);
+    expect(attached).toEqual([expect.objectContaining({ action: "create", outcome: "ok" })]);
+    expect(attached[0]).not.toHaveProperty("setup");
+    expect(results.some((result) => result.orphanedLabel === displayPath && result.setup !== undefined)).toBe(true);
   });
 
   it("still reports a removal after the row it removed has gone", () => {

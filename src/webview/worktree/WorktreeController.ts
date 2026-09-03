@@ -248,6 +248,11 @@ export function worktreeMenuActions(
 const MAX_ORPHAN_NOTICES = 4;
 const MAX_DEPARTED = 64;
 
+/** Stable identity across attached, pending-arrival, and departed notice scopes. */
+function actionResultIdentity(result: WorktreeActionResult): string | undefined {
+  return result.worktreeId ?? result.canonicalId ?? result.orphanedLabel;
+}
+
 /** Drop the oldest entries until `map` fits. Insertion order is age. */
 function trim(map: Map<string, string>, limit: number): void {
   for (const key of map.keys()) {
@@ -632,6 +637,16 @@ export class WorktreeController {
           this.askRemoval(result.worktreeId);
         }
       },
+      onRetrySetup: (result) => {
+        if (result.worktreeId !== undefined && result.setupRetryId !== undefined) {
+          deps.postMessage({ type: "worktreeSetupRetry", worktreeId: result.worktreeId, retryId: result.setupRetryId });
+        }
+      },
+      onViewSetupOutput: (result) => {
+        if (result.setupOutputId !== undefined) {
+          deps.postMessage({ type: "worktreeSetupViewOutput", outputId: result.setupOutputId });
+        }
+      },
       // Any dialog opening retires the outstanding assess: what the user is
       // looking at now is the answer to a newer question, and the view's own
       // blocked-notice opener is why this cannot be a controller-local guard
@@ -724,7 +739,7 @@ export class WorktreeController {
             draft.openAfter === "agent" && draft.agentId !== undefined
               ? {
                   kind: "agent",
-                  waitForSetup: false,
+                  waitForSetup: draft.waitForSetup ?? false,
                   agent: draft.agentId,
                   ...(draft.permissionChoiceId === undefined ? {} : { permissionChoiceId: draft.permissionChoiceId }),
                   ...(draft.prompt === undefined ? {} : { prompt: draft.prompt }),
@@ -1475,15 +1490,35 @@ export class WorktreeController {
     // worktree made a moment ago is precisely that until the next rebuild lands
     // — so the id-only key missed on every real create, which is what made the
     // service supplying an id (round-2 F017) only half the fix.
-    const existing = this.actionResults.find(
-      (r) => r.action === "create" && (r.worktreeId ?? r.orphanedLabel) === msg.worktreeId,
+    const exact = this.actionResults.find(
+      (result) => result.action === "create" && actionResultIdentity(result) === msg.worktreeId,
     );
+    const departedLabel = this.departed.get(msg.worktreeId);
+    const departed =
+      exact === undefined && msg.steps === undefined && departedLabel !== undefined
+        ? this.actionResults.find(
+            (result) =>
+              result.action === "create" &&
+              result.worktreeId === undefined &&
+              result.canonicalId === undefined &&
+              result.orphanedLabel === departedLabel,
+          )
+        : undefined;
+    const existing = exact ?? departed;
+    const fallback: WorktreeActionResult =
+      msg.steps === undefined
+        ? { action: "create", orphanedLabel: departedLabel ?? msg.worktreeId, outcome: "ok" }
+        : { action: "create", worktreeId: msg.worktreeId, outcome: "ok" };
     this.showActionResult({
-      ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
-      provisioned: msg.steps,
-      ports: msg.ports,
+      ...(existing ?? fallback),
+      ...(msg.steps === undefined ? {} : { provisioned: msg.steps }),
+      ...(msg.ports === undefined ? {} : { ports: msg.ports }),
       ...(msg.portWarnings === undefined ? {} : { portWarnings: msg.portWarnings }),
-      provisionContests: msg.contests,
+      ...(msg.contests === undefined ? {} : { provisionContests: msg.contests }),
+      setup: msg.setup,
+      setupOutputId: msg.setupOutputId,
+      setupRetryId: msg.setupRetryId,
+      manifestWarning: msg.manifestWarning,
     });
   }
 
@@ -1522,10 +1557,14 @@ export class WorktreeController {
     // `orphanedLabel`, and a worktree made a moment ago is exactly that — so two
     // creates in one repository both keyed as `undefined` and the second ate the
     // first (.reviews/round-4.md F017).
-    const identity = (r: WorktreeActionResult): string | undefined => r.worktreeId ?? r.orphanedLabel;
     this.actionResults = [
       ...this.actionResults.filter(
-        (r) => !(r.action === result.action && identity(r) === identity(result) && r.repoId === result.repoId),
+        (candidate) =>
+          !(
+            candidate.action === result.action &&
+            actionResultIdentity(candidate) === actionResultIdentity(result) &&
+            candidate.repoId === result.repoId
+          ),
       ),
       result,
     ];
@@ -1765,22 +1804,22 @@ export class WorktreeController {
       // about: every real create is re-scoped first and reattached here, and a
       // one-way move left it at the repository anchor forever, still counted
       // against the orphan bound that can evict it (round-5 F017).
-      const { orphanedLabel: _shown, ...named } = result;
-      return result.worktreeId === undefined ? { ...named, worktreeId } : result;
+      const { canonicalId: _identity, orphanedLabel: _shown, ...named } = result;
+      return { ...named, worktreeId };
     }
     const label = result.orphanedLabel ?? this.departed.get(worktreeId);
-    const { worktreeId: _gone, ...rest } = result;
+    const pendingCanonical = result.worktreeId === undefined ? result.canonicalId : undefined;
+    const { canonicalId: _identity, worktreeId: _gone, ...rest } = result;
     return {
       ...rest,
-      // Identity is kept only for a row that has NOT ARRIVED yet. A row that
-      // DEPARTED can be recreated at the same id, and handing the old notice
-      // back to it would report someone else's action on a worktree that never
-      // had it — so `departed`, which reconciliation has already filled by the
-      // time a removal's result lands, is what tells the two apart. An id aged
-      // out of that bounded map reads as never-arrived; the notice is then
-      // reattachable, which is the same answer it would get if it had been made
-      // after the eviction.
-      ...(label === undefined ? { canonicalId: worktreeId } : {}),
+      // A pending create keeps its identity through any number of tree pushes
+      // that still lack its row. An attached notice has `worktreeId`, so when
+      // that row actually departs reconciliation strips identity instead.
+      ...(pendingCanonical !== undefined
+        ? { canonicalId: pendingCanonical }
+        : result.action === "create" && present === undefined
+          ? { canonicalId: worktreeId }
+          : {}),
       orphanedLabel: label ?? worktreeId,
     };
   }

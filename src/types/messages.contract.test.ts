@@ -19,6 +19,7 @@ import type {
   ProvisionProblem,
   ProvisionProvider,
   ProvisionSelection,
+  ProvisionSetupResult,
   ProvisionStepOutcome,
   ProvisionStepResult,
   ResolvedMode,
@@ -28,6 +29,8 @@ import type {
   WorktreeProvisionSaveMessage,
   WorktreeRemoveAssessmentPayload,
   WorktreeRemoveRequestMessage,
+  WorktreeSetupRetryMessage,
+  WorktreeSetupViewOutputMessage,
 } from "./messages";
 
 type Mode<K extends WorktreeCreateMode["kind"]> = Extract<WorktreeCreateMode, { kind: K }>;
@@ -246,15 +249,61 @@ const portWithPath: ProvisionPortResult = {
   path: ".env.worktree",
 };
 
+const setupOk: ProvisionSetupResult = {
+  id: "i10",
+  source: "asimov/worktree.yaml",
+  script: "pnpm install",
+  outcome: { kind: "ok" },
+};
+const setupFailed: ProvisionSetupResult = {
+  id: "i11",
+  source: ".vscode/tasks.json",
+  script: "pnpm test",
+  outcome: { kind: "failed", reason: "exited 1" },
+};
+const setupWithoutReason: ProvisionSetupResult = {
+  id: "i12",
+  source: "orca.yaml",
+  script: "pnpm build",
+  // @ts-expect-error a failed setup step states its reason
+  outcome: { kind: "failed" },
+};
+const setupWithPath: ProvisionSetupResult = {
+  id: "i13",
+  source: "orca.yaml",
+  script: "pnpm build",
+  outcome: { kind: "ok" },
+  // @ts-expect-error a setup result never carries an executable path
+  path: "/repo/run.sh",
+};
+
 const provisionResult: WorktreeProvisionResultMessage = {
   type: "worktreeProvisionResult",
   worktreeId: "w1",
   steps: [stepForFile, stepForDirectory],
   ports: [allocatedPort, reusedPort, failedPort],
   portWarnings: ["lockReleaseFailed", "excludeFailed", "lockRetained", "temporaryCleanupFailed"],
+  setup: [setupOk, setupFailed],
+  setupOutputId: "output-1",
+  setupRetryId: "retry-1",
+  manifestWarning: "the setup record could not be written",
 };
 
-// @ts-expect-error every producer states the complete per-port result list, including an empty one
+const setupOnlyUpdate: WorktreeProvisionResultMessage = {
+  type: "worktreeProvisionResult",
+  worktreeId: "w1",
+  setup: [setupOk],
+};
+
+// @ts-expect-error a setup-only update cannot carry a partial prior result
+const setupOnlyWithPorts: WorktreeProvisionResultMessage = {
+  type: "worktreeProvisionResult",
+  worktreeId: "w1",
+  setup: [setupOk],
+  ports: [],
+};
+
+// @ts-expect-error every initial producer states the complete per-port result list, including an empty one
 const _provisionResultWithoutPorts: WorktreeProvisionResultMessage = {
   type: "worktreeProvisionResult",
   worktreeId: "w1",
@@ -263,6 +312,29 @@ const _provisionResultWithoutPorts: WorktreeProvisionResultMessage = {
 
 // It is an extension → webview message, so a panel switching on the union sees it.
 const provisionResultInUnion: ExtensionToWebViewMessage = provisionResult;
+
+const retrySetup: WorktreeSetupRetryMessage = {
+  type: "worktreeSetupRetry",
+  worktreeId: "w1",
+  retryId: "retry-1",
+};
+const viewSetupOutput: WorktreeSetupViewOutputMessage = {
+  type: "worktreeSetupViewOutput",
+  outputId: "output-1",
+};
+const retryWithScript: WorktreeSetupRetryMessage = {
+  type: "worktreeSetupRetry",
+  worktreeId: "w1",
+  retryId: "retry-1",
+  // @ts-expect-error retry carries no script text
+  script: "pnpm install",
+};
+const outputWithPath: WorktreeSetupViewOutputMessage = {
+  type: "worktreeSetupViewOutput",
+  outputId: "output-1",
+  // @ts-expect-error output reveal carries no terminal path
+  path: "/repo/output.log",
+};
 
 // Provisioning never says whether the create succeeded — that is the create's
 // own result, and this message arrives after it (worktree-apply.md § 1).
@@ -404,14 +476,22 @@ describe("the wire contract", () => {
     ]);
     expect(stepForDirectory.details).toHaveLength(1);
     expect(provisionResult.ports?.map((port) => port.outcome.kind)).toEqual(["allocated", "reused", "failed"]);
+    expect(provisionResult.setup?.map((step) => step.outcome.kind)).toEqual(["ok", "failed"]);
+    expect(setupOnlyUpdate.setup).toEqual([setupOk]);
+    expect([retrySetup.type, viewSetupOutput.type]).toEqual(["worktreeSetupRetry", "worktreeSetupViewOutput"]);
     expect(provisionResultInUnion.type).toBe("worktreeProvisionResult");
     expect([
       refusedNoReason,
       copiedWithReason,
       failedPortWithoutReason,
       portWithPath,
+      setupWithoutReason,
+      setupWithPath,
+      setupOnlyWithPorts,
+      retryWithScript,
+      outputWithPath,
       provisionResultWithVerdict,
-    ]).toHaveLength(5);
+    ]).toHaveLength(10);
     expect(save.kept).toHaveLength(2);
     expect(detectedProvider.present).toEqual([".worktreeinclude"]);
     expect(refusedSaveProblem.reason).toBe("unsaved");

@@ -46,12 +46,70 @@ const LINKED = path.join(TMP, "repo-wt", "feature");
 fs.mkdirSync(REPO, { recursive: true });
 fs.mkdirSync(LINKED, { recursive: true });
 
+const setupHarness = vi.hoisted(() => ({
+  runs: [] as Array<{ steps: readonly { id: string; source: string; script: string }[] }>,
+  outcomes: [] as Array<"ok" | "failed">,
+  wait: null as Promise<void> | null,
+  manifests: [] as unknown[][],
+  reveals: [] as Array<{ outputId: string; origin: string }>,
+  disposals: 0,
+  events: [] as string[],
+}));
+
+vi.mock("./worktree/provisioning/setupRunner", () => ({
+  runSetup: async (input: { steps: readonly { id: string; source: string; script: string }[] }) => {
+    setupHarness.runs.push(input);
+    setupHarness.events.push("run");
+    if (setupHarness.wait !== null) {
+      await setupHarness.wait;
+    }
+    const outcome = setupHarness.outcomes.shift() ?? "ok";
+    return {
+      succeeded: outcome === "ok",
+      steps: input.steps.map((step, index) => ({
+        ...step,
+        outcome:
+          outcome === "ok"
+            ? { kind: "ok" as const }
+            : index === 0
+              ? { kind: "failed" as const, reason: "exited with code 1" }
+              : { kind: "skipped" as const, reason: "previous setup step failed" },
+      })),
+    };
+  },
+}));
+
+vi.mock("./worktree/provisioning/setupTerminal", () => ({
+  SetupTerminal: class {
+    outputId(origin: string): string {
+      return `output-${setupHarness.runs.length}:${origin}`;
+    }
+    reveal(outputId: string, origin: string): boolean {
+      setupHarness.reveals.push({ outputId, origin });
+      return true;
+    }
+    dispose(): void {
+      setupHarness.disposals += 1;
+      setupHarness.events.push("dispose");
+    }
+  },
+}));
+
+vi.mock("./worktree/provisioning/provisionManifest", () => ({
+  writeProvisionManifest: async (...args: unknown[]) => {
+    setupHarness.manifests.push(args);
+    return {};
+  },
+}));
+
 /** Every git invocation the whole assembly made, in order. */
 let argv: { args: string[]; cwd: string; timeoutMs?: number }[] = [];
 
 /** What this fake repository currently has registered. `worktree remove` drops from it. */
 let registered: string[] = [];
 
+/** Set by a test whose fake `worktree add` must appear in the following rebuild. */
+let registerCreates = false;
 /** Set by a test that needs the linked worktree to render as locked. */
 let lockedRow = false;
 /**
@@ -190,6 +248,12 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
           // stops reporting the registration as stale. A fake that left the
           // flag up would make § 2.3 condition 4 unobservable either way.
           prunableRow = false;
+        }
+        if (registerCreates && args[0] === "worktree" && args[1] === "add") {
+          const created = args.find((arg) => path.isAbsolute(arg) && arg !== cwd);
+          if (created !== undefined) {
+            registered.push(created);
+          }
         }
         if (args[0] === "worktree" && args[1] === "remove") {
           // Real git drops the registration AND the directory; the host reads
@@ -529,6 +593,7 @@ beforeEach(() => {
   authorizedPaths.length = 0;
   provisioningAuthorizationStable = true;
   noStartableAgents = false;
+  registerCreates = false;
   lockedRow = false;
   prunableRow = false;
   listingFails = false;
@@ -542,6 +607,13 @@ beforeEach(() => {
   watchers = [];
   posted = [];
   outbound = [];
+  setupHarness.runs = [];
+  setupHarness.outcomes = [];
+  setupHarness.wait = null;
+  setupHarness.manifests = [];
+  setupHarness.reveals = [];
+  setupHarness.disposals = 0;
+  setupHarness.events = [];
   registered = [LINKED];
   featHead = "2".repeat(40);
   fs.mkdirSync(LINKED, { recursive: true });
@@ -1764,7 +1836,8 @@ describe("the invariants that span the host and the webview", () => {
       ?.click();
     await settleUntil(() => provisionResults.length > 0, "the failed provisioning result");
 
-    expect(provisionResults[0]?.steps[0]?.outcome.kind).toBe("failed");
+    const provision = provisionResults[0];
+    expect(provision?.steps?.[0]?.outcome.kind).toBe("failed");
     expect(fs.existsSync(path.join(destination, ".env"))).toBe(false);
   });
 
@@ -1839,14 +1912,16 @@ describe("the invariants that span the host and the webview", () => {
       () => provisionResults.length === 1 && createNotices().length > 0,
       "the create and provisioning results",
     );
+    await settleUntil(() => provisionResults.length > 0, "the create's provisioning result");
 
     // The file and port claim actually arrived, through the production bindings.
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
     expect(fs.readFileSync(path.join(destination, ".env.worktree"), "utf8")).toMatch(/^APP=[1-9][0-9]{0,4}\n$/);
     expect(provisionResults).toHaveLength(1);
-    expect(provisionResults[0]?.steps).toHaveLength(1);
-    expect(provisionResults[0]?.ports).toHaveLength(1);
-    expect(provisionResults[0]?.ports[0]?.outcome.kind).toBe("allocated");
+    const provision = provisionResults[0];
+    expect(provision?.steps).toHaveLength(1);
+    expect(provision?.ports).toHaveLength(1);
+    expect(provision?.ports?.[0]?.outcome.kind).toBe("allocated");
     expect(authorizedPaths).toContain(REPO);
     expect(authorizedPaths).toContain(LINKED);
     expect(authorizedPaths).toContain(destination);
@@ -1858,6 +1933,152 @@ describe("the invariants that span the host and the webview", () => {
     const notices = createNotices();
     expect(notices).toHaveLength(1);
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
+  });
+
+  it("runs the selected setup, exposes output, and retries setup only", async () => {
+    noProviderFiles();
+    registerCreates = true;
+    setupHarness.outcomes = ["failed", "ok"];
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "setup:\n  - pnpm install\n");
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => [...document.querySelectorAll(".wt-brow")].some((row) => (row.textContent ?? "").includes("Run setup")),
+      "the setup offer",
+    );
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.value = "feat/setup";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    const setupRow = [...document.querySelectorAll<HTMLElement>(".wt-brow")].find((row) =>
+      (row.textContent ?? "").includes("Run setup"),
+    );
+    const setupBox = setupRow?.querySelector<HTMLInputElement>(".wt-brow-cb");
+    if (setupBox === null || setupBox === undefined) {
+      throw new Error("the setup offer has no checkbox");
+    }
+    setupBox.checked = true;
+    setupBox.dispatchEvent(new Event("change", { bubbles: true }));
+    const after = document.querySelector<HTMLSelectElement>("#wt-after");
+    if (after === null) {
+      throw new Error("the create form has no after-create field");
+    }
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    const wait = document.querySelector<HTMLInputElement>("#wt-wait-setup");
+    if (wait === null || wait.disabled) {
+      throw new Error("the selected setup did not enable the wait control");
+    }
+    wait.checked = true;
+    wait.dispatchEvent(new Event("change", { bubbles: true }));
+    const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
+    fs.mkdirSync(destination, { recursive: true });
+
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => /create worktree/i.test(button.textContent ?? ""))
+      ?.click();
+    await settleUntil(
+      () =>
+        setupHarness.runs.length === 1 &&
+        [...document.querySelectorAll("button")].some((b) => b.textContent === "Retry setup"),
+      "the failed setup result",
+    );
+
+    expect(setupHarness.runs[0]?.steps.map((step) => step.script)).toEqual(["pnpm install"]);
+    expect(launched).toEqual([]);
+    expect(setupHarness.manifests).toHaveLength(1);
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "View output")?.click();
+    await settleUntil(() => setupHarness.reveals.length === 1, "the retained setup output");
+
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Retry setup")?.click();
+    await settleUntil(
+      () =>
+        setupHarness.runs.length === 2 &&
+        ![...document.querySelectorAll("button")].some((b) => b.textContent === "Retry setup"),
+      "the successful setup retry",
+    );
+
+    expect(setupHarness.manifests).toHaveLength(2);
+    expect(setupHarness.disposals).toBe(1);
+    expect(setupHarness.events).toEqual(["run", "dispose", "run"]);
+    expect(document.body.textContent ?? "").toContain("1 of 1 setup steps completed");
+    const setupMessages = outbound.filter(
+      (message) => message.type === "worktreeSetupRetry" || message.type === "worktreeSetupViewOutput",
+    );
+    expect(setupMessages).toHaveLength(2);
+    for (const message of setupMessages) {
+      expect(message).not.toHaveProperty("script");
+      expect(message).not.toHaveProperty("path");
+    }
+  });
+
+  it("starts an ungated agent while selected setup is still running", async () => {
+    noProviderFiles();
+    registerCreates = true;
+    let release!: () => void;
+    setupHarness.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "setup:\n  - pnpm install\n");
+    await assemble();
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => [...document.querySelectorAll(".wt-brow")].some((row) => (row.textContent ?? "").includes("Run setup")),
+      "the setup offer",
+    );
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    const after = document.querySelector<HTMLSelectElement>("#wt-after");
+    if (branch === null || after === null) {
+      throw new Error("the create form is missing its setup launch fields");
+    }
+    branch.value = "feat/ungated-setup";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    const setupBox = [...document.querySelectorAll<HTMLElement>(".wt-brow")]
+      .find((row) => (row.textContent ?? "").includes("Run setup"))
+      ?.querySelector<HTMLInputElement>(".wt-brow-cb");
+    if (setupBox === null || setupBox === undefined) {
+      throw new Error("the setup offer has no checkbox");
+    }
+    setupBox.checked = true;
+    setupBox.dispatchEvent(new Event("change", { bubbles: true }));
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
+    fs.mkdirSync(destination, { recursive: true });
+
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => /create worktree/i.test(button.textContent ?? ""))
+      ?.click();
+    await settleUntil(() => setupHarness.runs.length === 1, "setup to start");
+    expect(outbound.find((message) => message.type === "worktreeCreate")).toMatchObject({
+      afterCreate: { kind: "agent", waitForSetup: false },
+    });
+    expect(launched, "the ungated agent did not overlap setup").toHaveLength(1);
+    expect(document.body.textContent ?? "").not.toContain("1 of 1 setup steps completed");
+
+    release();
+    setupHarness.wait = null;
+    await settleUntil(
+      () => (document.body.textContent ?? "").includes("1 of 1 setup steps completed"),
+      "setup completion",
+    );
   });
 
   it("[8_1] refuses both contenders through one contest when the destination cannot be read", async () => {
@@ -1907,6 +2128,13 @@ describe("the invariants that span the host and the webview", () => {
       ?.click();
     await settleUntil(() => createNotices().length > 0, "the create to report something back to the panel");
     await settle();
+    await settleUntil(
+      () =>
+        [...document.querySelectorAll(".wt-notice")].some((notice) =>
+          (notice.textContent ?? "").includes("Create done."),
+        ),
+      "the create result",
+    );
 
     const created = createNotices();
     expect(created).toHaveLength(1);
@@ -2680,6 +2908,11 @@ describe("the invariants that span the host and the webview", () => {
     // Blocked on the dirty file only — an agent that is idle blocks nothing.
     clickItem(openMenu("feature"), /remove/i);
     await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
+    await settleUntil(
+      () =>
+        [...document.querySelectorAll<HTMLElement>("button")].some((b) => /force remove/i.test(b.textContent ?? "")),
+      "the blocked removal to offer Force remove",
+    );
     const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
       /force remove/i.test(b.textContent ?? ""),
     );

@@ -18,9 +18,12 @@ import type {
   ProvisionPort,
   ProvisionPortResult,
   ProvisionPortWarning,
+  ProvisionSetupResult,
+  ProvisionSetupStep,
   ProvisionStepResult,
   WorktreeAfterCreate,
   WorktreeCreateMode,
+  WorktreeProvisionResultMessage,
 } from "../types/messages";
 import type { AuthorizedDirectory } from "../utils/authorizedDirectory";
 import { normalizePathForCompare } from "../utils/pathBoundary";
@@ -110,6 +113,10 @@ export type MutationOutcome =
         steps: readonly ProvisionStepResult[];
         ports: readonly ProvisionPortResult[];
         portWarnings?: readonly ProvisionPortWarning[];
+        setup?: readonly ProvisionSetupResult[];
+        setupOutputId?: string;
+        setupRetryId?: string;
+        manifestWarning?: string;
       };
       /** The checkout exists, but migration could not establish where all source work ended up. */
       migrationIndeterminate?: string;
@@ -297,6 +304,24 @@ function declineReason(verdict: ReattachVerdict): string {
   return "That checkout has moved since it was inspected. Nothing was changed; please try again.";
 }
 
+export interface SetupExecutionInput {
+  readonly repoId: string;
+  readonly mainPath: string;
+  readonly worktreeId: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly steps: readonly ProvisionSetupStep[];
+  readonly asimovEnvironment: boolean;
+  readonly ports: Readonly<Record<string, number>>;
+  readonly authorization: AuthorizedDirectory;
+}
+
+export interface SetupExecutionOutcome {
+  readonly steps: readonly ProvisionSetupResult[];
+  readonly succeeded: boolean;
+  readonly outputId?: string;
+}
+
 export interface MutationServiceDeps {
   /**
    * Materialize the entries the host resolved, and answer per entry.
@@ -325,6 +350,19 @@ export interface MutationServiceDeps {
     ports: readonly ProvisionPort[];
     authorization: AuthorizedDirectory;
   }): Promise<{ ports: readonly ProvisionPortResult[]; warnings: readonly ProvisionPortWarning[] }>;
+  runSetup?(input: SetupExecutionInput, origin?: WorktreeSurface): Promise<SetupExecutionOutcome>;
+  writeProvisionManifest?(
+    worktreePath: string,
+    steps: readonly ProvisionStepResult[],
+    ports: readonly ProvisionPortResult[],
+    setup: readonly ProvisionSetupResult[],
+  ): Promise<{ readonly warning?: string }>;
+  /** Setup-only retries report without emitting another create mutation notice. */
+  reportProvisioning?(outcome: WorktreeProvisionResultMessage, origin?: WorktreeSurface): void;
+  /** Retire the prior output capability as soon as a valid retry spends its token. */
+  retireSetupOutput?(worktreeId: string): void;
+  /** Injectable so retry capabilities are deterministic in tests. */
+  newSetupRetryId?(): string;
 
   /**
    * The identity the TREE gives a worktree path — `WorktreeInfo.id`.
@@ -492,6 +530,8 @@ export type RemovalReport =
   | { kind: "unavailable"; unreadable: readonly string[] };
 
 export interface WorktreeMutationService extends WorktreeMutationCapabilities {
+  /** Spend one rotating capability to repeat setup only for the same live worktree. */
+  retrySetup(target: WorktreeMutationTarget, retryId: string): Promise<void>;
   /** Issue the confirmation token for what the user is about to be shown. */
   issueFingerprint(target: WorktreeMutationTarget, evidence: RemovalEvidence): string | null;
   /**
@@ -523,8 +563,28 @@ export interface WorktreeMutationService extends WorktreeMutationCapabilities {
   issueDebrisAuthorization(path: string): Promise<DebrisIssueResult>;
 }
 
+interface SetupRetryRecord {
+  readonly repoId: string;
+  readonly worktreeId: string;
+  readonly worktreePath: string;
+  readonly incarnation: string;
+  readonly mainPath: string;
+  readonly branch: string;
+  readonly steps: readonly ProvisionSetupStep[];
+  readonly asimovEnvironment: boolean;
+  readonly ports: Readonly<Record<string, number>>;
+  readonly authorization: AuthorizedDirectory;
+  readonly materialized: readonly ProvisionStepResult[];
+  readonly portResults: readonly ProvisionPortResult[];
+  retryId: string;
+}
+
+interface PendingSetupRetry extends Omit<SetupRetryRecord, "incarnation" | "retryId"> {}
+
 export function createWorktreeMutationService(deps: MutationServiceDeps): WorktreeMutationService {
   const fingerprints = deps.fingerprints ?? createFingerprintStore();
+  const setupRetries = new Map<string, SetupRetryRecord>();
+  const newSetupRetryId = deps.newSetupRetryId ?? (() => crypto.randomUUID());
   const debrisAuthorizations = deps.debrisAuthorizations ?? createDebrisAuthorizationStore();
   // The module's own, not deps assembled from `pathDeps`: the boundary's
   // ordering rule holds only while every probe is synchronous, and the async
@@ -536,6 +596,55 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
       queue: createMutationQueue(),
       gate: { request: async (repoId) => void (await deps.forceRebuild(repoId)) },
     });
+
+  const retryKey = (repoId: string, worktreeId: string): string => JSON.stringify([repoId, worktreeId]);
+
+  const failedSetup = (steps: readonly ProvisionSetupStep[], reason: string): readonly ProvisionSetupResult[] =>
+    steps.map((step, index) => ({
+      id: step.id,
+      source: step.source,
+      script: step.script,
+      outcome:
+        index === 0
+          ? { kind: "failed" as const, reason }
+          : { kind: "skipped" as const, reason: "previous setup step failed" },
+    }));
+
+  const portEnvironment = (ports: readonly ProvisionPortResult[]): Readonly<Record<string, number>> => {
+    const environment: Record<string, number> = Object.create(null);
+    for (const port of ports) {
+      if (port.outcome.kind === "allocated" || port.outcome.kind === "reused") {
+        environment[port.name] = port.outcome.port;
+      }
+    }
+    return environment;
+  };
+
+  const executeSetup = async (input: SetupExecutionInput, origin?: WorktreeSurface): Promise<SetupExecutionOutcome> => {
+    if (deps.runSetup === undefined) {
+      return { steps: failedSetup(input.steps, "this window cannot run setup"), succeeded: false };
+    }
+    return deps.runSetup(input, origin).catch((error: unknown) => ({
+      steps: failedSetup(input.steps, messageOf(error)),
+      succeeded: false,
+    }));
+  };
+
+  const writeManifest = async (
+    worktreePath: string,
+    steps: readonly ProvisionStepResult[],
+    ports: readonly ProvisionPortResult[],
+    setup: readonly ProvisionSetupResult[],
+  ): Promise<string | undefined> => {
+    if (deps.writeProvisionManifest === undefined) {
+      return undefined;
+    }
+    try {
+      return (await deps.writeProvisionManifest(worktreePath, steps, ports, setup)).warning;
+    } catch (error) {
+      return `the provisioning manifest could not be written: ${messageOf(error)}`;
+    }
+  };
 
   /**
    * Run `body` against whatever `target` names AFTER the rebuild.
@@ -618,6 +727,94 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           fingerprints.forget(worktreeId);
         }
       }
+      for (const [key, retry] of setupRetries) {
+        if (!present.has(retry.worktreeId)) {
+          setupRetries.delete(key);
+        }
+      }
+    },
+
+    retrySetup(target, retryId) {
+      const key = retryKey(target.repoId, target.worktreeId);
+      const held = setupRetries.get(key);
+      if (held === undefined || held.retryId !== retryId) {
+        return Promise.resolve();
+      }
+      // Spend before queueing, so a double click cannot enqueue the same authority twice.
+      held.retryId = newSetupRetryId();
+      deps.retireSetupOutput?.(held.worktreeId);
+      return coordinator
+        .run<ResolvedTarget, WorktreeProvisionResultMessage | null>(target.repoId, {
+          resolve: async () => deps.resolve(target),
+          missing: async () => null,
+          body: async (resolved) => {
+            if (
+              resolved.incarnation !== held.incarnation ||
+              normalizePathForCompare(resolved.worktreePath) !== normalizePathForCompare(held.worktreePath)
+            ) {
+              return null;
+            }
+            const setup = await executeSetup(
+              {
+                repoId: held.repoId,
+                mainPath: held.mainPath,
+                worktreeId: held.worktreeId,
+                worktreePath: held.worktreePath,
+                branch: held.branch,
+                steps: held.steps,
+                asimovEnvironment: held.asimovEnvironment,
+                ports: held.ports,
+                authorization: held.authorization,
+              },
+              target.origin,
+            );
+            const manifestWarning = await writeManifest(
+              held.worktreePath,
+              held.materialized,
+              held.portResults,
+              setup.steps,
+            );
+            if (setup.succeeded) {
+              setupRetries.delete(key);
+            }
+            return {
+              type: "worktreeProvisionResult",
+              worktreeId: held.worktreeId,
+              setup: setup.steps,
+              ...(setup.outputId === undefined ? {} : { setupOutputId: setup.outputId }),
+              ...(setup.succeeded ? {} : { setupRetryId: held.retryId }),
+              ...(manifestWarning === undefined ? {} : { manifestWarning }),
+            };
+          },
+        })
+        .then(
+          (outcome) => {
+            if (outcome === null) {
+              setupRetries.delete(key);
+              deps.reportProvisioning?.(
+                {
+                  type: "worktreeProvisionResult",
+                  worktreeId: held.worktreeId,
+                  setup: failedSetup(held.steps, "the worktree identity changed before setup retry"),
+                },
+                target.origin,
+              );
+              return;
+            }
+            deps.reportProvisioning?.(outcome, target.origin);
+          },
+          (error: unknown) => {
+            setupRetries.delete(key);
+            deps.reportProvisioning?.(
+              {
+                type: "worktreeProvisionResult",
+                worktreeId: held.worktreeId,
+                setup: failedSetup(held.steps, messageOf(error)),
+              },
+              target.origin,
+            );
+          },
+        );
     },
 
     issueFingerprint(target, evidence) {
@@ -1157,6 +1354,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
         return;
       }
 
+      let pendingSetupRetry: PendingSetupRetry | undefined;
       return coordinator
         .run<string, MutationOutcome>(request.repoId, {
           resolve: async () => deps.repoPath(request.repoId),
@@ -1261,6 +1459,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             const wanted = request.provision ?? [];
             const wantedPorts = request.ports ?? [];
+            const wantedSetup = request.setup ?? [];
             const migrationIndeterminate = async (reason: string): Promise<MutationOutcome> => ({
               kind: "ok",
               verb: "create",
@@ -1346,11 +1545,13 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             }
             let sourceAuthorization: AuthorizedDirectory | undefined;
             let destinationAuthorization: AuthorizedDirectory | undefined;
-            if (wanted.length > 0 || wantedPorts.length > 0) {
+            if (wanted.length > 0) {
               [sourceAuthorization, destinationAuthorization] = await Promise.all([
                 deps.authorizeDirectory(repoPath).catch(() => undefined),
                 deps.authorizeDirectory(check.path).catch(() => undefined),
               ]);
+            } else {
+              destinationAuthorization = await deps.authorizeDirectory(check.path).catch(() => undefined);
             }
             // BEFORE afterCreate, which launches an agent or a terminal INTO
             // this worktree: the whole point of copying `.env` is that whatever
@@ -1362,11 +1563,10 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             // attack found by reading that arm rather than this line.
             let provisioned: readonly ProvisionStepResult[] | undefined;
             let allocatedPorts: readonly ProvisionPortResult[] | undefined;
+            let setupOutcome: SetupExecutionOutcome | undefined;
             let portWarnings: readonly ProvisionPortWarning[] = [];
-            let provisionedAt =
-              request.migration === undefined
-                ? undefined
-                : ((await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path);
+            let manifestWarning: string | undefined;
+            let provisionedAt: string | undefined;
             if (wanted.length > 0) {
               const failed = (reason: string): readonly ProvisionStepResult[] =>
                 wanted.map((entry) => ({
@@ -1419,22 +1619,71 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               allocatedPorts = applied.ports;
               portWarnings = applied.warnings;
             }
-            if (provisionedAt === undefined && (provisioned !== undefined || allocatedPorts !== undefined)) {
-              // The id the tree will key this worktree on, not the path git was
-              // handed — a result message whose `worktreeId` is only USUALLY
-              // the one consumers hold is a latent mismatch (round-1 F015).
-              //
-              // Inside the guard and inside its own catch: it was the one
-              // unguarded await left in the body D1 exists to protect, and it
-              // ran on reattaches that provision nothing (round-2 F023).
-              provisionedAt = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
+            // Every fresh create owns a manifest, including a truthful empty one.
+            // Use the id the tree will key this worktree on, not the path git was handed.
+            provisionedAt = (await deps.normalizeWorktreeId?.(check.path).catch(() => null)) ?? check.path;
+
+            const launch = async (): Promise<void> => {
+              await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
+                const reason = messageOf(error);
+                openFailure = request.afterCreate.kind === "agent" ? `Agent did not start: ${reason}` : reason;
+              });
+            };
+
+            if (wantedSetup.length > 0) {
+              const run =
+                destinationAuthorization !== undefined && provisionedAt !== undefined
+                  ? executeSetup(
+                      {
+                        repoId: request.repoId,
+                        mainPath: repoPath,
+                        worktreeId: provisionedAt,
+                        worktreePath: check.path,
+                        branch: setupBranch(request.mode),
+                        steps: wantedSetup,
+                        asimovEnvironment: request.asimovEnvironment ?? false,
+                        ports: portEnvironment(allocatedPorts ?? []),
+                        authorization: destinationAuthorization,
+                      },
+                      request.origin,
+                    )
+                  : Promise.resolve({
+                      steps: failedSetup(wantedSetup, "the worktree identity could not be verified after creation"),
+                      succeeded: false,
+                    });
+              if (request.afterCreate.kind === "agent" && request.afterCreate.waitForSetup) {
+                setupOutcome = await run;
+                if (setupOutcome.succeeded) {
+                  await launch();
+                }
+              } else {
+                const launchPromise = launch();
+                setupOutcome = await run;
+                await launchPromise;
+              }
+            } else {
+              await launch();
             }
-            // The worktree is already made. Whatever this rejects with, it
-            // reports as a launch that did not happen — it never unmakes it.
-            await deps.afterCreate(check.path, request.afterCreate, request.origin).catch((error: unknown) => {
-              const reason = messageOf(error);
-              openFailure = request.afterCreate.kind === "agent" ? `Agent did not start: ${reason}` : reason;
-            });
+
+            const setupResults = setupOutcome?.steps ?? [];
+            if (provisionedAt !== undefined) {
+              manifestWarning = await writeManifest(check.path, provisioned ?? [], allocatedPorts ?? [], setupResults);
+              if (!setupOutcome?.succeeded && destinationAuthorization !== undefined && wantedSetup.length > 0) {
+                pendingSetupRetry = {
+                  repoId: request.repoId,
+                  worktreeId: provisionedAt,
+                  worktreePath: check.path,
+                  mainPath: repoPath,
+                  branch: setupBranch(request.mode),
+                  steps: wantedSetup,
+                  asimovEnvironment: request.asimovEnvironment ?? false,
+                  ports: portEnvironment(allocatedPorts ?? []),
+                  authorization: destinationAuthorization,
+                  materialized: provisioned ?? [],
+                  portResults: allocatedPorts ?? [],
+                };
+              }
+            }
             return {
               kind: "ok",
               verb: "create",
@@ -1447,15 +1696,18 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               // create notice carried no `worktreeId` at all, so the merge key
               // the provisioning message arrives under matched nothing and every
               // real create grew a second, invented notice (round-2 F017).
-              ...(provisionedAt === undefined ? {} : { worktreeId: provisionedAt }),
-              ...(provisioned === undefined && allocatedPorts === undefined
+              ...(provisionedAt === undefined
                 ? {}
                 : {
+                    worktreeId: provisionedAt,
                     provision: {
-                      path: provisionedAt ?? check.path,
+                      path: provisionedAt,
                       steps: provisioned ?? [],
                       ports: allocatedPorts ?? [],
                       ...(portWarnings.length === 0 ? {} : { portWarnings }),
+                      ...(setupOutcome === undefined ? {} : { setup: setupOutcome.steps }),
+                      ...(setupOutcome?.outputId === undefined ? {} : { setupOutputId: setupOutcome.outputId }),
+                      ...(manifestWarning === undefined ? {} : { manifestWarning }),
                     },
                   }),
               // Only a SURFACE can open a terminal — it needs a view id and a
@@ -1465,7 +1717,26 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
           },
         })
         .then(
-          (outcome) => deps.report(outcome, request.origin),
+          (outcome) => {
+            let reported = outcome;
+            if (outcome.kind === "ok" && outcome.worktreeId !== undefined && outcome.provision !== undefined) {
+              const key = retryKey(request.repoId, outcome.worktreeId);
+              setupRetries.delete(key);
+              if (pendingSetupRetry !== undefined) {
+                const current = deps.resolve({ repoId: request.repoId, worktreeId: outcome.worktreeId });
+                if (
+                  current !== null &&
+                  normalizePathForCompare(current.worktreePath) ===
+                    normalizePathForCompare(pendingSetupRetry.worktreePath)
+                ) {
+                  const retryId = newSetupRetryId();
+                  setupRetries.set(key, { ...pendingSetupRetry, incarnation: current.incarnation, retryId });
+                  reported = { ...outcome, provision: { ...outcome.provision, setupRetryId: retryId } };
+                }
+              }
+            }
+            deps.report(reported, request.origin);
+          },
           (error: unknown) => deps.report(fail(messageOf(error)), request.origin),
         );
     },
@@ -1516,6 +1787,20 @@ function asOutcome(verb: MutationVerb, repoId: string, outcome: RemovalOutcome):
  */
 function branchOf(mode: WorktreeCreateMode): string | undefined {
   return mode.kind === "fresh" ? mode.branch : undefined;
+}
+
+function setupBranch(mode: WorktreeCreateMode): string {
+  switch (mode.kind) {
+    case "fresh":
+    case "reuse":
+      return mode.branch;
+    case "fresh-detached":
+      return mode.baseRef;
+    case "reattach":
+      return mode.branch;
+    case "adopt":
+      return mode.branch;
+  }
 }
 
 /**

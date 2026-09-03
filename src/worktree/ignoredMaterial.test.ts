@@ -7,6 +7,7 @@ import {
   MAX_IGNORED_MS,
   measureIgnoredMaterial,
 } from "./ignoredMaterial";
+import { deriveProvisionManifest } from "./provisioning/provisionManifest";
 
 /**
  * A fake worktree's ignored content. `sizes` maps a worktree-relative path to
@@ -239,6 +240,64 @@ describe("naming what this extension provisioned", () => {
     const result = await measureIgnoredMaterial(deps);
 
     expect(result).toEqual({ kind: "unproven", reason: "budget" });
+  });
+});
+
+describe("degrading against the writer's own manifest", () => {
+  /** A walk of two entries, with whatever manifest text the case supplies. */
+  function withManifest(text: string | undefined): IgnoredMaterialDeps {
+    return {
+      ...fs({ entries: ["node_modules/", ".env.worktree"], sizes: { "node_modules/": 40, ".env.worktree": 2 } }),
+      readManifest: async () => {
+        if (text === undefined) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        return text;
+      },
+    };
+  }
+
+  it("names what deriveProvisionManifest actually wrote, not a shape this test invented", async () => {
+    // The producer and this consumer are proved compatible directly: the exact
+    // text `provisionManifest.ts` would stage is what is fed back in, so a
+    // field the writer stops naming — or the reader stops recognising — fails
+    // here rather than only in a shape this suite guessed at by hand.
+    const manifest = deriveProvisionManifest(
+      [
+        { id: "e1", path: ".env.worktree", outcome: { kind: "copied" } },
+        { id: "e2", path: "node_modules", outcome: { kind: "linked" } },
+        { id: "e3", path: "skipped-already-there", outcome: { kind: "skipped", reason: "already present" } },
+      ],
+      [{ id: "p1", name: "APP_PORT", outcome: { kind: "allocated", port: 4001 } }],
+      [{ id: "s1", source: "package.json", script: "npm ci", outcome: { kind: "ok" } }],
+      0,
+    );
+
+    const result = await measureIgnoredMaterial(withManifest(JSON.stringify(manifest)));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42, provisioned: { entries: 2 } });
+  });
+
+  it("degrades to the undifferentiated fallback when the writer never ran for this worktree", async () => {
+    // A create whose provisioning never reached the manifest write — refused
+    // administrative directory, unavailable lock, failed replace — leaves
+    // nothing at the manifest's path. `readManifest` reports that as a throw,
+    // matching what `diskIgnoredDeps` does for an absent file.
+    const result = await measureIgnoredMaterial(withManifest(undefined));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42 });
+  });
+
+  it("degrades to the undifferentiated fallback for a manifest the writer could only half stage", async () => {
+    // `LockedFile.atomicReplace` either lands a whole rename or none at all, so
+    // this is not a partial write in production — it stands in for a manifest
+    // damaged after the fact, and the reader owes it the same "we did not
+    // differentiate" answer as one that was never written.
+    const truncated = JSON.stringify(deriveProvisionManifest([], [], [], 0)).slice(0, 10);
+
+    const result = await measureIgnoredMaterial(withManifest(truncated));
+
+    expect(result).toEqual({ kind: "measured", entries: 2, bytes: 42 });
   });
 });
 

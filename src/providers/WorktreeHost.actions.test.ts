@@ -281,6 +281,8 @@ function recordingActions(assessReport?: AssessReport | (() => Promise<AssessRep
     revealSessionCwd: track("revealSessionCwd") as WorktreeActions["revealSessionCwd"],
     copySessionCwd: track("copySessionCwd") as WorktreeActions["copySessionCwd"],
     createWorktree: track("createWorktree") as NonNullable<WorktreeActions["createWorktree"]>,
+    retrySetup: track("retrySetup") as NonNullable<WorktreeActions["retrySetup"]>,
+    viewSetupOutput: track("viewSetupOutput") as NonNullable<WorktreeActions["viewSetupOutput"]>,
     removeWorktree: track("removeWorktree") as NonNullable<WorktreeActions["removeWorktree"]>,
     // Recorded like any other capability, so a test can assert the removal was
     // NOT what an assess reached.
@@ -6809,6 +6811,74 @@ describe("assessment traffic is bounded by one job per repository", () => {
   });
 });
 
+describe("setup capabilities resolve only host-held identities", () => {
+  it("routes a retry only for a worktree the current tree still names", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    host.handleMessage(view, { type: "worktreeSetupRetry", worktreeId: FEAT_PATH, retryId: "retry-1" });
+    host.handleMessage(view, { type: "worktreeSetupRetry", worktreeId: "/not/a/worktree", retryId: "retry-2" });
+    await settle();
+
+    expect(calls).toEqual([["retrySetup", { repoId: REPO, worktreeId: FEAT_PATH, origin: view }, "retry-1"]]);
+    dispose();
+  });
+
+  it("does not retry a row that disappeared after the offer was shown", async () => {
+    const { host, view, calls, vanish, dispose } = await builtHost();
+    await vanish();
+    host.handleMessage(view, { type: "worktreeSetupRetry", worktreeId: FEAT_PATH, retryId: "retry-1" });
+    await settle();
+
+    expect(calls).toEqual([]);
+    dispose();
+  });
+
+  it("refuses malformed opaque setup capabilities", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    for (const message of [
+      { type: "worktreeSetupRetry", worktreeId: FEAT_PATH, retryId: "", extra: true },
+      { type: "worktreeSetupRetry", worktreeId: FEAT_PATH, retryId: 1 },
+      { type: "worktreeSetupViewOutput", outputId: "", extra: true },
+      { type: "worktreeSetupViewOutput", outputId: 1 },
+    ]) {
+      host.handleMessage(view, message as never);
+    }
+    await settle();
+
+    expect(calls).toEqual([]);
+    dispose();
+  });
+
+  it("binds output reveal to the surface that requested it", async () => {
+    const { host, view, calls, dispose } = await builtHost();
+    const other = surface();
+    host.attach(other).setDisplayed(true);
+    host.handleMessage(other, { type: "worktreeSetupViewOutput", outputId: "output-1" });
+    await settle();
+
+    expect(calls).toEqual([["viewSetupOutput", "output-1", other]]);
+    expect(view.posts).toEqual([]);
+    dispose();
+  });
+
+  it("reports a retry provisioning update without a second mutation result", async () => {
+    const { host, view, dispose } = await builtHost();
+    host.reportProvisioning?.(view, {
+      type: "worktreeProvisionResult",
+      worktreeId: FEAT_PATH,
+      setup: [{ id: "setup-1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "ok" } }],
+    });
+
+    expect(view.posts).toEqual([
+      {
+        type: "worktreeProvisionResult",
+        worktreeId: FEAT_PATH,
+        setup: [{ id: "setup-1", source: "asimov/worktree.yaml", script: "pnpm install", outcome: { kind: "ok" } }],
+      },
+    ]);
+    dispose();
+  });
+});
+
 describe("the provisioning a create is actually given", () => {
   const REQ = {
     type: "worktreeCreate",
@@ -6947,6 +7017,72 @@ describe("the provisioning a create is actually given", () => {
     expect(new Set(offer.model.ports.map((item) => item.id)).size).toBe(2);
     expect(request?.provision).toEqual([offer.model.entries[0]]);
     expect(request?.ports).toEqual([offer.model.ports[1]]);
+    built.dispose();
+  });
+
+  it("redeems only selected setup from the current offer and derives active asimov inheritance", async () => {
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      setup: [
+        { id: "setup-a", kind: "shell", script: "pnpm install", source: "asimov/worktree.yaml" },
+        { id: "setup-b", kind: "shell", script: "pnpm build", source: "asimov/worktree.yaml" },
+      ],
+      ports: [{ id: "port-a", name: "APP", source: "asimov/worktree.yaml", port: 5183 }],
+      providers: [
+        { id: "native", files: [".vscode/worktree.json"], present: [".vscode/worktree.json"], active: true },
+        { id: "asimov", files: ["asimov/worktree.yaml"], present: ["asimov/worktree.yaml"], active: true },
+      ],
+    };
+    const built = await builtHost(undefined, false, { readProvisioning: async () => model });
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    if (offer?.type !== "worktreeProvisionOffer") {
+      throw new Error("expected provisioning offer");
+    }
+
+    built.host.handleMessage(built.view, {
+      ...REQ,
+      provision: {
+        offerId: offer.offerId,
+        itemIds: [offer.model.entries[0]?.id ?? "", offer.model.ports[0]?.id ?? "", offer.model.setup[0]?.id ?? ""],
+      },
+    } as Parameters<typeof built.host.handleMessage>[1]);
+    await settle();
+
+    expect(creates(built.calls)[0]?.[1]).toMatchObject({
+      provision: [offer.model.entries[0]],
+      ports: [offer.model.ports[0]],
+      setup: [offer.model.setup[0]],
+      asimovEnvironment: true,
+    });
+    built.dispose();
+  });
+
+  it("does not hand a setup step over when it was unselected or forged", async () => {
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      setup: [{ id: "setup-a", kind: "shell", script: "pnpm install", source: "asimov/worktree.yaml" }],
+    };
+    const built = await builtHost(undefined, false, { readProvisioning: async () => model });
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    if (offer?.type !== "worktreeProvisionOffer") {
+      throw new Error("expected provisioning offer");
+    }
+
+    built.host.handleMessage(built.view, {
+      ...REQ,
+      provision: { offerId: offer.offerId, itemIds: ["forged-setup-id"] },
+    });
+    await settle();
+
+    expect(creates(built.calls)[0]?.[1]).toMatchObject({ setup: [] });
     built.dispose();
   });
 

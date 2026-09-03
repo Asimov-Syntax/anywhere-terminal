@@ -25,6 +25,7 @@ import type {
   ProvisionPortResult,
   ProvisionPortWarning,
   ProvisionResultContest,
+  ProvisionSetupResult,
   ProvisionStepResult,
   PullRequestOffer,
   RemovalCheck,
@@ -176,6 +177,10 @@ export interface WorktreeActionResult {
    * N² (`carry-a-contest-membership-once`).
    */
   provisionContests?: readonly ProvisionResultContest[];
+  setup?: readonly ProvisionSetupResult[];
+  setupOutputId?: string;
+  setupRetryId?: string;
+  manifestWarning?: string;
 }
 
 /**
@@ -344,6 +349,15 @@ export interface WorktreeCreateDraft {
   provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
   /** Present only when the user checked the current move offer. */
   migrateChanges?: { readonly offerId: string };
+  /**
+   * Off by default: wait for every selected setup step to succeed before
+   * starting the agent, rather than starting it alongside setup.
+   *
+   * Set only while the form is offering an agent launch — the control that
+   * writes this is rendered beside the agent controls and disabled whenever
+   * the current selection has no setup step ticked (design.md D6, D3).
+   */
+  waitForSetup?: boolean;
 }
 
 /** Re-exported so the view reads one module for the shapes it renders. */
