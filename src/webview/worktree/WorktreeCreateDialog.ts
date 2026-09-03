@@ -1142,6 +1142,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   forkNote.className = "wt-dest-note";
   forkNote.id = "wt-fork-note";
   forkNote.hidden = true;
+  /**
+   * What an adoption cannot restore, stated before it is authorized (D8).
+   *
+   * A fixed list rather than a probe result: the directory that held the
+   * evidence is exactly what was deleted, so none of the five can be checked
+   * after the fact — and a check that cannot fail is worse than a stated
+   * limitation (worktree-create.md § 2.4).
+   */
+  const adoptLosses = document.createElement("p");
+  adoptLosses.className = "wt-fhint";
+  adoptLosses.id = "wt-adopt-losses";
+  adoptLosses.hidden = true;
   const recoverField = document.createElement("div");
   recoverField.className = "wt-recover";
   recoverField.id = "wt-recover";
@@ -1160,7 +1172,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   recoverNote.id = "wt-recover-note";
   recoverNote.hidden = true;
   recoverField.append(recoverLabel, recoverNote);
-  destWrap.append(dest, destNote, actionNote, forkNote, recoverField);
+  destWrap.append(dest, destNote, actionNote, forkNote, adoptLosses, recoverField);
   shell.dialog.appendChild(destWrap);
   /** The exact path the line is currently shortening; read on every show. */
   let destExact = "";
@@ -1824,7 +1836,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // proxy for it, and the two coincide whenever a stale registration's own
     // path is also the first free candidate — which armed a clearance the
     // service's repair branch never performs (round-1 B7).
-    if (draft.branchMode !== "detached" && effective.mode.kind === "reattach") {
+    // Adopt joins `reattach`, and more strongly: a repair's skipped candidate is
+    // merely a directory this create never touches, while an adoption's IS the
+    // directory being re-registered — so the offer would be to delete the work.
+    if (draft.branchMode !== "detached" && (effective.mode.kind === "reattach" || effective.mode.kind === "adopt")) {
       return null;
     }
     return targetOf(effective) === effective.freePath ? occupied.path : null;
@@ -1912,7 +1927,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // the classification is discarded (D5), so a repair path it named is not a
     // directory this create will ever act on.
     const mode = resolution.mode;
-    return mode.kind === "reattach" && draft.branchMode !== "detached" ? mode.repairPath : resolution.freePath;
+    if (draft.branchMode === "detached") {
+      return resolution.freePath;
+    }
+    if (mode.kind === "reattach") {
+      return mode.repairPath;
+    }
+    // An adoption's own directory, on the same rule: `freePath` is the suffix
+    // the create would have taken INSTEAD, and stating it beside the checkout
+    // being re-registered describes a directory this create never touches.
+    return mode.kind === "adopt" ? mode.adoptPath : resolution.freePath;
   }
 
   /** Ask the host what this selection would do, at most once each. */
@@ -2021,7 +2045,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     fresh: "Creates a new branch here.",
     reuse: "Checks out the branch that already exists.",
     reattach: "Repairs the stale registration of the checkout already on disk.",
-    adopt: "That checkout's administrative entry is gone, so a new worktree is created instead.",
+    adopt: "Re-registers the checkout already on disk, whose administrative entry is gone.",
   };
 
   /**
@@ -2033,6 +2057,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     detached: undefined,
     existing: undefined,
     reattach: "This repairs a checkout that is already on disk, so it keeps the directory it is in.",
+    adopt: "This re-registers a checkout that is already on disk, so it keeps the directory it is in.",
   };
 
   const BASE_REFUSED_BY: Record<WorktreeBranchMode, string | undefined> = {
@@ -2040,6 +2065,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     detached: undefined,
     existing: "This branch already exists, so it starts where it already is.",
     reattach: "This repairs a checkout that is already on disk, so it keeps the commit it is on.",
+    adopt: "This re-registers a checkout that is already on disk, so it keeps the commit it is on.",
   };
 
   /** The wire mode a choice means. `detached` is the toggle's and never a row's. */
@@ -2313,6 +2339,15 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     actionNote.hidden = actionText === undefined;
     actionNote.textContent = actionText ?? "";
     actionNote.classList.toggle("wt-dest-note--error", baseUnresolvable);
+    // Named here rather than only in a confirmation step, so the losses are on
+    // screen while the create can still be abandoned — the rule the fork note
+    // beside it already follows (§ 5).
+    const adopting = !detached && effective?.mode.kind === "adopt" ? effective.mode : undefined;
+    adoptLosses.hidden = adopting === undefined;
+    adoptLosses.textContent =
+      adopting === undefined
+        ? ""
+        : `Re-registers ${adopting.adoptPath} on ${nameInput.value.trim()}. These did not survive and are not recovered: staged changes; an in-progress rebase, merge, bisect or cherry-pick; the worktree's own refs and reflog; its per-worktree configuration; its locked state.`;
     // Said, rather than left to look complete: a capped list presented as the
     // repository's whole set is the one claim this control must not make. Both
     // lists are capped independently, and the pull requests were silent about it
@@ -2674,9 +2709,6 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (resolution.query.trim() !== (detached ? baseInput.value : nameInput.value).trim()) {
       return;
     }
-    // `adopt` is reported so the resolver can name the state it found; the form
-    // does not offer it, and WT-012.15 is where it becomes an action. Until
-    // then it behaves as the fresh it falls back to.
     // Every mode, not only `reattach`. Dropping the others left `fresh`,
     // `reuse` and `adopt` on whatever the local text derivation last guessed,
     // so a declined corroboration kept the form armed for a repair the host had
@@ -2701,10 +2733,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       case "reuse":
         draft.branchMode = "existing";
         break;
-      // `adopt` is reported so the resolver can name the state it found; the
-      // form does not offer it, and WT-012.15 is where it becomes an action.
-      // Until then it behaves as the fresh it falls back to.
       case "adopt":
+        draft.branchMode = "adopt";
+        break;
       case "fresh":
         draft.branchMode = "new";
         break;

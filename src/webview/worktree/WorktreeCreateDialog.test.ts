@@ -3061,6 +3061,109 @@ describe("the base ref states when it cannot apply", () => {
     expect(h.note().textContent).toContain("already on disk");
   });
 
+  // ── Adopting a checkout git has forgotten (design.md D6, D8) ─────────────
+
+  const ADOPT = {
+    kind: "adopt" as const,
+    adoptPath: "/trees/repo-feat-search",
+    expectedBranchOid: "oid-feat",
+  };
+
+  it("refuses the base ref for an adoption, with its own reason", () => {
+    // It used to CREATE one instead: the form had no adopt action and fell back
+    // to a fresh create, which is the fallback this task removes.
+    const h = withResolution();
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    expect(h.base().disabled).toBe(true);
+    expect(h.note().hidden).toBe(false);
+    expect(h.note().textContent).toContain("already on disk");
+  });
+
+  it("refuses the destination for an adoption, which keeps the directory it is adopting", () => {
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    const path = h.q<HTMLInputElement>("#wt-path");
+    expect(path.disabled).toBe(true);
+    // The directory being adopted, never the free suffix beside it: that path
+    // is one this create will never touch (round-3 B3, for the same reason).
+    expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/repo-feat-search");
+  });
+
+  it("states what an adoption does, rather than that a new worktree is created instead", () => {
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    const said = h.action().textContent ?? "";
+    expect(h.action().hidden).toBe(false);
+    expect(said).not.toContain("a new worktree is created instead");
+    expect(said.toLowerCase()).toContain("re-register");
+  });
+
+  it("names every loss before the adoption is authorized, as a stated list", () => {
+    // D8: none of the five can be probed after the fact — the directory that
+    // held the evidence is what was deleted — so they are declared. A check
+    // that cannot fail would be worse than a stated limitation.
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    const losses = h.q<HTMLElement>("#wt-adopt-losses");
+    expect(losses.hidden).toBe(false);
+    const said = (losses.textContent ?? "").toLowerCase();
+    expect(said).toContain("/trees/repo-feat-search");
+    expect(said).toContain("feat/search");
+    for (const lost of ["staged", "rebase", "reflog", "configuration", "lock"]) {
+      expect(said, `the offer did not name ${lost}`).toContain(lost);
+    }
+  });
+
+  it("says nothing about losses where nothing is being adopted", () => {
+    // The arm check: the block is hidden for every other mode, so the test
+    // above is about adopt and not about a block that is always on screen.
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: { kind: "reattach", repairPath: "/trees/stale", expectedOid: "abc" } });
+
+    expect(h.q<HTMLElement>("#wt-adopt-losses").hidden).toBe(true);
+  });
+
+  it("submits the adoption the resolution named, with the tip it promised", () => {
+    const submitted: WorktreeCreateDraft[] = [];
+    const h = withResolution({ onSubmit: (d) => submitted.push(d), onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    primary(h.host).click();
+    expect(submitted[0]?.path).toBe("/trees/repo-feat-search");
+    // The classification travels, so the owner builds the request from the
+    // answer this form was showing rather than from a second copy of it.
+    expect(submitted[0]?.resolved).toEqual(ADOPT);
+    expect(submitted[0]?.branchMode).toBe("adopt");
+  });
+
+  it("offers no clearance for the directory it is adopting", () => {
+    // The skipped candidate under an adoption IS the directory being adopted,
+    // so an offer to clear it would offer to delete the work being re-registered.
+    const h = withResolution({
+      onSelectionChange: () => {},
+      onAuthorizeDebris: () => {},
+      bindDebrisAuthorization: () => {},
+    });
+    settleBranch(h, "feat/search");
+    h.resolve({
+      mode: ADOPT,
+      freePath: "/trees/repo-feat-search-2",
+      occupiedCandidate: { path: "/trees/repo-feat-search", disposition: { kind: "debris" } },
+    });
+
+    expect(h.q<HTMLElement>("#wt-recover").hidden).toBe(true);
+  });
+
   it("keeps the base ref for a detached create, which is the one that needs it", () => {
     const h = withResolution();
     h.q<HTMLButtonElement>("#wt-detached").click();

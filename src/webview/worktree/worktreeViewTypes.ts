@@ -284,7 +284,7 @@ export interface WorktreeLaunchAgent {
  * base ref cannot apply to it — and the create it submits is a repair rather
  * than a `git worktree add`, which is a different thing to say on the wire.
  */
-export type WorktreeBranchMode = "new" | "existing" | "detached" | "reattach";
+export type WorktreeBranchMode = "new" | "existing" | "detached" | "reattach" | "adopt";
 
 export type WorktreeOpenAfter = "none" | "terminal" | "agent" | "newWindow" | "addToWorkspace";
 

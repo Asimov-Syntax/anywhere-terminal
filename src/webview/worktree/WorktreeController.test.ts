@@ -1038,6 +1038,27 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
   });
 
+  it("submits an adoption the resolution corroborated, not a checkout somewhere else", () => {
+    // Without this arm the fallback below catches adopt too, and `reuse` would
+    // `git worktree add` the branch at a DIFFERENT path — leaving the surviving
+    // checkout the form named exactly as unregistered as it found it.
+    const h = mount();
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "adopt",
+      branchName: "feat",
+      baseRef: "",
+      path: "/trees/survivor",
+      openAfter: "none",
+      resolved: { kind: "adopt", adoptPath: "/trees/survivor", expectedBranchOid: "oid-feat" },
+    });
+
+    expect(h.posts.find((m) => m.type === "worktreeCreate")).toMatchObject({
+      mode: { kind: "adopt", branch: "feat", adoptPath: "/trees/survivor", expectedBranchOid: "oid-feat" },
+    });
+  });
+
   it("[2_2] falls back to reuse when the submission carries no corroborated repair", () => {
     // A form saying `reattach` while carrying no repair — a resolution that
     // never arrived, or one that classified the selection as something else —

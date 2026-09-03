@@ -46,16 +46,19 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     6. In the same file, return `{ ok: true, id, undo }` on success so the caller can withdraw the registration after its own post-write checks, and write `commondir` as `../..`, `HEAD` as `ref: refs/heads/<branch>\n`, and `gitdir` as `<worktreePath>/.git\n`.
   - **Boundary**: Nothing inside the adopted working tree is created, modified or deleted; `<worktreePath>/.git` is the sole exception and is the adoption itself.
 
-- [ ] 1_3 Offer adopt in the create form, with both controls refused and the losses stated
+- [x] 1_3 Offer adopt in the create form, with both controls refused and the losses stated — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_0
   - **Refs**: specs/worktree-panel/spec.md#{adoption-states-what-it-cannot-restore-before-it-is-authorized, the-base-ref-is-refused-where-the-mode-cannot-apply-it, a-mode-that-fixes-its-own-target-refuses-the-destination-control}; design.md D6, D8
   - **Acceptance**:
     - Outcome: An adopt resolution submits an adopt create and names the directory, branch and losses
-    - Verify: unit src/webview/worktree/WorktreeCreateDialog.test.ts
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeCreateDialog.ts` builds a `{ kind: "adopt", branch, adoptPath, expectedBranchOid }` create mode from a resolution whose mode is `adopt`, taking the tip from the resolution rather than falling back to a fresh create.
-    2. In the same file, disable the base ref control and the destination control for an adopt resolution with their stated reasons, replacing the message at line 2024 that says a new worktree is created instead.
-    3. In the same file, render the confirmation naming the directory, the branch, and design.md D8's five losses as a fixed list that is stated rather than derived from any probe result.
+    1. `src/webview/worktree/worktreeViewTypes.ts` — `WorktreeBranchMode` gains `adopt`, so the refusal maps the dialog keys by mode have to answer for it rather than inherit an answer nobody wrote.
+    2. `src/webview/worktree/WorktreeController.ts` — the resolved-mode carrier that today produces only `reattach` also produces `{ kind: "adopt", branch, adoptPath, expectedBranchOid }` from a resolution whose mode is `adopt`, taking the tip from the resolution rather than falling back to a `reuse` that would check the branch out somewhere else.
+    3. `src/webview/worktree/WorktreeCreateDialog.ts` — an adopt resolution sets the draft's branch mode to `adopt` rather than to `new`, so the mode the form shows and the mode it submits are the one answer.
+    4. In the same file, refuse the base ref control and the destination control for that mode with their stated reasons, and replace the stated action at the `adopt` entry that says a new worktree is created instead.
+    5. In the same file, the destination the form states and submits for an adopt resolution is the directory being adopted, on the same rule a repair already follows, and the skipped candidate is never offered for clearing under it.
+    6. In the same file, render the confirmation naming the directory, the branch, and design.md D8's five losses as a fixed list that is stated rather than derived from any probe result.
   - **Boundary**: No new wire message — `WorktreeCreateMode.adopt` already exists.
 
 ## 2. Resolve it and run it
@@ -80,13 +83,14 @@ thing here. Then a second detector, an executor, the form's action, and the guar
   - **Refs**: specs/worktree-panel/spec.md#{a-branch-a-live-worktree-holds-is-never-adopted-onto, an-adoption-attaches-the-branch-at-the-tip-it-promised, an-adoption-re-establishes-what-it-was-offered-on, an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it}; design.md D5
   - **Acceptance**:
     - Outcome: Every guard refuses and withdraws the registration it had written
-    - Verify: unit src/worktree/worktreeMutationService.test.ts
+    - Verify: command pnpm exec vitest run src/worktree/worktreeMutationService.test.ts
   - **Plan**:
     1. `src/worktree/worktreeMutationService.ts` handles `request.mode.kind === "adopt"` before `validateCreatePath`, in the same position and for the same reason reattach leaves early at line 769, refusing a create that arrives carrying a debris disposition.
     2. In the same body, read `git worktree list --porcelain` and refuse when any non-prunable record names the selected branch, reporting the directory that holds it and offering no confirmation path.
     3. In the same body, re-run `probeAdopt` against `mode.adoptPath` and refuse on anything but `adopt`, so a registration restored during the user's pause is never overwritten.
     4. In the same body, call `adoptWorktree`, then read `git -C <adoptPath> rev-parse HEAD` and call the returned undo when it differs from `mode.expectedBranchOid`, reporting a refusal rather than a create.
     5. In the same body, re-read the listing after the reconstruction and require exactly one non-prunable record naming the branch at the adopted path; on two, call the undo and report a refusal.
+    6. `src/extension.ts` supplies the four adoption dependencies — the re-probe built from the same readers the create probe already uses, the repository's common directory, the reconstruction, and the post-repair tip read. Without them the mode is dark in the shipped extension however well this module is tested, which is the failure shape a past review round already caught for the provisioning offer.
   - **Boundary**: No `git worktree add` and no `--force` on the adopt path.
 
 ## 3. Prove it against a real repository

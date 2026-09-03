@@ -256,11 +256,22 @@ function trim(map: Map<string, string>, limit: number): void {
   }
 }
 
-/** The repair the form resolved, or nothing when it resolved something else. */
+/**
+ * The create the form resolved onto a directory that already exists, or nothing
+ * where it resolved something else.
+ *
+ * Both modes that act on a surviving directory, because the fallback below is
+ * `reuse` — which would check the branch out somewhere ELSE and leave the
+ * directory the form named untouched.
+ */
 function repairOf(resolved: ResolvedMode | undefined, branch: string): WorktreeCreateMode | undefined {
-  return resolved?.kind === "reattach"
-    ? { kind: "reattach", branch, repairPath: resolved.repairPath, expectedOid: resolved.expectedOid }
-    : undefined;
+  if (resolved?.kind === "reattach") {
+    return { kind: "reattach", branch, repairPath: resolved.repairPath, expectedOid: resolved.expectedOid };
+  }
+  if (resolved?.kind === "adopt") {
+    return { kind: "adopt", branch, adoptPath: resolved.adoptPath, expectedBranchOid: resolved.expectedBranchOid };
+  }
+  return undefined;
 }
 
 export class WorktreeController {
