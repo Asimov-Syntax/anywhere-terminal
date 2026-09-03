@@ -213,7 +213,10 @@ describe("deleteBranch", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    // Above `gitCommandRunner`'s own 10 s per-command bound: on the default
+    // 5 s this test cannot outlive the patience the code under test is granted,
+    // so a loaded machine fails it before that code has run out of time.
+  }, 15000);
 
   it("does not dereference a substituted symbolic ref into another branch", async () => {
     const repo = mkdtempSync(join(tmpdir(), "delete-branch-no-deref-"));
@@ -243,7 +246,8 @@ describe("deleteBranch", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
-  });
+    // Same budget, same reason: this one spawns a real repository too.
+  }, 15000);
 
   it("leaves no awaited work between the full holder scan and the transaction", async () => {
     const h = runner();
