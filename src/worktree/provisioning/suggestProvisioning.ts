@@ -175,7 +175,11 @@ async function workspaceDirs(deps: SuggestDeps, repoRoot: string, budget: Provid
     }
     const { names } = await scanNames(deps.readdir(path.join(repoRoot, glob.dir)), budget);
     for (const name of names) {
-      if (name.startsWith(glob.prefix) && name.endsWith(glob.suffix) && name.length >= glob.prefix.length + glob.suffix.length) {
+      if (
+        name.startsWith(glob.prefix) &&
+        name.endsWith(glob.suffix) &&
+        name.length >= glob.prefix.length + glob.suffix.length
+      ) {
         await charge(glob.dir === "" ? name : `${glob.dir}/${name}`);
       }
     }

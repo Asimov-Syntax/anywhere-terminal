@@ -5395,4 +5395,3 @@ describe("workspace package suggestions in the form", () => {
     expect(server?.querySelector<HTMLInputElement>(".wt-brow-cb")?.checked).toBe(false);
   });
 });
-

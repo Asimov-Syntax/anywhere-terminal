@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none
@@ -40,3 +40,5 @@ Lane: full
 Planned at: a304c7e5
 
 Plan attack: the oracle's trace of shipped code refuted two ledger rows as written, and both were repaired in design rather than accepted. `MAX_SCAN` counts only wildcard expansion, so a manifest of literal directories was unbounded (D2); `readJsonc` recovers a partial tree and reports syntax errors out-of-band, so an undefined-only check would act on half a manifest (D1).
+Escalation flags: security-privacy — the change widens where the extension looks for likely-secret files.
+Verify gate: 7621/7621 twice; the one biome error is `src/agentHooks/AgentHookController.test.ts` formatting, untouched by this change and present at its base.

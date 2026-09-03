@@ -3,7 +3,7 @@
 // (suggest-worktree-initialization design.md D1, D2).
 
 import { describe, expect, it } from "vitest";
-import { MAX_SCAN, type ProviderBudget, newBudget } from "./providerKit";
+import { MAX_SCAN, newBudget, type ProviderBudget } from "./providerKit";
 import { SUGGESTED_ENV_FILES, SUGGESTED_MANAGERS, type SuggestDeps, suggestProvisioning } from "./suggestProvisioning";
 
 const ROOT = "/repo";
@@ -40,7 +40,9 @@ function root(
       for (const key of [...Object.keys(entries), ...Object.keys(files)]) {
         if (key.startsWith(prefix)) {
           const next = key.slice(prefix.length).split("/")[0];
-          if (next) names.add(next);
+          if (next) {
+            names.add(next);
+          }
         }
       }
       return [...names];
@@ -244,10 +246,9 @@ describe("suggestProvisioning — the workspaces a repository declares", () => {
     // literal directories bought unbounded probing under a budget that could
     // not see it.
     const dirs = Array.from({ length: 40 }, (_, i) => `p${i}`);
-    const { deps, statted } = root(
-      Object.fromEntries(dirs.map((d) => [`${d}/.env`, "file" as Kind])),
-      { "package.json": PKG(dirs) },
-    );
+    const { deps, statted } = root(Object.fromEntries(dirs.map((d) => [`${d}/.env`, "file" as Kind])), {
+      "package.json": PKG(dirs),
+    });
     const budget = seq();
     budget.scanned = MAX_SCAN - 5;
 
@@ -283,4 +284,3 @@ describe("suggestProvisioning — the workspaces a repository declares", () => {
     expect(listed).toEqual([]);
   });
 });
-
