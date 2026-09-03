@@ -60,7 +60,8 @@ then, the adoption SHALL be undone and reported as refused rather than as a crea
 
 - **WHEN** another worktree takes the selected branch after the adoption's own check and before it
   finishes
-- **THEN** the registration the adoption wrote is removed and the result is reported as a refusal
+- **THEN** the registration the adoption wrote is withdrawn — emptied and unlocked, so git's own
+  collection takes it — and the result is reported as a refusal
 
 ### Requirement: An adoption attaches the branch at the tip it promised
 
@@ -71,7 +72,8 @@ from the adopted worktree after its registration is written.
 #### Scenario: The branch moves during the adoption
 
 - **WHEN** the selected branch is updated while the adoption is running
-- **THEN** the registration is removed and the result names the tip mismatch
+- **THEN** the registration is withdrawn for git's own collection and the result names the tip
+  mismatch
 
 ### Requirement: An adoption re-establishes what it was offered on
 
@@ -129,7 +131,8 @@ either a create or a clean failure.
 
 #### Scenario: An undo that cannot finish says so
 
-- **WHEN** the adoption fails and its own undo cannot remove the entry or restore the `.git` entry
+- **WHEN** the adoption fails and its own undo cannot empty or unlock the entry, or cannot restore
+  the `.git` entry
 - **THEN** the result names the entry directory and the state the `.git` entry was left in
 
 ### Requirement: An undo restores only the `.git` entry the adoption itself replaced

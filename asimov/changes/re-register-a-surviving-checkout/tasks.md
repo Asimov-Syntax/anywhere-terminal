@@ -326,3 +326,13 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. `src/extension.ts`, `src/worktree/adoptWorktree.ts` and `src/worktree/adoptWorktree.integration.test.ts` — `createPinned` returns the handle for an EMPTY file; the caller writes the bytes through it, so no window exists where the inode is published and nobody holds it (F017).
     3. `asimov/changes/re-register-a-surviving-checkout/design.md` and `asimov/changes/re-register-a-surviving-checkout/specs/worktree-panel/spec.md` — delete the text the round-7 handback superseded: D4's title, step table and gitdir-first rationale, the ledger's `removeDir` citations, and the two spec lines still promising removal (F018).
     4. `src/worktree/adoptWorktree.test.ts` — witnesses: an entry replaced only at the success unlock's own proof; a write that fails after `createPinned` published the inode, asserting the entry is still collectable; exactly-once closure of the entry handle on both terminal paths (F019). Each arm-checked.
+
+- [x] 10_1 Delete the last text that still describes the withdrawal the round-7 handback superseded — verified: bun run asm change validate re-register-a-surviving-checkout && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 9_1
+  - **Refs**: design.md D4; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, a-withdrawal-states-what-it-could-not-put-back}; `.reviews/round-9.md` F018
+  - **Acceptance**:
+    - Outcome: No accepted artifact describes a withdrawal that removes the entry
+    - Verify: command bun run asm change validate re-register-a-surviving-checkout
+  - **Plan**:
+    1. `asimov/changes/re-register-a-surviving-checkout/specs/worktree-panel/spec.md` — the two scenarios saying the registration "is removed" become the withdrawal D4 actually performs, and the undo that "cannot remove the entry" becomes one that cannot empty or unlock it.
+    2. `asimov/changes/re-register-a-surviving-checkout/design.md` — the withdrawal ledger row restricts the reported entry path to a handoff that did not complete, matching `entryPath: collectable ? null : entryPath`; the risk map's "`gitdir` first" mitigation becomes locked-first with descriptor-owned initialization.
