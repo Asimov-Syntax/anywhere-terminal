@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved — no fork; § 2.4 fixes the mechanism and the wire fixes the shape _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,7 +31,7 @@
 
 Blueprint: docs/PLAN.md task WT-012.15
 Lane: full (standard) — writes into git's administrative directory; the guard git cannot supply is silent when it fails | flags: security-privacy, cross-boundary
-Planned at: 21b801ed
+Planned at: 0215afec
 - No fork at Gate 1: the wire already carries adopt end to end (`WorktreeCreateMode.adopt`, `ResolvedMode.adopt`, `intentFor`'s `mustExistAsDirectory`), and § 2.4 fixes the mechanism. What was missing is a detector, an executor and the form's action.
 - WT-012.14 is NOT waited on. Its answer decides one predicate (design.md D7), so the capability is built now and the Windows arm is a defaulted parameter both platforms can witness. Withholding an unverified mode is what WT-012.14's own acceptance asks for; claiming it fails there is what it forbids.
 - Adopt is offered only where the selected branch exists (D2). A surviving checkout plus a branch nobody has made has no ref to attach to and no tip to promise, so that destination stays occupied and the suffixed fresh path stands.
@@ -55,3 +55,7 @@ Planned at: 21b801ed
 - 1_6 found a defect the unit tests could not: `git worktree prune` removes git's worktree-entry parent once it is empty, so the first adoption in a repository with exactly one forgotten checkout had no parent for its entry. The exclusive `mkdir` failed `ENOENT`, that was swallowed as a name collision, and after ninety-nine retries it reported that no name was available. The parent is created first now, and only `EEXIST` is a name to retry.
 - 1_6 also sharpened D4's premise without changing its decision. A `gitdir` file is not what spares an entry from `prune` — git removes one naming a path that is GONE as readily as one with no `gitdir` at all. What spares it is naming a path that EXISTS, which `<wt>/.git` does throughout the adoption because it holds the stale link until the last write. design.md D4 already said this precisely; the integration test now pins both arms so the order rests on the fact rather than a reading of it.
 - Tasks 1_3 and 1_5 had `Verify: unit <path>`, which `verify-task` runs under `bun test` — that gives a jsdom suite no `document` and failed 264 of 264. Both were changed to `command pnpm exec vitest run <path>`, which is what 1_6 already declared. Recorded in `asimov/project.md`.
+- Round-3 handback. The thrash stop tripped (F005 and F006 each survived two fix attempts) and F005+F012 could only be answered by changing D4's undo contract, so the fix loop was closed and Gate 2 re-earned rather than a third patch landed. New decision D9; two spec requirements added; four ledger rows rewritten.
+- Oracle attack on D9 returned 6 blockers and refuted 4 of the 6 ledger rows. All accepted, none rebutted. Four were implementation defects in the decision and are now fixed in it: the handle was closed in a `finally` while `undo` is returned to the caller and invoked later (it is carried on the result now, with a `release()` for the accepted path); `FileHandle.readFile` reads from the current offset, so the second proof would have read zero bytes and refused every ordinary adoption; `FileHandle.write` fulfils with `bytesWritten` and a short write would have passed both identity checks as an established link; and byte-equality ownership breaks on `worktree.useRelativePaths`, where `git worktree repair` legitimately rewrites our own link — on the COMMON post-repair undo paths — so ownership is now "the link resolves to our entry".
+- The other two were not fixable and the claim was narrowed instead, evidenced rather than asserted: `git worktree repair` writes `<wt>/.git` through git's `write_file_buf` with `O_WRONLY|O_CREAT|O_TRUNC`, rewriting the existing inode IN PLACE and holding no lock (git 2.50.1 `wrapper.c:682-688`, `worktree.c:887-890`). No handle, byte test or identity check can exclude that, so D9 promises parity with `git worktree repair` rather than exclusion of it — the same shape D5 already carries for the branch claim, and for the same reason. Our own instances need nothing: the mutation coordinator serializes them per repository. The identity comparison is likewise documented as a two-sample endpoint check that an A→B→A substitution passes.
+- A temp-file-plus-`rename` claim was considered and rejected: `rename` replaces whatever is at the name, so it clobbers a different-inode replacement unconditionally — trading the one failure the handle makes detectable for one it cannot.
