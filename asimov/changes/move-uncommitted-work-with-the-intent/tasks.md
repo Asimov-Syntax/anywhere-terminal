@@ -234,7 +234,7 @@
     1. `src/providers/WorktreeHost.ts`: derive current migration authority from the repository's currently published generation and paired registration at probe completion, redemption, and pre-queue handoff instead of using retained `rootFor` identity; expose that current authority through the narrow mutation binding.
     2. `src/providers/WorktreeHost.actions.test.ts`: cover guessed hidden generation, pending probe across degradation, issued offer across degradation, pre-queue withdrawal, and same-registration repo-scoped generation advance.
 
-- [ ] 5_4 Recheck authority after the queued rebuild
+- [x] 5_4 Recheck authority after the queued rebuild — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' 'src/extension.worktreeMutations.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=1 exit 0
   - **Deps**: 5_3
   - **Refs**: design.md D3 <!-- review round 4 F014 -->
   - **Acceptance**:

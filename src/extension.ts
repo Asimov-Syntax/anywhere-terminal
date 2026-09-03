@@ -678,6 +678,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         forceRebuild: bindings.forceRebuild,
         resolve: bindings.resolve,
         repoPath: bindings.repoPath,
+        migrationRegistration: bindings.migrationRegistration,
         assessRemoval: bindings.assessRemoval,
         corroborateRepair,
         // The SAME listing the tree is built from — it negotiates `-z` through

@@ -144,6 +144,7 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
       return target();
     },
     repoPath: () => "/repo",
+    migrationRegistration: () => authorization(REPO),
     assessRemoval: async () => ({ kind: "confirmable" as const, evidence: evidence(), fingerprint: "" }),
     // A tree that holds still, unless a test says otherwise.
     observation: () => 1,
@@ -2141,6 +2142,36 @@ describe("migration runs inside the successful create", () => {
     h.outcomes.find((item) => (item as { verb?: string }).verb === "create") as
       | { kind: string; worktreeId?: string; migrationIndeterminate?: string; provision?: unknown }
       | undefined;
+
+  it.each([
+    ["withdrawn", undefined],
+    ["replaced", authorization("/other/.git")],
+  ])("refuses %s publication authority after the queued rebuild", async (_name, current) => {
+    const h = harness({ migrationRegistration: () => current });
+
+    await h.service.createWorktree(create());
+
+    expect(h.order).not.toContain("git:add");
+    expect(outcome(h)).toEqual(expect.objectContaining({ kind: "error" }));
+  });
+
+  it("accepts an equal registration from a newer publication", async () => {
+    const h = harness({ migrationRegistration: () => structuredClone(binding.registration) });
+
+    await h.service.createWorktree(create());
+
+    expect(h.order).toContain("git:add");
+  });
+
+  it("does not ask for migration authority when no migration was selected", async () => {
+    const current = vi.fn(() => undefined);
+    const h = harness({ migrationRegistration: current });
+
+    await h.service.createWorktree(create({ migration: undefined }));
+
+    expect(current).not.toHaveBeenCalled();
+    expect(h.order).toContain("git:add");
+  });
 
   it("orders exclusion and migration before authorization, provisioning, ports, and launch", async () => {
     const seen: string[] = [];

@@ -10,6 +10,7 @@
 // module is that assembly, and the one place the ordering rules live.
 
 import * as nodePath from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { WorktreeMutationCapabilities, WorktreeMutationTarget, WorktreeSurface } from "../providers/WorktreeHost";
 import type {
   BranchDeleteRequest,
@@ -263,6 +264,8 @@ export interface MutationServiceDeps {
    * null for a path it cannot normalize, and the path is used then.
    */
   normalizeWorktreeId?(worktreePath: string): Promise<string | null>;
+  /** The migration registration paired with the currently published generation. */
+  migrationRegistration?(repoId: string): MigrationRepositoryBinding["registration"] | undefined;
 
   /** Capture the checkout registration observed immediately after Git creates it. */
   captureMigrationDestination?(
@@ -1038,6 +1041,12 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               if (!cleared.ok) {
                 return fail(cleared.reason);
               }
+            }
+            if (
+              request.migration !== undefined &&
+              !isDeepStrictEqual(deps.migrationRegistration?.(request.repoId), request.migration.binding.registration)
+            ) {
+              return fail("The source repository changed while the create was queued. Please try again.");
             }
             const result = await createWorktree(deps.runner, {
               repoPath,

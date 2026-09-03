@@ -178,6 +178,7 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     expect(typeof received.deps?.applyPorts).toBe("function");
     expect(typeof received.deps?.captureMigrationDestination).toBe("function");
     expect(typeof received.deps?.migrationGitExcludeDirFor).toBe("function");
+    expect(typeof received.deps?.migrationRegistration).toBe("function");
     expect(typeof received.deps?.migrateChanges).toBe("function");
   });
 
