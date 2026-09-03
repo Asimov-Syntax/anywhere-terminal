@@ -25,7 +25,7 @@
 
 ## 2. Explain and redeem the suggestions in the create form
 
-- [ ] 2_1 Render suggestions as unchecked current-create choices
+- [x] 2_1 Render suggestions as unchecked current-create choices — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts && pnpm run check-types && pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts exit 0
   - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{every-initialization-suggestion-is-explicit-and-explained,suggestions-spend-only-the-host-held-offer-the-user-selected,the-create-form-states-what-the-new-worktree-will-lack,saving-suggestions-records-positive-file-consent-but-never-setup-consent}; design.md D2, D3
   - **Boundary**: No automatic selection or save, setup wait-default change, execution-order change, or direct path or command message field

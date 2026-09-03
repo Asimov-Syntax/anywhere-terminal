@@ -2022,6 +2022,82 @@ describe("the invariants that span the host and the webview", () => {
     }
   });
 
+  it("copies a selected environment suggestion and never runs the unchecked suggested setup", async () => {
+    noProviderFiles();
+    registerCreates = true;
+    fs.writeFileSync(path.join(REPO, ".env.local"), "SECRET=1\n");
+    fs.writeFileSync(path.join(REPO, "pnpm-lock.yaml"), "");
+    try {
+      await assemble();
+
+      clickItem(openMenu("feature"), /new worktree/i);
+      // By content, not by count: `REPO` outlives the suite, so other root
+      // files earlier tests wrote may be suggested beside these two.
+      await settleUntil(
+        () => [...document.querySelectorAll(".wt-brow")].some((row) => (row.textContent ?? "").includes("pnpm install")),
+        "the suggestion offer",
+      );
+      // Presence first, so "did not run" below cannot pass by the row having
+      // been dropped before it reached the dialog.
+      const drawn = [...document.querySelectorAll<HTMLElement>(".wt-brow")];
+      const envRow = drawn.find((row) => (row.textContent ?? "").includes(".env.local"));
+      const setupRow = drawn.find((row) => (row.textContent ?? "").includes("Run setup"));
+      if (envRow === undefined || setupRow === undefined) {
+        throw new Error("the form did not offer both suggestions");
+      }
+      expect(envRow.textContent).toContain("may contain secrets");
+      expect(setupRow.textContent).toContain("pnpm-lock.yaml");
+      expect(setupRow.textContent).toContain("pnpm install");
+      const envBox = envRow.querySelector<HTMLInputElement>(".wt-brow-cb");
+      const setupBox = setupRow.querySelector<HTMLInputElement>(".wt-brow-cb");
+      expect(envBox?.checked).toBe(false);
+      expect(setupBox?.checked).toBe(false);
+      if (envBox == null) {
+        throw new Error("the environment suggestion has no checkbox");
+      }
+      envBox.checked = true;
+      envBox.dispatchEvent(new Event("change", { bubbles: true }));
+
+      const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+      if (branch === null) {
+        throw new Error("the create form has no branch field");
+      }
+      branch.value = "feat/suggested";
+      branch.dispatchEvent(new Event("input", { bubbles: true }));
+      branch.dispatchEvent(new Event("change", { bubbles: true }));
+      await settle();
+      const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+      if (destination === undefined || destination === "") {
+        throw new Error("the host resolved no destination");
+      }
+      fs.mkdirSync(destination, { recursive: true });
+
+      [...document.querySelectorAll<HTMLButtonElement>("button")]
+        .find((b) => /create worktree/i.test(b.textContent ?? ""))
+        ?.click();
+      await settleUntil(() => createNotices().length > 0, "the create to report back");
+      await settle();
+
+      // The copy arrived through the shipped bindings, from a row nobody configured.
+      expect(fs.readFileSync(path.join(destination, ".env.local"), "utf8")).toBe("SECRET=1\n");
+      // The unchecked suggested command never ran.
+      expect(setupHarness.runs).toEqual([]);
+      // And the create request itself carried only opaque ids — no path,
+      // script, or explanation text rode back as authority.
+      const create = outbound.find((message) => message.type === "worktreeCreate");
+      expect(create?.provision?.itemIds).toHaveLength(1);
+      const wire = JSON.stringify(create);
+      expect(wire).not.toContain(".env.local");
+      expect(wire).not.toContain("pnpm install");
+      expect(wire).not.toContain("secrets");
+    } finally {
+      // `REPO` outlives the test, and detection is about which files exist —
+      // a leftover root file would decide later tests' offers.
+      fs.rmSync(path.join(REPO, ".env.local"), { force: true });
+      fs.rmSync(path.join(REPO, "pnpm-lock.yaml"), { force: true });
+    }
+  });
+
   it("starts an ungated agent while selected setup is still running", async () => {
     noProviderFiles();
     registerCreates = true;

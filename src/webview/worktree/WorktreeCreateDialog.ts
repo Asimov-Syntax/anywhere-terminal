@@ -358,6 +358,12 @@ interface BringRow {
    */
   contested?: true;
   /**
+   * Why the host offered a row nobody configured — static host text from the
+   * fallback detector. Its presence is what makes the row opt-in (D2 of
+   * suggest-worktree-initialization).
+   */
+  suggestion?: string;
+  /**
    * Index into `model.contenders`, for the notes above.
    *
    * A pointer, never a copy of the membership: a group is every entry sharing
@@ -525,7 +531,10 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
       verb: entry.mode === "link" ? "Link" : "Copy",
       subject: entry.path,
       source: entry.source,
-      checked: loses === undefined,
+      // A suggestion starts unchecked: nobody configured it, so nothing has
+      // consented to it (suggest-worktree-initialization D2).
+      checked: entry.suggestion === undefined && loses === undefined,
+      ...(entry.suggestion === undefined ? {} : { suggestion: entry.suggestion }),
       ...(entry.mode === "link" ? { warn: "writes to main" } : {}),
       ...(named === undefined ? {} : { contender: named }),
       ...(place === undefined ? {} : { group: place.group }),
@@ -551,6 +560,7 @@ function bringRows(model: WorktreeProvisionOffer["model"]): BringRow[] {
       // OFF. A command a provider file supplied is not consent because a
       // checkbox arrived pre-ticked (worktree-provisioning.md § 7).
       checked: false,
+      ...(step.suggestion === undefined ? {} : { suggestion: step.suggestion }),
     });
   }
   // Last, and after everything the section WILL do. `source` is the file that
@@ -707,8 +717,12 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
   if (model.ports.length > 0) {
     parts.push(`${model.ports.length} port${model.ports.length === 1 ? "" : "s"}`);
   }
-  if (model.setup.length > 0) {
-    parts.push(`${model.setup.length} setup step${model.setup.length === 1 ? "" : "s"}`);
+  // A suggested step counts only once selected: the declared-count rationale
+  // above is about what the REPOSITORY asks for, and a fallback suggestion is
+  // not the repository asking (suggest-worktree-initialization D2).
+  const setupCount = model.setup.filter((s) => s.suggestion === undefined || selected.has(s.id)).length;
+  if (setupCount > 0) {
+    parts.push(`${setupCount} setup step${setupCount === 1 ? "" : "s"}`);
   }
   if (model.contenders.length > 0) {
     // The counts above exclude the members that yield, but a group with no
@@ -733,9 +747,13 @@ function bringSummary(model: WorktreeProvisionOffer["model"], selected: Readonly
     return parts.join(" \u00b7 ");
   }
   // Nothing to do. WHY there is nothing is the distinction that matters: a file
-  // that failed to parse would have produced entries if it had parsed.
+  // that failed to parse would have produced entries if it had parsed, and a
+  // suggestion set nobody touched is an unanswered offer, not a repository
+  // that configured nothing.
   if (model.problems.length === 0) {
-    return "Nothing configured";
+    const suggested =
+      model.entries.some((e) => e.suggestion !== undefined) || model.setup.some((s) => s.suggestion !== undefined);
+    return suggested ? "No suggestions selected" : "Nothing configured";
   }
   return "Could not be read";
 }
@@ -897,6 +915,14 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     note.className = "wt-brow-note wt-brow-yield";
     note.dataset.group = String(row.group);
     meta.appendChild(note);
+  }
+  if (row.suggestion !== undefined) {
+    // The reason a row nobody configured is here at all. Host text — but set
+    // with `textContent` anyway, like every other note in this section.
+    const why = document.createElement("span");
+    why.className = "wt-brow-note wt-brow-suggested";
+    why.textContent = row.suggestion;
+    meta.appendChild(why);
   }
   if (row.contested === true && row.group !== undefined) {
     // Live like the yielding note, and for the same reason: the user settles
@@ -1328,7 +1354,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // empty case is the sentence, naming what the worktree will actually lack.
   const bringEmpty = document.createElement("div");
   bringEmpty.className = "wt-bring-empty";
-  bringEmpty.textContent = "This worktree will have no .env and no node_modules.";
+  // A finding, not a guess: naming `.env` as absent was a claim about a file
+  // that, when present, the fallback detector now offers as a suggestion.
+  bringEmpty.textContent = "No configured items or supported repository-root suggestions were found.";
   bringField.append(bringBox, bringEmpty);
   shell.dialog.appendChild(bringField);
 

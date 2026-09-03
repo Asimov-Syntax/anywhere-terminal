@@ -1737,6 +1737,35 @@ describe("the create a toolbar with no repository opens", () => {
     expect(document.querySelectorAll(".wt-brow")).toHaveLength(5);
   });
 
+  it("hands a suggestion offer to the form with its rows unchecked and explained", () => {
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.handleProvisionOffer({
+      type: "worktreeProvisionOffer",
+      repoId: REPO_A,
+      opening: 1,
+      offerId: "provision-9",
+      model: provisionModel({
+        entries: [
+          { id: "s1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: "may contain secrets" },
+        ],
+        setup: [
+          { id: "s2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "from the lockfile" },
+        ],
+        ports: [],
+        providers: [],
+      }),
+    });
+
+    const boxes = [...document.querySelectorAll<HTMLInputElement>(".wt-brow-cb")];
+    expect(boxes.map((b) => b.checked)).toEqual([false, false]);
+    expect(document.body.textContent).toContain("may contain secrets");
+    expect(document.body.textContent).toContain("from the lockfile");
+    expect(document.querySelector(".wt-bring-sum")?.textContent).toBe("No suggestions selected");
+  });
+
   it("[1_4] keeps the offer while the destination is re-answered per keystroke", () => {
     // The host issues ONE offer per form and answers the destination on every
     // settled edit. An offer folded into that reply would be dropped by the

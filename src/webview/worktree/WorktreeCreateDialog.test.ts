@@ -1532,6 +1532,88 @@ describe("Move uncommitted work", () => {
   });
 });
 
+describe("Bring over — fallback suggestions are explicit, explained, and current-create-only", () => {
+  const ENV_WHY = "`.env.local` is at the repository root and may contain secrets. Copy creates an independent file in the new worktree.";
+  const SETUP_WHY = "`pnpm-lock.yaml` is at the repository root. Run setup executes `pnpm install` in the worktree after file provisioning.";
+
+  function suggested() {
+    return provisionModel({
+      entries: [{ id: "s1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: ENV_WHY }],
+      setup: [{ id: "s2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: SETUP_WHY }],
+      ports: [],
+      providers: [],
+    });
+  }
+
+  function withSuggestions() {
+    return open({ repos: [createDefaults({ provisioning: provisionOffer({ model: suggested() }) })] });
+  }
+
+  const boxFor = (host: HTMLElement, id: string): HTMLInputElement => {
+    const box = Array.from(host.querySelectorAll<HTMLInputElement>(".wt-brow-cb")).find((b) => b.value === id);
+    if (box === undefined) {
+      throw new Error(`no row offered for ${id}`);
+    }
+    return box;
+  };
+
+  it("offers a suggested file unchecked, unlike a configured copy", () => {
+    const { host } = withSuggestions();
+    expect(boxFor(host, "s1").checked).toBe(false);
+    expect(boxFor(host, "s2").checked).toBe(false);
+  });
+
+  it("explains every suggestion beside its own row", () => {
+    const { host } = withSuggestions();
+    const said = Array.from(host.querySelectorAll<HTMLElement>(".wt-brow")).map((r) => r.textContent ?? "");
+    expect(said.some((t) => t.includes(ENV_WHY))).toBe(true);
+    expect(said.some((t) => t.includes(SETUP_WHY))).toBe(true);
+  });
+
+  it("summarizes an untouched suggestion set as unselected, not as configured", () => {
+    const { host } = withSuggestions();
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("No suggestions selected");
+  });
+
+  it("counts a selected suggestion into what the create will do", () => {
+    const { host } = withSuggestions();
+    const env = boxFor(host, "s1");
+    env.checked = true;
+    env.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 copied");
+  });
+
+  it("counts a selected suggested setup step, and only a selected one", () => {
+    const { host } = withSuggestions();
+    const setup = boxFor(host, "s2");
+    setup.checked = true;
+    setup.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(host.querySelector(".wt-bring-sum")?.textContent).toBe("1 setup step");
+  });
+
+  it("submits only the selected opaque ids — never the path, script, or explanation", () => {
+    const { host, q, submitted } = withSuggestions();
+    const env = boxFor(host, "s1");
+    env.checked = true;
+    env.dispatchEvent(new Event("change", { bubbles: true }));
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    q<HTMLButtonElement>(".wt-btn--primary").click();
+
+    expect(submitted[0]?.provision).toEqual({ offerId: "provision-1", itemIds: ["s1"] });
+    expect(JSON.stringify(submitted[0])).not.toContain("pnpm install");
+    expect(JSON.stringify(submitted[0])).not.toContain("repository root");
+  });
+
+  it("states the true empty state without claiming an uninspected file is absent", () => {
+    const { host } = open({
+      repos: [createDefaults({ provisioning: provisionOffer({ model: emptyProvisionModel() }) })],
+    });
+    const said = host.querySelector(".wt-bring-empty")?.textContent ?? "";
+    expect(said).toContain("No configured items or supported repository-root suggestions");
+    expect(said).not.toContain("no .env");
+  });
+});
+
 describe("Bring over — what the new worktree will lack", () => {
   /** The form opened against a repository whose provisioning offer has arrived. */
   function withOffer(over: Parameters<typeof provisionOffer>[0] = {}) {
@@ -1716,14 +1798,14 @@ describe("Bring over — a repository that declares nothing, and a file that can
     return open({ repos: [createDefaults({ provisioning: provisionOffer({ model }) })] });
   }
 
-  it("says what an empty repository will still lack, rather than showing an empty list", () => {
+  it("says the section looked and found nothing, rather than showing an empty list", () => {
     // "This repo needs nothing brought over" and "we did not look" are different
-    // statements, and only the second is a defect. An empty box says neither.
+    // statements, and only the second is a defect. Naming `.env` as absent was a
+    // third: a claim about a file that, with suggestions, would have been offered.
     const { host } = withModel(emptyProvisionModel());
     expect(host.querySelectorAll(".wt-brow")).toHaveLength(0);
     const said = host.querySelector(".wt-bring-empty")?.textContent ?? "";
-    expect(said).toContain(".env");
-    expect(said).toContain("node_modules");
+    expect(said).toContain("No configured items or supported repository-root suggestions");
   });
 
   it("marks the empty section as configuring nothing, not as unread", () => {
