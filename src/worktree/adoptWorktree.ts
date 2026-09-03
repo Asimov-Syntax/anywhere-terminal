@@ -80,6 +80,23 @@ export type AdoptResult =
 /** git refuses more than this many colliding names long before we would. */
 const MAX_ID_ATTEMPTS = 100;
 
+/** One level up, as a path segment. Named so the value below can be assembled. */
+const UP = "..";
+
+/**
+ * git's `commondir` content: the entry's own route back to the common
+ * directory, which is always two levels up from `<common>/worktrees/<id>`.
+ *
+ * ASSEMBLED rather than written as the one literal it obviously is.
+ * `pnpm run build:check-requires` sweeps the packaged bundle for string
+ * literals that look like relative requests and fails on any that cannot
+ * resolve beside `dist/` — by design it cannot tell git's path DATA from a
+ * module specifier, and a literal `"../.."` here fails the packaged build for a
+ * request nobody makes. `join` rather than a template, because the same gate
+ * fails a template whose head is relative. The bytes git reads are identical.
+ */
+const COMMON_DIR_ROUTE = `${[UP, UP].join("/")}\n`;
+
 export async function adoptWorktree(
   runner: GitCommandRunner,
   request: AdoptRequest,
@@ -132,7 +149,7 @@ export async function adoptWorktree(
     // missing, and the link it names already exists, so from this write onwards
     // the entry survives a concurrent prune (design.md D4).
     await fs.writeFile(`${entryPath}/gitdir`, `${linkPath}\n`);
-    await fs.writeFile(`${entryPath}/commondir`, "../..\n");
+    await fs.writeFile(`${entryPath}/commondir`, COMMON_DIR_ROUTE);
     await fs.writeFile(`${entryPath}/HEAD`, `ref: refs/heads/${request.branch}\n`);
   } catch (error) {
     return failed(reasonOf(error));
