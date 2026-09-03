@@ -11,13 +11,24 @@ import { ORCA_INCLUDE_FILE, ORCA_YAML_FILE } from "./orcaProvider";
 import { foldSegment, MAX_MODEL_ROWS, MAX_SCAN, type ProviderDeps } from "./providerKit";
 import { createProvisioningDeps } from "./provisioningDeps";
 import { DETECTION_ORDER, readProvisioning } from "./readProvisioning";
+import type { SuggestDeps } from "./suggestProvisioning";
 import { VSCODE_TASKS_FILE } from "./vscodeTasksProvider";
 
 const ROOT = "/repo";
 
-type Repo = { native?: string; asimov?: string; orcaYaml?: string; orcaInclude?: string; tasks?: string };
+type ReadDeps = ProviderDeps & SuggestDeps;
 
-function fs(spec: Repo, dirs: Record<string, string[]> = {}): ProviderDeps {
+type Repo = {
+  native?: string;
+  asimov?: string;
+  orcaYaml?: string;
+  orcaInclude?: string;
+  tasks?: string;
+  /** Plain root filenames that exist as ordinary files — suggestion evidence. */
+  root?: readonly string[];
+};
+
+function fs(spec: Repo, dirs: Record<string, string[]> = {}): ReadDeps {
   const files: Record<string, string> = {};
   const put = (rel: string, text: string | undefined) => {
     if (text !== undefined) {
@@ -29,6 +40,9 @@ function fs(spec: Repo, dirs: Record<string, string[]> = {}): ProviderDeps {
   put(ORCA_YAML_FILE, spec.orcaYaml);
   put(ORCA_INCLUDE_FILE, spec.orcaInclude);
   put(VSCODE_TASKS_FILE, spec.tasks);
+  for (const name of spec.root ?? []) {
+    put(name, "");
+  }
   const missing = (p: string) => Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
   return {
     readFile: async (p) => {
@@ -46,7 +60,7 @@ function fs(spec: Repo, dirs: Record<string, string[]> = {}): ProviderDeps {
       return held;
     },
     realpath: async (p) => p,
-    lstat: async () => ({}),
+    lstat: async (p) => ({ isFile: () => files[p] !== undefined }),
   };
 }
 
@@ -84,6 +98,49 @@ describe("one source answers", () => {
     expect(model.providers).toEqual([]);
     expect(model.entries).toEqual([]);
     expect(model.problems).toEqual([]);
+  });
+});
+
+describe("a repository with no provisioning source gets bounded suggestions", () => {
+  it("suggests root environment files and lockfile commands when every provider is absent", async () => {
+    const model = await readProvisioning(fs({ root: [".env.local", "pnpm-lock.yaml"] }), ROOT);
+
+    expect(model.entries.map((e) => [e.path, e.mode, e.source])).toEqual([[".env.local", "copy", ".env.local"]]);
+    expect(model.setup.map((s) => [s.script, s.source])).toEqual([["pnpm install", "pnpm-lock.yaml"]]);
+    // Every suggested row says so — presence of the explanation is what the
+    // dialog keys the opt-in default on.
+    expect([...model.entries, ...model.setup].every((r) => typeof r.suggestion === "string")).toBe(true);
+    expect(model.providers).toEqual([]);
+    expect(model.problems).toEqual([]);
+  });
+
+  it("does not suggest over a present but empty source", async () => {
+    // An empty checked-in file is the repository answering "nothing here" —
+    // falling through it would offer an answer the repository already declined.
+    const model = await readProvisioning(fs({ asimov: "", root: [".env", "pnpm-lock.yaml"] }), ROOT);
+
+    expect(model.entries).toEqual([]);
+    expect(model.setup).toEqual([]);
+    expect(model.providers.map((p) => p.id)).toEqual(["asimov"]);
+  });
+
+  it("does not suggest over a present but unreadable source", async () => {
+    const base = fs({ asimov: ASIMOV_YAML, root: [".env", "pnpm-lock.yaml"] });
+    const deps: ReadDeps = {
+      ...base,
+      readFile: async (p) => {
+        if (p.endsWith(ASIMOV_PROVIDER_FILE)) {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        }
+        return base.readFile(p);
+      },
+    };
+
+    const model = await readProvisioning(deps, ROOT);
+
+    expect(model.problems.map((p) => p.reason)).toEqual(["unreadable"]);
+    expect(model.entries).toEqual([]);
+    expect(model.setup).toEqual([]);
   });
 });
 
@@ -146,7 +203,7 @@ describe("exactly one detected source supplies the offer", () => {
     // Presence is the same question `anyFilePresent` already answered: a denied
     // or oversized file is one `extends` can name without producing
     // `missingExtends`. Reducing it to "readable" would split the two answers.
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({ asimov: ASIMOV_YAML }),
       readFile: async (path: string) => {
         if (path.endsWith(ORCA_YAML_FILE)) {
@@ -165,7 +222,7 @@ describe("exactly one detected source supplies the offer", () => {
 
   it("chooses without enumerating a single directory", async () => {
     const listed: string[] = [];
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs(ALL),
       readdir: async (p: string) => {
         listed.push(p);
@@ -210,7 +267,7 @@ describe("[D3] a present source answers even when its answer is nothing", () => 
   });
 
   it("stops at a first source that is present and unreadable, and reports it", async () => {
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({ orcaYaml: ORCA_YAML }),
       readFile: async (p) => {
         if (p.endsWith(ASIMOV_PROVIDER_FILE)) {
@@ -269,7 +326,7 @@ describe("a preference reorders one entry, it does not replace the order", () =>
 describe("[D9] one budget, and nothing spent on a source that did not win", () => {
   it("charges a losing source no scan at all", async () => {
     let listed = 0;
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({ asimov: "# nothing\n", orcaYaml: "worktree:\n  sharedDirectories: [big/*]\n" }),
       readdir: async () => {
         listed += 1;
@@ -288,7 +345,7 @@ describe("[D9] one budget, and nothing spent on a source that did not win", () =
   it("gives the source that did win one account across its globs", async () => {
     let seen = 0;
     const noise = Array.from({ length: MAX_SCAN }, (_, i) => `n${i}.txt`);
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({ asimov: "copy:\n  - a/*.env\n  - b/*.env\n" }),
       readdir: async function* () {
         for (const name of noise) {
@@ -306,7 +363,7 @@ describe("[D9] one budget, and nothing spent on a source that did not win", () =
 
 describe("[round-1 F003] a checkout that will not resolve elects nobody", () => {
   it("does not activate the last adapter in the order when the root fails", async () => {
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({}),
       realpath: async () => {
         throw Object.assign(new Error("ELOOP"), { code: "ELOOP" });
@@ -520,7 +577,7 @@ describe("[D2] extends reaches only a present framework file inside the reposito
   });
 
   it("refuses a base that is a symlink out of the checkout", async () => {
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({ native: `{"extends": "asimov/worktree.yaml", ${INLINE}}`, asimov: ASIMOV_YAML }),
       realpath: async (p) => (p.endsWith(ASIMOV_PROVIDER_FILE) ? "/elsewhere/worktree.yaml" : p),
     };
@@ -685,7 +742,7 @@ describe("[round-1 F002] the file that was authorized is the file that is read",
     // `orca.yaml`, and the model inherited a setup command from a file the user
     // never named — with orca marked active and no problem at all.
     let opens = 0;
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({
         native: `{"extends": ".worktreeinclude"}`,
         orcaInclude: ".env\n",
@@ -725,7 +782,7 @@ describe("[round-3 F002] authorization is a result, not a byte source", () => {
     // command, with orca marked active.
     const INCLUDE_AT = `${ROOT}/${ORCA_INCLUDE_FILE}`;
     let resolutions = 0;
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...fs({
         native: `{"extends": ".worktreeinclude"}`,
         orcaInclude: ".env\n",
@@ -830,7 +887,7 @@ describe("[round-7 F001, F013] identity is the declared spelling, and nothing fo
         },
         lstat: async (p) => {
           asked.push(p);
-          return {};
+          return { isFile: () => false };
         },
       },
       ROOT,
@@ -1122,7 +1179,7 @@ describe("[round-7 F014] a source found and unreadable is not a source that is a
   const NATIVE_WITH_BASE = `{"extends": "${ASIMOV_PROVIDER_FILE}", "copy": [".env.local"]}`;
 
   /** The named base is there; opening it fails for a reason that is not absence. */
-  function denied(code: string): ProviderDeps {
+  function denied(code: string): ReadDeps {
     const base = fs({ native: NATIVE_WITH_BASE, asimov: ASIMOV_YAML });
     return {
       ...base,
@@ -1235,7 +1292,7 @@ describe("[F017] presence costs no extra provider-file reads", () => {
   function counted(spec: Parameters<typeof fs>[0]) {
     const inner = fs(spec);
     const reads: string[] = [];
-    const deps: ProviderDeps = {
+    const deps: ReadDeps = {
       ...inner,
       readFile: async (p) => {
         reads.push(p);

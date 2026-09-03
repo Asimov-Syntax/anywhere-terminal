@@ -854,6 +854,13 @@ export interface ProvisionEntry extends ProvisionItemId {
   readonly mode: "copy" | "link";
   /** Provider file this entry came from, repo-relative. Never absent. */
   readonly source: string;
+  /**
+   * Why the host offered a row nobody configured — static host text naming the
+   * root file whose presence is the evidence. Present only on fallback
+   * suggestions, and its presence is what makes the row opt-in: a suggested row
+   * starts unchecked where a configured one starts checked.
+   */
+  readonly suggestion?: string;
 }
 
 /**
@@ -873,6 +880,8 @@ export type ProvisionSetupStep = ProvisionItemId & {
   /** Exact script text, passed as the shell's single script argument. Never concatenated. */
   readonly script: string;
   readonly source: string;
+  /** Same contract as `ProvisionEntry.suggestion` — host explanation of a fallback row. */
+  readonly suggestion?: string;
 };
 
 /** A named port the repo wants allocated per worktree. Selectable, like every other row. */

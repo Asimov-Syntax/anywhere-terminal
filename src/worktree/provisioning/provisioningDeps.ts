@@ -8,6 +8,7 @@
 import { lstat, opendir, realpath } from "node:fs/promises";
 import { openRegularFile } from "../../utils/regularFileRead";
 import type { ProviderDeps } from "./providerKit";
+import type { SuggestDeps } from "./suggestProvisioning";
 
 /**
  * The most a provider file may weigh.
@@ -65,7 +66,7 @@ async function readBounded(filePath: string, maxBytes: number): Promise<string> 
  * RESOLVED path — the answer authorizes a read, so a symlinked component has to
  * be followed before it is trusted (design.md D4).
  */
-export function createProvisioningDeps(): ProviderDeps {
+export function createProvisioningDeps(): ProviderDeps & SuggestDeps {
   return {
     readFile: (p) => readBounded(p, MAX_PROVIDER_BYTES),
     // `opendir` rather than `readdir`: the kit scans under a budget, and a

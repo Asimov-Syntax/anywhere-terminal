@@ -32,6 +32,7 @@ import {
   problem,
   report,
 } from "./providerKit";
+import { type SuggestDeps, suggestProvisioning } from "./suggestProvisioning";
 import { vscodeTasksAdapter } from "./vscodeTasksProvider";
 
 /**
@@ -408,7 +409,7 @@ async function assemble(
  * or more rows by carrying more provider files (design.md D9).
  */
 export async function readProvisioning(
-  deps: ProviderDeps,
+  deps: ProviderDeps & SuggestDeps,
   repoRoot: string,
   prefer?: ProvisionProvider["id"],
 ): Promise<ProvisionModel> {
@@ -444,7 +445,11 @@ export async function readProvisioning(
   }
 
   if (chosen === null) {
-    return emptyModel();
+    // No source at all — not even an empty or unreadable one, both of which
+    // answered above. Only here may the bounded fallback speak: a present
+    // source, whatever it says, is the repository's answer, and suggestions
+    // never override an answer (suggest-worktree-initialization design.md D1).
+    return suggestProvisioning(deps, repoRoot, budget.nextId);
   }
   // A switch to a FRAMEWORK populates the section from that source alone: the
   // user asked to see that source's answer, and showing it wrapped in the

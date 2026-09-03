@@ -18,6 +18,7 @@ const READ_PATH = [
   "orcaProvider.ts",
   "vscodeTasksProvider.ts",
   "readProvisioning.ts",
+  "suggestProvisioning.ts",
 ];
 
 /** Executing something, or changing something. Either ends the property. */

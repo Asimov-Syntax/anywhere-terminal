@@ -15,11 +15,13 @@ import type {
   BranchDeleteRequest,
   DestinationDisposition,
   ExtensionToWebViewMessage,
+  ProvisionEntry,
   ProvisionPortResult,
   ProvisionProblem,
   ProvisionProvider,
   ProvisionSelection,
   ProvisionSetupResult,
+  ProvisionSetupStep,
   ProvisionStepOutcome,
   ProvisionStepResult,
   ResolvedMode,
@@ -150,6 +152,31 @@ const selectionWithPath: ProvisionSelection = {
   itemIds: ["item-1"],
   // @ts-expect-error a selection carries no path
   path: "/repo/.env",
+};
+
+// --- A suggestion explains a host-detected row; it never rides back ----------
+
+const configuredEntry: ProvisionEntry = { id: "i1", path: ".env", mode: "copy", source: "asimov/worktree.yaml" };
+const suggestedEntry: ProvisionEntry = {
+  id: "i1",
+  path: ".env",
+  mode: "copy",
+  source: ".env",
+  suggestion: "`.env` is at the repository root.",
+};
+const suggestedSetup: ProvisionSetupStep = {
+  id: "i2",
+  kind: "shell",
+  script: "pnpm install",
+  source: "pnpm-lock.yaml",
+  suggestion: "`pnpm-lock.yaml` is at the repository root.",
+};
+
+const selectionWithSuggestion: ProvisionSelection = {
+  offerId: "offer-1",
+  itemIds: ["item-1"],
+  // @ts-expect-error the explanation is host output; text on the selection would ride back as authority
+  suggestion: "pnpm install",
 };
 
 // --- The remaining shapes construct ------------------------------------------
@@ -466,6 +493,12 @@ describe("the wire contract", () => {
     expect([reuseWithBase, reattachWithBase, adoptWithBase, detachedWithBranch, detachedNoBase]).toHaveLength(5);
     expect([resolvedAdopt, resolvedAdoptWithoutTip]).toHaveLength(2);
     expect([noneWithAgent, terminalWithWait, selectionWithCommand, selectionWithPath]).toHaveLength(4);
+    expect([suggestedEntry.suggestion, suggestedSetup.suggestion]).toEqual([
+      "`.env` is at the repository root.",
+      "`pnpm-lock.yaml` is at the repository root.",
+    ]);
+    expect(configuredEntry.suggestion).toBeUndefined();
+    expect(selectionWithSuggestion.itemIds).toHaveLength(1);
     expect([copied, linked, degraded, skipped, refusedOutcome, failedOutcome].map((o) => o.kind)).toEqual([
       "copied",
       "linked",
