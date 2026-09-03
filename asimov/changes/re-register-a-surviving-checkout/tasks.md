@@ -160,3 +160,15 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     5. `src/worktree/adoptWorktree.test.ts`, `src/worktree/worktreeMutationService.test.ts` and `src/providers/WorktreeHost.actions.test.ts` — a substituted entry, a post-`mkdir` identity failure, a restored registration and a restored link each leave the destination as found and report what was left.
     6. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository, the adoption still lists and commits, and a link replaced between the probe and the write is not overwritten.
     7. `src/extension.ts` — the production filesystem supplies the exclusive create and the directory-existence read the reconstruction now asks for.
+
+- [x] 2_5 Put the tip guard back in front of the index, and keep a resolved mode across a late refs reply — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/worktreeMutationService.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 2_4
+  - **Refs**: design.md D4, D6; `.reviews/round-1.md` F008, F009
+  - **Acceptance**:
+    - Outcome: A moved branch refuses before the index is rebuilt, and a refs reply never demotes a resolved mode
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/worktreeMutationService.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — the reconstruction is given the tip it promised and reads `HEAD` from inside the worktree after `repair` and before `reset --mixed`, which is the order design.md D4 states; a mismatch undoes and refuses there (F009).
+    2. `src/worktree/worktreeMutationService.ts` and `src/extension.ts` — the tip guard has one owner, so the service's separate post-success read is retired with its dependency.
+    3. `src/webview/worktree/WorktreeCreateDialog.ts` — a refs reply that arrives after a resolution does not replace the branch mode that resolution set, while the typed branch is still the one it answered (F008).
+    4. `src/worktree/adoptWorktree.test.ts`, `src/worktree/worktreeMutationService.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` — a moved tip leaves no entry and no index rebuild, and a late refs reply leaves the destination control refused.

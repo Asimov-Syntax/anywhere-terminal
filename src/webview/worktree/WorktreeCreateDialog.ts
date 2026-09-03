@@ -2022,9 +2022,20 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const typed = nameInput.value.trim();
     const exact = typed.length === 0 ? undefined : offeredRefs().find((r) => r.name === typed);
     choice = exact === undefined ? { kind: "new" } : { kind: "existing", ref: exact };
-    if (draft.branchMode !== "detached") {
-      draft.branchMode = choiceMode(choice);
+    if (draft.branchMode === "detached") {
+      return;
     }
+    // A RESOLVED mode is the host's answer about a directory, and this local
+    // derivation only ever knows the ref list — which can be truncated, and
+    // which arrives on its own schedule. Letting it demote `adopt` or
+    // `reattach` left the form stating it would re-register a fixed directory
+    // while the controls were enabled for a different mode, and the submitted
+    // mode still adopt (round-1 F008). It only holds while the typed branch is
+    // the one that answer was about; anything else re-derives as before.
+    if ((draft.branchMode === "adopt" || draft.branchMode === "reattach") && effective?.query.trim() === typed) {
+      return;
+    }
+    draft.branchMode = choiceMode(choice);
   }
 
   /**

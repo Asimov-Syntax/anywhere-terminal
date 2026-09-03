@@ -12,6 +12,8 @@ const COMMON = "/repo/.git";
 const WT = "/wt/survivor";
 const ENTRY = `${COMMON}/worktrees/survivor`;
 const ORIGINAL_LINK = "gitdir: /repo/.git/worktrees/gone\n";
+/** The tip the adoption promised, as `git -C <wt> rev-parse HEAD` answers it. */
+const TIP = "a".repeat(40);
 /** The administrative directory that link still names — proven absent by the probe. */
 const STALE = `${COMMON}/worktrees/gone`;
 
@@ -19,7 +21,7 @@ function ok(stdout = ""): GitCommandResult {
   return { code: 0, stdout: Buffer.from(stdout, "utf8"), stderr: "", timedOut: false, failedToSpawn: false };
 }
 
-function runnerOf(answer: (args: readonly string[]) => GitCommandResult = () => ok()) {
+function runnerOf(answer: (args: readonly string[]) => GitCommandResult = (args) => ok(args[0] === "rev-parse" ? `${TIP}\n` : "")) {
   const calls: { args: string[]; cwd: string }[] = [];
   const runner: GitCommandRunner = {
     run: async (args: readonly string[], cwd: string) => {
@@ -84,7 +86,14 @@ function fsOf(over: Partial<AdoptFs> = {}) {
   return { fs: { ...base, ...over }, writes, files, dirs, identities };
 }
 
-const request = { repoPath: "/repo", commonDir: COMMON, worktreePath: WT, branch: "feat/x", staleGitdir: STALE };
+const request = {
+  repoPath: "/repo",
+  commonDir: COMMON,
+  worktreePath: WT,
+  branch: "feat/x",
+  staleGitdir: STALE,
+  expectedBranchOid: TIP,
+};
 
 describe("adoptWorktree", () => {
   it("writes gitdir first, so a prune never sees an entry it would collect", async () => {
@@ -119,7 +128,9 @@ describe("adoptWorktree", () => {
     expect(files.get(`${WT}/.git`)).toBe(`gitdir: ${ENTRY}\n`);
   });
 
-  it("repairs and then rebuilds the index, in that order", async () => {
+  it("repairs, checks the tip, and only then rebuilds the index", async () => {
+    // design.md D4's order. The tip guard sits between the two because the
+    // index is work against a branch state (round-1 F009).
     const { runner, calls } = runnerOf();
     const { fs } = fsOf();
 
@@ -127,6 +138,7 @@ describe("adoptWorktree", () => {
 
     expect(calls.map((c) => c.args)).toEqual([
       ["worktree", "repair", WT],
+      ["rev-parse", "HEAD"],
       ["reset", "--mixed"],
     ]);
   });
@@ -503,5 +515,41 @@ describe("adoptWorktree says which failure stopped it", () => {
     const result = await adoptWorktree(runner, request, fs);
 
     expect((result as { message: string }).message).toContain("No unused administrative entry name");
+  });
+});
+
+describe("adoptWorktree checks the tip before it rebuilds the index", () => {
+  // The index is work against a branch STATE. Rebuilding it first spent that
+  // work on a state the user was never shown and reported a reset failure
+  // instead of the move — design.md D4 states repair, verify, then reset
+  // (round-1 F009).
+  it("refuses a moved branch without rebuilding the index", async () => {
+    const { runner, calls } = runnerOf((args) => ok(args[0] === "rev-parse" ? `${"b".repeat(40)}\n` : ""));
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { message: string }).message).toContain("moved");
+    expect(calls.some((c) => c.args[0] === "reset"), "the index was rebuilt against a branch that moved").toBe(false);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+  });
+
+  it("refuses when that tip cannot be read at all", async () => {
+    // An unreadable HEAD is not a matching one: treating it as a pass would
+    // attach the checkout to a commit nobody verified.
+    const { runner, calls } = runnerOf((args) =>
+      args[0] === "rev-parse"
+        ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal", timedOut: false, failedToSpawn: false }
+        : ok(),
+    );
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(calls.some((c) => c.args[0] === "reset")).toBe(false);
+    expect(store.dirs.has(ENTRY)).toBe(false);
   });
 });

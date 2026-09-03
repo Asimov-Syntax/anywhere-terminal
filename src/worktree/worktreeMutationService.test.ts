@@ -111,7 +111,6 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     // A surviving checkout git has forgotten, unless a test moves one of these.
     corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt" as const, adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
     reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
-    readHeadAt: async () => "oid-tip",
     pathDeps: {
       platform: "darwin",
       lstat: async () => null,
@@ -1707,7 +1706,6 @@ describe("re-registering a surviving checkout", () => {
       listing?: null;
       verdict?: AdoptVerdict;
       asked?: { candidatePath: string; commonDir: string }[];
-      head?: string | null;
       reconstruct?: AdoptResult;
       undone?: AdoptResidue | undefined;
       /** Records each call of the undo the reconstruction handed back. */
@@ -1726,11 +1724,12 @@ describe("re-registering a surviving checkout", () => {
         const others = live.map((r) => ({ branch: "feat", ...r, prunable: false }));
         return reads === 1 ? others : over.unregisteredAfter === true ? others : [...others, adopted];
       },
+      // The tip guard lives in the reconstruction now (F009), so a moved branch
+      // reaches this service as a reconstruction that refused.
       corroborateAdopt: async (input) => {
         over.asked?.push(input);
         return over.verdict ?? { kind: "adopt", adoptPath: input.candidatePath, staleGitdir: STALE_GITDIR };
       },
-      readHeadAt: async () => (over.head === undefined ? TIP : over.head),
       reconstructEntry: async () =>
         over.reconstruct ?? {
           ok: true,
@@ -1837,16 +1836,6 @@ describe("re-registering a surviving checkout", () => {
     expect((h.outcomes[0] as { message: string }).message).toContain("could not be read");
   });
 
-  it("undoes the registration when the branch moved between the offer and the write", async () => {
-    const undos: string[] = [];
-    const h = adoptHarness({ head: "oid-moved", undos });
-    await adopt(h);
-
-    expect(undos).toEqual(["undo"]);
-    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
-    expect((h.outcomes[0] as { message: string }).message).toContain("moved");
-  });
-
   it("undoes the registration when git does not report the adopted path as a worktree", async () => {
     const undos: string[] = [];
     const h = adoptHarness({ unregisteredAfter: true, undos });
@@ -1871,7 +1860,7 @@ describe("re-registering a surviving checkout", () => {
     // A plain failure would send the user looking for a directory that is still
     // registered; reporting a create would be worse.
     const h = adoptHarness({
-      head: "oid-moved",
+      unregisteredAfter: true,
       undone: { entryPath: "/repo/.git/worktrees/survivor", worktreeLinkRestored: false },
     });
     await adopt(h);
@@ -1908,7 +1897,6 @@ describe("re-registering a surviving checkout", () => {
   it("writes nothing when the directory is gone", async () => {
     const h = harness({
       corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
-      readHeadAt: async () => TIP,
       reconstructEntry: async () => {
         throw new Error("the reconstruction ran against a directory that is gone");
       },
@@ -1943,17 +1931,6 @@ describe("re-registering a surviving checkout", () => {
       kind: "error",
       message: expect.stringContaining("another repository"),
     });
-  });
-
-  it("undoes the registration when the tip cannot be read at all", async () => {
-    // An unreadable HEAD is not a matching one. Treating it as a pass would
-    // attach the checkout to a commit nobody verified.
-    const undos: string[] = [];
-    const h = adoptHarness({ head: null, undos });
-    await adopt(h);
-
-    expect(undos).toEqual(["undo"]);
-    expect(h.outcomes[0]).toMatchObject({ kind: "error" });
   });
 
   it("is indeterminate rather than refused when the listing cannot be read", async () => {

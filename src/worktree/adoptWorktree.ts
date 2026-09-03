@@ -31,6 +31,15 @@ export interface AdoptRequest {
    * one this adoption must not overwrite (round-1 F006).
    */
   staleGitdir: string;
+  /**
+   * The tip the user was promised for `branch`.
+   *
+   * Read back from inside the worktree after `repair` and BEFORE the index is
+   * rebuilt, which is the order design.md D4 states: the index is work against
+   * a branch state, and doing it first spends that work on a state the user was
+   * never shown and reports a reset failure instead of the move (round-1 F009).
+   */
+  expectedBranchOid: string;
 }
 
 /** The filesystem this needs, injected so every failure below is witnessable. */
@@ -226,6 +235,19 @@ export async function adoptWorktree(
   const repaired = await repairWorktree(runner, { repoPath: request.repoPath, worktreePath: request.worktreePath });
   if (!repaired.ok) {
     return failed(repaired.message);
+  }
+
+  // The tip the user was PROMISED, from inside the worktree. A pre-read cannot
+  // carry this claim — an `update-ref` between it and the write defeats it — so
+  // the guard is here, and it is here BEFORE the index (D4, D5).
+  const head = await runner.run(["rev-parse", "HEAD"], request.worktreePath);
+  const at = head.code === 0 && !head.timedOut && !head.failedToSpawn ? head.stdout.toString("utf8").trim() : null;
+  if (at !== request.expectedBranchOid) {
+    return failed(
+      at === null
+        ? `The commit ${request.worktreePath} was re-registered at could not be read.`
+        : "That branch has moved since it was offered, so it was not re-registered on it.",
+    );
   }
 
   const rebuilt = await resetMixedIndex(runner, { worktreePath: request.worktreePath });

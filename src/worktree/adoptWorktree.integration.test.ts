@@ -61,6 +61,11 @@ let commonDir: string;
 /** The administrative directory the survivor's link still names — deleted in setup. */
 let staleGitdir: string;
 
+/** A branch's current tip, as the adoption promises it. */
+function tipOf(branch: string): string {
+  return git(["rev-parse", branch]).trim();
+}
+
 /** The `gitdir:` a surviving checkout still points at, read from git's own link file. */
 function staleOf(worktreePath: string): string {
   const link = fs.readFileSync(path.join(worktreePath, ".git"), "utf8");
@@ -137,7 +142,7 @@ describe("what git does with a reconstructed entry", () => {
 
     return adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") },
       realFs,
     ).then((result) => {
       expect(result).toMatchObject({ ok: true });
@@ -152,7 +157,7 @@ describe("what git does with a reconstructed entry", () => {
   });
 
   it("accepts a commit that lands in the repository", async () => {
-    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir }, realFs);
+    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") }, realFs);
 
     fs.writeFileSync(path.join(survivor, "added.txt"), "from the adopted tree\n");
     git(["add", "added.txt"], survivor);
@@ -169,7 +174,7 @@ describe("what git does with a reconstructed entry", () => {
     fs.writeFileSync(path.join(survivor, "README.md"), "edited before the adoption\n");
     fs.writeFileSync(path.join(survivor, "untracked.txt"), "never added\n");
 
-    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir }, realFs);
+    await adoptWorktree(runner, { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") }, realFs);
 
     const status = git(["status", "--porcelain"], survivor)
       .split("\n")
@@ -188,7 +193,7 @@ describe("what git does with a reconstructed entry", () => {
 
     const result = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") },
       realFs,
     );
     expect(result).toMatchObject({ ok: true });
@@ -213,7 +218,7 @@ describe("what git does with a reconstructed entry", () => {
 
     const result = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") },
       realFs,
     );
     // The reconstruction itself does not read the listing — the service's guards
@@ -288,7 +293,7 @@ describe("what git does with a reconstructed entry", () => {
 
     const result = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: "--force", branch: "survivor", staleGitdir },
+      { repoPath: repo, commonDir, worktreePath: "--force", branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") },
       realFs,
     );
 
@@ -315,12 +320,12 @@ describe("what git does with a reconstructed entry", () => {
 
     const first = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir },
+      { repoPath: repo, commonDir, worktreePath: survivor, branch: "survivor", staleGitdir, expectedBranchOid: tipOf("survivor") },
       realFs,
     );
     const second = await adoptWorktree(
       runner,
-      { repoPath: repo, commonDir, worktreePath: other, branch: "second", staleGitdir: staleOther },
+      { repoPath: repo, commonDir, worktreePath: other, branch: "second", staleGitdir: staleOther, expectedBranchOid: tipOf("second") },
       realFs,
     );
 

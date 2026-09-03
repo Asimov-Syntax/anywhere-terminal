@@ -351,15 +351,6 @@ export interface MutationServiceDeps {
    */
   reconstructEntry(request: AdoptRequest): Promise<AdoptResult>;
   /**
-   * The commit the adopted worktree's HEAD names, read from INSIDE it after the
-   * repair (D5).
-   *
-   * The pre-read cannot carry this claim: an `update-ref` landing between the
-   * enumeration and the symbolic-HEAD write defeats it, so the guard is a read
-   * of the state the adoption actually produced.
-   */
-  readHeadAt(worktreePath: string): Promise<string | null>;
-  /**
    * The repository's worktrees, from the listing that negotiates `-z`.
    *
    * `null` when no listing could be obtained, which is indeterminate rather
@@ -901,6 +892,11 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 // than re-derived: the reconstruction re-reads it at its own
                 // write boundary, and two readings of one link could disagree.
                 staleGitdir: verdict.staleGitdir,
+                // The tip guard belongs to the reconstruction, which is the only
+                // place that can run it between `repair` and the index rebuild —
+                // the order D4 states. One owner, so the two cannot disagree
+                // about which read the claim rests on (round-1 F009).
+                expectedBranchOid: mode.expectedBranchOid,
               });
               if (!written.ok) {
                 return fail(`${written.message}${residueNote(written.leftBehind)}`);
@@ -908,14 +904,6 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               /** Withdraw the registration, and say what the withdrawal could not put back. */
               const withdraw = async (why: string): Promise<MutationOutcome> =>
                 fail(`${why}${residueNote(await written.undo())}`);
-              // The tip the user was PROMISED, read from inside the worktree
-              // after the repair. The pre-read cannot carry this claim (D5).
-              const head = await deps.readHeadAt(adoptPath);
-              if (head !== mode.expectedBranchOid) {
-                return withdraw(
-                  `That branch has moved since it was offered, so ${adoptPath} was not re-registered on it.`,
-                );
-              }
               // And the branch claim again, because the window this closes is
               // the one between the pre-read and the write. Exactly one
               // non-prunable record, and it is the adopted path.

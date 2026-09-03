@@ -3010,15 +3010,22 @@ describe("the base ref states when it cannot apply", () => {
 
   function withResolution(over: Partial<Parameters<typeof openWorktreeCreateDialog>[1]> = {}) {
     let apply: ((resolution: WorktreeCreateResolutionMessage) => void) | undefined;
+    let refsApply:
+      | ((repoId: string, refs: { list: { name: string; oid: string }[]; truncated: boolean }) => void)
+      | undefined;
     const h = open({
       repos: [createDefaults({ refs: { list: RESOLVED_REFS, truncated: false } })],
       bindResolution: (fn) => {
         apply = fn;
       },
+      bindRefs: (fn) => {
+        refsApply = fn as typeof refsApply;
+      },
       ...over,
     });
     return {
       ...h,
+      pushRefs: (list: { name: string; oid: string }[], truncated = false) => refsApply?.(REPO_ID, { list, truncated }),
       action: () => h.q<HTMLElement>("#wt-action-note"),
       base: () => h.q<HTMLInputElement>("#wt-base"),
       note: () => h.q<HTMLElement>("#wt-base-note"),
@@ -3091,6 +3098,37 @@ describe("the base ref states when it cannot apply", () => {
     // The directory being adopted, never the free suffix beside it: that path
     // is one this create will never touch (round-3 B3, for the same reason).
     expect(h.q<HTMLElement>(".wt-dest").getAttribute("aria-label")).toBe("/trees/repo-feat-search");
+  });
+
+  it("keeps an adoption when a late refs reply does not carry the branch", () => {
+    // The controller does not wait for refs before opening the form, so the
+    // list can land AFTER a resolution — and it can be truncated, so a branch
+    // the host enumerated need not be in it. The local derivation would then
+    // demote the mode to `new` while the note, the losses and the submitted
+    // mode all stayed adopt, re-enabling the destination D6 refuses
+    // (round-1 F008).
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    h.pushRefs([{ name: "some/other", oid: "oid-other" }], true);
+
+    expect(h.q<HTMLInputElement>("#wt-path").disabled).toBe(true);
+    expect(h.base().disabled).toBe(true);
+    expect(h.q<HTMLElement>("#wt-adopt-losses").hidden).toBe(false);
+  });
+
+  it("re-derives the mode once the typed branch is no longer the one that was answered", () => {
+    // The hold is bound to the answer's own question. A user who types past it
+    // is composing a different create, and that one is the local derivation's.
+    const h = withResolution({ onSelectionChange: () => {} });
+    settleBranch(h, "feat/search");
+    h.resolve({ mode: ADOPT, freePath: "/trees/repo-feat-search-2" });
+
+    settleBranch(h, "feat/other");
+    h.pushRefs([{ name: "some/other", oid: "oid-other" }], true);
+
+    expect(h.q<HTMLInputElement>("#wt-path").disabled).toBe(false);
   });
 
   it("states what an adoption does, rather than that a new worktree is created instead", () => {

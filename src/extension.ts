@@ -638,14 +638,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // mutation cannot disagree about what was checked (design.md D5).
         corroborateAdopt: (subject) => probeAdopt(subject, gitEntryReads),
         reconstructEntry: (request) => adoptWorktree(worktreeTreeDeps.runner, request, nodeAdoptFs),
-        readHeadAt: async (worktreePath) => {
-          const read = await worktreeTreeDeps.runner.run(["rev-parse", "HEAD"], worktreePath);
-          if (read.code !== 0 || read.timedOut || read.failedToSpawn) {
-            return null;
-          }
-          const value = read.stdout.toString("utf8").trim();
-          return value.length > 0 ? value : null;
-        },
         // The SAME listing the tree is built from — it negotiates `-z` through
         // the capability probe, so the listing that offers a repair and the one
         // that confirms it cannot parse the same path differently (round-1 W5).
