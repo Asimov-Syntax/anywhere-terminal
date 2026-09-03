@@ -2155,6 +2155,40 @@ describe("migration runs inside the successful create", () => {
     expect(outcome(h)).toEqual(expect.objectContaining({ kind: "error" }));
   });
 
+  it("refuses withdrawn migration authority before clearing authorized debris", async () => {
+    const removed: string[] = [];
+    const store = createDebrisAuthorizationStore();
+    const token = store.issue("/repo/wt/new", { entries: ["stale.log"], identity: "1:7" }, 0);
+    const h = harness({
+      migrationRegistration: () => undefined,
+      debrisAuthorizations: store,
+      clearDebrisDeps: {
+        lstat: () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 7 }),
+        readdir: () => ["stale.log"],
+        probeEntry: () => "absent",
+        remove: async (path) => {
+          removed.push(path);
+        },
+      },
+      pathDeps: {
+        platform: "darwin",
+        lstat: async () => ({ isSymbolicLink: () => false, isDirectory: () => true, dev: 1, ino: 7 }),
+        readdir: async () => ["stale.log"],
+        normalize: async (raw) => raw,
+      },
+    });
+
+    await h.service.createWorktree(
+      create({
+        disposition: { kind: "debris", authorization: { path: "/repo/wt/new", fingerprint: token } },
+      }),
+    );
+
+    expect(removed).toEqual([]);
+    expect(h.order).not.toContain("git:add");
+    expect(outcome(h)).toEqual(expect.objectContaining({ kind: "error" }));
+  });
+
   it("accepts an equal registration from a newer publication", async () => {
     const h = harness({ migrationRegistration: () => structuredClone(binding.registration) });
 

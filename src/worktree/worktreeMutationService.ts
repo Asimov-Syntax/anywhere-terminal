@@ -1001,12 +1001,18 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
             if (named !== undefined && (await branchNameIsValid(deps.runner, repoPath, named)) === false) {
               return fail(`Git will not accept "${named}" as a branch name.`);
             }
+            const migrationAuthorityIsCurrent = (): boolean =>
+              request.migration === undefined ||
+              isDeepStrictEqual(deps.migrationRegistration?.(request.repoId), request.migration.binding.registration);
             // The clearance goes LAST, after every recheck and every question
             // that can still refuse — a directory deleted before a refusal is a
             // directory deleted for nothing. `clearDebris` re-takes the identity
             // reading itself: `branchNameIsValid` above awaited, so the phase-2
             // comparison no longer describes the moment of the delete (D3).
             if (intent.kind === "mustMatchDebrisAuthorization") {
+              if (!migrationAuthorityIsCurrent()) {
+                return fail("The source repository changed while the create was queued. Please try again.");
+              }
               const entries = await deps.pathDeps.readdir(check.path);
               if (entries === null) {
                 // An unreadable directory is not an empty one. Redeeming it as
@@ -1042,10 +1048,7 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 return fail(cleared.reason);
               }
             }
-            if (
-              request.migration !== undefined &&
-              !isDeepStrictEqual(deps.migrationRegistration?.(request.repoId), request.migration.binding.registration)
-            ) {
+            if (!migrationAuthorityIsCurrent()) {
               return fail("The source repository changed while the create was queued. Please try again.");
             }
             const result = await createWorktree(deps.runner, {

@@ -280,4 +280,14 @@
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts`: replace the post-submit quiescence guess with the add argv condition the assertion consumes.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4 | 5_5 | 5_6 | 5_7 | 5_8`
+- [x] 5_9 Refuse stale migration authority before debris clearance — verified: pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=1 exit 0
+  - **Deps**: 5_8
+  - **Refs**: design.md D3 <!-- review round 5 F015 -->
+  - **Acceptance**:
+    - Outcome: Known-invalid migration authority cannot clear an authorized debris destination
+    - Verify: command pnpm exec vitest run 'src/worktree/worktreeMutationService.test.ts'
+  - **Plan**:
+    1. `src/worktree/worktreeMutationService.ts`: check current migration registration before destructive debris clearance and retain the final pre-create check.
+    2. `src/worktree/worktreeMutationService.test.ts`: combine debris authorization with withdrawn migration authority and prove neither clearance nor `worktree add` runs.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4 | 5_5 | 5_6 | 5_7 | 5_8 | 5_9`
