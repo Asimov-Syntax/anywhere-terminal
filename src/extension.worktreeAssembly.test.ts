@@ -758,6 +758,12 @@ async function settleUntil(ready: () => boolean, what: string): Promise<void> {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+function createNotices(): Element[] {
+  return [...document.querySelectorAll(".wt-notice")].filter((notice) =>
+    (notice.textContent ?? "").includes("Create done."),
+  );
+}
+
 /** Open the row's context menu the way a user does, and return its items. */
 function openMenu(rowText: string): HTMLElement[] {
   const rows = [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')];
@@ -1780,11 +1786,7 @@ describe("the invariants that span the host and the webview", () => {
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
     await settleUntil(
-      () =>
-        provisionResults.length === 1 &&
-        [...document.querySelectorAll(".wt-notice")].some((notice) =>
-          (notice.textContent ?? "").includes("Create done."),
-        ),
+      () => provisionResults.length === 1 && createNotices().length > 0,
       "the create and provisioning results",
     );
 
@@ -1803,9 +1805,7 @@ describe("the invariants that span the host and the webview", () => {
     // and made its own — which is what shipped.
     // ONE create notice. The panel also carries an unrelated "not being watched"
     // notice in this assembly, so the count is taken over the create's own.
-    const notices = [...document.querySelectorAll(".wt-notice")].filter((n) =>
-      (n.textContent ?? "").includes("Create done."),
-    );
+    const notices = createNotices();
     expect(notices).toHaveLength(1);
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
   });
@@ -1855,15 +1855,10 @@ describe("the invariants that span the host and the webview", () => {
     [...document.querySelectorAll<HTMLButtonElement>("button")]
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
-    await settleUntil(
-      () => document.querySelectorAll(".wt-notice").length > 0,
-      "the create to report something back to the panel",
-    );
+    await settleUntil(() => createNotices().length > 0, "the create to report something back to the panel");
     await settle();
 
-    const created = [...document.querySelectorAll(".wt-notice")].filter((n) =>
-      (n.textContent ?? "").includes("Create done."),
-    );
+    const created = createNotices();
     expect(created).toHaveLength(1);
     const reason = [...(created[0]?.querySelectorAll(".wt-reason") ?? [])].map((n) => n.textContent ?? "").join("\n");
 
