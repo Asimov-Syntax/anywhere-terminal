@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "make-the-create-dialog-explain-itself"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788446397740,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788446397740,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788446397740
+        }
+      ],
+      "firstAt": 1788446397740,
+      "lastAt": 1788451213611,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-oracle",
+          "model": "claude-opus-5",
+          "messages": 48,
+          "inputTokens": 96,
+          "outputTokens": 7845,
+          "reasoningTokens": 4444,
+          "cacheWriteTokens": 138826,
+          "cacheReadTokens": 4446176,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 138826,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    }
+  ]
+}
