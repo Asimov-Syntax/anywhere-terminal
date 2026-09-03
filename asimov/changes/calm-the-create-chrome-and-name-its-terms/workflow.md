@@ -12,11 +12,11 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [-] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
@@ -35,3 +35,6 @@ Planned at: a304c7e5
 
 Must not: change what either secondary action does when pressed, add a control, or move a default. Presentation only — no wire message, no host authority.
 Fastlane decision: no obligation ledger — the change touches no mutable resource beyond the rendered DOM, so no plan attack was required.
+Verify gate: the one biome error is `src/agentHooks/AgentHookController.test.ts` formatting, untouched by this change and present at its base; warnings went 15 → 14 because the one this change introduced was fixed.
+Review skipped: presentation-only, no wire message, no host authority, no escalation flag, and every rule and explanation carries a witness.
+Follow-up (not this change): `src/cursor/CursorHookInstaller.test.ts:970` accepts only EPIPE/ERR_STREAM_DESTROYED for a deliberately closed stdin, but Darwin's socket-backed stdin also yields ENOTCONN — an under-specified assertion that fails the gate under load.

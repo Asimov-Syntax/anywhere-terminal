@@ -1263,7 +1263,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * plain `<label>`.
    */
   const explain = (el: HTMLElement | null, text: string): void => {
-    if (!el) return;
+    if (!el) {
+      return;
+    }
     el.setAttribute("title", text);
     el.setAttribute("aria-description", text);
   };
