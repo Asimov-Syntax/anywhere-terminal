@@ -108,3 +108,51 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     4. In the same file, assert that a second worktree taking the branch between the pre-read and the post-read leaves no entry at the adopted path and reports a refusal.
     5. In the same file, assert that an entry directory whose `gitdir` file names a path that EXISTS is not removed by `git worktree prune --expire now`, and that one with no `gitdir` file is — the pair is what makes design.md D4's write order load-bearing.
     6. `src/worktree/adoptWorktree.ts` and `src/extension.ts` — git's administrative worktree-entry parent directory is created if it is not there before the entry's own exclusive `mkdir`, and that `mkdir` treats only a collision as a name to retry, reporting any other failure as itself. Found by this task against a real repository: `git worktree prune` removes that parent once it is empty, so the first adoption in a repository with one forgotten checkout failed with a message about names being unavailable.
+
+## 4. Close review round 1
+
+- [x] 2_1 Accept only git's own gitfile as the authority to overwrite one — verified: pnpm exec vitest run src/worktree/reattachProbe.test.ts src/worktree/adoptProbe.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 1_6
+  - **Refs**: design.md D1; `.reviews/round-1.md` F007
+  - **Acceptance**:
+    - Outcome: A `.git` file git itself rejects is `unreadable`, never a link adopt may act on
+    - Verify: command pnpm exec vitest run src/worktree/reattachProbe.test.ts src/worktree/adoptProbe.test.ts
+  - **Plan**:
+    1. `src/worktree/reattachProbe.ts` — `readGitLink` accepts only git's own gitfile grammar: the file begins with `gitdir: ` and the rest, with trailing whitespace removed, is the path. Anything else is `unreadable`. The parser is shared with reattach, so the narrowing applies at both boundaries (F007).
+    2. `src/worktree/reattachProbe.test.ts` — a file whose `gitdir:` line is not the first thing in it is `unreadable`, and the reattach classification refuses with it.
+    3. `src/worktree/adoptProbe.test.ts` — the same file declines adoption rather than authorizing a write over it.
+
+- [ ] 2_2 Prove a surviving checkout belongs to this repository before it is offered
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-surviving-checkout-is-offered-as-adopt-not-skipped}; design.md D1; `.reviews/round-1.md` F002, F003
+  - **Acceptance**:
+    - Outcome: Adopt is declined unless the stale gitdir is an entry of this repository
+    - Verify: command pnpm exec vitest run src/worktree/adoptProbe.test.ts src/providers/WorktreeHost.actions.test.ts src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptProbe.ts` — `probeAdopt` takes the repository's common directory and declines unless the parsed stale gitdir is an entry beneath it (F002).
+    2. `src/providers/WorktreeHost.ts` and `src/worktree/worktreeMutationService.ts` — the adopt corroboration is asked with the repository whose common directory it must prove against; the host reads it from the repository the probe is answering for.
+    3. `src/extension.ts` — the production adapters treat only `ENOENT`/`ENOTDIR` as absence; any other read failure is an unreadable refusal, for `adminDirExists` and for the undo's `readFile` (F003).
+    4. `src/worktree/adoptProbe.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.test.ts` — a stale gitdir under another repository declines at the probe, is not offered by the host, and is refused by the mutation.
+
+- [ ] 2_3 Run an adoption only on the resolution the host published
+  - **Deps**: 2_2
+  - **Refs**: design.md D1, D3; `.reviews/round-1.md` F001
+  - **Acceptance**:
+    - Outcome: A repair submission that differs from the published answer is refused out loud
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts` — the `Opening` record carries the repair mode this opening's latest answer published, set beside `debrisCandidate` and withdrawn with it.
+    2. `src/providers/WorktreeHost.ts` — an inbound `worktreeCreate` naming `adopt` or `reattach` runs only when its path, branch, target and expected oid equal that record, and is refused with a stated reason otherwise (F001).
+    3. `src/providers/WorktreeHost.actions.test.ts` — a substituted path, branch or tip refuses and says so, and the legitimate submission still runs.
+
+- [ ] 2_4 Make the reconstruction non-destructive under substitution and leave nothing behind
+  - **Deps**: 2_3
+  - **Refs**: specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-adoption-re-establishes-what-it-was-offered-on}; design.md D4, D5; `.reviews/round-1.md` F004, F005, F006
+  - **Acceptance**:
+    - Outcome: A failed reconstruction leaves no entry and reports whatever it could not remove
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — every entry file is written exclusively, so a directory substituted after the `mkdir` is never truncated; a failure after the `mkdir` removes the entry and reports what it could not remove (F004, F005).
+    2. `src/worktree/adoptWorktree.ts` — the final `<wt>/.git` write is conditional: the link is re-read immediately before it and the write is refused unless it still holds the stale bytes the adoption was offered on (F006).
+    3. `src/worktree/adoptWorktree.test.ts` — a substituted entry directory and a post-`mkdir` identity failure each leave no entry and report the residue.
+    4. `src/worktree/adoptWorktree.integration.test.ts` — a registration restored between the probe and the write leaves the directory's `.git` as it was found.

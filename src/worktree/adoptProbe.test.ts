@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { type AdoptProbeDeps, probeAdopt } from "./adoptProbe";
-import type { GitLink } from "./reattachProbe";
+import { type GitLink, readGitLink } from "./reattachProbe";
 
 function deps(over: Partial<AdoptProbeDeps> = {}): AdoptProbeDeps {
   return {
@@ -95,5 +95,22 @@ describe("probeAdopt", () => {
     );
 
     expect(asked).toEqual(["/repo/.git/worktrees/gone"]);
+  });
+});
+
+describe("probeAdopt refuses a gitfile git itself rejects", () => {
+  it("declines a `.git` whose `gitdir:` is not the first thing in it", async () => {
+    // The authority to overwrite a `.git` cannot be weaker than git's own
+    // reading of it (round-1 F007).
+    const verdict = await probeAdopt("/wt/stale", {
+      readGitLink: (p) =>
+        readGitLink(p, {
+          lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
+          readFile: async () => "junk\ngitdir: /repo/.git/worktrees/stale\n",
+        }),
+      adminDirExists: async () => false,
+    });
+
+    expect(verdict).toEqual({ kind: "declined", because: "unreadable" });
   });
 });

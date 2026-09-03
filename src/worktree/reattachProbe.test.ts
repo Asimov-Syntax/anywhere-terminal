@@ -187,3 +187,53 @@ describe("readGitLink", () => {
     ).toEqual({ kind: "unreadable" });
   });
 });
+
+describe("readGitLink follows git's own gitfile grammar", () => {
+  function linkFs(content: string): GitLinkFs {
+    return {
+      lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
+      readFile: async () => content,
+    };
+  }
+
+  // Git's `read_gitfile_gently` requires the file to BEGIN with `gitdir: ` and
+  // treats everything after it as the path. A `gitdir:` line found further down
+  // is not a link git would follow, so it is not authority to overwrite one
+  // (round-1 F007).
+  it("refuses a `gitdir:` line that is not the first thing in the file", async () => {
+    expect(await readGitLink("/wt/stale", linkFs("junk\ngitdir: /repo/.git/worktrees/stale\n"))).toEqual({
+      kind: "unreadable",
+    });
+  });
+
+  it("refuses a leading blank line before the `gitdir:`", async () => {
+    expect(await readGitLink("/wt/stale", linkFs("\ngitdir: /repo/.git/worktrees/stale\n"))).toEqual({
+      kind: "unreadable",
+    });
+  });
+
+  it("refuses `gitdir:` without the space git writes after it", async () => {
+    expect(await readGitLink("/wt/stale", linkFs("gitdir:/repo/.git/worktrees/stale\n"))).toEqual({
+      kind: "unreadable",
+    });
+  });
+
+  it("trims the trailing whitespace git trims, and nothing else", async () => {
+    expect(await readGitLink("/wt/stale", linkFs("gitdir: /repo/.git/worktrees/stale  \n"))).toEqual({
+      kind: "file",
+      gitdir: "/repo/.git/worktrees/stale",
+    });
+  });
+
+  it("declines a repair against a malformed gitfile rather than reading it as a link", async () => {
+    const verdict = await probeReattach(SUBJECT, {
+      readGitLink: (p) => readGitLink(p, linkFs("junk\ngitdir: /repo/.git/worktrees/stale\n")),
+      adminDirExists: async () => false,
+      headOid: async () => "abc123",
+    });
+
+    // Not `adopt`: an unreadable `.git` is still a `.git`, and reporting this
+    // one as a forgotten checkout would offer to overwrite it.
+    expect(verdict).toEqual({ kind: "declined", because: "unreadable" });
+  });
+});

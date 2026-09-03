@@ -95,7 +95,14 @@ export interface GitLinkFs {
   readFile(p: string): Promise<string | null>;
 }
 
-const GITDIR_PREFIX = "gitdir:";
+/**
+ * Git's own prefix, the space included.
+ *
+ * `read_gitfile_gently` matches `"gitdir: "` at the START of the file and takes
+ * everything after it as the path. Accepting `gitdir:` without the space, or
+ * anywhere but the first byte, would read as a link a file git refuses.
+ */
+const GITDIR_PREFIX = "gitdir: ";
 
 /**
  * Classify a candidate directory's `.git`.
@@ -128,11 +135,18 @@ export async function readGitLink(worktreePath: string, fs: GitLinkFs): Promise<
   if (text === null) {
     return { kind: "unreadable" };
   }
-  const named = text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.startsWith(GITDIR_PREFIX));
-  const gitdir = named?.slice(GITDIR_PREFIX.length).trim() ?? "";
+  // Git's grammar, not a search for a line that looks like one. The old reader
+  // took the first line ANYWHERE in the file that began with `gitdir:`, so
+  // `junk\ngitdir: <path>` — which git rejects outright — was accepted as the
+  // authority to overwrite that same file (round-1 F007).
+  if (!text.startsWith(GITDIR_PREFIX)) {
+    return { kind: "unreadable" };
+  }
+  // The tail git trims, plus `\r`: a CRLF-written link that resolves to an
+  // existing administrative directory must report that directory as PRESENT.
+  // Being liberal at the tail can only decline an adoption; being liberal at
+  // the head is what admits a file git would not follow.
+  const gitdir = text.slice(GITDIR_PREFIX.length).replace(/[\n\r ]+$/, "");
   if (gitdir.length === 0) {
     return { kind: "unreadable" };
   }
