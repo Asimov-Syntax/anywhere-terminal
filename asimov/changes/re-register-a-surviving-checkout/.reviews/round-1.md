@@ -221,3 +221,58 @@ host does not match them to what it published). It is shipped behavior this chan
 F001's fix records the published repair mode generically so both arms are bound by one rule, because
 recording adopt alone would leave the same hole one line away — that is closing the finding at its
 boundary, not widening scope.
+
+## Fix-delta audit (author, before re-review)
+
+Every accepted finding was fixed. The witness each blocker named now closes, and the earlier
+blockers' witnesses were re-run together as one suite on every tick (7192 tests, 287 files).
+
+| Finding | Where it closes | Witness |
+|---|---|---|
+| F001 | `WorktreeHost.ts` — `Opening.publishedRepair`, set beside `debrisCandidate` and withdrawn with it | six host cases: substituted path, branch, tip, stated destination, withdrawn answer, and the legitimate submit |
+| F002 | `adoptProbe.ts` — the stale gitdir must be an entry under this repository's common directory | five probe cases including a prefix sibling (`/repo/.git-other`) and a redundant spelling |
+| F003 | `extension.ts` — one errno rule shared by both readers | probe cases at both boundaries; the undo's `readFile` no longer answers absence for a failed read |
+| F004 | `adoptWorktree.ts` — a created entry whose identity cannot be read is reported with its path | "removes nothing and reports nothing when the entry is already gone" plus the residue case |
+| F005 | `adoptWorktree.ts` — the three entry files are created exclusively | "refuses rather than truncating a replacement entry's own files", asserting the foreign bytes survive |
+| F006 | `adoptWorktree.ts` — link bytes and the stale entry's own claim are re-read immediately before the write | three cases: changed link, restored registration, unreadable read; plus one proving an unrelated occupant does NOT refuse |
+| F007 | `reattachProbe.ts` — git's own gitfile grammar | five parser cases and one at each probe |
+| F008 | `WorktreeCreateDialog.ts` — a refs reply does not demote a resolved mode | two dialog cases; arm-checked by reverting the guard (1 failure) |
+| F009 | `adoptWorktree.ts` — repair, verify tip, then reset | the argv order is asserted, and "refuses a moved branch without rebuilding the index" |
+| F010 | `worktreeMutationService.ts` — the common directory is `repoId`, the tree's capability-aware value | the corroboration's subject is asserted; `commonDirOf` is retired |
+| F011 | `adoptWorktree.ts` — a discriminated create-entry failure | a permission failure names itself; exhaustion still reports exhaustion |
+
+**Found by this audit, not by the round.** F003 named the adopt adapter at `extension.ts:929`. The
+reattach adapter twenty lines above it swallowed the same failures, and that arm REPORTS adopt — so a
+`stat` that merely failed offered a live registration for overwriting. Fixed at both boundaries with
+one shared rule (task 2_6).
+
+**Witnesses previously satisfied that the delta could falsify, and were re-checked**: D4's write
+order (the argv-order test now also pins the tip read between repair and reset); D4's undo contract
+(the identity-mismatch arm changed meaning — it reports residue instead of a clean withdrawal, and
+the existing replacement test was extended rather than replaced); D5's post-write branch-claim
+re-read (unchanged, still asserted); the spec's "content is untouched" integration witness (unchanged
+and green against a real repository); `build:check-requires` and `gate:fs-deletion` (both re-run).
+No assertion was weakened or removed. Three service cases for the tip guard MOVED to
+`adoptWorktree.test.ts` because the guard itself moved; they assert more there, not less.
+
+## Impact manifest (for the verification round)
+
+The fixes change routing, identity source, error handling and three shared interfaces. Reachable
+call sites, each verified:
+
+- **`AdoptVerdict` gained `staleGitdir` and a `anotherRepository` decline** — consumers:
+  `WorktreeHost.corroborateAdopt` (declines fall to `reuse`), `worktreeMutationService`'s adopt
+  branch (`adoptDeclineReason` gained the arm), `probeReattach`'s own adopt report (unchanged shape).
+- **`probeAdopt` now takes a subject with `commonDir`** — call sites: `extension.ts` twice (host
+  option and mutation dep), both fed from `repoId`.
+- **`MutationServiceDeps` lost `commonDirOf` and `readHeadAt`** — the `unavailable` outcome for an
+  unreadable common directory no longer exists; the tip refusal now arrives as a reconstruction
+  failure, with the same user-facing wording.
+- **`AdoptFs` gained `createFile`; `AdoptRequest` gained `staleGitdir` and `expectedBranchOid`** —
+  one production implementation (`extension.ts`) and two test fakes, one of which is a real
+  filesystem against a real repository.
+- **The create door refuses `adopt` and `reattach` that do not match the published resolution** —
+  entry modes exercised: fresh, fresh-detached, reuse, reattach, adopt; the assembly walk now drives
+  reattach through a real probe rather than a hand-built submit, which is the production path.
+- **`readGitLink` narrowed** — shared with reattach, so both classifications were re-run; the
+  reattach suite's existing cases are unchanged and green.
