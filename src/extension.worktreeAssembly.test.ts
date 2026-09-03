@@ -2134,6 +2134,14 @@ describe("the invariants that span the host and the webview", () => {
     setupBox.dispatchEvent(new Event("change", { bubbles: true }));
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
+    // Overlap is now the deliberate choice: selecting setup arms the wait as
+    // the recommendation, so an ungated create is one the user asks for.
+    const wait = document.querySelector<HTMLInputElement>("#wt-wait-setup");
+    if (wait === null || !wait.checked) {
+      throw new Error("the selected setup did not arm the wait by default");
+    }
+    wait.checked = false;
+    wait.dispatchEvent(new Event("change", { bubbles: true }));
     const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
     if (destination === undefined || destination === "") {
       throw new Error("the host resolved no destination");

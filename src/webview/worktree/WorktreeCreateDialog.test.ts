@@ -1042,10 +1042,76 @@ describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
     };
   }
 
-  it("renders off, and stays off, by default", () => {
+  it("renders off while nothing is there to wait for", () => {
     const { q } = withOffer();
     chooseAgent(q);
     expect(q<HTMLInputElement>("#wt-wait-setup").checked).toBe(false);
+  });
+
+  it("arms itself as the recommendation once a setup step is selected", () => {
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    tick(setupRow(host), true);
+    expect(q<HTMLInputElement>("#wt-wait-setup").checked).toBe(true);
+  });
+
+  it("states the order the armed choice produces", () => {
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    tick(setupRow(host), true);
+    const said = q<HTMLElement>(".wt-wait-setup").textContent ?? "";
+    expect(said).toContain("after the selected setup finishes");
+  });
+
+  it("states the overlapping order when the user clears it", () => {
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    tick(setupRow(host), true);
+    tick(q<HTMLInputElement>("#wt-wait-setup"), false);
+    const said = q<HTMLElement>(".wt-wait-setup").textContent ?? "";
+    expect(said).toContain("while the selected setup is still running");
+  });
+
+  it("never re-arms a choice the user cleared, however the selection changes", () => {
+    // The whole point of the recommendation is that it is a recommendation:
+    // silently re-gating a user who asked for overlap is the failure.
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    const setup = setupRow(host);
+    tick(setup, true);
+    const wait = q<HTMLInputElement>("#wt-wait-setup");
+    tick(wait, false);
+
+    tick(setup, false);
+    tick(setup, true);
+
+    expect(wait.checked).toBe(false);
+  });
+
+  it("re-arms an untouched choice when the selection is emptied and refilled", () => {
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    const setup = setupRow(host);
+    tick(setup, true);
+    tick(setup, false);
+    tick(setup, true);
+    expect(q<HTMLInputElement>("#wt-wait-setup").checked).toBe(true);
+  });
+
+  it("keeps an explicit tick explicit, so a later default cannot claim it", () => {
+    // The negative that gives the rule meaning: an explicit ON and an armed
+    // default are the same checkbox state, and only one of them survives a
+    // user who then wants overlap.
+    const { q, host } = withOffer();
+    chooseAgent(q);
+    const setup = setupRow(host);
+    tick(setup, true);
+    const wait = q<HTMLInputElement>("#wt-wait-setup");
+    tick(wait, false);
+    tick(wait, true);
+    tick(setup, false);
+    tick(setup, true);
+    expect(wait.checked).toBe(true);
   });
 
   it("stays hidden for a create that does not launch an agent", () => {
@@ -1079,6 +1145,8 @@ describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
     tick(wait, true);
     tick(setup, false);
     expect(wait.disabled).toBe(true);
+    // Nothing to wait for is not a gate: an armed box with no selected setup
+    // would submit a wait for steps that do not exist.
     expect(wait.checked).toBe(false);
   });
 
@@ -1101,7 +1169,8 @@ describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
     const { q, host, submitted } = withOffer();
     chooseAgent(q);
     tick(setupRow(host), true);
-    tick(q<HTMLInputElement>("#wt-wait-setup"), true);
+    // Already armed by the recommendation; the submitted field is unchanged.
+    expect(q<HTMLInputElement>("#wt-wait-setup").checked).toBe(true);
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(submitted[0]?.waitForSetup).toBe(true);

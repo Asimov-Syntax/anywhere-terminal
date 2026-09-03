@@ -1746,7 +1746,29 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   waitText.textContent = "Wait for setup to finish before starting the agent";
   waitLabel.append(waitBox, waitText);
   waitField.appendChild(waitLabel);
+  // The order the current state produces, said rather than left to be inferred
+  // from a checkbox: an agent that starts into a half-installed tree is the
+  // confusion this recommendation exists to prevent.
+  const waitNote = document.createElement("span");
+  waitNote.className = "wt-fhint wt-wait-note";
+  waitField.appendChild(waitNote);
   shell.dialog.appendChild(waitField);
+
+  /**
+   * What the user set the wait to themselves, or `undefined` while untouched.
+   *
+   * The VALUE rather than a touched flag, because the box is forced off
+   * whenever no setup is selected: a flag alone remembers that a choice was
+   * made and loses which one, so an explicit ON came back off the next time
+   * there was something to wait for. The recommendation is a default, not a
+   * policy — an armed box and an explicitly ticked one are the same DOM state,
+   * and only the untouched one may be re-decided by the selection.
+   */
+  let waitChoice: boolean | undefined;
+  waitBox.addEventListener("change", () => {
+    waitChoice = waitBox.checked;
+    syncWaitForSetup();
+  });
 
   /** The setup steps currently selected in the drawn offer, if any. */
   function hasSelectedSetup(): boolean {
@@ -1771,8 +1793,21 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     const selected = hasSelectedSetup();
     waitBox.disabled = !selected;
     if (!selected) {
+      // Nothing to wait for is not a gate. The user's own choice is kept for
+      // the next time there IS something, but the box cannot stay armed for
+      // steps that are no longer selected.
       waitBox.checked = false;
+    } else {
+      // Recommended, because setup usually installs what the agent is about to
+      // read — but only while untouched. An explicit choice owns the box from
+      // then on, in both directions.
+      waitBox.checked = waitChoice ?? true;
     }
+    waitNote.textContent = !selected
+      ? "Select a setup step to gate the agent on it."
+      : waitBox.checked
+        ? "The agent starts after the selected setup finishes."
+        : "The agent starts while the selected setup is still running.";
   }
 
   // ── Advanced — collapsed, and out of the focus order while it is ────────
