@@ -1013,6 +1013,13 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     }
     expect(create.disabled).toBe(false);
     create.click();
+    // The create's own argv, not a pump count. The host is suspended in an
+    // await between the click and the spawn, painting nothing and spawning
+    // nothing — so `settle()`'s quiet-turn tail can elapse inside that gap and
+    // return before the command it is waiting for exists. It held on a quiet
+    // run and failed under gate load, which is the shape of a wait that assumes
+    // a cost rather than one that waits for the thing being asserted.
+    await settleUntil(() => gitCalls("add").length > 0, "the create to reach `git worktree add`");
     await settle();
 
     const added = gitCalls("add");
