@@ -38,14 +38,28 @@ const realFs: AdoptFs = {
       return null;
     }
   },
-  writeFile: async (p, data) => {
-    fs.writeFileSync(p, data, "utf8");
+  openLink: async (p) => {
+    // The real thing: one `O_RDWR` descriptor, no `O_TRUNC`, held across the
+    // reconstruction. Every read and write below addresses that object.
+    const fd = fs.openSync(p, fs.constants.O_RDWR | (fs.constants.O_NOFOLLOW ?? 0));
+    return {
+      identity: async () => fs.fstatSync(fd, { bigint: true }),
+      readAt: async (position) => {
+        const buffer = Buffer.alloc(8192);
+        const read = fs.readSync(fd, buffer, 0, buffer.byteLength, position);
+        return buffer.subarray(0, read).toString("utf8");
+      },
+      truncate: async (length) => {
+        fs.ftruncateSync(fd, length);
+      },
+      writeAt: async (data, position) => fs.writeSync(fd, data, 0, data.byteLength, position),
+      close: async () => {
+        fs.closeSync(fd);
+      },
+    };
   },
   createFile: async (p, data) => {
     fs.writeFileSync(p, data, { encoding: "utf8", flag: "wx" });
-  },
-  removeFile: async (p) => {
-    fs.rmSync(p, { force: true });
   },
   removeDir: async (p) => {
     fs.rmSync(p, { recursive: true, force: true });
@@ -435,11 +449,23 @@ describe("what a failing adoption does to a link somebody else replaced", () => 
     const replacement = `gitdir: ${commonDir}/worktrees/somebody-else\n`;
     const watched: AdoptFs = {
       ...realFs,
-      writeFile: async (p, data) => {
-        await realFs.writeFile(p, data);
-        if (p === path.join(survivor, ".git")) {
-          fs.writeFileSync(p, replacement, "utf8");
-        }
+      openLink: async (p) => {
+        const handle = await realFs.openLink(p);
+        let claimed = false;
+        return {
+          ...handle,
+          writeAt: async (data, position) => {
+            const wrote = await handle.writeAt(data, position);
+            if (!claimed && p === path.join(survivor, ".git")) {
+              claimed = true;
+              // Through the REAL filesystem, and as a REPLACEMENT: the path is
+              // rebound to a new inode, which is what a careful writer does.
+              fs.rmSync(p);
+              fs.writeFileSync(p, replacement, "utf8");
+            }
+            return wrote;
+          },
+        };
       },
     };
 

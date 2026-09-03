@@ -10,6 +10,7 @@
 import { basename, resolve } from "node:path";
 import { type FileIdentity, sameIdentity } from "../utils/fileIdentity";
 import { readsAsFlag } from "../utils/readsAsFlag";
+import { gitdirOf } from "./reattachProbe";
 import type { GitCommandRunner } from "./gitCommandRunner";
 import { repairWorktree, resetMixedIndex } from "./worktreeMutations";
 
@@ -51,6 +52,38 @@ export interface AdoptRequest {
   expectedBranchOid: string;
 }
 
+/**
+ * One open `<wt>/.git`, bound to the object it resolved to at open time.
+ *
+ * The primitives are separate rather than a single `replace` so this module owns
+ * the state machine: a truncate that succeeds followed by a write that fails, or
+ * a write that fulfils SHORT, are different outcomes with different recoveries,
+ * and an adapter that hid them behind one call would put them out of reach of
+ * every test.
+ */
+export interface LinkHandle {
+  /** `fstat` at `{ bigint: true }` — the object, not the name. */
+  identity(): Promise<FileIdentity>;
+  /**
+   * The whole file from an EXPLICIT position.
+   *
+   * `FileHandle.readFile` reads from the handle's current offset, so a second
+   * sequential read of one handle returns zero bytes — which this module would
+   * read as an empty link and refuse every ordinary adoption on its second
+   * proof. Both proofs pass 0.
+   */
+  readAt(position: number): Promise<string>;
+  truncate(length: number): Promise<void>;
+  /**
+   * Bytes written, which is NOT required to be all of them.
+   *
+   * `FileHandle.write` fulfils with a count; a short write leaves a partial
+   * link that both identity checks accept. The caller loops.
+   */
+  writeAt(data: Buffer, position: number): Promise<number>;
+  close(): Promise<void>;
+}
+
 /** The filesystem this needs, injected so every failure below is witnessable. */
 export interface AdoptFs {
   /** NON-recursive: it must fail `EEXIST` on a directory that is already there. */
@@ -67,9 +100,20 @@ export interface AdoptFs {
   ensureDir(path: string): Promise<void>;
   /** `lstat` at `{ bigint: true }`, for the identity the writes are checked against. */
   identify(path: string): Promise<FileIdentity>;
-  /** `null` when the file is not there — an absent link is restored as absent. */
+  /**
+   * Resolve `<wt>/.git` ONCE, and hand back the object rather than the name.
+   *
+   * Every read and write of that file goes through the returned handle. A
+   * writer that REPLACES the file gives the path a new inode while this handle
+   * keeps the old one, so a write through it cannot land on the replacement —
+   * which is the destructive half of round-1 F006 and rounds 2 and 3's F005.
+   * What it does not cover is a writer that truncates the same inode in place,
+   * because that is what git's own `write_file_buf` does and nothing here can
+   * exclude it (design.md D9).
+   */
+  openLink(path: string): Promise<LinkHandle>;
+  /** `null` when the file is not there. For the entry's own `gitdir`, never for the link. */
   readFile(path: string): Promise<string | null>;
-  writeFile(path: string, data: string): Promise<void>;
   /**
    * Exclusive create — `wx`, so it fails `EEXIST` rather than truncating.
    *
@@ -79,8 +123,6 @@ export interface AdoptFs {
    * registration before the identity re-check can notice (round-1 F005).
    */
   createFile(path: string, data: string): Promise<void>;
-  /** Remove the link this adoption wrote where the directory had none before. */
-  removeFile(path: string): Promise<void>;
   /** Recursive removal of the entry directory this adoption created. */
   removeDir(path: string): Promise<void>;
 }
@@ -93,9 +135,21 @@ export interface AdoptFs {
  * registered, and reporting a create would be worse.
  */
 export interface AdoptResidue {
-  entryPath: string;
-  worktreeLinkRestored: boolean;
+  /** `null` when the entry was withdrawn and only the link has something to say. */
+  entryPath: string | null;
+  link: AdoptLinkState;
 }
+
+/**
+ * What the withdrawal could say about `<wt>/.git`.
+ *
+ * `leftAsFound` is not a failure: the link there names something other than the
+ * entry this adoption created, so it is somebody else's and writing over it is
+ * the thing rounds 2 and 3 both refused. `unknown` is the one that must never be
+ * reported as a clean failure — the claim write began, and the recovery that
+ * would have put the old bytes back did not land (round-3 F012).
+ */
+export type AdoptLinkState = "restored" | "leftAsFound" | "unknown";
 
 export type AdoptResult =
   | {
@@ -110,6 +164,14 @@ export type AdoptResult =
        * they cannot reach would mean discovering the conflict and leaving it.
        */
       undo(): Promise<AdoptResidue | undefined>;
+      /**
+       * Let the pinned `<wt>/.git` go, for the caller that KEEPS the adoption.
+       *
+       * The handle outlives this function because `undo` does. A caller that
+       * accepts the registration never calls `undo`, so without this the
+       * descriptor leaks for the life of the extension host.
+       */
+      release(): Promise<void>;
     }
   | { ok: false; message: string; leftBehind?: AdoptResidue };
 
@@ -143,36 +205,108 @@ export async function adoptWorktree(
   }
 
   const linkPath = `${request.worktreePath}/.git`;
-  // Read BEFORE the mkdir, and PROVED before anything is created. A read that
-  // failed used to answer `null`, which the undo then read as "there was no
-  // link", and it removed one it had never seen (round-2 F003). Bytes that
-  // differ from the corroborated ones are a link somebody rewrote between the
-  // offer and here — including a restored live registration (round-2 F006).
-  let opening: string | null;
+  // Opened BEFORE the mkdir, and this open is the only resolution of this name
+  // the whole reconstruction makes. Everything after it addresses the OBJECT.
+  let link: LinkHandle;
   try {
-    opening = await fs.readFile(linkPath);
+    link = await fs.openLink(linkPath);
   } catch (error) {
     return {
       ok: false,
       message: `That directory's git link could not be read, so nothing was written: ${reasonOf(error)}`,
     };
   }
+  /** Nothing has been created yet, so a refusal here is just a closed handle. */
+  const refuse = async (message: string): Promise<AdoptResult> => {
+    await link.close().catch(() => {});
+    return { ok: false, message };
+  };
+
+  // PROVED before anything is created. A read that failed used to answer `null`,
+  // which the undo then read as "there was no link", and it removed one it had
+  // never seen (round-2 F003). Bytes that differ from the corroborated ones are
+  // a link somebody rewrote between the offer and here — including a restored
+  // live registration (round-2 F006).
+  let opening: string;
+  try {
+    opening = await link.readAt(0);
+  } catch (error) {
+    return refuse(`That directory's git link could not be read, so nothing was written: ${reasonOf(error)}`);
+  }
   if (opening !== request.staleLink) {
-    return {
-      ok: false,
-      message: "That directory's git link is not the one this adoption was offered on, so nothing was written.",
-    };
+    return refuse(
+      "That directory's git link is not the one this adoption was offered on, so nothing was written.",
+    );
   }
 
   const created = await createEntry(request, fs);
   if (!created.ok) {
+    await link.close().catch(() => {});
     return { ok: false, message: created.message };
   }
   const { entryPath, id, identity } = created;
   /** The link this adoption will install, and the only bytes it may overwrite. */
   const ourLink = `gitdir: ${entryPath}\n`;
-  /** Has the final write landed? Until it has, the link is nobody's to restore. */
+  /** Has the final write landed WHOLE? Until it has, the link is nobody's to restore. */
   let installed = false;
+  /**
+   * Set only where the claim write began and the recovery did not finish.
+   *
+   * Sticky: the undo must not overwrite this with a cheerier answer it reached
+   * by reading a file whose content nobody can vouch for.
+   */
+  let contentUnknown = false;
+
+  /**
+   * Write `data` whole, through the handle, at position 0.
+   *
+   * `truncate` first: a short write over longer old bytes leaves a valid first
+   * line followed by a fragment of the old one, and git accepts that first line
+   * — a link that reads as VALID and names the wrong administrative directory
+   * is worse than one that reads as empty (design.md D9).
+   */
+  const putLink = async (data: string): Promise<boolean> => {
+    const bytes = Buffer.from(data, "utf8");
+    try {
+      await link.truncate(0);
+      let at = 0;
+      while (at < bytes.byteLength) {
+        const wrote = await link.writeAt(bytes.subarray(at), at);
+        // A fulfilled write of nothing is not progress, and looping on it is a
+        // hang rather than an error. `write` may legitimately fulfil short.
+        if (wrote <= 0) {
+          return false;
+        }
+        at += wrote;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /** Whether the link AT THAT NAME is still the object this adoption wrote its own into. */
+  const stillOurLink = async (): Promise<boolean> => {
+    let now: string;
+    try {
+      // The name first. Our handle can still write its object long after the
+      // path stopped naming it, and restoring a detached inode would put the
+      // stale bytes somewhere nobody reads while reporting a restore.
+      if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
+        return false;
+      }
+      now = await link.readAt(0);
+    } catch {
+      return false;
+    }
+    // Resolved, not compared byte for byte. `git worktree repair` rewrites our
+    // own link into relative form under `worktree.useRelativePaths`, and every
+    // withdrawal D5 reaches runs AFTER repair — byte equality would report our
+    // own link as a stranger's on the common failure path and leave `<wt>/.git`
+    // naming an entry this undo is about to remove (oracle finding 3).
+    const named = gitdirOf(now, request.worktreePath);
+    return named !== null && resolve(named) === resolve(entryPath);
+  };
 
   const undo = async (): Promise<AdoptResidue | undefined> => {
     // Identity first, and it is the whole point: `prune` can remove an entry
@@ -201,17 +335,18 @@ export async function adoptWorktree(
     // that write there is nothing of ours there to undo, and writing the old
     // bytes back over whatever is there now is how a refused adoption used to
     // destroy another process's newly installed registration (round-2 F005).
-    let restored = true;
-    if (installed) {
-      const now = await fs.readFile(linkPath).catch(() => null);
-      restored =
-        now === ourLink &&
-        (await fs
-          .writeFile(linkPath, request.staleLink)
-          .then(() => true)
-          .catch(() => false));
+    // The link is left ALONE until this adoption installed its own — before that
+    // write there is nothing of ours there to undo, and writing the old bytes
+    // back over whatever is there now is how a refused adoption used to destroy
+    // another process's newly installed registration (round-2 F005).
+    let state: AdoptLinkState = "restored";
+    if (contentUnknown) {
+      state = "unknown";
+    } else if (installed) {
+      state = !(await stillOurLink()) ? "leftAsFound" : (await putLink(request.staleLink)) ? "restored" : "unknown";
     }
-    return removed && restored ? undefined : { entryPath, worktreeLinkRestored: restored };
+    await link.close().catch(() => {});
+    return removed && state === "restored" ? undefined : { entryPath: removed ? null : entryPath, link: state };
   };
 
   const failed = async (message: string): Promise<AdoptResult> => {
@@ -254,7 +389,7 @@ export async function adoptWorktree(
   // window from the caller's probe to here, leaving only the instant between
   // these reads and the write itself.
   try {
-    if ((await fs.readFile(linkPath)) !== request.staleLink) {
+    if ((await link.readAt(0)) !== request.staleLink) {
       return failed("That directory's git link changed while it was being re-registered.");
     }
     // A registration for THIS checkout, back at the path the stale link named.
@@ -269,8 +404,27 @@ export async function adoptWorktree(
         return failed("That directory is registered with git again, so it was not re-registered.");
       }
     }
-    await fs.writeFile(linkPath, ourLink);
+    // The name still means the object this handle holds. A replacement would
+    // give the path a new inode, and the write below would then land on one
+    // nothing points at — silently, which is what this turns into a refusal.
+    if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
+      return failed("That directory's git link was replaced while it was being re-registered.");
+    }
+    if (!(await putLink(ourLink))) {
+      // Begun and not finished. The handle is still open, so the old bytes can
+      // be put back where a pathname write had nothing left to try; if THAT
+      // fails the content is nobody's guess and the caller must say so rather
+      // than report a failure that changed nothing (round-3 F012).
+      contentUnknown = !(await putLink(request.staleLink));
+      return failed("That directory's git link could not be written.");
+    }
     installed = true;
+    // And it landed at the NAME, not on an object that was detached from it
+    // between the check above and the write. Bounded on purpose: this is a
+    // two-sample endpoint test, and an A→B→A substitution passes it (D9).
+    if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
+      return failed("That directory's git link was replaced while it was being re-registered.");
+    }
   } catch (error) {
     return failed(reasonOf(error));
   }
@@ -298,7 +452,7 @@ export async function adoptWorktree(
     return failed(rebuilt.message);
   }
 
-  return { ok: true, id, undo };
+  return { ok: true, id, undo, release: () => link.close().catch(() => {}) };
 }
 
 /**
@@ -343,7 +497,7 @@ async function createEntry(request: AdoptRequest, fs: AdoptFs): Promise<CreatedE
       return {
         ok: false,
         message: `The administrative entry at ${entryPath} was created but could not be read back: ${reasonOf(error)}`,
-        leftBehind: { entryPath, worktreeLinkRestored: true },
+        leftBehind: { entryPath, link: "restored" },
       };
     }
   }

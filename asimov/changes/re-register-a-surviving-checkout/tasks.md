@@ -204,7 +204,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 6. Close review round 3 — bind the link's writes to the object that was proved
 
-- [ ] 4_1 Hold one handle on the worktree's link, and write only through it
+- [x] 4_1 Hold one handle on the worktree's link, and write only through it — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D9, D4; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-undo-restores-only-the-git-entry-the-adoption-itself-replaced, an-adoption-that-cannot-establish-the-git-entry-says-so-rather-than-reporting-a-clean-failure}; `.reviews/round-3.md` F005, F006, F012; `src/utils/regularFileRead.ts`; `src/utils/fileIdentity.ts`
   - **Acceptance**:
@@ -217,8 +217,12 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     4. `src/worktree/adoptWorktree.ts` — the claim is `truncate(0)` then a write looped to completion; a fulfilled SHORT write is a failure, not an established link (oracle finding 4). Path-vs-handle identity is compared immediately before and after it.
     5. `src/worktree/adoptWorktree.ts` — a failed or short claim write re-writes `staleLink` through the same handle; a failed recovery reports a residue naming the directory and the unknown content.
     6. `src/worktree/adoptWorktree.ts` — the undo owns the link when it RESOLVES to the entry this adoption created, not when its bytes match: `git worktree repair` rewrites our own link into relative form under `worktree.useRelativePaths`, and every D5 undo runs after repair (oracle finding 3).
-    7. `src/extension.ts` — `nodeAdoptFs.openLink` opens `O_RDWR` with `O_NOFOLLOW` where defined, degrading as `src/utils/regularFileRead.ts` already does, and refuses a handle whose `fstat` is not a regular file.
-    8. `src/worktree/adoptWorktree.test.ts` — the fake models an inode table: paths map to inode objects with their own identity and bytes, a handle captures one inode at open, and every operation through it still reaches the captured inode after the path has been replaced. Cases: a different-inode replacement survives the claim write AND the undo, asserted on the old inode as well as the path so a write to the detached inode is visible; a same-inode in-place rewrite, asserting the documented parity rather than a guarantee; a repair that normalizes to a relative link, asserting the undo still restores; a short write; a truncate-then-reject with a recovery that succeeds and one that fails; a `close()`d handle rejecting, so the deferred-undo path is armed. Each guard arm-checked by reverting it.
+    7. `src/worktree/reattachProbe.ts` — the `gitdir:` grammar is exported as a parser over the bytes, so the undo's ownership test and the detector cannot hold two opinions about what a link says; `readGitLink` is expressed in terms of it.
+    8. `src/extension.ts` — `nodeAdoptFs.openLink` opens `O_RDWR` with `O_NOFOLLOW` where defined, degrading as `src/utils/regularFileRead.ts` already does, and refuses a handle whose `fstat` is not a regular file.
+    9. `src/worktree/worktreeMutationService.ts` — the residue's link state stops being a boolean, so the third outcome is representable at all; 4_2 owns its wording and its tests.
+    10. `src/worktree/adoptWorktree.integration.test.ts` — the real-filesystem adapter moves with `AdoptFs`; 4_2 owns the new cases it grows.
+    11. `src/worktree/worktreeMutationService.test.ts` — its adopt fakes move with the result and residue shapes; 4_2 owns the cases that assert the three messages.
+    12. `src/worktree/adoptWorktree.test.ts` — the fake models an inode table: paths map to inode objects with their own identity and bytes, a handle captures one inode at open, and every operation through it still reaches the captured inode after the path has been replaced. Cases: a different-inode replacement survives the claim write AND the undo, asserted on the old inode as well as the path so a write to the detached inode is visible; a same-inode in-place rewrite, asserting the documented parity rather than a guarantee; a repair that normalizes to a relative link, asserting the undo still restores; a short write; a truncate-then-reject with a recovery that succeeds and one that fails; a `close()`d handle rejecting, so the deferred-undo path is armed. Each guard arm-checked by reverting it.
 
 - [ ] 4_2 Report a link the adoption could not establish, and release the handle the caller accepts
   - **Deps**: 4_1

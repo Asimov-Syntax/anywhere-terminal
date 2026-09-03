@@ -928,14 +928,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * there is what mints the next entry id, and a recursive call would answer
    * success for one this adoption does not own (design.md D4).
    */
+  /** Longer than any `gitdir:` line git writes, and short enough to be one read. */
+  const LINK_READ_CAP = 8192;
+
   const nodeAdoptFs: AdoptFs = {
     mkdir: (path) => fsp.mkdir(path).then(() => {}),
     ensureDir: (path) => fsp.mkdir(path, { recursive: true }).then(() => {}),
     identify: (path) => fsp.lstat(path, { bigint: true }),
-    // `null` means the file was NOT THERE, which the undo restores by removing
-    // the link it wrote. Any other read failure must not answer that question,
-    // so it is thrown and the adoption reports it rather than deleting a link
-    // whose bytes it never read (round-1 F003).
+    /**
+     * `O_RDWR` and no `O_TRUNC`: this handle proves the file before it replaces
+     * it, so an open that truncated would destroy the evidence it was opened to
+     * read. `O_NOFOLLOW` where the platform defines it, degrading exactly as
+     * `src/utils/regularFileRead.ts` documents — libuv defines it as 0 on
+     * win32, where adopt is withheld anyway (design.md D7, D9).
+     */
+    openLink: async (path) => {
+      const handle = await fsp.open(path, fs.constants.O_RDWR | (fs.constants.O_NOFOLLOW ?? 0));
+      try {
+        // From the OPEN descriptor, never the path. A symlink swapped in after
+        // an `lstat` would be a different object; this one cannot be swapped.
+        if (!(await handle.stat({ bigint: true })).isFile()) {
+          throw Object.assign(new Error(`${path} is not a regular file`), { code: "ENOTSUP" });
+        }
+      } catch (error) {
+        await handle.close().catch(() => {});
+        throw error;
+      }
+      return {
+        identity: () => handle.stat({ bigint: true }),
+        // A gitfile is one short line. A file longer than this cap is not one,
+        // and the truncated read simply fails the byte comparison above it.
+        readAt: async (position) => {
+          const buffer = Buffer.alloc(LINK_READ_CAP);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
+          return buffer.subarray(0, bytesRead).toString("utf8");
+        },
+        truncate: (length) => handle.truncate(length),
+        writeAt: async (data, position) => (await handle.write(data, 0, data.byteLength, position)).bytesWritten,
+        close: () => handle.close(),
+      };
+    },
+    // `null` means the entry's `gitdir` was NOT THERE. Any other read failure
+    // must not answer that question, so it is thrown and the adoption reports
+    // it rather than acting on a file it never read (round-1 F003).
     readFile: (path) =>
       fsp.readFile(path, "utf8").catch((error: unknown) => {
         if (readsAsAbsent(error)) {
@@ -943,13 +978,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
         throw error;
       }),
-    writeFile: (path, data) => fsp.writeFile(path, data, "utf8"),
     // `wx` — the entry's own files are CREATED, never truncated. An ordinary
     // write into a directory another process put there after our `mkdir` would
     // overwrite its registration before the identity re-check sees it
     // (round-1 F005).
     createFile: (path, data) => fsp.writeFile(path, data, { encoding: "utf8", flag: "wx" }),
-    removeFile: (path) => fsp.rm(path, { force: true }),
     removeDir: (path) => fsp.rm(path, { recursive: true, force: true }),
   };
 

@@ -127,6 +127,34 @@ export interface GitLinkFs {
 const GITDIR_PREFIX = "gitdir: ";
 
 /**
+ * The administrative directory a `.git` file's bytes name, or `null`.
+ *
+ * Git's grammar, not a search for a line that looks like one. The old reader
+ * took the first line ANYWHERE in the file that began with `gitdir:`, so
+ * `junk\ngitdir: <path>` — which git rejects outright — was accepted as the
+ * authority to overwrite that same file (round-1 F007).
+ *
+ * Exported because the adoption's undo has to ask the same question of bytes it
+ * already holds — whether the link there still names the entry it created. Two
+ * readers of one grammar is how they come to disagree about which of them is
+ * right, and the undo's answer decides whether a file is overwritten.
+ */
+export function gitdirOf(text: string, worktreePath: string): string | null {
+  if (!text.startsWith(GITDIR_PREFIX)) {
+    return null;
+  }
+  // The tail git trims, plus `\r`: a CRLF-written link that resolves to an
+  // existing administrative directory must report that directory as PRESENT.
+  // Being liberal at the tail can only decline an adoption; being liberal at
+  // the head is what admits a file git would not follow.
+  const gitdir = text.slice(GITDIR_PREFIX.length).replace(/[\n\r ]+$/, "");
+  if (gitdir.length === 0) {
+    return null;
+  }
+  return isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir);
+}
+
+/**
  * Classify a candidate directory's `.git`.
  *
  * The `gitdir:` value is git's own two-way link and may be written relative to
@@ -157,20 +185,9 @@ export async function readGitLink(worktreePath: string, fs: GitLinkFs): Promise<
   if (text === null) {
     return { kind: "unreadable" };
   }
-  // Git's grammar, not a search for a line that looks like one. The old reader
-  // took the first line ANYWHERE in the file that began with `gitdir:`, so
-  // `junk\ngitdir: <path>` — which git rejects outright — was accepted as the
-  // authority to overwrite that same file (round-1 F007).
-  if (!text.startsWith(GITDIR_PREFIX)) {
+  const gitdir = gitdirOf(text, worktreePath);
+  if (gitdir === null) {
     return { kind: "unreadable" };
   }
-  // The tail git trims, plus `\r`: a CRLF-written link that resolves to an
-  // existing administrative directory must report that directory as PRESENT.
-  // Being liberal at the tail can only decline an adoption; being liberal at
-  // the head is what admits a file git would not follow.
-  const gitdir = text.slice(GITDIR_PREFIX.length).replace(/[\n\r ]+$/, "");
-  if (gitdir.length === 0) {
-    return { kind: "unreadable" };
-  }
-  return { kind: "file", gitdir: isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir), raw: text };
+  return { kind: "file", gitdir, raw: text };
 }

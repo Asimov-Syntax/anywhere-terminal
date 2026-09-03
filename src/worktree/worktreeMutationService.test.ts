@@ -117,7 +117,12 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
       staleGitdir: STALE_GITDIR,
       staleLink: STALE_LINK,
     }),
-    reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
+    reconstructEntry: async () => ({
+      ok: true as const,
+      id: "survivor",
+      undo: async () => undefined,
+      release: async () => {},
+    }),
     pathDeps: {
       platform: "darwin",
       lstat: async () => null,
@@ -1748,6 +1753,7 @@ describe("re-registering a surviving checkout", () => {
         over.reconstruct ?? {
           ok: true,
           id: "survivor",
+          release: async () => {},
           undo: async () => {
             over.undos?.push("undo");
             return over.undone;
@@ -1875,13 +1881,13 @@ describe("re-registering a surviving checkout", () => {
     // registered; reporting a create would be worse.
     const h = adoptHarness({
       unregisteredAfter: true,
-      undone: { entryPath: "/repo/.git/worktrees/survivor", worktreeLinkRestored: false },
+      undone: { entryPath: "/repo/.git/worktrees/survivor", link: "leftAsFound" as const },
     });
     await adopt(h);
 
     const message = (h.outcomes[0] as { message: string }).message;
     expect(message).toContain("/repo/.git/worktrees/survivor");
-    expect(message).toContain("NOT restored");
+    expect(message).toContain("left as found");
   });
 
   it("names what a failed reconstruction left behind", async () => {
@@ -1889,7 +1895,7 @@ describe("re-registering a surviving checkout", () => {
       reconstruct: {
         ok: false,
         message: "The administrative entry could not be written.",
-        leftBehind: { entryPath: "/repo/.git/worktrees/survivor", worktreeLinkRestored: true },
+        leftBehind: { entryPath: "/repo/.git/worktrees/survivor", link: "restored" as const },
       },
     });
     await adopt(h);

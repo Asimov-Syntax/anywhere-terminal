@@ -236,10 +236,15 @@ function residueNote(residue: AdoptResidue | undefined): string {
   if (residue === undefined) {
     return "";
   }
-  const link = residue.worktreeLinkRestored
-    ? "its own .git entry was restored"
-    : "its .git entry was NOT restored and still points at that directory";
-  return ` The administrative entry at ${residue.entryPath} could not be removed, and ${link}.`;
+  const link =
+    residue.link === "restored"
+      ? "its own .git entry was restored"
+      : residue.link === "leftAsFound"
+        ? "its .git entry now names something else and was left as found"
+        : "its .git entry could not be left in a known state";
+  return residue.entryPath === null
+    ? ` The directory's .git entry could not be left in a known state.`
+    : ` The administrative entry at ${residue.entryPath} could not be removed, and ${link}.`;
 }
 
 /** Why a re-corroborated repair was refused, in the user's terms. */

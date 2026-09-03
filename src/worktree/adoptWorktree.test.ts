@@ -34,13 +34,38 @@ function runnerOf(
   return { runner, calls };
 }
 
-/** A filesystem that records the order it was written in — the order IS the contract. */
+/**
+ * A filesystem that records the order it was written in, over an INODE TABLE.
+ *
+ * The table is the point. Rounds 1 through 3 were each defeated by a fake that
+ * could not tell "the path now names a different file" from "the file's bytes
+ * changed" — round 2's returned alternate bytes from the reader while leaving
+ * the store untouched, so an overwrite was invisible to the assertions. Here a
+ * path maps to an inode id and the bytes live on the inode, so a handle opened
+ * before a replacement keeps writing the OLD object and a test can read both.
+ */
 function fsOf(over: Partial<AdoptFs> = {}) {
   const dirs = new Set<string>([COMMON, `${COMMON}/worktrees`, WT]);
-  const files = new Map<string, string>([[`${WT}/.git`, ORIGINAL_LINK]]);
+  /** path → inode id. Replacing a file rebinds the path; rewriting it does not. */
+  const at = new Map<string, bigint>();
+  /** inode id → its bytes. Reachable after the path stops naming it. */
+  const inodes = new Map<bigint, string>();
   const writes: string[] = [];
   const identities = new Map<string, { dev: bigint; ino: bigint }>();
   let nextIno = 1n;
+  let closed = false;
+
+  const put = (p: string, data: string): bigint => {
+    const ino = nextIno++;
+    at.set(p, ino);
+    inodes.set(ino, data);
+    return ino;
+  };
+  put(`${WT}/.git`, ORIGINAL_LINK);
+  const bytesAt = (p: string): string | null => {
+    const ino = at.get(p);
+    return ino === undefined ? null : (inodes.get(ino) ?? null);
+  };
 
   const base: AdoptFs = {
     mkdir: async (p) => {
@@ -58,34 +83,97 @@ function fsOf(over: Partial<AdoptFs> = {}) {
       dirs.add(p);
     },
     identify: async (p) => {
-      const seen = identities.get(p);
-      if (seen === undefined) {
+      const dir = identities.get(p);
+      if (dir !== undefined) {
+        return dir;
+      }
+      const ino = at.get(p);
+      if (ino === undefined) {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       }
-      return seen;
+      return { dev: 1n, ino };
     },
-    readFile: async (p) => files.get(p) ?? null,
-    writeFile: async (p, data) => {
-      files.set(p, data);
-      writes.push(`write ${p}`);
+    openLink: async (p) => {
+      // Bound HERE, once. Everything below reaches this object even after the
+      // path has been rebound to another one.
+      const bound = at.get(p);
+      if (bound === undefined) {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }
+      const live = <T>(run: () => T): T => {
+        if (closed) {
+          throw Object.assign(new Error("closed"), { code: "EBADF" });
+        }
+        return run();
+      };
+      return {
+        identity: async () => live(() => ({ dev: 1n, ino: bound })),
+        readAt: async (position) => live(() => (inodes.get(bound) ?? "").slice(position)),
+        truncate: async (length) =>
+          live(() => {
+            inodes.set(bound, (inodes.get(bound) ?? "").slice(0, length));
+            writes.push(`truncate ${p}`);
+          }),
+        writeAt: async (data, position) =>
+          live(() => {
+            const text = data.toString("utf8");
+            const held = inodes.get(bound) ?? "";
+            inodes.set(bound, held.slice(0, position) + text);
+            writes.push(`write ${p}`);
+            return data.byteLength;
+          }),
+        close: async () => {
+          closed = true;
+        },
+      };
     },
+    readFile: async (p) => bytesAt(p),
     createFile: async (p, data) => {
-      if (files.has(p)) {
+      if (at.has(p)) {
         throw Object.assign(new Error("exists"), { code: "EEXIST" });
       }
-      files.set(p, data);
+      put(p, data);
       writes.push(`write ${p}`);
-    },
-    removeFile: async (p) => {
-      files.delete(p);
-      writes.push(`unlink ${p}`);
     },
     removeDir: async (p) => {
       dirs.delete(p);
       writes.push(`rm ${p}`);
     },
   };
-  return { fs: { ...base, ...over }, writes, files, dirs, identities };
+
+  /** The `files`-shaped view the existing assertions read, over the inode table. */
+  const files = {
+    get: (p: string) => bytesAt(p) ?? undefined,
+    has: (p: string) => at.has(p),
+    delete: (p: string) => at.delete(p),
+    set: (p: string, data: string) => {
+      put(p, data);
+    },
+  };
+
+  return {
+    fs: { ...base, ...over },
+    writes,
+    files,
+    dirs,
+    identities,
+    /** Another writer REPLACES the link — `rename` or unlink+create. New inode. */
+    replaceLink: (data: string) => put(`${WT}/.git`, data),
+    /** Another writer TRUNCATES the link in place — what git's own writer does. */
+    rewriteLinkInPlace: (data: string) => {
+      const ino = at.get(`${WT}/.git`);
+      if (ino === undefined) {
+        throw new Error("no link to rewrite");
+      }
+      inodes.set(ino, data);
+    },
+    /** What the NAME holds now. */
+    linkBytes: () => bytesAt(`${WT}/.git`),
+    /** What a given object holds, whether or not the name still points at it. */
+    inodeBytes: (ino: bigint) => inodes.get(ino) ?? null,
+    linkInode: () => at.get(`${WT}/.git`),
+    wasClosed: () => closed,
+  };
 }
 
 const request = {
@@ -195,18 +283,11 @@ describe("adoptWorktree", () => {
     ["gitdir", `${ENTRY}/gitdir`],
     ["commondir", `${ENTRY}/commondir`],
     ["HEAD", `${ENTRY}/HEAD`],
-    ["the worktree link", `${WT}/.git`],
   ])("undoes everything when the %s write fails", async (_label: string, failing: string) => {
     const { runner } = runnerOf();
     const store = fsOf();
     const fs: AdoptFs = {
       ...store.fs,
-      writeFile: async (p, data) => {
-        if (p === failing) {
-          throw new Error("ENOSPC");
-        }
-        return store.fs.writeFile(p, data);
-      },
       createFile: async (p, data) => {
         if (p === failing) {
           throw new Error("ENOSPC");
@@ -220,6 +301,125 @@ describe("adoptWorktree", () => {
     expect(result.ok).toBe(false);
     expect(store.dirs.has(ENTRY)).toBe(false);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+  });
+
+  // The claim write is not an ordinary write, and round-3 F012 is the reason:
+  // `writeFile` opens `w`, which truncates BEFORE the first byte, so a
+  // rejection left `.git` empty while the adoption reported that its withdrawal
+  // had changed nothing.
+  describe("when the claim write begins and does not finish", () => {
+    /** A handle whose claim write fails; `recoverable` decides whether the restore may. */
+    function brokenClaim(store: ReturnType<typeof fsOf>, recoverable: boolean): AdoptFs {
+      return {
+        ...store.fs,
+        openLink: async (p) => {
+          const handle = await store.fs.openLink(p);
+          let attempts = 0;
+          return {
+            ...handle,
+            writeAt: async (data, position) => {
+              attempts += 1;
+              if (attempts === 1 || !recoverable) {
+                throw new Error("ENOSPC");
+              }
+              return handle.writeAt(data, position);
+            },
+          };
+        },
+      };
+    }
+
+    it("puts the found bytes back through the same handle", async () => {
+      const { runner } = runnerOf();
+      const store = fsOf();
+
+      const result = await adoptWorktree(runner, request, brokenClaim(store, true));
+
+      expect(result.ok).toBe(false);
+      expect(store.dirs.has(ENTRY)).toBe(false);
+      expect(store.linkBytes()).toBe(ORIGINAL_LINK);
+      expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
+    });
+
+    it("says the content is unknown when the recovery cannot land either", async () => {
+      const { runner } = runnerOf();
+      const store = fsOf();
+
+      const result = await adoptWorktree(runner, request, brokenClaim(store, false));
+
+      expect(result.ok).toBe(false);
+      // The entry IS withdrawn — the thing that is not withdrawn is the link,
+      // and a failure that says nothing changed would be a lie about a `.git`
+      // that now names nothing.
+      expect(store.dirs.has(ENTRY)).toBe(false);
+      expect(store.linkBytes()).not.toBe(ORIGINAL_LINK);
+      expect(result.ok === false && result.leftBehind).toEqual({ entryPath: null, link: "unknown" });
+    });
+
+    // A fulfilled write is not a completed one. `FileHandle.write` answers with
+    // a byte count, and taking fulfilment for completion leaves a partial link
+    // that BOTH identity checks accept as established.
+    it("finishes a write that fulfils short rather than taking it for a whole link", async () => {
+      const { runner } = runnerOf();
+      const store = fsOf();
+      const fs: AdoptFs = {
+        ...store.fs,
+        openLink: async (p) => {
+          const handle = await store.fs.openLink(p);
+          let first = true;
+          return {
+            ...handle,
+            writeAt: async (data, position) => {
+              if (!first) {
+                return handle.writeAt(data, position);
+              }
+              first = false;
+              // Half the bytes, fulfilled. No rejection anywhere.
+              const half = data.subarray(0, Math.floor(data.byteLength / 2));
+              await handle.writeAt(half, position);
+              return half.byteLength;
+            },
+          };
+        },
+      };
+
+      const result = await adoptWorktree(runner, request, fs);
+
+      // The remainder is written, so the link is WHOLE — not the half the first
+      // call reported. Taking the count for completion would leave `gitdir: /re`.
+      expect(result.ok).toBe(true);
+      expect(store.linkBytes()).toBe(`gitdir: ${ENTRY}\n`);
+    });
+
+    // And a fulfilled write of NOTHING is not progress: looping on it is a hang
+    // rather than an error, so it ends the write like any other failure.
+    it("stops rather than spinning when a write fulfils with no bytes", async () => {
+      const { runner } = runnerOf();
+      const store = fsOf();
+      const fs: AdoptFs = {
+        ...store.fs,
+        openLink: async (p) => {
+          const handle = await store.fs.openLink(p);
+          let claimed = false;
+          return {
+            ...handle,
+            writeAt: async (data, position) => {
+              if (claimed) {
+                return handle.writeAt(data, position);
+              }
+              claimed = true;
+              return 0;
+            },
+          };
+        },
+      };
+
+      const result = await adoptWorktree(runner, request, fs);
+
+      expect(result.ok).toBe(false);
+      expect(store.dirs.has(ENTRY)).toBe(false);
+      expect(store.linkBytes()).toBe(ORIGINAL_LINK);
+    });
   });
 
   it("undoes the adoption when the repair fails", async () => {
@@ -268,7 +468,7 @@ describe("adoptWorktree", () => {
     const result = await adoptWorktree(runner, request, store.fs);
 
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.leftBehind).toEqual({ entryPath: ENTRY, worktreeLinkRestored: true });
+    expect(result.ok === false && result.leftBehind).toEqual({ entryPath: ENTRY, link: "restored" });
   });
 
   it("names the link it could not restore", async () => {
@@ -278,19 +478,34 @@ describe("adoptWorktree", () => {
         : ok(),
     );
     const store = fsOf();
+    // The claim write lands; the RESTORE is what cannot be made. The link is
+    // then neither ours-as-written nor the bytes it was found with, and saying
+    // "withdrawn" over that state is the report round-3 F012 falsified.
     const fs: AdoptFs = {
       ...store.fs,
-      writeFile: async (p, data) => {
-        if (p === `${WT}/.git` && store.files.get(`${WT}/.git`) !== ORIGINAL_LINK) {
-          throw new Error("EPERM");
-        }
-        return store.fs.writeFile(p, data);
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        let claimed = false;
+        return {
+          ...handle,
+          truncate: async (length) => {
+            if (claimed) {
+              throw new Error("EPERM");
+            }
+            return handle.truncate(length);
+          },
+          writeAt: async (data, position) => {
+            const wrote = await handle.writeAt(data, position);
+            claimed = true;
+            return wrote;
+          },
+        };
       },
     };
 
     const result = await adoptWorktree(runner, request, fs);
 
-    expect(result.ok === false && result.leftBehind?.worktreeLinkRestored).toBe(false);
+    expect(result.ok === false && result.leftBehind?.link).toBe("unknown");
   });
 
   // The caller's own post-write checks run after this returns, so withdrawing
@@ -472,12 +687,10 @@ describe("adoptWorktree writes the link only while it is still the one it was of
   it("refuses rather than assuming absence when that read cannot be made", async () => {
     const { runner } = runnerOf();
     const store = fsOf();
-    let reads = 0;
     const fs: AdoptFs = {
       ...store.fs,
       readFile: async (p) => {
-        reads += 1;
-        if (reads > 1) {
+        if (p.startsWith(STALE)) {
           throw new Error("EACCES");
         }
         return store.fs.readFile(p);
@@ -583,20 +796,33 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
   it("does not restore over a registration installed after its own write", async () => {
     const { runner } = failingRepair();
     const store = fsOf();
+    let ours: bigint | undefined;
     const fs: AdoptFs = {
       ...store.fs,
-      writeFile: async (p, data) => {
-        await store.fs.writeFile(p, data);
-        if (p === `${WT}/.git`) {
-          store.files.set(p, REPLACEMENT);
+      // The substitution goes through the inode table, so the path is REBOUND
+      // rather than the bytes swapped under a reader — which is the difference
+      // round 2's witness could not see.
+      identify: async (p) => {
+        const seen = await store.fs.identify(p);
+        if (p === `${WT}/.git` && ours !== undefined && store.linkInode() === ours) {
+          store.replaceLink(REPLACEMENT);
         }
+        return seen;
+      },
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        ours = store.linkInode();
+        return handle;
       },
     };
 
     const result = await adoptWorktree(runner, request, fs);
 
-    expect(store.files.get(`${WT}/.git`), "another process's registration was overwritten").toBe(REPLACEMENT);
-    expect(result).toMatchObject({ ok: false, leftBehind: { worktreeLinkRestored: false } });
+    expect(store.linkBytes(), "another process's registration was overwritten").toBe(REPLACEMENT);
+    expect(result).toMatchObject({ ok: false, leftBehind: { link: "leftAsFound" } });
+    // And not merely "the name still reads right": the object this adoption
+    // held was not written either, so the restore did not go somewhere unread.
+    expect(ours !== undefined && store.inodeBytes(ours)).not.toBe(ORIGINAL_LINK);
   });
 
   it("does not touch the link at all when it fails before installing its own", async () => {
@@ -662,5 +888,121 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
     expect(result).toMatchObject({ ok: false });
     expect(store.files.get(`${WT}/.git`)).toBe(REPLACEMENT);
     expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+});
+
+describe("adoptWorktree writes through the object it opened, not the name", () => {
+  const REPLACEMENT = "gitdir: /repo/.git/worktrees/restored\n";
+
+  // The destructive half of round-1 F006 and rounds 2 and 3's F005: a writer
+  // that REPLACES the link. Our handle keeps the old inode, so the write cannot
+  // reach the replacement — and the post-write check turns that from a silent
+  // no-op into a refusal.
+  it("refuses rather than writing when the link was replaced before the claim", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    let opened = false;
+    let ours: bigint | undefined;
+    const fs: AdoptFs = {
+      ...store.fs,
+      identify: async (p) => {
+        const seen = await store.fs.identify(p);
+        if (p === `${WT}/.git` && opened) {
+          opened = false;
+          store.replaceLink(REPLACEMENT);
+          return store.fs.identify(p);
+        }
+        return seen;
+      },
+      openLink: async (p) => {
+        opened = true;
+        ours = store.linkInode();
+        return store.fs.openLink(p);
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(store.linkBytes(), "the replacement was overwritten").toBe(REPLACEMENT);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+    // And the refusal came BEFORE the write, not after it. Checking only that
+    // the replacement survived cannot tell the two apart — the write would have
+    // landed on the detached object either way, and the post-write check would
+    // have refused just the same. What separates them is whether this adoption
+    // truncated an object it had already been told was no longer the link.
+    expect(ours !== undefined && store.inodeBytes(ours), "the detached object was written anyway").toBe(
+      ORIGINAL_LINK,
+    );
+  });
+
+  // The case the handle does NOT close, asserted as parity rather than left to
+  // be discovered: `git worktree repair` truncates this file in place through
+  // git's own `write_file_buf`, so the inode never changes and nothing here can
+  // tell that write from ours (design.md D9).
+  it("cannot tell an in-place rewrite of the same object from its own write", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      readFile: async (p) => {
+        if (p.startsWith(STALE)) {
+          store.rewriteLinkInPlace(REPLACEMENT);
+        }
+        return store.fs.readFile(p);
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    // Documented, not celebrated. If this ever starts refusing, the claim in D9
+    // has become stronger than it says and the ledger row should be re-read.
+    expect(result).toMatchObject({ ok: true });
+    expect(store.linkBytes()).toBe(`gitdir: ${ENTRY}\n`);
+  });
+
+  // Byte equality was the round-2 answer, and `worktree.useRelativePaths` breaks
+  // it without any race at all: repair legitimately rewrites OUR link, and every
+  // withdrawal D5 reaches runs after repair.
+  it("still recognises its own link after repair normalises it to a relative one", async () => {
+    const { runner } = runnerOf((args) =>
+      args[1] === "repair"
+        ? (store.rewriteLinkInPlace("gitdir: ../../repo/.git/worktrees/survivor\n"),
+          { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false })
+        : ok(`${TIP}\n`),
+    );
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    // Restored, NOT reported as a stranger's: the relative form resolves to the
+    // very entry this adoption created.
+    expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
+    expect(store.linkBytes()).toBe(ORIGINAL_LINK);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+
+  // The handle outlives the call because the undo does. Closing it on return
+  // would hand the caller a withdrawal that can only fail.
+  it("keeps the link open for a caller that withdraws, and releases it for one that keeps", async () => {
+    const { runner } = runnerOf();
+    const kept = fsOf();
+
+    const held = await adoptWorktree(runner, request, kept.fs);
+    expect(held.ok).toBe(true);
+    expect(kept.wasClosed(), "the handle was closed before the caller could withdraw").toBe(false);
+    if (held.ok) {
+      await held.release();
+    }
+    expect(kept.wasClosed()).toBe(true);
+
+    const withdrawn = fsOf();
+    const second = await adoptWorktree(runner, request, withdrawn.fs);
+    if (second.ok) {
+      expect(await second.undo()).toBeUndefined();
+    }
+    expect(withdrawn.linkBytes()).toBe(ORIGINAL_LINK);
+    expect(withdrawn.wasClosed()).toBe(true);
   });
 });
