@@ -31,7 +31,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     3. In the same file, take `adminDirExists` and `readGitLink` as injected dependencies with the shapes `ReattachProbeDeps` already declares, and never throw — a rejection answers `declined`.
   - **Boundary**: No new filesystem classification — the existing `.git` reader is the one reader of a `.git` entry.
 
-- [ ] 1_2 Reconstruct an administrative entry gitdir-first, and hand back its undo
+- [x] 1_2 Reconstruct an administrative entry gitdir-first, and hand back its undo — verified: bun test 'src/worktree/adoptWorktree.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{adoption-re-registers-a-directory-without-changing-what-is-in-it, an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it}; design.md D4; docs/design/worktree-create.md#24-adopt-re-registers-a-surviving-checkout
   - **Acceptance**:
@@ -71,6 +71,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. In the same file, the new occupied-candidate producer fills `expectedBranchOid` on the rule 1_0 established for the existing one.
     3. In the same file, add an `adoptSupported` option defaulting to `process.platform !== "win32"`, and when it is false answer the suffixed fresh path instead of adopt, with the reason stating the platform is not yet verified rather than that the reconstruction fails.
     4. In the same file, change `takesBase` to exclude `adopt`, and extend the `offerable` rule so an adopt resolution never records a debris candidate.
+    5. `src/extension.ts` — supply `probeAdopt` to `createWorktreeHost`, built from the same `readGitLink` and `adminDirExists` the existing `corroborateRepair` already constructs. Without it the option is undefined in the shipped extension and adopt is dark however well the host is tested — the failure shape a past review round already caught for the provisioning offer.
   - **Boundary**: The prunable detector stays where it is — `probeReattach` keeps producing the listed case's adopt.
 
 - [ ] 1_5 Execute adopt behind the claim refusal, the re-probe and the post-write tip check
