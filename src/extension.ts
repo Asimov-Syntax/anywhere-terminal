@@ -912,6 +912,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    */
   const nodeAdoptFs: AdoptFs = {
     mkdir: (path) => fsp.mkdir(path).then(() => {}),
+    ensureDir: (path) => fsp.mkdir(path, { recursive: true }).then(() => {}),
     identify: (path) => fsp.lstat(path, { bigint: true }),
     readFile: (path) => fsp.readFile(path, "utf8").catch(() => null),
     writeFile: (path, data) => fsp.writeFile(path, data, "utf8"),

@@ -95,7 +95,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 3. Prove it against a real repository
 
-- [ ] 1_6 Prove an adopted checkout is a worktree again, with its content untouched
+- [x] 1_6 Prove an adopted checkout is a worktree again, with its content untouched — verified: pnpm exec vitest run src/worktree/adoptWorktree.integration.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 1_3, 1_4, 1_5
   - **Refs**: specs/worktree-panel/spec.md#{adoption-re-registers-a-directory-without-changing-what-is-in-it, a-branch-a-live-worktree-holds-is-never-adopted-onto}; design.md D4, D5
   - **Acceptance**:
@@ -106,4 +106,5 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. In the same file, assert the adopted path appears in `git worktree list --porcelain` on its branch, is absent from the prunable set after a second `git worktree prune`, and accepts a commit that lands in the repository.
     3. In the same file, hash every path under the adopted directory EXCEPT its `.git` entry, with mtimes, before and after the adoption and assert equality, with a dirty tracked file and an untracked file present; assert separately that `.git` holds exactly the new `gitdir:` line.
     4. In the same file, assert that a second worktree taking the branch between the pre-read and the post-read leaves no entry at the adopted path and reports a refusal.
-    5. In the same file, assert that an entry directory whose `gitdir` file exists is not removed by `git worktree prune --expire now`, which is what makes design.md D4's write order load-bearing.
+    5. In the same file, assert that an entry directory whose `gitdir` file names a path that EXISTS is not removed by `git worktree prune --expire now`, and that one with no `gitdir` file is — the pair is what makes design.md D4's write order load-bearing.
+    6. `src/worktree/adoptWorktree.ts` and `src/extension.ts` — git's administrative worktree-entry parent directory is created if it is not there before the entry's own exclusive `mkdir`, and that `mkdir` treats only a collision as a name to retry, reporting any other failure as itself. Found by this task against a real repository: `git worktree prune` removes that parent once it is empty, so the first adoption in a repository with one forgotten checkout failed with a message about names being unavailable.

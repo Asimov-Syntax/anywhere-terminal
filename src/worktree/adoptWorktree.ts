@@ -28,6 +28,16 @@ export interface AdoptRequest {
 export interface AdoptFs {
   /** NON-recursive: it must fail `EEXIST` on a directory that is already there. */
   mkdir(path: string): Promise<void>;
+  /**
+   * Recursive and idempotent, for the entry's PARENT only.
+   *
+   * `git worktree prune` removes git's `worktrees/` directory once it is empty,
+   * so a repository whose one forgotten checkout was just pruned has no parent
+   * for the entry to be created in. Kept separate from `mkdir` because the
+   * exclusivity of that call is the whole claim: a recursive create there would
+   * answer success for an entry this adoption does not own.
+   */
+  ensureDir(path: string): Promise<void>;
   /** `lstat` at `{ bigint: true }`, for the identity the writes are checked against. */
   identify(path: string): Promise<FileIdentity>;
   /** `null` when the file is not there — an absent link is restored as absent. */
@@ -172,12 +182,25 @@ async function createEntry(
   fs: AdoptFs,
 ): Promise<{ entryPath: string; id: string; identity: FileIdentity } | undefined> {
   const stem = basename(request.worktreePath);
+  const parent = `${request.commonDir}/worktrees`;
+  try {
+    await fs.ensureDir(parent);
+  } catch {
+    return undefined;
+  }
   for (let attempt = 1; attempt <= MAX_ID_ATTEMPTS; attempt++) {
     const id = attempt === 1 ? stem : `${stem}-${attempt}`;
-    const entryPath = `${request.commonDir}/worktrees/${id}`;
+    const entryPath = `${parent}/${id}`;
     try {
       await fs.mkdir(entryPath);
-    } catch {
+    } catch (error) {
+      // Only a COLLISION is a name to try again. Anything else — a parent that
+      // vanished, a permission wall — is a failure of this adoption, and
+      // retrying it ninety-nine times ends in a message about names being
+      // unavailable that says the wrong thing about what went wrong.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        return undefined;
+      }
       continue;
     }
     try {

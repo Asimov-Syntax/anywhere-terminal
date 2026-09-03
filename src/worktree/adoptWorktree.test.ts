@@ -45,6 +45,12 @@ function fsOf(over: Partial<AdoptFs> = {}) {
       identities.set(p, { dev: 1n, ino: nextIno++ });
       writes.push(`mkdir ${p}`);
     },
+    // Idempotent, and NOT recorded in `writes`: the entry's parent is not part
+    // of the ordered contract this fake exists to pin — the entry directory and
+    // the four files are.
+    ensureDir: async (p) => {
+      dirs.add(p);
+    },
     identify: async (p) => {
       const seen = identities.get(p);
       if (seen === undefined) {
