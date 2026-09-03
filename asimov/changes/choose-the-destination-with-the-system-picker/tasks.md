@@ -20,11 +20,11 @@
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2
   - **Boundary**: No handling of the reply's meaning here — routing only, and no second place that decides whether an opening matches
   - **Acceptance**:
-    - Outcome: A posted answer reaches the worktree controller instead of being dropped in the router
+    - Outcome: A posted answer is carried by the router instead of being dropped there
     - Verify: command pnpm exec vitest run src/webview/messaging/MessageRouter.test.ts
   - **Plan**:
-    1. `src/webview/messaging/MessageRouter.ts` and `src/webview/worktree/worktreeMessageHandlers.ts` — carry the new answer to the worktree surface, the way every other host-to-webview worktree reply is carried.
-    2. `src/webview/messaging/MessageRouter.test.ts` — witness the route, so a reply declared on the wire cannot stay production-dark.
+    1. `src/webview/messaging/MessageRouter.ts` — carry the new answer, the way every other host-to-webview worktree reply is carried.
+    2. `src/webview/messaging/MessageRouter.test.ts` — witness the route, so a reply declared on the wire cannot stay production-dark. The worktree handler map is 2_1's, because its entry names a controller method that does not exist until then.
 
 ## 2. Offer it where the destination is stated
 
@@ -37,7 +37,7 @@
     - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts
   - **Plan**:
     1. `src/webview/worktree/WorktreeCreateDialog.ts` — extract the state change the override's `input` listener performs into one named transition, call it from both the listener and the picker's answer, take the opening as a dependency, and disable the action wherever the override is disabled.
-    2. `src/webview/worktree/WorktreeController.ts` — bind the request and hand each opening's dialog its own opening number.
+    2. `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/worktreeMessageHandlers.ts` — bind the request, hand each opening's dialog its own opening number, and route the answer from the router to the controller.
     3. `src/webview/worktree/worktreePanel.css` — lay the action out beside the destination, whose wrapper is a column today.
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — witness that the two ways of naming one destination compose identical creates, that a foreign or superseded opening is ignored, that cancelling changes nothing, and that the action follows the override's disabled modes.
     5. `src/extension.worktreeAssembly.test.ts` — prove the whole path is live in the shipped wiring rather than only declared.

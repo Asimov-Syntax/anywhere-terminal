@@ -25,3 +25,16 @@
   - **Plan**:
     1. `src/webview/worktree/WorktreeCreateDialog.test.ts` — witness that two package rows are distinguishable and still start unchecked.
     2. `src/extension.worktreeAssembly.test.ts` — prove a selected package environment suggestion arrives at the same relative location in the new worktree through the shipped wiring.
+
+## 3. Name every declaration state once
+
+- [ ] 3_1 Own the refusal invariant in one exhaustive classifier
+  - **Deps**: none
+  - **Refs**: specs/worktree-panel/spec.md#{a-workspace-repositorys-package-environment-files-are-found}; design.md D6, D7
+  - **Boundary**: No change to which filenames are probed, to the one-level depth, to the scan or row budget, to how a row is displayed, or to the rule that a present provisioning source suppresses fallback
+  - **Acceptance**:
+    - Outcome: A declaration this reader refuses stops workspace discovery
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/suggestProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/suggestProvisioning.ts` — replace the `Declaration` union and the guard chain that produced it with the five-state classifier of D6, switched over exhaustively at its one consumer. `manifestText` carries the opened result's kind instead of collapsing every non-`text` outcome to `undefined`, so a containment or size refusal is `refused` and only a genuinely absent file is `absent`. `patternsOf` reports what it discarded, so a list that had members and kept none is `unsupported` rather than empty. Absoluteness is judged from the raw spelling per D7 — POSIX, UNC, and drive-qualified — before normalisation and before `splitGlob`.
+    2. `src/worktree/provisioning/suggestProvisioning.test.ts` — the state matrix D6's ledger row names: one witness per state per manifest, each asserting both what is offered AND that the lower-priority manifest was never read; plus forward-slash, backslash, and UNC drive-path witnesses asserting no `readdir` and no candidate `lstat`. The round-1 and round-3 witnesses stay as they are — this task must not weaken one.
