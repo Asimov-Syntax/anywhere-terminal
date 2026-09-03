@@ -86,11 +86,16 @@ describe("resolveSelection", () => {
   });
 
   it("nothing typed resolves nothing rather than guessing a mode", () => {
-    expect(resolveSelection(facts({ query: "   ", refs: [{ name: "main", oid: "oid-main" }] })).mode).toEqual({ kind: "none" });
+    expect(resolveSelection(facts({ query: "   ", refs: [{ name: "main", oid: "oid-main" }] })).mode).toEqual({
+      kind: "none",
+    });
   });
 
   it("surrounding whitespace does not make an existing branch look new", () => {
-    expect(resolveSelection(facts({ query: "  feat/search  ", refs: [{ name: "feat/search", oid: "oid-feat-search" }] })).mode).toEqual({
+    expect(
+      resolveSelection(facts({ query: "  feat/search  ", refs: [{ name: "feat/search", oid: "oid-feat-search" }] }))
+        .mode,
+    ).toEqual({
       kind: "reuse",
     });
   });

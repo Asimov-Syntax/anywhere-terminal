@@ -1567,7 +1567,9 @@ describe("the create a toolbar with no repository opens", () => {
       truncated: false,
     });
 
-    expect(applied).toEqual([{ repoId: REPO_A, refs: { list: [{ name: "main", oid: "oid-main" }], truncated: false } }]);
+    expect(applied).toEqual([
+      { repoId: REPO_A, refs: { list: [{ name: "main", oid: "oid-main" }], truncated: false } },
+    ]);
     expect(refsHeld(h).get(REPO_A)).toBeDefined();
   });
 

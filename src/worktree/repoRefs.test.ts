@@ -19,7 +19,7 @@ function ok(stdout: string): GitCommandResult {
  * writing it out at every call site would bury the case each test is making.
  */
 function listing(...names: readonly string[]): GitCommandResult {
-  return ok(names.map((name) => (name.length === 0 ? "" : `oid-${name} ${name}`)).join("\n") + "\n");
+  return ok(`${names.map((name) => (name.length === 0 ? "" : `oid-${name} ${name}`)).join("\n")}\n`);
 }
 
 function failed(overrides: Partial<GitCommandResult> = {}): GitCommandResult {

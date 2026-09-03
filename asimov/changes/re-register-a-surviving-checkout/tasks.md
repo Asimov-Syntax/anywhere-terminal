@@ -19,7 +19,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 1. Recognise it and build it
 
-- [ ] 1_1 Recognise a pruned checkout at an occupied destination as an adopt candidate
+- [x] 1_1 Recognise a pruned checkout at an occupied destination as an adopt candidate — verified: bun test 'src/worktree/adoptProbe.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-surviving-checkout-is-offered-as-adopt-not-skipped}; design.md D1, D2, D3
   - **Acceptance**:

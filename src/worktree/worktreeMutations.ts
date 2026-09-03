@@ -326,6 +326,27 @@ export async function repairWorktree(runner: GitCommandRunner, request: RepairRe
 }
 
 /**
+ * Rebuild a worktree's index from its own HEAD.
+ *
+ * `--mixed`, never `--hard`: the index is what lived in the deleted
+ * administrative directory, and until it is written every tracked file reports
+ * as both deleted and untracked — a working tree that looks destroyed.
+ * `--mixed` writes that index and touches no file, which is the whole reason
+ * adoption can promise the content is untouched (worktree-create.md § 2.4).
+ */
+export async function resetMixedIndex(runner: GitCommandRunner, request: ResetIndexRequest): Promise<MutationResult> {
+  if (readsAsFlag(request.worktreePath)) {
+    return REFUSED_FLAG_LIKE;
+  }
+  return settle(await runner.run(["reset", "--mixed"], request.worktreePath), "git reset --mixed");
+}
+
+export interface ResetIndexRequest {
+  /** The adopted checkout; the reset runs INSIDE it, so its own HEAD is the source. */
+  worktreePath: string;
+}
+
+/**
  * The DIRECTORY's own `HEAD` commit, asked of the directory itself.
  *
  * `undefined` when git could not say — a refusal, a timeout, or a zero exit

@@ -20,6 +20,7 @@ import type {
   ProvisionSelection,
   ProvisionStepOutcome,
   ProvisionStepResult,
+  ResolvedMode,
   WorktreeAfterCreate,
   WorktreeCreateMode,
   WorktreeProvisionResultMessage,
@@ -27,7 +28,6 @@ import type {
   WorktreeRemoveAssessmentPayload,
   WorktreeRemoveRequestMessage,
 } from "./messages";
-import type { ResolvedMode } from "./messages";
 
 type Mode<K extends WorktreeCreateMode["kind"]> = Extract<WorktreeCreateMode, { kind: K }>;
 type After<K extends WorktreeAfterCreate["kind"]> = Extract<WorktreeAfterCreate, { kind: K }>;
@@ -350,6 +350,7 @@ describe("the wire contract", () => {
     expect(assessmentWithBranch.branchDelete).toBe(branchOffer);
     expect(selection.itemIds).toHaveLength(2);
     expect([reuseWithBase, reattachWithBase, adoptWithBase, detachedWithBranch, detachedNoBase]).toHaveLength(5);
+    expect([resolvedAdopt, resolvedAdoptWithoutTip]).toHaveLength(2);
     expect([noneWithAgent, terminalWithWait, selectionWithCommand, selectionWithPath]).toHaveLength(4);
     expect([copied, linked, degraded, skipped, refusedOutcome, failedOutcome].map((o) => o.kind)).toEqual([
       "copied",

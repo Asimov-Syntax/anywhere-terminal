@@ -1247,7 +1247,14 @@ describe("the destination a create opens on comes from the host", () => {
 describe("the list of branches a create can pick from comes from the host", () => {
   it("answers a refs request with what the reader found", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
-      readRefs: async () => ({ ok: true, refs: [{ name: "main", oid: "oid-main", heldBy: "repo" }, { name: "idle", oid: "oid-idle" }], truncated: true }),
+      readRefs: async () => ({
+        ok: true,
+        refs: [
+          { name: "main", oid: "oid-main", heldBy: "repo" },
+          { name: "idle", oid: "oid-idle" },
+        ],
+        truncated: true,
+      }),
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
@@ -1259,7 +1266,10 @@ describe("the list of branches a create can pick from comes from the host", () =
       type: "worktreeRefs",
       repoId: REPO,
       token: 1,
-      refs: [{ name: "main", oid: "oid-main", heldBy: "repo" }, { name: "idle", oid: "oid-idle" }],
+      refs: [
+        { name: "main", oid: "oid-main", heldBy: "repo" },
+        { name: "idle", oid: "oid-idle" },
+      ],
       truncated: true,
     });
     dispose();
