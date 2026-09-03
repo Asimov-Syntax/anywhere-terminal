@@ -29,6 +29,7 @@ import type {
   WorktreeBranchMode,
   WorktreeCreateDefaults,
   WorktreeCreateDraft,
+  WorktreeLaunchAgent,
   WorktreeMigrationOffer,
   WorktreeOpenAfter,
   WorktreeProvisionOffer,
@@ -184,6 +185,11 @@ const FOLDER_MODES: readonly { value: WorktreeOpenAfter; label: string }[] = [
  */
 function openAfterOptions(canLaunch: boolean): { value: AfterChoice; label: string }[] {
   return AFTER_CHOICES.filter((o) => o.value !== "agent" || canLaunch);
+}
+
+/** An automatic launch requires an explicit posture known not to be dangerous. */
+function safeAgentId(agents: readonly WorktreeLaunchAgent[]): string | undefined {
+  return agents.find((agent) => agent.permissionChoices.some((choice) => !choice.dangerous))?.id;
 }
 
 /** Everything the host needs to say what a submit of this form would do. */
@@ -942,13 +948,17 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     throw new Error("openWorktreeCreateDialog requires at least one repo");
   }
 
+  const initialRepoId = deps.initialRepoId ?? first.repoId;
+  const initialRepo = repos.find((repo) => repo.repoId === initialRepoId) ?? first;
+  const initialSafeAgentId = safeAgentId(initialRepo.agents);
+  const initialAfterChoice: AfterChoice = initialSafeAgentId === undefined ? "terminal" : "agent";
   const draft: WorktreeCreateDraft = {
-    repoId: deps.initialRepoId ?? first.repoId,
+    repoId: initialRepoId,
     branchMode: "new",
     branchName: "",
     baseRef: "",
     path: "",
-    openAfter: "none",
+    openAfter: initialAfterChoice,
   };
   /** True until the user edits the path themselves; after that we stop deriving it. */
   let pathIsDerived = true;
@@ -964,7 +974,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   let supplied = "";
   /** What the user picked, in the form's vocabulary. `draft.openAfter` is derived
    *  from this and `folderMode` — one wire value, never two sources for it. */
-  let afterChoice: AfterChoice = "none";
+  let afterChoice: AfterChoice = initialAfterChoice;
   let folderMode: WorktreeOpenAfter = "addToWorkspace";
 
   const currentRepo = (): WorktreeCreateDefaults => repos.find((r) => r.repoId === draft.repoId) ?? first;
@@ -1207,7 +1217,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     );
     repoSelect.addEventListener("change", () => {
       draft.repoId = repoSelect.value;
-      agentBox.setAgents(currentRepo().agents);
+      agentBox.setAgents(currentRepo().agents, safeAgentId(currentRepo().agents));
       rebuildAfterOptions();
       // The branch list belongs to a repository. The same typed name can be an
       // existing branch in one and a new one in the next, and it can be held in
@@ -1329,18 +1339,18 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   shell.dialog.appendChild(bringField);
 
   // Attached only while an offer is drawn, and removed rather than disabled
-  // when one is not: a Configure pressed before the host has answered would
+  // when one is not: a save pressed before the host has answered would
   // record the empty selection as "bring nothing over", which is a statement
   // the user never made.
   const saveRow = document.createElement("div");
   saveRow.className = "wt-bring-save-row";
   const saveButton = document.createElement("button");
   // Explicitly a button, like the switch rows: a default-type button inside the
-  // form SUBMITS, and a create started by pressing Configure is the one thing
+  // form SUBMITS, and a create started by pressing Save is the one thing
   // this must never do.
   saveButton.type = "button";
   saveButton.className = "wt-bring-save";
-  saveButton.textContent = "Configure…";
+  saveButton.textContent = "Save current choices as defaults";
   // What the repository will NOT keep, said before the save rather than after
   // it. Setup steps and ports are the two choices the configuration has no
   // vocabulary for — § 7 forbids persisting a pre-ticked command, and an
@@ -1348,7 +1358,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const saveNote = document.createElement("span");
   saveNote.className = "wt-bring-save-note";
   saveNote.id = "wt-bring-save-note";
-  saveNote.textContent = "Setup steps and ports apply to this create only.";
+  saveNote.textContent =
+    "Saves the active source and selected copy/link choices for future creates. Setup steps and ports apply to this create only.";
   // The note states what pressing this does NOT record. A sighted user reads it
   // beside the button; without the association a screen reader announces the
   // button alone, which is the half of the sentence that sounds complete
@@ -1669,7 +1680,9 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     afterChoice = afterSelect.value as AfterChoice;
     syncOpenAfter();
   });
-  afterField.appendChild(afterSelect);
+  const afterNote = document.createElement("span");
+  afterNote.className = "wt-fhint wt-after-note";
+  afterField.append(afterSelect, afterNote);
 
   // The secondary control on the folder choice, revealed by it the same way the
   // agent block is revealed by the agent choice.
@@ -1688,8 +1701,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // The block itself is shared with the standalone launch dialog, so create-then-
   // launch and launch-here collect the same thing rather than two things that
   // happen to look alike (design.md D7).
-  const agentBox = createWorktreeAgentBox(currentRepo().agents, () => syncDerived());
-  agentBox.setVisible(false);
+  const agentBox = createWorktreeAgentBox(currentRepo().agents, () => syncDerived(), initialSafeAgentId);
+  agentBox.setVisible(afterChoice === "agent");
   shell.dialog.appendChild(agentBox.element);
 
   // ── Wait-for-setup — beside the agent controls, never inside them ───────
@@ -1768,6 +1781,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   shell.dialog.appendChild(advanced);
 
   // ── Actions ─────────────────────────────────────────────────────────────
+  const disabledReason = document.createElement("span");
+  disabledReason.className = "wt-create-disabled-reason";
+  disabledReason.id = "wt-create-disabled-reason";
+  disabledReason.setAttribute("role", "status");
+  disabledReason.setAttribute("aria-live", "polite");
+  shell.actions.appendChild(disabledReason);
   const cancelBtn = textButton("Cancel", "plain", cancel);
   const createBtn = textButton("Create worktree", "primary", () => submit());
   createBtn.appendChild(keyHint("⌘↵"));
@@ -1831,9 +1850,27 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * keeps them apart: "this create is not launching" is ours, "there is nothing
    * to launch" is its own.
    */
+  function syncAfterHint(): void {
+    if (afterChoice === "none") {
+      afterNote.textContent = "No terminal, folder, or agent opens after creation.";
+    } else if (afterChoice === "terminal") {
+      afterNote.textContent = "Opens a terminal in the new worktree.";
+    } else if (afterChoice === "folder") {
+      afterNote.textContent =
+        folderMode === "addToWorkspace"
+          ? "Adds the new folder to this workspace."
+          : "Opens the new folder in a separate window.";
+    } else {
+      const selected = agentBox.read().agentId;
+      const label = currentRepo().agents.find((agent) => agent.id === selected)?.label ?? "the selected agent";
+      afterNote.textContent = `Starts ${label} in the new worktree using the selected permissions.`;
+    }
+  }
+
   function syncOpenAfter(): void {
     draft.openAfter = afterChoice === "folder" ? folderMode : afterChoice;
     agentBox.setVisible(afterChoice === "agent");
+    syncAfterHint();
     folderField.hidden = afterChoice !== "folder";
     // The submit gate reads the revealed block, so revealing one has to re-ask
     // it. `syncDerived` does not call back here, so this does not recurse.
@@ -1847,7 +1884,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // always offered, so a repo switch that drops the agent one must leave it —
     // and its secondary selection — exactly where the user put them.
     if (!offered.some((o) => o.value === afterChoice)) {
-      afterChoice = "none";
+      afterChoice = safeAgentId(currentRepo().agents) === undefined ? "terminal" : "agent";
     }
     afterSelect.replaceChildren(
       ...offered.map((o) => {
@@ -2379,7 +2416,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     }
     recoverField.hidden = false;
     recoverBox.checked = recoverWanted;
-    recoverText.textContent = `Recover ${lastSegment(offer)} — clear this directory and create here.`;
+    recoverText.textContent = `Clear existing folder and create here: ${lastSegment(offer)}`;
     const note =
       recoverRefused ??
       (recoverAsked !== null
@@ -2640,20 +2677,36 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // default — submitting here would launch under a posture the user never
     // picked, which is the whole point of never preselecting one.
     const postureMissing = afterChoice === "agent" && agentBox.needsPosture();
-    createBtn.disabled =
-      Boolean(error) ||
-      heldBy !== undefined ||
-      !named ||
-      draft.path.trim().length === 0 ||
-      outstanding ||
-      unasked ||
-      resolutionOutstanding ||
-      // The user accepted a removal and the host has not said what it would
-      // remove. Submitting here would submit a recover with no authorization,
-      // which the host refuses — so the form waits instead of failing after.
-      recoverAsked !== null ||
-      baseUnresolvable ||
-      postureMissing;
+    const blockedBy =
+      error ??
+      (!named
+        ? detached
+          ? "Enter a ref to detach at."
+          : "Enter a branch name."
+        : unasked
+          ? "Waiting to check this selection."
+          : resolutionOutstanding
+            ? "Checking whether the branch is new, reusable, or repairable."
+            : draft.path.trim().length === 0
+              ? "Waiting for a destination."
+              : outstanding
+                ? "Checking the destination."
+                : recoverAsked !== null
+                  ? "Reading the existing folder before it can be cleared."
+                  : baseUnresolvable
+                    ? (verdict as { ok: false; reason: string }).reason
+                    : postureMissing
+                      ? "Choose a permission mode before starting the agent."
+                      : undefined);
+    createBtn.disabled = blockedBy !== undefined;
+    disabledReason.hidden = blockedBy === undefined;
+    disabledReason.textContent = blockedBy ?? "";
+    if (blockedBy === undefined) {
+      createBtn.removeAttribute("aria-describedby");
+    } else {
+      createBtn.setAttribute("aria-describedby", disabledReason.id);
+    }
+    syncAfterHint();
     shell.refreshFocusTrap();
   }
 

@@ -66,6 +66,134 @@ describe("sanitizeBranchForPath", () => {
   });
 });
 
+describe("create worktree — the default and every consequential action explain themselves", () => {
+  it("opens on Start an agent only with an explicit safe posture", () => {
+    const { q } = open();
+    expect(q<HTMLSelectElement>("#wt-after").value).toBe("agent");
+    expect(q<HTMLSelectElement>("#wt-agent").value).toBe("claude");
+    expect(q<HTMLSelectElement>("#wt-perm").value).toBe("default");
+    expect(q(".wt-after-note").textContent).toContain("Claude Code");
+  });
+
+  it("does not read a no-axis agent as evidence of a safe default", () => {
+    const { q } = open({
+      repos: [
+        createDefaults({
+          agents: [{ id: "opencode", label: "OpenCode", canSeedPrompt: true, permissionChoices: [] }],
+        }),
+      ],
+    });
+    expect(q<HTMLSelectElement>("#wt-after").value).toBe("terminal");
+    expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
+  });
+
+  it("falls back to a terminal when every posture is dangerous", () => {
+    const { q } = open({
+      repos: [
+        createDefaults({
+          agents: [
+            {
+              id: "danger",
+              label: "Danger",
+              canSeedPrompt: false,
+              permissionChoices: [{ id: "bypass", label: "Bypass", dangerous: true }],
+            },
+          ],
+        }),
+      ],
+    });
+    expect(q<HTMLSelectElement>("#wt-after").value).toBe("terminal");
+  });
+
+  it("falls back to a terminal when no agent resolves", () => {
+    const { q } = open({ repos: [createDefaults({ agents: [] })] });
+    expect(q<HTMLSelectElement>("#wt-after").value).toBe("terminal");
+  });
+
+  it("selects a later explicitly safe agent without reordering the list", () => {
+    const { q } = open({
+      repos: [
+        createDefaults({
+          agents: [
+            { id: "unknown", label: "Unknown", canSeedPrompt: true, permissionChoices: [] },
+            {
+              id: "safe",
+              label: "Safe",
+              canSeedPrompt: true,
+              permissionChoices: [{ id: "ask", label: "Ask first" }],
+            },
+          ],
+        }),
+      ],
+    });
+    const agents = q<HTMLSelectElement>("#wt-agent");
+    expect([...agents.options].map((option) => option.value)).toEqual(["unknown", "safe"]);
+    expect(agents.value).toBe("safe");
+    expect(q<HTMLSelectElement>("#wt-perm").value).toBe("ask");
+  });
+
+  it("changes the consequence sentence with the after-create choice", () => {
+    const { q } = open();
+    const after = q<HTMLSelectElement>("#wt-after");
+    const note = q(".wt-after-note");
+    expect(note.textContent).toContain("Claude Code");
+    after.value = "none";
+    after.dispatchEvent(new Event("change"));
+    expect(note.textContent).toContain("No terminal");
+    after.value = "terminal";
+    after.dispatchEvent(new Event("change"));
+    expect(note.textContent).toContain("terminal in the new worktree");
+    after.value = "folder";
+    after.dispatchEvent(new Event("change"));
+    expect(note.textContent).toContain("this workspace");
+    const folder = q<HTMLSelectElement>("#wt-folder-mode");
+    folder.value = "newWindow";
+    folder.dispatchEvent(new Event("change"));
+    expect(note.textContent).toContain("separate window");
+  });
+
+  it("names the immediate repository-default write instead of saying Configure", () => {
+    const { host } = open({ repos: [createDefaults({ provisioning: provisionOffer() })], onProvisionSave: () => {} });
+    const save = host.querySelector<HTMLButtonElement>(".wt-bring-save");
+    expect(save?.textContent).toBe("Save current choices as defaults");
+    expect(save?.textContent).not.toContain("Configure");
+    expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("active source");
+    expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("future creates");
+    expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("this create only");
+  });
+
+  it("associates one live reason with a disabled Create button", () => {
+    const { q } = open();
+    const create = q<HTMLButtonElement>(".wt-btn--primary");
+    const reason = q<HTMLElement>(".wt-create-disabled-reason");
+    expect(create.disabled).toBe(true);
+    expect(create.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(reason.getAttribute("role")).toBe("status");
+    expect(reason.getAttribute("aria-live")).toBe("polite");
+    expect(reason.textContent).toContain("branch");
+    type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    expect(create.disabled).toBe(false);
+    expect(reason.hidden).toBe(true);
+  });
+
+  it("uses the validation failure as the first disabled reason", () => {
+    const { q } = open({ validateBranch: () => "That branch name is invalid." });
+    type(q<HTMLInputElement>("#wt-branch"), "bad name");
+    expect(q(".wt-create-disabled-reason").textContent).toBe("That branch name is invalid.");
+  });
+
+  it("distinguishes an unresolved host classification from a missing destination", () => {
+    const { q } = open({ onSelectionChange: () => {}, bindResolution: () => {} });
+    const name = q<HTMLInputElement>("#wt-branch");
+    type(name, "feat/x");
+    expect(q(".wt-create-disabled-reason").textContent).toBe("Waiting to check this selection.");
+    name.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(q(".wt-create-disabled-reason").textContent).toBe(
+      "Checking whether the branch is new, reusable, or repairable.",
+    );
+  });
+});
+
 describe("create worktree — default state (§ 9)", () => {
   it("starts with an empty branch name and offers no suggestion", () => {
     const { q } = open();
@@ -159,6 +287,9 @@ describe("create worktree — default state (§ 9)", () => {
     const repo = q<HTMLSelectElement>("#wt-repo-select");
     repo.value = "/other/.git";
     repo.dispatchEvent(new Event("change"));
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "none";
+    after.dispatchEvent(new Event("change"));
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(submitted[0]?.openAfter).toBe("none");
@@ -178,10 +309,13 @@ describe("create worktree — default state (§ 9)", () => {
     expect([...bare<HTMLSelectElement>("#wt-after").options].map((o) => o.value)).not.toContain("agent");
   });
 
-  it("unhides the agent picker when After creating asks for one", () => {
+  it("shows the default agent picker and hides it when another action is chosen", () => {
     const { q } = open();
-    expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
+    expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(false);
     const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "none";
+    after.dispatchEvent(new Event("change"));
+    expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
     expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(false);
@@ -200,7 +334,7 @@ describe("create worktree — default state (§ 9)", () => {
     repo.value = "/other/.git";
     repo.dispatchEvent(new Event("change"));
     expect([...after.options].map((o) => o.value)).not.toContain("agent");
-    expect(after.value).toBe("none");
+    expect(after.value).toBe("terminal");
     expect(q<HTMLElement>(".wt-agentbox").hidden).toBe(true);
   });
 
@@ -648,6 +782,7 @@ describe("After creating offers four choices (§ 3.2.1)", () => {
     // The reveal rule was implemented but unpinned by anything that would notice
     // it moving, and a restructure is exactly what moves it.
     const { host, q } = open();
+    choose(q, "none");
     const reachable = (): string[] =>
       [...host.querySelectorAll<HTMLElement>(".wt-dialog input, .wt-dialog select, .wt-dialog textarea")]
         .filter((el) => !el.closest("[hidden]"))
@@ -675,6 +810,7 @@ describe("a create that cannot name a posture cannot be submitted", () => {
     after.value = "agent";
     after.dispatchEvent(new Event("change"));
     expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+    expect(q(".wt-create-disabled-reason").textContent).toBe("Choose a permission mode before starting the agent.");
     const perm = q<HTMLSelectElement>("#wt-perm");
     perm.value = "yolo";
     perm.dispatchEvent(new Event("change"));
@@ -735,6 +871,9 @@ describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
 
   it("stays hidden for a create that does not launch an agent", () => {
     const { q } = withOffer();
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "none";
+    after.dispatchEvent(new Event("change"));
     expect(q<HTMLElement>(".wt-wait-setup").hidden).toBe(true);
   });
 
@@ -791,6 +930,9 @@ describe("wait for setup — the agent-launch checkbox (design.md D6)", () => {
 
   it("carries nothing on a create that does not launch an agent", () => {
     const { q, submitted } = withOffer();
+    const after = q<HTMLSelectElement>("#wt-after");
+    after.value = "none";
+    after.dispatchEvent(new Event("change"));
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
     q<HTMLButtonElement>(".wt-btn--primary").click();
     expect(submitted[0]).not.toHaveProperty("waitForSetup");
@@ -3839,6 +3981,7 @@ describe("the base ref states when it cannot apply", () => {
 
       expect(h.action().textContent).toContain("does not name a commit");
       expect(createBtn(h).disabled).toBe(true);
+      expect(h.q(".wt-create-disabled-reason").textContent).toBe('"nope" does not name a commit.');
     });
 
     it("withholds a base verdict where the mode refuses a base at all", () => {
@@ -3945,7 +4088,12 @@ describe("create worktree — recover a debris destination", () => {
     h.resolve();
 
     expect(h.offer().hidden).toBe(false);
+    expect(h.accept().checked).toBe(false);
+    expect(h.offer().textContent).toContain("Clear existing folder and create here");
+    expect(h.offer().textContent).not.toContain("Recover");
     expect(h.offer().textContent).toContain("repo-feat-search");
+    expect(h.note().textContent).toContain(SKIPPED);
+    expect(h.note().textContent).toContain("Accepting clears it before the worktree is created");
   });
 
   it("does not offer a destination the resolution reported free", () => {
@@ -3982,6 +4130,7 @@ describe("create worktree — recover a debris destination", () => {
 
     check(h.accept());
     expect(h.create().disabled).toBe(true);
+    expect(h.q(".wt-create-disabled-reason").textContent).toBe("Reading the existing folder before it can be cleared.");
 
     h.authorize();
     expect(h.create().disabled).toBe(false);
@@ -3995,6 +4144,7 @@ describe("create worktree — recover a debris destination", () => {
     h.authorize();
 
     expect(h.note().hidden).toBe(false);
+    expect(h.note().textContent).toContain(SKIPPED);
     expect(h.note().textContent).toContain("node_modules");
     expect(h.note().textContent).toContain("src");
   });

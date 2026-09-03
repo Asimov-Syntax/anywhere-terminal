@@ -31,7 +31,7 @@ Blueprint: none
 Lane: full (standard) — one dialog, but process-launch and destructive-action defaults make misleading fallback medium risk | flags: none
 Planned at: 2d6a8436
 Follow-up: `suggest-worktree-initialization` — bounded repository-root `.env`/lockfile suggestions, host-held opt-in offers, and setup-before-agent recommendation; mechanically split because it adds an evidence/authority owner rather than dialog language alone.
-Fastlane decision: the save control is `Save file choices as defaults`, not `Choose files & setup…`; inspection showed it writes immediately and opens no chooser, so an ellipsis or configuration verb would preserve the original ambiguity.
+Fastlane decision: the save control is `Save current choices as defaults`, not `Choose files & setup…`; inspection showed it writes immediately and opens no chooser, so an ellipsis or configuration verb would preserve the original ambiguity.
 
 
 Blueprint: none

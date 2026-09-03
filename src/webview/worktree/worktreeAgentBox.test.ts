@@ -128,6 +128,13 @@ describe("createWorktreeAgentBox", () => {
     expect(box.read().agentId).toBe("claude");
   });
 
+  it("uses a preferred safe fallback without reordering the offered agents", () => {
+    const { box, sel } = mount([CODEX]);
+    box.setAgents([BARE, CLAUDE], "claude");
+    expect([...sel("wt-agent").options].map((option) => option.value)).toEqual(["bare", "claude"]);
+    expect(box.read()).toMatchObject({ agentId: "claude", permissionChoiceId: "default" });
+  });
+
   it("shows the bound it is held to, and counts against it", () => {
     // The host refuses an oversized prompt rather than truncating it, and the
     // refusal happens after the dialog closes — so the limit belongs where the

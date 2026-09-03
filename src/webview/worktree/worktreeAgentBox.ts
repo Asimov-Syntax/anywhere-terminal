@@ -26,7 +26,7 @@ export interface WorktreeAgentChoice {
 export interface WorktreeAgentBox {
   readonly element: HTMLElement;
   /** Swap the offered agents — the create form does this when the repo changes. */
-  setAgents(agents: readonly WorktreeLaunchAgent[]): void;
+  setAgents(agents: readonly WorktreeLaunchAgent[], preferredAgentId?: string): void;
   /**
    * Whether the caller wants the block shown at all. Distinct from having
    * nothing to offer: the create form asks for it only in `agent` mode, and the
@@ -57,6 +57,7 @@ function initialPosture(agent: WorktreeLaunchAgent | undefined): string | undefi
 export function createWorktreeAgentBox(
   agents: readonly WorktreeLaunchAgent[],
   onChange?: () => void,
+  preferredAgentId?: string,
 ): WorktreeAgentBox {
   let offered: readonly WorktreeLaunchAgent[] = agents;
   let agentId: string | undefined;
@@ -144,9 +145,10 @@ export function createWorktreeAgentBox(
     }
   }
 
-  function setAgents(next: readonly WorktreeLaunchAgent[]): void {
+  function setAgents(next: readonly WorktreeLaunchAgent[], preferred?: string): void {
     offered = next;
-    const keep = next.some((a) => a.id === agentId) ? agentId : next[0]?.id;
+    const preferredOffered = preferred !== undefined && next.some((a) => a.id === preferred) ? preferred : undefined;
+    const keep = next.some((a) => a.id === agentId) ? agentId : (preferredOffered ?? next[0]?.id);
     agentId = keep;
     permissionChoiceId = initialPosture(next.find((a) => a.id === keep));
     agentSelect.replaceChildren();
@@ -184,7 +186,7 @@ export function createWorktreeAgentBox(
   });
   promptInput.addEventListener("input", () => onChange?.());
 
-  setAgents(agents);
+  setAgents(agents, preferredAgentId);
 
   return {
     element,
