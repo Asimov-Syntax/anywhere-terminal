@@ -63,9 +63,8 @@ const realFs: AdoptFs = {
   createFile: async (p, data) => {
     fs.writeFileSync(p, data, { encoding: "utf8", flag: "wx" });
   },
-  createPinned: async (p, data) => {
+  createPinned: async (p) => {
     const fd = fs.openSync(p, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR);
-    fs.writeSync(fd, data, 0, "utf8");
     return {
       identity: async () => fs.fstatSync(fd, { bigint: true }),
       readAt: async (position) => {

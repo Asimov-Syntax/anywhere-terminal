@@ -991,7 +991,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // (round-1 F005).
     createFile: (path, data) => fsp.writeFile(path, data, { encoding: "utf8", flag: "wx" }),
     /**
-     * The entry's `gitdir`, created exclusively and then HELD.
+     * The entry's `gitdir`, created EMPTY and exclusively, and handed straight
+     * back before a single byte is written into it.
      *
      * The withdrawal empties this file rather than deleting the directory that
      * holds it, so the descriptor is what makes the withdrawal address an object
@@ -999,23 +1000,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
      * leaves this handle on a detached inode, where a truncate harms nobody
      * (design.md D4). The same-inode limit D9 states for `<wt>/.git` applies
      * here too and is stated, not closed.
+     *
+     * It returns before writing because a fallible write inside this call would
+     * publish an inode nobody holds: the caller's assignment never happens, so
+     * the withdrawal cannot empty the file it created and does not know it
+     * exists (round-8 F017).
      */
-    createPinned: async (path, data) => {
+    createPinned: async (path) => {
       const handle = await fsp.open(path, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR);
-      try {
-        const bytes = Buffer.from(data, "utf8");
-        let at = 0;
-        while (at < bytes.byteLength) {
-          const { bytesWritten } = await handle.write(bytes, at, bytes.byteLength - at, at);
-          if (bytesWritten <= 0) {
-            throw Object.assign(new Error(`${path} could not be written`), { code: "EIO" });
-          }
-          at += bytesWritten;
-        }
-      } catch (error) {
-        await handle.close().catch(() => {});
-        throw error;
-      }
       return {
         identity: () => handle.stat({ bigint: true }),
         readAt: async (position) => {

@@ -145,11 +145,11 @@ function fsOf(over: Partial<AdoptFs> = {}) {
       put(p, data);
       writes.push(`write ${p}`);
     },
-    createPinned: async (p, data) => {
+    createPinned: async (p) => {
       if (at.has(p)) {
         throw Object.assign(new Error("exists"), { code: "EEXIST" });
       }
-      const bound = put(p, data);
+      const bound = put(p, "");
       writes.push(`write ${p}`);
       return {
         identity: async () => ({ dev: 1n, ino: bound, nlink: names.get(bound) ?? 1 }),
@@ -403,11 +403,11 @@ describe("adoptWorktree", () => {
         }
         return store.fs.createFile(p, data);
       },
-      createPinned: async (p, data) => {
+      createPinned: async (p: string) => {
         if (p === failing) {
           throw new Error("ENOSPC");
         }
-        return store.fs.createPinned(p, data);
+        return store.fs.createPinned(p);
       },
     };
 
@@ -1298,6 +1298,82 @@ describe("adoptWorktree's withdrawal does not consult the link's name", () => {
     expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: ENTRY } });
     expect(store.files.get(`${ENTRY}/gitdir`), "the aliased object was emptied anyway").not.toBe("");
     expect(store.files.has(`${ENTRY}/locked`), "an entry it could not empty was unlocked").toBe(true);
+  });
+
+  // Round-8 F005: the gate existed in the withdrawal and not on the success
+  // path, so an entry replaced during repair/tip/index had OUR unlink applied to
+  // it. Same shape as round-5 F013 at a different boundary, same answer.
+  it("refuses to unlock an entry that was replaced while git was working", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    let sampled = 0;
+    const fs: AdoptFs = {
+      ...store.fs,
+      identify: async (p) => {
+        const seen = await store.fs.identify(p);
+        // The LAST proof this adoption takes of the entry is the success
+        // unlock's. Substituting only there leaves every earlier check passing.
+        if (p === ENTRY) {
+          sampled += 1;
+          return sampled >= 3 ? { dev: 1n, ino: 999n } : seen;
+        }
+        return seen;
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok, "a replaced entry was adopted as if it were ours").toBe(false);
+    expect(store.files.has(`${ENTRY}/locked`), "the replacement's marker was removed by us").toBe(true);
+  });
+
+  // Round-8 F017: `createPinned` used to write the bytes itself, so a rejection
+  // published an inode nobody held — the withdrawal could not empty a file it
+  // did not know existed.
+  it("still owns the entry gitdir when the write into it fails", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      createPinned: async (p: string) => {
+        const handle = await store.fs.createPinned(p);
+        return {
+          ...handle,
+          writeAt: async () => {
+            throw new Error("ENOSPC");
+          },
+        };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    // The handle reached the outer state machine before the fallible write, so
+    // the withdrawal could empty the file and hand the entry to git.
+    expect(store.collectable(ENTRY), "an entry nothing can collect was left behind").toBe(true);
+    expect(store.entryClosed(), "the entry handle leaked").toBe(1);
+  });
+
+  // Round-8 F019: the fake counted closes and nothing read the counter.
+  it("closes the entry handle exactly once, on whichever terminal path the caller takes", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+
+    const accepted = await adoptWorktree(runner, request, store.fs);
+
+    expect(accepted.ok).toBe(true);
+    expect(store.entryClosed(), "the handle was closed before the caller was done with it").toBe(0);
+    if (accepted.ok) {
+      await accepted.release();
+    }
+    expect(store.entryClosed()).toBe(1);
+
+    const store2 = fsOf();
+    const withdrawn = await adoptWorktree(failingRepair().runner, request, store2.fs);
+
+    expect(withdrawn.ok).toBe(false);
+    expect(store2.entryClosed(), "the withdrawal did not close the entry handle exactly once").toBe(1);
   });
 
   // Round 7: the pathname deletion is what remained, and it is gone. The only

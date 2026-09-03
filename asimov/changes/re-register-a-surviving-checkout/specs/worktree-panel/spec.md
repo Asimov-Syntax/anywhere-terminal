@@ -100,8 +100,9 @@ did not survive and are not recovered. These SHALL be stated rather than probed.
 
 WHERE any step of an adoption fails, the panel SHALL leave the directory in a state it offers as
 adopt again, reporting the failure rather than a create. It SHALL NOT delete any directory to do so:
-the administrative entry it created is left in the state git's own collection takes it from, named in
-the report, and hidden from the repository's worktree listing meanwhile.
+the administrative entry it created is left in the state git's own collection takes it from, and
+hidden from the repository's worktree listing meanwhile. It SHALL name that entry only where it could
+not hand it over — an entry git will collect needs nothing from the user.
 
 #### Scenario: A withdrawn adoption is offered again rather than left behind
 
@@ -155,7 +156,7 @@ created — an unbegun write is not an unestablished one.
 
 - **WHEN** the write that re-points the directory's `.git` entry begins and does not complete
 - **THEN** the result names that directory and states that its `.git` entry could not be left in a
-  known state, and no administrative entry is left behind
+  known state, and the administrative entry has been handed to git's collection
 
 ### Requirement: Adoption is offered only where the reconstruction has been verified
 

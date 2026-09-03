@@ -312,3 +312,17 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     5. `src/worktree/worktreeMutationService.ts` — `residueNote` says an entry was left for git to collect and names it, rather than reporting a removal that failed.
     6. `src/worktree/adoptWorktree.test.ts` — witnesses: `removeDir` called zero times; the entry directory replaced between creation and withdrawal, asserting the replacement is intact and our detached object was truncated; an alias on `gitdir`; a rejecting truncate leaving `locked`. Each guard arm-checked.
     7. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository: `locked` exists for the whole construction interval; after a withdrawal the entry is omitted from `git worktree list`, a real `git worktree prune` collects it, and `probeAdopt` offers the directory again.
+
+## 11. Close review round 8 — one gate for both unlinks, and a handle nobody drops
+
+- [x] 9_1 Gate every marker unlink on ownership, hand the entry handle over before the first write — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 8_1
+  - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, a-withdrawal-states-what-it-could-not-put-back}; `.reviews/round-8.md` F005, F017, F018, F019
+  - **Acceptance**:
+    - Outcome: No marker is unlinked without a current ownership proof, and an entry whose first write fails is still collectable
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — the ownership proof moves INTO the unlink, so the withdrawal and the success path both inherit it (F005).
+    2. `src/extension.ts`, `src/worktree/adoptWorktree.ts` and `src/worktree/adoptWorktree.integration.test.ts` — `createPinned` returns the handle for an EMPTY file; the caller writes the bytes through it, so no window exists where the inode is published and nobody holds it (F017).
+    3. `asimov/changes/re-register-a-surviving-checkout/design.md` and `asimov/changes/re-register-a-surviving-checkout/specs/worktree-panel/spec.md` — delete the text the round-7 handback superseded: D4's title, step table and gitdir-first rationale, the ledger's `removeDir` citations, and the two spec lines still promising removal (F018).
+    4. `src/worktree/adoptWorktree.test.ts` — witnesses: an entry replaced only at the success unlock's own proof; a write that fails after `createPinned` published the inode, asserting the entry is still collectable; exactly-once closure of the entry handle on both terminal paths (F019). Each arm-checked.

@@ -130,13 +130,15 @@ export interface AdoptFs {
    */
   createFile(path: string, data: string): Promise<void>;
   /**
-   * Create a file exclusively and hand back a handle on the object created.
+   * Create an EMPTY file exclusively and hand back its handle, writing nothing.
    *
    * Used for `<entry>/gitdir` alone. The withdrawal empties that file instead of
    * removing the directory around it, and only a descriptor makes that address
-   * an object rather than a name (design.md D4).
+   * an object rather than a name (design.md D4). The bytes are written by the
+   * caller THROUGH the handle: an implementation that wrote them itself would
+   * publish an inode nobody holds if that write failed (round-8 F017).
    */
-  createPinned(path: string, data: string): Promise<LinkHandle>;
+  createPinned(path: string): Promise<LinkHandle>;
   /** Remove ONE file. There is deliberately no recursive removal here (D4). */
   removeFile(path: string): Promise<void>;
   /** Recursive removal of the entry directory this adoption created. */
@@ -402,6 +404,35 @@ export async function adoptWorktree(
     return named !== null && resolve(named) === resolve(entryPath);
   };
 
+  /**
+   * Drop `locked`, but only while the entry is still provably this adoption's.
+   *
+   * Written as ONE operation because it has two callers — the withdrawal and the
+   * success path — and a gate written at one of them covered one: the success
+   * path unlinked the marker after `repair`, the tip read and the index rebuild
+   * with no fresh proof at all, so an entry replaced during those steps had OUR
+   * unlink applied to it (round-8 F005). This is round-5 F013's shape, at a
+   * different boundary, and it gets the same answer: the proof lives in the
+   * operation. The interval between the proof and the unlink is the residual D4
+   * states; it is not closed here and is not claimed to be.
+   */
+  const unlockIfOurs = async (): Promise<boolean> => {
+    try {
+      if (!sameIdentity(await fs.identify(entryPath), identity)) {
+        return false;
+      }
+    } catch (error) {
+      // An entry that is GONE leaves nothing to unlock and nothing to say.
+      // Folding that into "not ours" reported a residue over a directory that
+      // no longer exists (round-1 F005).
+      return readsAsAbsent(error);
+    }
+    return fs
+      .removeFile(`${entryPath}/${LOCK_MARKER}`)
+      .then(() => true)
+      .catch(() => false);
+  };
+
   const undo = async (): Promise<AdoptResidue | undefined> => {
     // The LINK first, and the order is the claim: removing the entry before the
     // link goes back leaves an interval in which `<wt>/.git` names a directory
@@ -475,23 +506,7 @@ export async function adoptWorktree(
       // git's collection, where `rm -r` on a pathname destroyed one outright
       // (round-7 F005). Gated on the best evidence there is: an entry this
       // adoption cannot prove it owns is not touched at all, and is reported.
-      let ours: boolean;
-      try {
-        ours = sameIdentity(await fs.identify(entryPath), identity);
-      } catch (error) {
-        // An entry that is GONE leaves nothing to collect and nothing to say.
-        // Folding that into "not ours" reported a residue over a directory that
-        // no longer exists (round-1 F005).
-        if (!readsAsAbsent(error)) {
-          throw error;
-        }
-        collectable = true;
-        ours = false;
-      }
-      if (ours) {
-        await fs.removeFile(`${entryPath}/${LOCK_MARKER}`);
-        collectable = true;
-      }
+      collectable = await unlockIfOurs();
     } catch {
       collectable = false;
     }
@@ -519,7 +534,18 @@ export async function adoptWorktree(
     await fs.createFile(`${entryPath}/${LOCK_MARKER}`, LOCK_REASON);
     // Held from here. The withdrawal empties THIS object rather than removing
     // the directory around it.
-    entry = await fs.createPinned(`${entryPath}/gitdir`, `${linkPath}\n`);
+    entry = await fs.createPinned(`${entryPath}/gitdir`);
+    // Through the handle, and only after this adoption owns it. `writeAt` may
+    // fulfil short, so the remainder is looped for the reason D9 gives.
+    const gitdirBytes = Buffer.from(`${linkPath}\n`, "utf8");
+    let written = 0;
+    while (written < gitdirBytes.byteLength) {
+      const wrote = await entry.writeAt(gitdirBytes.subarray(written), written);
+      if (wrote <= 0) {
+        throw Object.assign(new Error(`${entryPath}/gitdir could not be written`), { code: "EIO" });
+      }
+      written += wrote;
+    }
     await fs.createFile(`${entryPath}/commondir`, COMMON_DIR_ROUTE);
     await fs.createFile(`${entryPath}/HEAD`, `ref: refs/heads/${request.branch}\n`);
   } catch (error) {
@@ -624,10 +650,8 @@ export async function adoptWorktree(
   // entry becomes an ordinary registration. Removing it earlier would expose a
   // finished-looking entry that a concurrent prune could still act on; leaving
   // it on would ship a worktree git refuses to remove (D4).
-  try {
-    await fs.removeFile(`${entryPath}/${LOCK_MARKER}`);
-  } catch (error) {
-    return failed(`The administrative entry at ${entryPath} could not be unlocked: ${reasonOf(error)}`);
+  if (!(await unlockIfOurs())) {
+    return failed(`The administrative entry at ${entryPath} could not be unlocked.`);
   }
 
   return {
