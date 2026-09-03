@@ -244,4 +244,13 @@
     1. `src/worktree/worktreeMutationService.ts`, `src/worktree/worktreeMutationService.test.ts`: after the coordinator's forced rebuild and before create, require the current migration registration to equal the host-held binding; cover withdrawal, changed registration, unavailable lookup, same-registration generation advance, and no-migration creates.
     2. `src/extension.ts`, `src/extension.worktreeMutations.test.ts`: bind the mutation service's current-registration check to the host cache authority and prove production passes it through.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4`
+- [x] 5_5 Stabilize the full assembly verification lane — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=1 exit 0
+  - **Deps**: 5_4
+  - **Refs**: none
+  - **Acceptance**:
+    - Outcome: Assembly tests wait for the UI state each assertion consumes
+    - Verify: command pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts'
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts`: hand-port the condition-based tree, removal-report, confirmation, and bounded settlement waits from hardening commit `199886d0` without its WT-012.15 fixtures or production changes.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4 | 5_5`

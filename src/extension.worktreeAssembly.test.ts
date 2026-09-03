@@ -680,8 +680,11 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
   host.attach(surface).setDisplayed(true);
   controller.setVisible(true);
   await settleUntil(
-    () => document.querySelectorAll('[role="treeitem"]').length > 0,
-    "the first worktree tree push to render a row",
+    () =>
+      [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')].some((row) =>
+        (row.textContent ?? "").includes("feature"),
+      ),
+    "the linked worktree row",
   );
   return { controller, host, surface };
 }
@@ -698,10 +701,41 @@ function linkTheWorktree(): void {
   fs.writeFileSync(path.join(LINKED, ".git"), `gitdir: ${admin}\n`);
 }
 
+/**
+ * Pump the event loop for callers with no single condition to wait on.
+ *
+ * The old bound was a flat 40 turns, and the full suite outgrew it: adding ANY
+ * test file to the run — including two pure modules this suite never imports —
+ * reproduced a failure here, a different assertion each time, because the extra
+ * scheduling pressure pushed the host past 40 turns before the walk read the
+ * DOM.
+ *
+ * So the floor stays 40, and past it the pump keeps going WHILE THE DOM IS
+ * STILL MOVING, up to 300. Raising the flat bound instead was measured and
+ * rejected — it took this file from 12s to 40s, because every call site paid
+ * the worst case.
+ *
+ * This is a MITIGATION, and a partial one. It never returns earlier than the
+ * old helper did, so nothing that passed before can start failing here — but
+ * DOM quiescence is not settlement: a host suspended in `await assess(...)`
+ * changes no DOM at all, so five quiet turns can pass while the work that will
+ * paint the report has not resumed. The durable answer is `settleUntil` at each
+ * remaining call site, waiting on the thing that site is actually about.
+ */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+  const FLOOR = 40;
+  const QUIET_TURNS = 5;
+  let previous = "";
+  let quiet = 0;
+  for (let turn = 0; turn < 300; turn++) {
     await Promise.resolve();
     await new Promise((r) => setTimeout(r, 0));
+    const painted = document.body.innerHTML;
+    quiet = painted === previous ? quiet + 1 : 0;
+    previous = painted;
+    if (turn >= FLOOR - 1 && quiet >= QUIET_TURNS) {
+      return;
+    }
   }
 }
 
@@ -766,7 +800,17 @@ function clickItem(items: HTMLElement[], label: RegExp): void {
  * confirms. Types the branch name first where the report earned a typed
  * confirmation, so one helper covers both controls.
  */
-function confirmRemoval(branch: string): void {
+async function confirmRemoval(branch: string): Promise<void> {
+  // Waits for the dialog rather than assuming the pump before it was long
+  // enough. The report is assembled asynchronously, so a fixed pump count is a
+  // guess about how many turns that costs — and under full-suite load it costs
+  // more, which surfaced as "the removal report offered no confirmation",
+  // intermittently and only in a full run (the same defect `settleUntil` was
+  // introduced for).
+  await settleUntil(
+    () => document.querySelector('[role="dialog"] button.wt-btn--danger') !== null,
+    "the removal report's confirmation",
+  );
   const field = document.querySelector<HTMLInputElement>('[role="dialog"] #wt-confirm-name');
   if (field !== null) {
     field.value = branch;
@@ -799,7 +843,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // boundary the bound has to survive, so this is where it is asserted.
     await assemble();
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
 
     const listing = argv.find((c) => c.args[0] === "ls-files");
     expect(listing, "the removal never asked for the ignored listing").toBeDefined();
@@ -809,12 +853,12 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
   it("removes: menu item → webview message → host → coordinator → git argv", async () => {
     await assemble();
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
     // The menu click removes nothing: it asks, and the report is what the user
     // answers (design.md D6). A removal here would be round-3 B1 back.
     expect(gitCalls("remove")).toEqual([]);
-    confirmRemoval("feature");
-    await settle();
+    await confirmRemoval("feature");
+    await settleUntil(() => gitCalls("remove").length === 1, "the removal command");
     // The unforced removal the confirmation posts, carried all the way down. A
     // `--force` here would mean the assessment was skipped.
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
@@ -828,7 +872,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await assemble();
 
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog, "the menu click opened no report").not.toBeNull();
@@ -845,8 +889,8 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // Confirmation authority is universal; the report's checks still choose the
     // ordinary control, while fresh host evidence chooses ordinary Git execution.
     expect(dialog?.querySelector("#wt-confirm-name")).toBeNull();
-    confirmRemoval("feature");
-    await settle();
+    await confirmRemoval("feature");
+    await settleUntil(() => gitCalls("remove").length === 1, "the removal command");
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
@@ -855,12 +899,14 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     const { host, surface } = await assemble();
 
     void host.handleMessage(surface, { type: "worktreeRemove", worktreeId: LINKED });
-    await settle();
+    const opener = (): HTMLButtonElement | undefined =>
+      [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+        /force remove/i.test(button.textContent ?? ""),
+      );
+    await settleUntil(() => opener() !== undefined, "the blocked notice's report opener");
 
     expect(gitCalls("remove"), "a fingerprint-free request reached git").toEqual([]);
-    const openReport = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-      /force remove/i.test(button.textContent ?? ""),
-    );
+    const openReport = opener();
     expect(openReport, "the blocked notice offered no report opener").toBeDefined();
 
     openReport?.click();
@@ -868,8 +914,8 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(document.querySelector('[role="dialog"]'), "the notice action opened no report").not.toBeNull();
     expect(gitCalls("remove"), "opening the report reached git").toEqual([]);
 
-    confirmRemoval("feature");
-    await settle();
+    await confirmRemoval("feature");
+    await settleUntil(() => gitCalls("remove").length === 1, "the removal command");
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
 
@@ -878,7 +924,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await assemble();
 
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
 
     const confirm = document.querySelector<HTMLButtonElement>('[role="dialog"] button.wt-btn--danger');
     expect(confirm?.textContent).toBe("Force remove");
@@ -889,8 +935,8 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await settle();
     expect(gitCalls("remove"), "the destructive button authorized before the name was typed").toEqual([]);
 
-    confirmRemoval("feature");
-    await settle();
+    await confirmRemoval("feature");
+    await settleUntil(() => gitCalls("remove").length === 1, "the forced removal command");
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", "--force", LINKED]]);
   });
@@ -908,8 +954,12 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await host.mutationBindings().forceRebuild(REPO_ID);
     await settle();
 
+    const assessmentsBefore = posted.filter((message) => message.type === "worktreeRemoveAssessment").length;
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(
+      () => posted.filter((message) => message.type === "worktreeRemoveAssessment").length > assessmentsBefore,
+      "the refused removal assessment",
+    );
 
     expect(gitCalls("remove")).toEqual([]);
   });
@@ -951,7 +1001,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(listings(), "a rebuild landed before the click, so nothing was stale").toBe(before);
 
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog, "the menu click opened no report at all").not.toBeNull();
@@ -971,8 +1021,8 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     watchers[0]?.deliver();
     await settle();
 
-    confirmRemoval("feature");
-    await settle();
+    await confirmRemoval("feature");
+    await settleUntil(() => gitCalls("remove").length === 1, "the replacement removal command");
 
     // The confirmation reached git, and reached it for the replacement: the
     // report was issued against generation two and generation two is what the
@@ -991,9 +1041,9 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // (round-4 B1) — here the order is production's, not the test's.
     await assemble();
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
-    confirmRemoval("feature");
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
+    await confirmRemoval("feature");
+    await settleUntil(() => document.body.textContent?.includes("Remove done.") === true, "the removal outcome");
     expect(document.body.textContent).toContain("Remove done.");
     expect(document.body.textContent).toContain("feature");
   });
@@ -1730,10 +1780,13 @@ describe("the invariants that span the host and the webview", () => {
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
     await settleUntil(
-      () => document.querySelectorAll(".wt-notice").length > 0,
-      "the create to report something back to the panel",
+      () =>
+        provisionResults.length === 1 &&
+        [...document.querySelectorAll(".wt-notice")].some((notice) =>
+          (notice.textContent ?? "").includes("Create done."),
+        ),
+      "the create and provisioning results",
     );
-    await settle();
 
     // The file and port claim actually arrived, through the production bindings.
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
@@ -2511,7 +2564,7 @@ describe("the invariants that span the host and the webview", () => {
     // underneath it: the confirmation is answered against a set that has since
     // changed, and the host re-prompts rather than acting.
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
     expect(gitCalls("remove")).toEqual([]);
     const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
       /force remove/i.test(b.textContent ?? ""),
@@ -2557,7 +2610,7 @@ describe("the invariants that span the host and the webview", () => {
 
     // Blocked on the dirty file only — an agent that is idle blocks nothing.
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
     const force = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
       /force remove/i.test(b.textContent ?? ""),
     );
@@ -2606,9 +2659,12 @@ describe("the invariants that span the host and the webview", () => {
     const listsBefore = gitCalls("list").length;
 
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
-    confirmRemoval("feature");
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
+    await confirmRemoval("feature");
+    await settleUntil(
+      () => document.body.textContent?.includes("stopped before git reported an outcome") === true,
+      "the indeterminate removal outcome",
+    );
 
     // Not "Couldn't remove": git never reported an outcome, so a clean failure
     // would be a claim nobody made. Asserted on the reason the TIMEOUT leg
@@ -2630,9 +2686,12 @@ describe("the invariants that span the host and the webview", () => {
     await assemble();
 
     clickItem(openMenu("feature"), /remove/i);
-    await settle();
-    confirmRemoval("feature");
-    await settle();
+    await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
+    await confirmRemoval("feature");
+    await settleUntil(
+      () => document.body.textContent?.includes("is still registered") === true,
+      "the inconsistent removal outcome",
+    );
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
     expect(document.body.textContent).toContain("partly applied");
