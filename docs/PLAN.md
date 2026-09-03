@@ -708,7 +708,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | None |
 | **Notes** | The Git extension already exposes `migrateChanges`; this is a call and a conditional row, not a reimplementation. Ordering matters — the move lands before setup runs so a setup command sees the moved work |
 | **Acceptance** | A row-context create offers the move only for that source directory and `.git` state when Git can produce a bounded positive snapshot, states the distinct record count as current, and states that Git acts on execution-time uncommitted work; repository-level creates and unresolved merges offer no move; observed drift before API entry refuses, while changes after the final check may enter the operation and make its result indeterminate; the attempt happens after git creates a fresh, detached, or reused checkout and before provisioning or launch, with nested destinations excluded first; only an empty source plus an exact non-conflicted destination snapshot counts as moved; every other outcome is potentially partial with the created worktree standing, later steps stopped, and no claim of source restoration or single-report ownership; declining invokes no migration |
-| **Status** | in_progress |
+| **Status** | done |
 
 ### [WT-012.11] Setup Runs What the User Actually Saw
 

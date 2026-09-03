@@ -125,7 +125,7 @@
       "windows": [
         {
           "from": 1788342089142,
-          "to": null
+          "to": 1788402240926
         }
       ],
       "phases": [
@@ -462,12 +462,12 @@
           "phase": "plan",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 492,
-          "inputTokens": 1222512,
-          "outputTokens": 173722,
+          "messages": 855,
+          "inputTokens": 1792198,
+          "outputTokens": 253933,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 103764608,
+          "cacheReadTokens": 195634048,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -480,12 +480,12 @@
           "phase": "build",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 548,
-          "inputTokens": 945700,
-          "outputTokens": 146481,
+          "messages": 593,
+          "inputTokens": 1064389,
+          "outputTokens": 156165,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 119998464,
+          "cacheReadTokens": 124194688,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

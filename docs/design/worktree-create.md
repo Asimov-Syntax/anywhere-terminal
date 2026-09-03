@@ -317,7 +317,7 @@ everything else is derived, defaulted, or advanced.
 | Destination | **One derived line**, shortened, and not a field in the common case. The exact value is carried by a tooltip and by a visually-hidden span beside the shortened text — the line's implicit role is `generic`, which prohibits naming, so an `aria-label` on it is not exposed to AT. The line is focusable so the exact value is reachable by keyboard, not by pointer alone |
 | Collision | One field-local line naming the **result segment only** (§ 4.2) |
 | Bring over | The provision model, summarized, with per-entry provenance (§ 4.3) |
-| Move uncommitted changes | Conditional row, present only when the source worktree has changes to move |
+| Move uncommitted changes | Conditional, source-bound row stating the current distinct-path count and execution-time semantics (§ 4.5) |
 | "After creating" | Segmented radios mapping onto all five `WorktreeOpenAfter` wire values: `Nothing` → `none`; `Open a terminal` → `terminal`; `Start an agent` → `agent`; `Open the folder` → `newWindow` or `addToWorkspace`, chosen by a secondary control and defaulting to `addToWorkspace`. No wire value is unreachable from the form |
 | Repo picker | Below the destination line when the workspace has more than one repo. "Nothing above the lead input" is a rule about order; the picker cannot go into Advanced, because the destination is derived from it |
 | Agent block | Agent, permission posture, and first prompt are revealed **only when "After creating" is "Start an agent"**. While absent nothing agent-shaped is tabbable and the submitted draft carries no agent details |
@@ -431,6 +431,18 @@ branch an answer is for, so it cannot catch a branch-less leftover. The conventi
 unenforced by any type; a `kind` tag on the request and its answer is the follow-up that would
 enforce it.
 
+### 4.5 Move uncommitted changes
+
+Only a row-context create can carry a source worktree. The host offers the move when that normalized
+source still belongs to the selected repository publication, Git can read one bounded snapshot with
+no unresolved merge, and the distinct affected-path count is positive. Repository-level doors,
+unavailable evidence, empty snapshots, reattach and adopt expose no row.
+
+The row starts unchecked. It states that the count is the **current snapshot** and that Git moves the
+execution-time uncommitted work, which may differ by submission time. Replacing the offer or changing
+the repository clears consent; the form submits only the opaque offer identity, never source evidence
+or migration instructions.
+
 ## 5. Pull request as a source
 
 A PR is a **source inside the combobox**, never a fifth tab. Selecting one resolves to a branch
@@ -518,13 +530,23 @@ setup under a gate still starts nothing and reports per § 5.5 of the provisioni
 is disabled, not hidden, when no setup step is selected: hiding it would make its absence look
 like a layout change rather than a consequence of the checkbox above it.
 
-**Moving uncommitted changes**, when the user asked for it, happens between git success and
-provisioning, so a setup command sees the moved work. The Git extension's `migrateChanges` is the
-supported mechanism.
+**Moving uncommitted changes**, when the user asked for it, happens after Git creates a fresh,
+detached, or reused checkout and before provisioning or `openAfter`, so setup sees the moved work.
+The Git extension's `migrateChanges` is the supported mechanism. Nested destinations are refused
+before it runs. Declining the row invokes no migration.
+
+The source offer is current authority, not a lock. It is rechecked after the mutation queue rebuild,
+before any authorized debris is cleared, and again immediately before `git worktree add`; retained,
+degraded, Git-unavailable, replaced, or withdrawn repository state refuses. Git then acts on the
+source's execution-time work rather than promising the earlier count is atomic.
+
+Only an empty source plus an exact, non-conflicted destination snapshot is reported as moved. Every
+other result is potentially partial: the created worktree stands, provisioning and launch stop, and
+the report claims neither source restoration nor exclusive ownership of later notices.
 
 **A failed launch after a successful create is reported as exactly that**: the worktree exists, the
 agent did not start. The create is never rolled back to make the compound action look atomic. The
-same rule covers provisioning (§ 5.5 of the provisioning doc) and a failed change migration.
+same rule covers provisioning (§ 5.5 of the provisioning doc) and change migration.
 
 ## 7. Where create is offered
 
