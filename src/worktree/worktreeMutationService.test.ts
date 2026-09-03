@@ -1722,6 +1722,8 @@ describe("re-registering a surviving checkout", () => {
       undone?: AdoptResidue | undefined;
       /** Records each call of the undo the reconstruction handed back. */
       undos?: string[];
+      /** Records the release of the pinned link, for the caller that keeps the adoption. */
+      releases?: string[];
     } = {},
   ) {
     let reads = 0;
@@ -1753,7 +1755,9 @@ describe("re-registering a surviving checkout", () => {
         over.reconstruct ?? {
           ok: true,
           id: "survivor",
-          release: async () => {},
+          release: async () => {
+            over.releases?.push("release");
+          },
           undo: async () => {
             over.undos?.push("undo");
             return over.undone;
@@ -1888,6 +1892,46 @@ describe("re-registering a surviving checkout", () => {
     const message = (h.outcomes[0] as { message: string }).message;
     expect(message).toContain("/repo/.git/worktrees/survivor");
     expect(message).toContain("left as found");
+  });
+
+  // The three states are three different things for the user to do, and the
+  // message is the only place that difference reaches them.
+  it("says the link is in no known state, naming the directory, when the claim write did not finish", async () => {
+    const h = adoptHarness({
+      unregisteredAfter: true,
+      // No entry left behind — the withdrawal removed it. What was NOT withdrawn
+      // is the link, and a failure that reads as "nothing changed" would be a
+      // lie about a `.git` that now names nothing (round-3 F012).
+      undone: { entryPath: null, link: "unknown" as const },
+    });
+    await adopt(h);
+
+    const message = (h.outcomes[0] as { message: string }).message;
+    expect(message).toContain(SURVIVOR);
+    expect(message).toContain("could not be left in a known state");
+    expect(message).not.toContain("was restored");
+  });
+
+  it("says the withdrawal was clean when the link went back", async () => {
+    const h = adoptHarness({
+      unregisteredAfter: true,
+      undone: { entryPath: "/repo/.git/worktrees/survivor", link: "restored" as const },
+    });
+    await adopt(h);
+
+    expect((h.outcomes[0] as { message: string }).message).toContain("its own .git entry was restored");
+  });
+
+  // The pinned `<wt>/.git` has no other owner once the adoption is kept: the
+  // undo is what would have closed it, and an accepted adoption never calls it.
+  it("releases the pinned link when it keeps the adoption", async () => {
+    const releases: string[] = [];
+    const h = adoptHarness({ releases });
+
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({ kind: "ok" });
+    expect(releases, "the descriptor was held for the life of the extension host").toEqual(["release"]);
   });
 
   it("names what a failed reconstruction left behind", async () => {

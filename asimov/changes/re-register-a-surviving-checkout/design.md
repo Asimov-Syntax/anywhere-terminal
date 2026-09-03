@@ -213,7 +213,9 @@ that alone ends the write and takes the recovery path below.
 **Ownership is "the link resolves to OUR entry", not byte equality.** Byte equality was the round-2
 answer and it is wrong for a reason that has nothing to do with races: with `worktree.useRelativePaths`
 set, `git worktree repair` legitimately rewrites the link we just wrote into relative form (git 2.50.1
-`worktree.c:875-876, 1085-1090`). The undos D5 reaches — the branch-claim contender and the tip
+`worktree.c:875-876, 1085-1090`) — reproduced against a hand-built entry of exactly this adoption's
+shape, where repair reported `.git file absolute/relative path mismatch` and left `gitdir: ../repo/...`
+behind. The undos D5 reaches — the branch-claim contender and the tip
 mismatch — all run AFTER `repair`, so byte equality would report our own link as a stranger's on the
 common failure path and leave `<wt>/.git` naming an entry the undo then removed. So the undo parses
 the current link with the same grammar the detector uses and asks whether it resolves to the entry

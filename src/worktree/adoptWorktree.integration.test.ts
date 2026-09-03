@@ -484,6 +484,62 @@ describe("what a failing adoption does to a link somebody else replaced", () => 
     ).then((result) => {
       expect(result).toMatchObject({ ok: false });
       expect(fs.readFileSync(path.join(survivor, ".git"), "utf8")).toBe(replacement);
+      expect(result.ok === false && result.leftBehind?.link).toBe("leftAsFound");
     });
+  });
+});
+
+describe("a repository that writes its worktree links relative", () => {
+  // Byte equality was the round-2 answer to ownership, and this breaks it with
+  // no second process anywhere: `git worktree repair` rewrites the very link
+  // this adoption just wrote into relative form, and EVERY withdrawal the
+  // service reaches runs after repair. Ownership is the entry the link resolves
+  // to, so the normalised link is still recognised as ours.
+  it("still withdraws its own link after repair has normalised it", async () => {
+    execFileSync("git", ["-C", repo, "config", "worktree.useRelativePaths", "true"]);
+    /** What the link held once `repair` had run — the premise this case rests on. */
+    let afterRepair: string | null = null;
+    const watched = {
+      run: async (args: readonly string[], cwd: string) => {
+        const answer = await runner.run(args, cwd);
+        if (args[1] === "repair") {
+          afterRepair = fs.readFileSync(path.join(survivor, ".git"), "utf8");
+        }
+        return answer;
+      },
+    } as typeof runner;
+    try {
+      // AWAITED inside the `try`. Returning the promise instead runs the
+      // `finally` the moment it is created, which unset the config before
+      // repair ever read it — and the case then passed for no reason.
+      const result = await adoptWorktree(
+        watched,
+        {
+          repoPath: repo,
+          commonDir,
+          worktreePath: survivor,
+          branch: "survivor",
+          staleGitdir,
+          staleLink,
+          // A tip nothing is at, so the guard AFTER `repair` is what refuses —
+          // the ordinary withdrawal path, not an injected failure.
+          expectedBranchOid: "0".repeat(40),
+        },
+        realFs,
+      );
+
+      // The premise FIRST. If repair stopped normalising the link this case
+      // would pass for the wrong reason and prove nothing about ownership.
+      expect(afterRepair, "repair did not normalise the link, so this case tests nothing").toBe(
+        `gitdir: ${path.relative(survivor, `${commonDir}/worktrees/survivor`)}\n`,
+      );
+      expect(result).toMatchObject({ ok: false });
+      // Withdrawn cleanly: recognised as OURS despite the rewrite, so the bytes
+      // the directory was found with are back and no residue is reported.
+      expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
+      expect(fs.readFileSync(path.join(survivor, ".git"), "utf8")).toBe(staleLink);
+    } finally {
+      execFileSync("git", ["-C", repo, "config", "--unset", "worktree.useRelativePaths"]);
+    }
   });
 });

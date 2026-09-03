@@ -232,18 +232,22 @@ function adoptDeclineReason(verdict: AdoptVerdict): string {
 }
 
 /** What an undo could not put back, said rather than folded into a plain failure. */
-function residueNote(residue: AdoptResidue | undefined): string {
+function residueNote(residue: AdoptResidue | undefined, adoptPath: string): string {
   if (residue === undefined) {
     return "";
   }
+  // Three states, and the third is the one that must never read as a clean
+  // failure: the claim write began and the bytes that were there could not be
+  // put back, so `<wt>/.git` names nothing anybody can act on. It is reported
+  // whether or not an entry was left behind (round-3 F012).
   const link =
     residue.link === "restored"
       ? "its own .git entry was restored"
       : residue.link === "leftAsFound"
         ? "its .git entry now names something else and was left as found"
-        : "its .git entry could not be left in a known state";
+        : `the .git entry in ${adoptPath} could not be left in a known state`;
   return residue.entryPath === null
-    ? ` The directory's .git entry could not be left in a known state.`
+    ? ` The ${link}.`
     : ` The administrative entry at ${residue.entryPath} could not be removed, and ${link}.`;
 }
 
@@ -907,11 +911,11 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 expectedBranchOid: mode.expectedBranchOid,
               });
               if (!written.ok) {
-                return fail(`${written.message}${residueNote(written.leftBehind)}`);
+                return fail(`${written.message}${residueNote(written.leftBehind, adoptPath)}`);
               }
               /** Withdraw the registration, and say what the withdrawal could not put back. */
               const withdraw = async (why: string): Promise<MutationOutcome> =>
-                fail(`${why}${residueNote(await written.undo())}`);
+                fail(`${why}${residueNote(await written.undo(), adoptPath)}`);
               // And the branch claim again, because the window this closes is
               // the one between the pre-read and the write. Exactly one
               // non-prunable record, and it is the adopted path.
@@ -927,6 +931,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               if (proof === undefined || proof.prunable) {
                 return withdraw(`Git does not report ${adoptPath} as a worktree of this repository.`);
               }
+              // The adoption is KEPT, so nothing will call `undo` and the pinned
+              // `<wt>/.git` has no other owner left to close it.
+              await written.release();
               await deps.afterCreate(adoptPath, request.afterCreate, request.origin).catch((error: unknown) => {
                 const reason = messageOf(error);
                 openFailure = request.afterCreate.kind === "agent" ? `Agent did not start: ${reason}` : reason;

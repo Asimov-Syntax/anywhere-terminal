@@ -224,7 +224,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     11. `src/worktree/worktreeMutationService.test.ts` — its adopt fakes move with the result and residue shapes; 4_2 owns the cases that assert the three messages.
     12. `src/worktree/adoptWorktree.test.ts` — the fake models an inode table: paths map to inode objects with their own identity and bytes, a handle captures one inode at open, and every operation through it still reaches the captured inode after the path has been replaced. Cases: a different-inode replacement survives the claim write AND the undo, asserted on the old inode as well as the path so a write to the detached inode is visible; a same-inode in-place rewrite, asserting the documented parity rather than a guarantee; a repair that normalizes to a relative link, asserting the undo still restores; a short write; a truncate-then-reject with a recovery that succeeds and one that fails; a `close()`d handle rejecting, so the deferred-undo path is armed. Each guard arm-checked by reverting it.
 
-- [ ] 4_2 Report a link the adoption could not establish, and release the handle the caller accepts
+- [x] 4_2 Report a link the adoption could not establish, and release the handle the caller accepts — verified: pnpm exec vitest run src/worktree/worktreeMutationService.test.ts src/worktree/adoptWorktree.integration.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 4_1
   - **Refs**: design.md D9; specs/worktree-panel/spec.md#an-adoption-that-cannot-establish-the-git-entry-says-so-rather-than-reporting-a-clean-failure; `.reviews/round-3.md` F012
   - **Acceptance**:
