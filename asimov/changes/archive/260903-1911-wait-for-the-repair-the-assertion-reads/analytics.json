@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "wait-for-the-repair-the-assertion-reads"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788462650396,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788462650396,
+          "to": 1788462713103
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788462650396
+        }
+      ],
+      "firstAt": 1788462650396,
+      "lastAt": 1788462650396,
+      "buckets": []
+    }
+  ]
+}
