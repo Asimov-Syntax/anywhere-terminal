@@ -2886,7 +2886,13 @@ describe("the invariants that span the host and the webview", () => {
 
     const shown = displayedDestination();
     clickCreate();
-    await settle();
+    // The host validates and queues before it repairs, so quiescence can land
+    // while the repair is still pending and this assertion reads argv that has
+    // not been written yet.
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "worktree" && c.args[1] === "repair"),
+      "the repair to reach git",
+    );
 
     expect(shown).toBe(LINKED);
     expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({
