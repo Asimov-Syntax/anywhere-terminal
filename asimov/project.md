@@ -45,3 +45,19 @@ Two things follow.
   finished; it never returns earlier than it used to, but DOM quiescence is not settlement — a host
   suspended in `await assess(...)` paints nothing while it waits. Each remaining bare `settle()` is an
   unconverted instance of this defect.
+
+**Not all of it is load.** Two sites converted on 2026-09-03 were waiting on the WRONG CONDITION, and
+load only exposed them. One waited on `.wt-notice` being non-empty while an unrelated "not being
+watched" notice was already on screen, so the wait was satisfied before the create had reported
+anything (`b802f2ae`). The other waited a pump count for `git worktree add` across an await in which
+the host paints nothing AND spawns nothing, so neither of `settle()`'s two signals could move
+(`dc693875`). Before recording a gate failure here as environmental, check whether the wait names the
+thing the assertion reads — a wait that does not is a defect that will resurface on any machine.
+
+### `Verify: unit <path>` runs under `bun test`, which cannot run the jsdom suites
+
+`asm change verify-task` executes a `unit`/`integration` Verify with `bun test <path>`. Every test in
+this repository that needs jsdom, `vi.fn`, or vitest module mocking fails wholesale under it — 264 of
+264 in one case, which reads like a catastrophic regression and is not one. Those tasks must declare
+`Verify: command pnpm exec vitest run <path>` instead. `unit` is correct only for the plain node-env
+modules. Getting this wrong costs verify attempts, and three of them lock the task.
