@@ -98,16 +98,26 @@ did not survive and are not recovered. These SHALL be stated rather than probed.
 
 ### Requirement: An adoption that does not complete leaves the destination as it found it
 
-WHERE any step of an adoption fails, the panel SHALL leave no administrative entry behind, SHALL
-restore the directory's `.git` entry to the bytes it held, and SHALL report the failure rather than a
-create. WHERE the undo itself cannot complete, the panel SHALL report what was left behind and where,
-rather than reporting either a create or a clean failure.
+WHERE any step of an adoption fails, the panel SHALL leave no administrative entry behind and SHALL
+leave the directory in a state it offers as adopt again, reporting the failure rather than a create.
+
+#### Scenario: A withdrawn adoption is offered again rather than left behind
+
+- **WHEN** an adoption fails at any step and is withdrawn
+- **THEN** the same directory is offered as adopt on a retry, and no administrative entry from the
+  failed attempt remains
 
 #### Scenario: A failed reconstruction is not a half-registration
 
 - **WHEN** a write or a git step of the adoption fails
 - **THEN** the repository lists no worktree at that directory, the directory's `.git` entry holds
   what it held before, and the result is reported as a failure
+
+### Requirement: A withdrawal states what it could not put back
+
+WHERE the directory's `.git` entry could not be restored to the bytes it held, or the undo itself
+could not complete, the panel SHALL report what was left behind and where, rather than reporting
+either a create or a clean failure.
 
 #### Scenario: An undo that cannot finish says so
 
@@ -128,9 +138,11 @@ as found.
 
 ### Requirement: An adoption that cannot establish the `.git` entry says so rather than reporting a clean failure
 
-WHERE the write of the directory's `.git` entry does not complete, the panel SHALL report the entry's
-state as unestablished and name the directory, rather than reporting a failure whose stated effect is
-that nothing was changed.
+WHERE the write of the directory's `.git` entry BEGINS and does not complete, the panel SHALL report
+the entry's state as unestablished and name the directory, rather than reporting a failure whose
+stated effect is that nothing was changed. WHERE the write is refused before it changes anything, the
+panel SHALL report a failure that changed nothing and SHALL withdraw the administrative entry it had
+created — an unbegun write is not an unestablished one.
 
 #### Scenario: The link write fails partway
 

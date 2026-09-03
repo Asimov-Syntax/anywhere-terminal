@@ -265,3 +265,26 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. `src/worktree/adoptWorktree.ts` — the `nlink` refusal moves inside the write, so the claim, the failed-claim recovery and the undo's restore all inherit it (F013).
     3. `src/worktree/adoptWorktree.test.ts` — a replacement whose link names THIS adoption's entry, asserting the entry survives and is named; an alias appearing after a successful claim, asserting neither the recovery nor the undo rewrites it. Each guard arm-checked.
     4. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository, a hard link created during a failing adoption keeps its bytes through the undo.
+
+## 9. Close review round 6 — the withdrawal stops depending on the link
+
+> 6_1's Outcome is deliberately REVERSED here. "A withdrawal never removes an administrative entry the
+> visible `.git` still names" is the rule that produced F005 in six consecutive rounds, and the round-6
+> handback establishes it was the wrong rule: the retained entry it protects is collected by nothing,
+> while the dangling link it avoids is the state `probeAdopt` exists to recover from and `git worktree
+> prune` produces unasked (design.md D4, table).
+
+- [ ] 7_1 Remove the entry this adoption created whatever the link says, and split the link count
+  - **Deps**: 6_1
+  - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, a-withdrawal-states-what-it-could-not-put-back, an-adoption-that-cannot-establish-the-git-entry-says-so-rather-than-reporting-a-clean-failure}; `.reviews/round-6.md` F005, F015, F016
+  - **Acceptance**:
+    - Outcome: A withdrawn adoption leaves no administrative entry behind and the same directory is offered as adopt again
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — delete the visible-link pathname read from the undo; the entry is removed after the identity re-check regardless of the link's outcome (F005). `gitdirOf` stays exported only if `reattachProbe` still needs it — otherwise the undo's last caller is gone.
+    2. `src/worktree/adoptWorktree.ts` — `putLink` returns `wrote | notWritten | unknown` instead of a boolean; only `unknown` takes the stale-byte recovery and sets the unvouchable flag (F015).
+    3. `src/worktree/adoptWorktree.ts` — the link count is read three ways: `0` refuses the write AND settles the link as `leftAsFound`, `> 1` refuses it, `1` proceeds (oracle B1).
+    4. `src/extension.ts` — `LinkHandle.truncate` documents the POSIX failure-atomic guarantee the `notWritten` classification rests on (oracle B2).
+    5. `src/worktree/worktreeMutationService.ts` — `residueNote` stops saying an entry "could not be removed" for one that was never meant to be removed; a residue reports the link state, and an entry only when `removeDir` actually failed.
+    6. `src/worktree/adoptWorktree.test.ts` — witnesses: the undo reads `<wt>/.git` by pathname ZERO times; an `nlink === 0` replacement before the claim asserting `leftAsFound`, untouched stale bytes and a removed entry; the pruned SAME-NAME alias case asserting the residue does not say `unknown`; a rejecting `truncate` leaving the bytes intact; the failed-claim recovery alias (F016). Each guard arm-checked.
+    7. `src/worktree/adoptWorktree.integration.test.ts` — the round-trip: against a real repository, withdraw a failing adoption and assert `probeAdopt` offers that directory as adopt again and `<common>/worktrees` holds nothing from the attempt.
