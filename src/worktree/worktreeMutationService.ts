@@ -218,9 +218,17 @@ async function liveHolderOf(
 
 /** Why a re-corroborated adoption was refused, in the user's terms. */
 function adoptDeclineReason(verdict: AdoptVerdict): string {
-  return verdict.kind === "declined" && verdict.because === "unreadable"
-    ? "That directory's git link could not be read, so nothing was re-registered."
-    : "That directory is registered with git again, so it is no longer the forgotten checkout that was offered.";
+  if (verdict.kind !== "declined") {
+    return "That directory is registered with git again, so it is no longer the forgotten checkout that was offered.";
+  }
+  switch (verdict.because) {
+    case "unreadable":
+      return "That directory's git link could not be read, so nothing was re-registered.";
+    case "anotherRepository":
+      return "That directory was a worktree of another repository, so it was not re-registered here.";
+    default:
+      return "That directory is registered with git again, so it is no longer the forgotten checkout that was offered.";
+  }
 }
 
 /** What an undo could not put back, said rather than folded into a plain failure. */
@@ -333,15 +341,7 @@ export interface MutationServiceDeps {
    * administrative entry restored inside that window is a registration this
    * adoption would otherwise overwrite — whatever branch it names.
    */
-  corroborateAdopt(input: { candidatePath: string }): Promise<AdoptVerdict>;
-  /**
-   * `$GIT_COMMON_DIR` for the repository, absolute. The entry is created under
-   * its `worktrees/`, and there is nowhere else it could go.
-   *
-   * `null` is indeterminate rather than "no common dir": a reconstruction into
-   * a guessed path would write git's own bookkeeping somewhere git does not read.
-   */
-  commonDirOf(repoPath: string): Promise<string | null>;
+  corroborateAdopt(input: { candidatePath: string; commonDir: string }): Promise<AdoptVerdict>;
   /**
    * Reconstruct the administrative entry, and hand back its undo.
    *
@@ -882,13 +882,15 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
               // D5's re-probe. An entry restored during the user's pause is a
               // registration this adoption would overwrite, and the branch check
               // above would not catch one that is detached or on another branch.
-              const verdict = await deps.corroborateAdopt({ candidatePath: adoptPath });
+              // `repoId` IS the normalized git common directory (types.ts), so
+              // the corroboration and the reconstruction are given ONE value
+              // resolved once by the tree's capability-aware reader — rather
+              // than a second `rev-parse` here that has no such fallback and
+              // could answer differently (round-1 F002, F010).
+              const commonDir = request.repoId;
+              const verdict = await deps.corroborateAdopt({ candidatePath: adoptPath, commonDir });
               if (verdict.kind !== "adopt") {
                 return fail(adoptDeclineReason(verdict));
-              }
-              const commonDir = await deps.commonDirOf(repoPath);
-              if (commonDir === null) {
-                return { kind: "unavailable", verb: "create", repoId: request.repoId, unreadable: ["prunable"] };
               }
               const written = await deps.reconstructEntry({
                 repoPath,

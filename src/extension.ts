@@ -636,18 +636,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         corroborateRepair,
         // The SAME probe that offered the adoption, so the offer and the
         // mutation cannot disagree about what was checked (design.md D5).
-        corroborateAdopt: ({ candidatePath }) => probeAdopt(candidatePath, gitEntryReads),
-        commonDirOf: async (repoPath) => {
-          const read = await worktreeTreeDeps.runner.run(
-            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            repoPath,
-          );
-          if (read.code !== 0 || read.timedOut || read.failedToSpawn) {
-            return null;
-          }
-          const value = read.stdout.toString("utf8").trim();
-          return value.length > 0 ? value : null;
-        },
+        corroborateAdopt: (subject) => probeAdopt(subject, gitEntryReads),
         reconstructEntry: (request) => adoptWorktree(worktreeTreeDeps.runner, request, nodeAdoptFs),
         readHeadAt: async (worktreePath) => {
           const read = await worktreeTreeDeps.runner.run(["rev-parse", "HEAD"], worktreePath);
@@ -914,10 +903,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     mkdir: (path) => fsp.mkdir(path).then(() => {}),
     ensureDir: (path) => fsp.mkdir(path, { recursive: true }).then(() => {}),
     identify: (path) => fsp.lstat(path, { bigint: true }),
-    readFile: (path) => fsp.readFile(path, "utf8").catch(() => null),
+    // `null` means the file was NOT THERE, which the undo restores by removing
+    // the link it wrote. Any other read failure must not answer that question,
+    // so it is thrown and the adoption reports it rather than deleting a link
+    // whose bytes it never read (round-1 F003).
+    readFile: (path) =>
+      fsp.readFile(path, "utf8").catch((error: unknown) => {
+        if (readsAsAbsent(error)) {
+          return null;
+        }
+        throw error;
+      }),
     writeFile: (path, data) => fsp.writeFile(path, data, "utf8"),
     removeFile: (path) => fsp.rm(path, { force: true }),
     removeDir: (path) => fsp.rm(path, { recursive: true, force: true }),
+  };
+
+  /**
+   * Is this the one errno that MEANS the path is not there?
+   *
+   * Every other failure — a permission wall, an I/O error, a stale mount — is
+   * the absence of an ANSWER, and both probes have a separate verdict for that.
+   * Folding them into `false` made an unreadable administrative directory prove
+   * the registration was gone, which is the adopt arm (round-1 F003).
+   */
+  const readsAsAbsent = (error: unknown): boolean => {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR";
   };
 
   const gitEntryReads = {
@@ -926,7 +938,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         lstat: (p: string) => fsp.lstat(p).catch(() => null),
         readFile: (p: string) => fsp.readFile(p, "utf8").catch(() => null),
       }),
-    adminDirExists: async (gitdir: string) => (await fsp.stat(gitdir).catch(() => null))?.isDirectory() === true,
+    adminDirExists: async (gitdir: string) => {
+      try {
+        return (await fsp.stat(gitdir)).isDirectory();
+      } catch (error) {
+        if (readsAsAbsent(error)) {
+          return false;
+        }
+        // Thrown, not answered: both probes catch this and reply `unreadable`,
+        // which is the one verdict that must not become "gone".
+        throw error;
+      }
+    },
   };
 
   // `gh` is the forge client (design.md D1). One runner, built here, so the
@@ -937,7 +960,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Without this the create form never resolves a surviving checkout to adopt
     // in the shipped extension, however well the host is tested — the same
     // failure shape a past review round caught for the provisioning offer.
-    probeAdopt: ({ candidatePath }) => probeAdopt(candidatePath, gitEntryReads),
+    probeAdopt: (subject) => probeAdopt(subject, gitEntryReads),
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).

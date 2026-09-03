@@ -391,7 +391,7 @@ export interface WorktreeHostOptions {
    * suffixed free path stands. That is the same fail-closed a `declined`
    * verdict produces.
    */
-  probeAdopt?(input: { candidatePath: string }): Promise<AdoptVerdict>;
+  probeAdopt?(input: { candidatePath: string; commonDir: string }): Promise<AdoptVerdict>;
   /**
    * Whether the reconstruction has been executed and recorded on this platform.
    *
@@ -1942,7 +1942,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // mode that will always be refused is not one to put on screen either.
         const occupied = selection.blockedBy === undefined ? occupiedCandidate?.path : undefined;
         const verdict =
-          adoptable && occupied !== undefined && tip !== undefined ? await corroborateAdopt(occupied) : undefined;
+          adoptable && occupied !== undefined && tip !== undefined ? await corroborateAdopt(repo, occupied) : undefined;
         mode =
           verdict?.kind === "adopt" && occupied !== undefined && tip !== undefined
             ? { kind: "adopt", adoptPath: occupied, expectedBranchOid: tip }
@@ -2175,12 +2175,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * produced — the common path adds no I/O at all, which is the rule
    * `corroborate` follows for the same reason (design.md D1).
    */
-  async function corroborateAdopt(candidatePath: string): Promise<AdoptVerdict | undefined> {
+  async function corroborateAdopt(repo: WorktreeRepo, candidatePath: string): Promise<AdoptVerdict | undefined> {
     const probe = options.probeAdopt;
     if (probe === undefined) {
       return undefined;
     }
-    return probe({ candidatePath }).catch(() => undefined);
+    // `repoId` IS the normalized git common directory (types.ts), resolved once
+    // by the tree through the capability-aware reader. The probe needs it to
+    // prove the surviving checkout was a worktree of THIS repository, and
+    // asking git again here would be a second answer about one thing (F002).
+    return probe({ candidatePath, commonDir: repo.repoId }).catch(() => undefined);
   }
 
   /**

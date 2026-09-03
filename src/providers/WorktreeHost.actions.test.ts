@@ -347,7 +347,7 @@ async function builtHost(
     probeReattach?: (input: { repoPath: string; branch: string; repairPath: string }) => Promise<ReattachVerdict>;
     probeSubjects?: { repoPath: string; branch: string; repairPath: string }[];
     /** D3's adopt corroboration at the occupied candidate, and its subjects. */
-    probeAdopt?: (input: { candidatePath: string }) => Promise<AdoptVerdict>;
+    probeAdopt?: (input: { candidatePath: string; commonDir: string }) => Promise<AdoptVerdict>;
     adoptSubjects?: string[];
     /** D7's platform predicate. Left undefined the host reads the platform. */
     adoptSupported?: boolean;
@@ -475,7 +475,7 @@ async function builtHost(
     ...(over.probeAdopt === undefined && over.adoptSubjects === undefined
       ? {}
       : {
-          probeAdopt: async (input: { candidatePath: string }) => {
+          probeAdopt: async (input: { candidatePath: string; commonDir: string }) => {
             over.adoptSubjects?.push(input.candidatePath);
             return (await over.probeAdopt?.(input)) ?? { kind: "declined" as const, because: "notAPrunedCheckout" };
           },
@@ -4364,6 +4364,35 @@ describe("the host resolves a selection before the create runs", () => {
     await probeFor(view, host);
 
     expect(resolutionIn(view)?.mode.kind).toBe("adopt");
+    dispose();
+  });
+
+  it("asks the probe about THIS repository's common directory", async () => {
+    // The probe cannot prove which repository a stale link belongs to without
+    // being told which repository is asking, and the host already holds it:
+    // `repoId` IS the normalized common directory (round-1 F002).
+    const asked: { candidatePath: string; commonDir: string }[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeAdopt: async (input) => {
+        asked.push(input);
+        return { kind: "adopt", adoptPath: input.candidatePath };
+      },
+    });
+    await probeFor(view, host);
+
+    expect(asked).toEqual([{ candidatePath: "/trees/repo-idle", commonDir: REPO }]);
+    dispose();
+  });
+
+  it("leaves the occupied candidate alone when the checkout belongs to another repository", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeAdopt: async () => ({ kind: "declined", because: "anotherRepository" }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "reuse" });
     dispose();
   });
 

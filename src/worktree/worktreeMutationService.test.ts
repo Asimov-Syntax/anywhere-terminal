@@ -108,7 +108,6 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     listWorktrees: async () => [{ displayPath: "/repo-wt/stale", branch: "feat", prunable: true }],
     // A surviving checkout git has forgotten, unless a test moves one of these.
     corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt" as const, adoptPath: candidatePath }),
-    commonDirOf: async () => "/repo/.git",
     reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
     readHeadAt: async () => "oid-tip",
     pathDeps: {
@@ -1705,7 +1704,7 @@ describe("re-registering a surviving checkout", () => {
       prunableAfter?: boolean;
       listing?: null;
       verdict?: AdoptVerdict;
-      commonDir?: string | null;
+      asked?: { candidatePath: string; commonDir: string }[];
       head?: string | null;
       reconstruct?: AdoptResult;
       undone?: AdoptResidue | undefined;
@@ -1725,8 +1724,10 @@ describe("re-registering a surviving checkout", () => {
         const others = live.map((r) => ({ branch: "feat", ...r, prunable: false }));
         return reads === 1 ? others : over.unregisteredAfter === true ? others : [...others, adopted];
       },
-      corroborateAdopt: async ({ candidatePath }) => over.verdict ?? { kind: "adopt", adoptPath: candidatePath },
-      commonDirOf: async () => (over.commonDir === undefined ? "/repo/.git" : over.commonDir),
+      corroborateAdopt: async (input) => {
+        over.asked?.push(input);
+        return over.verdict ?? { kind: "adopt", adoptPath: input.candidatePath };
+      },
       readHeadAt: async () => (over.head === undefined ? TIP : over.head),
       reconstructEntry: async () =>
         over.reconstruct ?? {
@@ -1905,7 +1906,6 @@ describe("re-registering a surviving checkout", () => {
   it("writes nothing when the directory is gone", async () => {
     const h = harness({
       corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
-      commonDirOf: async () => "/repo/.git",
       readHeadAt: async () => TIP,
       reconstructEntry: async () => {
         throw new Error("the reconstruction ran against a directory that is gone");
@@ -1922,13 +1922,25 @@ describe("re-registering a surviving checkout", () => {
     expect(h.outcomes[0]).toMatchObject({ kind: "error" });
   });
 
-  it("writes nothing when the common directory cannot be read", async () => {
-    // A reconstruction into a guessed path would write git's own bookkeeping
-    // somewhere git does not read — indeterminate, never a default.
-    const h = adoptHarness({ commonDir: null });
+  it("corroborates against THIS repository's common directory", async () => {
+    // The re-probe cannot prove the surviving checkout belongs here without
+    // being told where here is, and the request already carries it: `repoId` IS
+    // the normalized common directory, resolved once by the tree (F002, F010).
+    const asked: { candidatePath: string; commonDir: string }[] = [];
+    const h = adoptHarness({ asked });
     await adopt(h);
 
-    expect(h.outcomes[0]).toMatchObject({ kind: "unavailable" });
+    expect(asked).toEqual([{ candidatePath: SURVIVOR, commonDir: REPO }]);
+  });
+
+  it("refuses a surviving checkout that belongs to another repository", async () => {
+    const h = adoptHarness({ verdict: { kind: "declined", because: "anotherRepository" } });
+    await adopt(h);
+
+    expect(h.outcomes[0]).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("another repository"),
+    });
   });
 
   it("undoes the registration when the tip cannot be read at all", async () => {

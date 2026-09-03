@@ -11,6 +11,7 @@
 // reader of a `.git` entry, and a second one would be a second opinion about
 // which of them is right.
 
+import { basename, dirname, resolve } from "node:path";
 import type { GitLink } from "./reattachProbe";
 
 export interface AdoptProbeDeps {
@@ -32,7 +33,33 @@ export interface AdoptProbeDeps {
  */
 export type AdoptVerdict =
   | { kind: "adopt"; adoptPath: string }
-  | { kind: "declined"; because: "notAPrunedCheckout" | "unreadable" };
+  | { kind: "declined"; because: "notAPrunedCheckout" | "unreadable" | "anotherRepository" };
+
+/** The candidate, and the repository the adoption would re-register it into. */
+export interface AdoptSubject {
+  /** The occupied destination the derivation already produced. */
+  candidatePath: string;
+  /** This repository's `$GIT_COMMON_DIR`, absolute. */
+  commonDir: string;
+}
+
+/** Git's own layout: an administrative entry lives at `<commonDir>/worktrees/<id>`. */
+const ENTRY_PARENT = "worktrees";
+
+/**
+ * Is `gitdir` an administrative entry of THIS repository?
+ *
+ * Compared as resolved paths rather than by prefix: `/repo/.git-other` starts
+ * with `/repo/.git` as text and is a different repository, and a trailing
+ * separator or a `..` segment is the same directory spelled differently. Split
+ * with `dirname`/`basename` rather than matched against a separator, so the
+ * rule reads the same on a platform that spells one differently.
+ */
+function entryOf(commonDir: string, gitdir: string): boolean {
+  const entry = resolve(gitdir);
+  const parent = dirname(entry);
+  return dirname(parent) === resolve(commonDir) && basename(parent) === ENTRY_PARENT;
+}
 
 /**
  * Whether `candidatePath` is a checkout whose administrative entry is gone.
@@ -42,7 +69,8 @@ export type AdoptVerdict =
  * would fail the whole resolution over a candidate the user may not even have
  * selected.
  */
-export async function probeAdopt(candidatePath: string, deps: AdoptProbeDeps): Promise<AdoptVerdict> {
+export async function probeAdopt(subject: AdoptSubject, deps: AdoptProbeDeps): Promise<AdoptVerdict> {
+  const candidatePath = subject.candidatePath;
   let link: GitLink;
   try {
     link = await deps.readGitLink(candidatePath);
@@ -54,6 +82,14 @@ export async function probeAdopt(candidatePath: string, deps: AdoptProbeDeps): P
   }
   if (link.kind !== "file") {
     return { kind: "declined", because: "notAPrunedCheckout" };
+  }
+
+  // The stale `gitdir:` is the only surviving statement of WHICH repository
+  // this directory was a worktree of, and it is proved before anything else is
+  // asked about it: a path under another repository is not a path this probe
+  // has any business reading (round-1 F002).
+  if (!entryOf(subject.commonDir, link.gitdir)) {
+    return { kind: "declined", because: "anotherRepository" };
   }
 
   let exists: boolean;

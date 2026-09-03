@@ -122,15 +122,15 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. `src/worktree/reattachProbe.test.ts` — a file whose `gitdir:` line is not the first thing in it is `unreadable`, and the reattach classification refuses with it.
     3. `src/worktree/adoptProbe.test.ts` — the same file declines adoption rather than authorizing a write over it.
 
-- [ ] 2_2 Prove a surviving checkout belongs to this repository before it is offered
+- [x] 2_2 Prove a surviving checkout belongs to this repository before it is offered — verified: pnpm exec vitest run src/worktree/adoptProbe.test.ts src/providers/WorktreeHost.actions.test.ts src/worktree/worktreeMutationService.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 2_1
-  - **Refs**: specs/worktree-panel/spec.md#{a-surviving-checkout-is-offered-as-adopt-not-skipped}; design.md D1; `.reviews/round-1.md` F002, F003
+  - **Refs**: specs/worktree-panel/spec.md#{a-surviving-checkout-is-offered-as-adopt-not-skipped}; design.md D1; `.reviews/round-1.md` F002, F003, F010
   - **Acceptance**:
     - Outcome: Adopt is declined unless the stale gitdir is an entry of this repository
     - Verify: command pnpm exec vitest run src/worktree/adoptProbe.test.ts src/providers/WorktreeHost.actions.test.ts src/worktree/worktreeMutationService.test.ts
   - **Plan**:
     1. `src/worktree/adoptProbe.ts` — `probeAdopt` takes the repository's common directory and declines unless the parsed stale gitdir is an entry beneath it (F002).
-    2. `src/providers/WorktreeHost.ts` and `src/worktree/worktreeMutationService.ts` — the adopt corroboration is asked with the repository whose common directory it must prove against; the host reads it from the repository the probe is answering for.
+    2. `src/providers/WorktreeHost.ts` and `src/worktree/worktreeMutationService.ts` — the adopt corroboration is asked with the common directory it must prove against, taken from the repository identity both already hold rather than read again from git (F010).
     3. `src/extension.ts` — the production adapters treat only `ENOENT`/`ENOTDIR` as absence; any other read failure is an unreadable refusal, for `adminDirExists` and for the undo's `readFile` (F003).
     4. `src/worktree/adoptProbe.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.test.ts` — a stale gitdir under another repository declines at the probe, is not offered by the host, and is refused by the mutation.
 
