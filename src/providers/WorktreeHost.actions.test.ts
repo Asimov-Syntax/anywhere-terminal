@@ -19,6 +19,7 @@ import type {
 } from "../types/messages";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
+import type { AdoptVerdict } from "../worktree/adoptProbe";
 import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
@@ -27,7 +28,6 @@ import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
 import { MAX_MODEL_ROWS } from "../worktree/provisioning/providerKit";
 import type { NativeConfigDivergence, NativeConfigWrite } from "../worktree/provisioning/writeNativeConfig";
-import type { AdoptVerdict } from "../worktree/adoptProbe";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsRead } from "../worktree/repoPullRequests";

@@ -38,6 +38,7 @@ import { isResolvedPathInside, type ResolvedPathInsideDeps } from "../utils/reso
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { VaultLaunchTarget } from "../vault/types";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
+import type { AdoptVerdict } from "../worktree/adoptProbe";
 import { sanitizeBranchForPath } from "../worktree/branchSlug";
 import { resolveCreateRoot, suggestFreePath } from "../worktree/createPath";
 import { resolveSelection } from "../worktree/createResolution";
@@ -63,7 +64,6 @@ import {
   type NativeConfigRefusal,
   type NativeConfigWrite,
 } from "../worktree/provisioning/writeNativeConfig";
-import type { AdoptVerdict } from "../worktree/adoptProbe";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRequests";
@@ -1942,9 +1942,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // mode that will always be refused is not one to put on screen either.
         const occupied = selection.blockedBy === undefined ? occupiedCandidate?.path : undefined;
         const verdict =
-          adoptable && occupied !== undefined && tip !== undefined
-            ? await corroborateAdopt(occupied)
-            : undefined;
+          adoptable && occupied !== undefined && tip !== undefined ? await corroborateAdopt(occupied) : undefined;
         mode =
           verdict?.kind === "adopt" && occupied !== undefined && tip !== undefined
             ? { kind: "adopt", adoptPath: occupied, expectedBranchOid: tip }
