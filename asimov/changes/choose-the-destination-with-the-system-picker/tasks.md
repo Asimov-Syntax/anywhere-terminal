@@ -1,17 +1,19 @@
 ## 1. Ask the host for a folder
 
-- [ ] 1_1 Carry the request and its answer on the wire, and open the picker
+- [x] 1_1 Carry the request and its answer on the wire, and open the picker — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts src/extension.worktreeActions.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2, D3
   - **Boundary**: No new destination field on the create request, and no reply for a cancelled dialog, a failed one, or one whose form is gone
   - **Acceptance**:
     - Outcome: The host opens the folder picker and answers only a form still asking
-    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts src/extension.worktreeActions.test.ts
   - **Plan**:
     1. `src/types/messages.ts` — the request naming repository and opening, the reply echoing that opening beside the chosen path, and the request's entry in the inbound `WORKTREE_MESSAGE_TYPES` allowlist whose exhaustiveness assertion would otherwise refuse to compile.
-    2. `src/providers/WorktreeHost.ts` — open the picker through the same `showOpenDialog` shape the file tree already uses, and post only on a confirmed choice whose opening is still the live one after the await.
-    3. `src/providers/WorktreeHost.test.ts` — witness the dialog options, the echoed opening, and that cancel, failure, and a dismissed form each post nothing.
-    4. `src/providers/TerminalViewProvider.worktree.test.ts` — extend the exhaustive inbound sample record the new request type obliges.
+    2. `src/providers/WorktreeHost.ts` — take the picker as an optional `WorktreeActions` capability, the way every other host capability arrives, and post only on a confirmed choice whose opening is still the live one after the await. The host imports `vscode` as a type only and must not reach for the API itself.
+    3. `src/extension.ts` — declare the picker on `WorktreeActionDeps`, pass it through `createWorktreeActions`, and wire it to the same `showOpenDialog` shape the file tree already uses.
+    4. `src/providers/WorktreeHost.actions.test.ts` — where the opening dance already lives: witness the echoed opening, and that cancel, failure, an unwired capability, and a dismissed form each post nothing.
+    5. `src/providers/TerminalViewProvider.worktree.test.ts` — extend the exhaustive inbound sample record the new request type obliges.
+    6. `src/extension.worktreeActions.test.ts` — its harness builds a complete `WorktreeActionDeps`, so the new capability is a required member there.
 
 - [ ] 1_2 Route the answer to the webview that asked
   - **Deps**: 1_1

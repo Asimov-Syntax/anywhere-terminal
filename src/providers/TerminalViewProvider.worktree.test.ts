@@ -423,6 +423,7 @@ const SAMPLE: Record<(typeof WORKTREE_MESSAGE_TYPES)[number], Record<string, unk
   },
   requestWorktreeRefs: { type: "requestWorktreeRefs", repoId: "/repo/.git", token: 1 },
   worktreeCreateProbe: { type: "worktreeCreateProbe", repoId: "/repo/.git", token: 1, query: "feat" },
+  worktreePickDestination: { type: "worktreePickDestination", repoId: "/repo/.git", token: 1 },
   worktreeAuthorizeDebris: {
     type: "worktreeAuthorizeDebris",
     repoId: "/repo/.git",

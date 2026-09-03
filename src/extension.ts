@@ -127,6 +127,8 @@ export interface WorktreeActionDeps {
   resumeCommand(entryId: string): Promise<string>;
   /** The working directory the vault recorded for a session, if it has one. */
   sessionCwd(entryId: string): Promise<string | undefined>;
+  /** The folder the user chose, or `undefined` for a cancelled picker. */
+  pickFolder(): Promise<string | undefined>;
 }
 
 /**
@@ -173,6 +175,7 @@ export function createWorktreeActions(deps: WorktreeActionDeps): WorktreeActions
     revealInOS: async (path) => {
       await deps.executeCommand("revealFileInOS", deps.fileUri(path));
     },
+    pickFolder: () => deps.pickFolder(),
     copyText: async (text) => {
       await deps.writeClipboard(text);
     },
@@ -545,6 +548,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const worktreeActions = createWorktreeActions({
     executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
     writeClipboard: (text) => vscode.env.clipboard.writeText(text),
+    // The same shape the file tree's Open Folder already uses, so the two
+    // pickers in this product ask the same question the same way.
+    pickFolder: async () => {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: "Choose Folder",
+        title: "Choose where the worktree is created",
+      });
+      return picked?.[0]?.fsPath;
+    },
     fileUri: (path) => vscode.Uri.file(path),
     workspaceFolderCount: () => (vscode.workspace.workspaceFolders ?? []).length,
     addWorkspaceFolder: (at, uri) => vscode.workspace.updateWorkspaceFolders(at, null, { uri: uri as vscode.Uri }),

@@ -362,6 +362,7 @@ async function builtHost(
     startAgent?: WorktreeActions["startAgent"];
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
+    pickFolder?: WorktreeActions["pickFolder"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
     previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
     writeNativeConfig?: (mainWorktree: string, divergence: NativeConfigDivergence) => Promise<NativeConfigWrite>;
@@ -478,6 +479,7 @@ async function builtHost(
       ...(over.startAgent === undefined ? {} : { startAgent: over.startAgent }),
       ...(over.resumeSessionAt === undefined ? {} : { resumeSessionAt: over.resumeSessionAt }),
       ...(over.launchTargets === undefined ? {} : { launchTargets: over.launchTargets }),
+      ...(over.pickFolder === undefined ? {} : { pickFolder: over.pickFolder }),
     },
     now: () => 1000,
     // Without these `assessRemoval` returns null before it reaches git, which
@@ -4939,6 +4941,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     host.handleMessage(view, {
       type: "worktreeCreateProbe",
@@ -4968,6 +4971,7 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     await settle();
@@ -5032,6 +5036,7 @@ describe("the host resolves a selection before the create runs", () => {
     });
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     host.handleMessage(view, {
@@ -6267,6 +6272,7 @@ describe("the host resolves a selection before the create runs", () => {
     // The form opens first: refs rides an opening the host already holds, and the
     // branch-less defaults ask is the only door that establishes one (round-3 B2).
     host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
     host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
     await settle();
     view.posts.length = 0;
@@ -7302,6 +7308,122 @@ describe("the provisioning a create is actually given", () => {
     host.reportMutation({ origin: view, message: CREATED });
 
     expect((view.posts as ExtensionToWebViewMessage[]).filter((m) => m.type === "worktreeProvisionResult")).toEqual([]);
+    dispose();
+  });
+});
+
+describe("choosing a destination with the system picker", () => {
+  const opened = (view: { posts: { type: string }[] }) =>
+    view.posts.filter((m) => m.type === "worktreeDestinationPicked");
+
+  /**
+   * A host with an opening already minted, which is what the picker answers
+   * into. `requestWorktreeRefs` is what mints one — the defaults request does
+   * not, and a picker sent without one is correctly unowned and silent.
+   */
+  async function withOpening(pickFolder?: WorktreeActions["pickFolder"], token = 1) {
+    const built = await builtHost([windowRow()], false, {
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      ...(pickFolder === undefined ? {} : { pickFolder }),
+    });
+    // Both doors, in this order: the defaults ask is what establishes an
+    // opening at all, and refs is what records the token the picker answers to.
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: token });
+    built.host.handleMessage(built.view, { type: "requestWorktreeRefs", repoId: REPO, token });
+    await settle();
+    built.view.posts.length = 0;
+    return built;
+  }
+
+  it("[1_1] answers a confirmed choice, echoing the opening that asked", async () => {
+    const { host, view, dispose } = await withOpening(async () => "/elsewhere/trees");
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(opened(view)).toEqual([
+      { type: "worktreeDestinationPicked", repoId: REPO, token: 1, path: "/elsewhere/trees" },
+    ]);
+    dispose();
+  });
+
+  it("[1_1] posts nothing when the picker is cancelled", async () => {
+    // Cancel has no "chose nothing" answer, because nothing was taken: the form
+    // is never disabled while the dialog is up, so there is no state to release.
+    const { host, view, dispose } = await withOpening(async () => undefined);
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(opened(view)).toEqual([]);
+    dispose();
+  });
+
+  it("[1_1] posts nothing when the picker fails", async () => {
+    const { host, view, dispose } = await withOpening(async () => {
+      throw new Error("no dialog here");
+    });
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(opened(view)).toEqual([]);
+    dispose();
+  });
+
+  it("[1_1] offers nothing at all where the capability is not wired", async () => {
+    const { host, view, dispose } = await withOpening();
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+
+    expect(opened(view)).toEqual([]);
+    dispose();
+  });
+
+  it("[1_1] drops a confirmed choice whose form has been dismissed", async () => {
+    // The dialog is modal to the USER but async to the extension. The opening is
+    // re-read AFTER the await for exactly this schedule — a captured reference
+    // would still be reachable and would answer a form that no longer exists.
+    let release!: (path: string) => void;
+    const { host, view, dispose } = await withOpening(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+    host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+    release("/elsewhere/trees");
+    await settle();
+
+    expect(opened(view)).toEqual([]);
+    dispose();
+  });
+
+  it("[1_1] drops a choice answering an opening the form has moved past", async () => {
+    let release!: (path: string) => void;
+    const { host, view, dispose } = await withOpening(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+    // A second form opens while the first picker is still up, replacing the
+    // opening the answer names.
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    await settle();
+    release("/elsewhere/trees");
+    await settle();
+
+    expect(opened(view)).toEqual([]);
     dispose();
   });
 });

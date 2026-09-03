@@ -1416,6 +1416,20 @@ export type ProbeBase = { kind: "ref"; ref: string } | { kind: "detached" };
  */
 export type BaseVerdict = { ok: true; oid: string } | { ok: false; reason: string };
 
+/**
+ * WebView → Extension: open the system folder picker for this create form.
+ *
+ * Carries no path of its own. The ANSWER is a suggestion into the same
+ * untrusted override the user could have typed, so this request authorizes
+ * nothing beyond showing a dialog (design.md D1).
+ */
+export interface WorktreePickDestinationMessage {
+  type: "worktreePickDestination";
+  repoId: string;
+  /** Echoed back, so an answer cannot reach a form that did not ask (D2). */
+  token: number;
+}
+
 export interface WorktreeCreateProbeMessage {
   type: "worktreeCreateProbe";
   repoId: string;
@@ -1741,6 +1755,7 @@ export type WebViewToExtensionMessage =
   | WorktreeSetupViewOutputMessage
   | WorktreeRefsRequestMessage
   | WorktreeCreateProbeMessage
+  | WorktreePickDestinationMessage
   | WorktreeAuthorizeDebrisMessage
   | WorktreeRemoveRequestMessage
   | WorktreeRemoveAssessRequestMessage
@@ -1783,6 +1798,7 @@ export const WORKTREE_MESSAGE_TYPES = [
   "worktreeSetupViewOutput",
   "requestWorktreeRefs",
   "worktreeCreateProbe",
+  "worktreePickDestination",
   "worktreeAuthorizeDebris",
   "requestWorktreeTree",
   "requestWorktreeSubagents",
@@ -2655,6 +2671,25 @@ export interface WorktreeCreateResolutionMessage {
 }
 
 /**
+ * Extension → WebView: the folder the user chose in the system picker.
+ *
+ * Posted ONLY for a confirmed choice whose opening is still the live one after
+ * the dialog returns. A cancelled picker, a failed one, and one whose form has
+ * been dismissed all post nothing at all — there is no "chose nothing" answer,
+ * because there is no state waiting to be released (design.md D3).
+ *
+ * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
+ */
+export interface WorktreeDestinationPickedMessage {
+  type: "worktreeDestinationPicked";
+  repoId: string;
+  /** Echoed from the request. An answer naming another opening is dropped. */
+  token: number;
+  /** The chosen folder, absolute. Untrusted, and re-resolved like a typed one. */
+  path: string;
+}
+
+/**
  * Extension → WebView: the provisioning model this create would apply, under the
  * id the selection quotes back.
  *
@@ -2900,6 +2935,7 @@ export type ExtensionToWebViewMessage =
   | WorktreeRefsMessage
   | WorktreePullRequestsMessage
   | WorktreeCreateResolutionMessage
+  | WorktreeDestinationPickedMessage
   | WorktreeDebrisAuthorizedMessage
   | WorktreeMigrationOfferMessage
   | WorktreeProvisionOfferMessage

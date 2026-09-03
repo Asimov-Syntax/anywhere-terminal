@@ -447,6 +447,13 @@ export interface WorktreeHostOptions {
 export interface WorktreeActions {
   openFolder(path: string, mode: "newWindow" | "addToWorkspace"): Promise<void>;
   revealInOS(path: string): Promise<void>;
+  /**
+   * The folder the user chose, or `undefined` for a cancelled or failed picker.
+   *
+   * Optional like every other capability here: a host wired without it offers no
+   * picker at all, rather than a control that resolves to nothing.
+   */
+  pickFolder?(): Promise<string | undefined>;
   copyText(text: string): Promise<void>;
   focusPane(paneId: string, viewId: string): Promise<void>;
   copyResumeCommand(entryId: string): Promise<void>;
@@ -2049,6 +2056,44 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * candidate the classification already produced, so the common path adds no
    * I/O at all (design.md D2, D3).
    */
+  /**
+   * Show the system folder picker for one create form, and answer only if that
+   * form is still the one asking.
+   *
+   * The dialog is modal to the USER but async to the extension: they can dismiss
+   * the create form, open another, and only then confirm this picker. So the
+   * opening is re-read AFTER the await, the way every other post-await
+   * continuation here re-reads its own ownership — a captured reference would
+   * still be reachable and would answer a form that no longer exists.
+   *
+   * Cancel, failure, and a form that has gone all produce no post at all. There
+   * is nothing to release: the form is never disabled while the dialog is up,
+   * because a form locked behind an OS dialog that never returns is a form the
+   * user cannot escape (design.md D3).
+   */
+  async function pickDestination(
+    surface: WorktreeSurface,
+    msg: Extract<WorktreeActionMessage, { type: "worktreePickDestination" }>,
+  ): Promise<void> {
+    const pick = options.actions?.pickFolder;
+    if (pick === undefined) {
+      return;
+    }
+    let chosen: string | undefined;
+    try {
+      chosen = await pick();
+    } catch {
+      return;
+    }
+    if (chosen === undefined || chosen === "") {
+      return;
+    }
+    if (disposed || !surfaces.has(surface) || openingFor(surface, msg.repoId, msg.token) === undefined) {
+      return;
+    }
+    surface.post({ type: "worktreeDestinationPicked", repoId: msg.repoId, token: msg.token, path: chosen });
+  }
+
   async function answerCreateProbe(
     surface: WorktreeSurface,
     msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>,
@@ -2712,6 +2757,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (unlock && repoId !== undefined && actionPath(msg.worktreeId, false) !== undefined) {
           perform(() => unlock({ repoId, worktreeId: msg.worktreeId, origin: surface }));
         }
+        return;
+      }
+      case "worktreePickDestination": {
+        // Type-checked before it enters async logic, like every other inbound
+        // payload: the discriminant alone is not the payload (round-3 W1).
+        if (typeof msg.repoId !== "string" || !Number.isSafeInteger(msg.token) || msg.token < 0) {
+          return;
+        }
+        void pickDestination(surface, msg);
         return;
       }
       case "worktreeCreateProbe": {
@@ -4223,6 +4277,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreeSetupViewOutput":
       case "requestWorktreeRefs":
       case "worktreeCreateProbe":
+      case "worktreePickDestination":
       case "worktreeAuthorizeDebris":
         handleAction(surface, msg);
         return;
