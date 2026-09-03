@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -39,3 +39,4 @@ Lane: full
 Planned at: 2d6a8436
 Oracle attack: accepted all material findings. No-axis agents are UNKNOWN rather than safe; save wording covers source + files; repo switches select an explicit-safe agent without reordering; disabled reasons distinguish selection checks from destination state and use a live region; the footer stays visible in short viewports. The spec delta MODIFIES the standing agent-block and save scenarios rather than appending contradictions.
 Oracle ledger: dangerous-default row refuted before triage and supported after the explicit-safe-only amendment; destructive-clearance and shared-gate rows supported, with the entry-list requirement narrowed to before Create becomes available.
+Verify gate baseline: `pnpm exec biome check src` retains the clean-tree formatter error in untouched `src/agentHooks/AgentHookController.test.ts`; all changed TypeScript/tests are clean, and the touched stylesheet's sole warning predates this change.
