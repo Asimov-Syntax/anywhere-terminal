@@ -449,7 +449,7 @@ export async function readProvisioning(
     // answered above. Only here may the bounded fallback speak: a present
     // source, whatever it says, is the repository's answer, and suggestions
     // never override an answer (suggest-worktree-initialization design.md D1).
-    return suggestProvisioning(deps, repoRoot, budget.nextId);
+    return suggestProvisioning(deps, repoRoot, budget);
   }
   // A switch to a FRAMEWORK populates the section from that source alone: the
   // user asked to see that source's answer, and showing it wrapped in the

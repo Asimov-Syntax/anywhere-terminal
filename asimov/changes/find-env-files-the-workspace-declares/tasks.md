@@ -1,6 +1,6 @@
 ## 1. Look where the repository says its packages are
 
-- [ ] 1_1 Read the declared workspaces and probe one level inside them
+- [x] 1_1 Read the declared workspaces and probe one level inside them — verified: pnpm exec vitest run src/worktree/provisioning/suggestProvisioning.test.ts src/worktree/provisioning/readProvisioning.test.ts src/worktree/provisioning/readOnly.test.ts src/worktree/provisioning/oneOwner.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-repository-without-provisioning-configuration-gets-bounded-initialization-suggestions,a-workspace-repository-s-package-environment-files-are-found}; design.md D1, D2, D3, D4, D5
   - **Boundary**: No recursive scan, environment-file content read, per-package setup command, provider-order change, or second implementation of glob/containment/budget
