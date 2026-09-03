@@ -160,10 +160,14 @@
         {
           "phase": "build",
           "from": 1788394548807
+        },
+        {
+          "phase": "plan",
+          "from": 1788395056212
         }
       ],
       "firstAt": 1788342089142,
-      "lastAt": 1788394799289,
+      "lastAt": 1788395050831,
       "buckets": [
         {
           "runtime": "claude",
@@ -278,12 +282,12 @@
           "phase": "build",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 623,
-          "inputTokens": 1141367,
-          "outputTokens": 161954,
+          "messages": 639,
+          "inputTokens": 1230460,
+          "outputTokens": 164865,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 126732928,
+          "cacheReadTokens": 128382336,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
