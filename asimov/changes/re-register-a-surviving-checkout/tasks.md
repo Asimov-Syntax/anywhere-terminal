@@ -288,3 +288,27 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     5. `src/worktree/worktreeMutationService.ts` — `residueNote` stops saying an entry "could not be removed" for one that was never meant to be removed; a residue reports the link state, and an entry only when `removeDir` actually failed.
     6. `src/worktree/adoptWorktree.test.ts` — witnesses: the undo reads `<wt>/.git` by pathname ZERO times; an `nlink === 0` replacement before the claim asserting `leftAsFound`, untouched stale bytes and a removed entry; the pruned SAME-NAME alias case asserting the residue does not say `unknown`; a rejecting `truncate` leaving the bytes intact; the failed-claim recovery alias (F016). Each guard arm-checked.
     7. `src/worktree/adoptWorktree.integration.test.ts` — the round-trip: against a real repository, withdraw a failing adoption and assert `probeAdopt` offers that directory as adopt again and `<common>/worktrees` holds nothing from the attempt.
+
+## 10. Close review round 7 — the withdrawal stops deleting
+
+> The absolute "leave no administrative entry behind" is DROPPED, and this narrows what the panel
+> promises on failure. It is forced, not chosen: `identify` + `removeDir` is a check-then-mutate pair
+> (round-7 F005), and handing the deletion to `git worktree prune` moves the same pair into git, whose
+> `delete_git_dir()` resolves the entry name a second time with no recheck (design.md D4). What the
+> withdrawal promises instead is that it deletes nothing and leaves the entry where git's own
+> collection takes it.
+
+- [ ] 8_1 Withdraw by truncating a held descriptor and unlocking, never by removing a directory
+  - **Deps**: 7_1
+  - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, a-withdrawal-states-what-it-could-not-put-back}; `.reviews/round-7.md` F005
+  - **Acceptance**:
+    - Outcome: A withdrawal removes no directory, and a routine `git worktree prune` collects what the failed attempt created
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — `createEntry` writes `locked` BEFORE `gitdir`, so a half-built entry is never offered to a concurrent prune; the success path removes it after the branch tip is re-proved.
+    2. `src/worktree/adoptWorktree.ts` — `createEntry` keeps `<entry>/gitdir` open and hands the handle back; the withdrawal truncates through it, removes `locked`, and reports the entry path. `removeDir` and the entry identity re-check go.
+    3. `src/worktree/adoptWorktree.ts` — the `nlink` rule travels to the entry handle; a truncate that fails leaves `locked` in place.
+    4. `src/extension.ts` — `AdoptFs` creates `<entry>/gitdir` with `wx` and returns its handle; `removeFile` for the marker.
+    5. `src/worktree/worktreeMutationService.ts` — `residueNote` says an entry was left for git to collect and names it, rather than reporting a removal that failed.
+    6. `src/worktree/adoptWorktree.test.ts` — witnesses: `removeDir` called zero times; the entry directory replaced between creation and withdrawal, asserting the replacement is intact and our detached object was truncated; an alias on `gitdir`; a rejecting truncate leaving `locked`. Each guard arm-checked.
+    7. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository: `locked` exists for the whole construction interval; after a withdrawal the entry is omitted from `git worktree list`, a real `git worktree prune` collects it, and `probeAdopt` offers the directory again.

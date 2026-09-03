@@ -32,19 +32,19 @@
         }
       ],
       "firstAt": 1788372128580,
-      "lastAt": 1788416903550,
+      "lastAt": 1788417605605,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "plan",
           "agent": "asm-oracle",
           "model": "gpt-5.6-sol",
-          "messages": 65,
-          "inputTokens": 326937,
-          "outputTokens": 53109,
+          "messages": 85,
+          "inputTokens": 413182,
+          "outputTokens": 69515,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 3650048,
+          "cacheReadTokens": 4690944,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -93,15 +93,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 573,
-          "inputTokens": 1146,
-          "outputTokens": 466668,
-          "reasoningTokens": 133730,
-          "cacheWriteTokens": 1108610,
-          "cacheReadTokens": 124320962,
+          "messages": 580,
+          "inputTokens": 1160,
+          "outputTokens": 478448,
+          "reasoningTokens": 137023,
+          "cacheWriteTokens": 1123541,
+          "cacheReadTokens": 126002895,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 1108610,
+            "cacheWrite1hTokens": 1123541,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }

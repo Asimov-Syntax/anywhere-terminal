@@ -98,14 +98,21 @@ did not survive and are not recovered. These SHALL be stated rather than probed.
 
 ### Requirement: An adoption that does not complete leaves the destination as it found it
 
-WHERE any step of an adoption fails, the panel SHALL leave no administrative entry behind and SHALL
-leave the directory in a state it offers as adopt again, reporting the failure rather than a create.
+WHERE any step of an adoption fails, the panel SHALL leave the directory in a state it offers as
+adopt again, reporting the failure rather than a create. It SHALL NOT delete any directory to do so:
+the administrative entry it created is left in the state git's own collection takes it from, named in
+the report, and hidden from the repository's worktree listing meanwhile.
 
 #### Scenario: A withdrawn adoption is offered again rather than left behind
 
 - **WHEN** an adoption fails at any step and is withdrawn
-- **THEN** the same directory is offered as adopt on a retry, and no administrative entry from the
-  failed attempt remains
+- **THEN** the same directory is offered as adopt on a retry, the repository lists no worktree from
+  the failed attempt, and a routine `git worktree prune` collects what the attempt created
+
+#### Scenario: A withdrawal does not delete what another process put there
+
+- **WHEN** another process replaces the administrative entry while an adoption is withdrawing
+- **THEN** that process's files are left intact, because the withdrawal removes no directory at all
 
 #### Scenario: A failed reconstruction is not a half-registration
 

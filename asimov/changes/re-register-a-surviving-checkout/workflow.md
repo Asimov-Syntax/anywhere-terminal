@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved — no fork; § 2.4 fixes the mechanism and the wire fixes the shape _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -76,3 +76,4 @@ Planned at: 81e9136b
 - Round-6 handback applied. The oracle REFUTED both amended ledger rows, and the second refutation is why the design changed direction rather than being patched: `nlink === 0` is positive evidence the link was replaced, and my first amendment collapsed it with `nlink > 1` into one "nothing happened" outcome that then authorised deleting the entry. Chasing that led to the git probe above, which showed the retain-the-entry rule I had just written was the worse of the two failures — a leak nothing collects, accumulating per retry. The withdrawal now removes its own entry unconditionally and reads no pathname, so F005's mechanism is deleted rather than guarded a sixth time.
 - Verify Gate after 7_1: check-types clean, 7224 tests / 287 files, biome clean on every file this change touches, `verify-status` exit 0. Arm-check over all 10 guards including the new rule itself — reintroducing the undo's pathname read fails the zero-reads witness. One guard was vacuous on the first pass (the open's `nlink === 0` refusal was indistinguishable from the alias refusal except by its message) and now has a message witness; that is the SIXTH vacuous witness this cycle.
 - Round-7 handback, cycle 3, F005's seventh appearance. The link dependency is confirmed gone; the same check-then-mutate pair had moved up to the entry, where `removeDir` deletes by pathname what `identify` proved by inode. Rejecting the chair's claim that the two guarantees cannot coexist: `<entry>/gitdir` is OUR file, so the withdrawal truncates it through a held descriptor and lets `git worktree prune` do the deletion — verified on 2.50.1, an empty `gitdir` yields `Removing worktrees/<id>: invalid gitdir file` while an untouched entry survives the same prune. No pathname is deleted by this process at all.
+- SCOPE NARROWING, flagged rather than assumed: the spec no longer promises that a failed adoption leaves no administrative entry behind. It promises the withdrawal deletes nothing and leaves the entry where `git worktree prune` takes it, named in the report. Forced by evidence — the oracle refuted delegation to prune using git's own source, and the chair had already refuted the identify+removeDir pair. Overrule this if the weaker failure promise is not acceptable.
