@@ -1090,7 +1090,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     }
     expect(create.disabled).toBe(false);
     create.click();
-    await settle();
+    await settleUntil(() => gitCalls("add").length > 0, "the create command");
 
     const added = gitCalls("add");
     expect(added).toHaveLength(1);
