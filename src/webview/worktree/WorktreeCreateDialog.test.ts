@@ -142,7 +142,7 @@ describe("create worktree — the default and every consequential action explain
     expect(note.textContent).toContain("No terminal");
     after.value = "terminal";
     after.dispatchEvent(new Event("change"));
-    expect(note.textContent).toContain("terminal in the new worktree");
+    expect(note.textContent).toContain("terminal in the worktree");
     after.value = "folder";
     after.dispatchEvent(new Event("change"));
     expect(note.textContent).toContain("this workspace");
@@ -150,6 +150,41 @@ describe("create worktree — the default and every consequential action explain
     folder.value = "newWindow";
     folder.dispatchEvent(new Event("change"));
     expect(note.textContent).toContain("separate window");
+  });
+
+  it("keeps launch and folder hints true for existing checkouts and absent permission axes", () => {
+    let apply: ((answer: WorktreeCreateResolutionMessage) => void) | undefined;
+    const h = open({
+      repos: [
+        createDefaults({
+          agents: [{ id: "bare", label: "Bare", canSeedPrompt: false, permissionChoices: [] }],
+        }),
+      ],
+      onSelectionChange: () => {},
+      bindResolution: (fn) => {
+        apply = fn;
+      },
+    });
+    const name = h.q<HTMLInputElement>("#wt-branch");
+    name.value = "feat/x";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    name.dispatchEvent(new Event("change", { bubbles: true }));
+    apply?.({
+      type: "worktreeCreateResolution",
+      repoId: REPO_ID,
+      token: 1,
+      seq: 0,
+      query: "feat/x",
+      mode: { kind: "adopt", adoptPath: "/trees/repo-feat-x", expectedBranchOid: "abc123" },
+      freePath: "/trees/repo-feat-x-2",
+    });
+    const after = h.q<HTMLSelectElement>("#wt-after");
+    after.value = "agent";
+    after.dispatchEvent(new Event("change"));
+    expect(h.q(".wt-after-note").textContent).toBe("Starts Bare in the worktree.");
+    after.value = "folder";
+    after.dispatchEvent(new Event("change"));
+    expect(h.q(".wt-after-note").textContent).toBe("Adds the worktree folder to this workspace.");
   });
 
   it("names the immediate repository-default write instead of saying Configure", () => {
@@ -162,35 +197,179 @@ describe("create worktree — the default and every consequential action explain
     expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("this create only");
   });
 
-  it("associates one live reason with a disabled Create button", () => {
-    const { q } = open();
-    const create = q<HTMLButtonElement>(".wt-btn--primary");
-    const reason = q<HTMLElement>(".wt-create-disabled-reason");
+  type ReasonHarness = ReturnType<typeof open>;
+  type ReasonCase = { name: string; expected: string; arrange: () => ReasonHarness };
+
+  const resolution = (
+    h: ReasonHarness,
+    apply: ((answer: WorktreeCreateResolutionMessage) => void) | undefined,
+    answer: Partial<WorktreeCreateResolutionMessage> = {},
+  ): void => {
+    const name = h.q<HTMLInputElement>("#wt-branch");
+    name.value = "feat/x";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    name.dispatchEvent(new Event("change", { bubbles: true }));
+    apply?.({
+      type: "worktreeCreateResolution",
+      repoId: REPO_ID,
+      token: 1,
+      seq: 0,
+      query: "feat/x",
+      mode: { kind: "fresh" },
+      freePath: "/trees/repo-feat-x",
+      ...answer,
+    });
+  };
+
+  const reasonCases: ReasonCase[] = [
+    { name: "missing branch", expected: "Enter a branch name.", arrange: () => open() },
+    {
+      name: "missing detached ref",
+      expected: "Enter a ref to detach at.",
+      arrange: () => {
+        const h = open();
+        h.q<HTMLButtonElement>("#wt-detached").click();
+        return h;
+      },
+    },
+    {
+      name: "validation failure outranks host checks",
+      expected: "That branch name is invalid.",
+      arrange: () => {
+        const h = open({
+          validateBranch: () => "That branch name is invalid.",
+          onSelectionChange: () => {},
+          bindResolution: () => {},
+        });
+        type(h.q<HTMLInputElement>("#wt-branch"), "bad name");
+        return h;
+      },
+    },
+    {
+      name: "selection not asked yet",
+      expected: "Waiting to check this selection.",
+      arrange: () => {
+        const h = open({ onSelectionChange: () => {} });
+        type(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+        return h;
+      },
+    },
+    {
+      name: "classification pending",
+      expected: "Checking whether the branch is new, reusable, or repairable.",
+      arrange: () => {
+        const h = open({ onSelectionChange: () => {}, bindResolution: () => {} });
+        const name = h.q<HTMLInputElement>("#wt-branch");
+        type(name, "feat/x");
+        name.dispatchEvent(new Event("change", { bubbles: true }));
+        return h;
+      },
+    },
+    {
+      name: "destination absent",
+      expected: "Waiting for a destination.",
+      arrange: () => {
+        const h = open();
+        type(h.q<HTMLInputElement>("#wt-branch"), "--");
+        return h;
+      },
+    },
+    {
+      name: "destination stale",
+      expected: "Checking the destination.",
+      arrange: () => {
+        const h = open({ onSelectionChange: () => {} });
+        const name = h.q<HTMLInputElement>("#wt-branch");
+        type(name, "feat/x");
+        name.dispatchEvent(new Event("change", { bubbles: true }));
+        return h;
+      },
+    },
+    {
+      name: "clearance assessment pending",
+      expected: "Reading the existing folder before it can be cleared.",
+      arrange: () => {
+        let apply: ((answer: WorktreeCreateResolutionMessage) => void) | undefined;
+        const h = open({
+          onSelectionChange: () => {},
+          bindResolution: (fn) => {
+            apply = fn;
+          },
+          onAuthorizeDebris: () => {},
+          bindDebrisAuthorization: () => {},
+        });
+        resolution(h, apply, {
+          freePath: "/trees/repo-feat-x-2",
+          occupiedCandidate: { path: "/trees/repo-feat-x", disposition: { kind: "debris" } },
+        });
+        const accept = h.q<HTMLInputElement>("#wt-recover-accept");
+        accept.checked = true;
+        accept.dispatchEvent(new Event("change", { bubbles: true }));
+        return h;
+      },
+    },
+    {
+      name: "base unavailable",
+      expected: '"nope" does not name a commit.',
+      arrange: () => {
+        let apply: ((answer: WorktreeCreateResolutionMessage) => void) | undefined;
+        const h = open({
+          onSelectionChange: () => {},
+          bindResolution: (fn) => {
+            apply = fn;
+          },
+        });
+        resolution(h, apply, { baseValid: { ok: false, reason: '"nope" does not name a commit.' } });
+        return h;
+      },
+    },
+    {
+      name: "permission posture unchosen",
+      expected: "Choose a permission mode before starting the agent.",
+      arrange: () => {
+        const h = open({
+          repos: [
+            createDefaults({
+              agents: [
+                {
+                  id: "danger",
+                  label: "Danger",
+                  canSeedPrompt: false,
+                  permissionChoices: [{ id: "bypass", label: "Bypass", dangerous: true }],
+                },
+              ],
+            }),
+          ],
+        });
+        type(h.q<HTMLInputElement>("#wt-branch"), "feat/x");
+        const after = h.q<HTMLSelectElement>("#wt-after");
+        after.value = "agent";
+        after.dispatchEvent(new Event("change"));
+        return h;
+      },
+    },
+  ];
+
+  it.each(reasonCases)("states the first unmet condition: $name", ({ expected, arrange }) => {
+    const h = arrange();
+    const create = h.q<HTMLButtonElement>(".wt-btn--primary");
+    const reason = h.q<HTMLElement>(".wt-create-disabled-reason");
     expect(create.disabled).toBe(true);
-    expect(create.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(reason.textContent).toBe(expected);
     expect(reason.getAttribute("role")).toBe("status");
     expect(reason.getAttribute("aria-live")).toBe("polite");
-    expect(reason.textContent).toContain("branch");
+    expect(create.getAttribute("aria-describedby")).toBe(reason.id);
+  });
+
+  it("removes the disabled reason and association when Create becomes available", () => {
+    const { q } = open({ repos: [createDefaults({ agents: [] })] });
     type(q<HTMLInputElement>("#wt-branch"), "feat/x");
+    const create = q<HTMLButtonElement>(".wt-btn--primary");
+    const reason = q<HTMLElement>(".wt-create-disabled-reason");
     expect(create.disabled).toBe(false);
     expect(reason.hidden).toBe(true);
-  });
-
-  it("uses the validation failure as the first disabled reason", () => {
-    const { q } = open({ validateBranch: () => "That branch name is invalid." });
-    type(q<HTMLInputElement>("#wt-branch"), "bad name");
-    expect(q(".wt-create-disabled-reason").textContent).toBe("That branch name is invalid.");
-  });
-
-  it("distinguishes an unresolved host classification from a missing destination", () => {
-    const { q } = open({ onSelectionChange: () => {}, bindResolution: () => {} });
-    const name = q<HTMLInputElement>("#wt-branch");
-    type(name, "feat/x");
-    expect(q(".wt-create-disabled-reason").textContent).toBe("Waiting to check this selection.");
-    name.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(q(".wt-create-disabled-reason").textContent).toBe(
-      "Checking whether the branch is new, reusable, or repairable.",
-    );
+    expect(reason.textContent).toBe("");
+    expect(create.hasAttribute("aria-describedby")).toBe(false);
   });
 });
 
@@ -3981,7 +4160,6 @@ describe("the base ref states when it cannot apply", () => {
 
       expect(h.action().textContent).toContain("does not name a commit");
       expect(createBtn(h).disabled).toBe(true);
-      expect(h.q(".wt-create-disabled-reason").textContent).toBe('"nope" does not name a commit.');
     });
 
     it("withholds a base verdict where the mode refuses a base at all", () => {

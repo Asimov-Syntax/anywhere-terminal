@@ -54,6 +54,11 @@ function initialPosture(agent: WorktreeLaunchAgent | undefined): string | undefi
   return agent?.permissionChoices.find((c) => !c.dangerous)?.id;
 }
 
+/** The first offered agent whose initial posture is explicitly non-dangerous. */
+export function initialSafeAgentId(agents: readonly WorktreeLaunchAgent[]): string | undefined {
+  return agents.find((agent) => initialPosture(agent) !== undefined)?.id;
+}
+
 export function createWorktreeAgentBox(
   agents: readonly WorktreeLaunchAgent[],
   onChange?: () => void,

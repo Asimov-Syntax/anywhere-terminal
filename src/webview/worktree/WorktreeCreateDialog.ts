@@ -23,13 +23,12 @@ import type {
 } from "../../types/messages";
 import { sanitizeBranchForPath } from "../../worktree/branchSlug";
 import { attachTooltip } from "../ui/Tooltip";
-import { createWorktreeAgentBox } from "./worktreeAgentBox";
+import { createWorktreeAgentBox, initialSafeAgentId } from "./worktreeAgentBox";
 import { dialogTitle, field, keyHint, openDialogShell, selectControl, textButton } from "./worktreeDialogShell";
 import type {
   WorktreeBranchMode,
   WorktreeCreateDefaults,
   WorktreeCreateDraft,
-  WorktreeLaunchAgent,
   WorktreeMigrationOffer,
   WorktreeOpenAfter,
   WorktreeProvisionOffer,
@@ -185,11 +184,6 @@ const FOLDER_MODES: readonly { value: WorktreeOpenAfter; label: string }[] = [
  */
 function openAfterOptions(canLaunch: boolean): { value: AfterChoice; label: string }[] {
   return AFTER_CHOICES.filter((o) => o.value !== "agent" || canLaunch);
-}
-
-/** An automatic launch requires an explicit posture known not to be dangerous. */
-function safeAgentId(agents: readonly WorktreeLaunchAgent[]): string | undefined {
-  return agents.find((agent) => agent.permissionChoices.some((choice) => !choice.dangerous))?.id;
 }
 
 /** Everything the host needs to say what a submit of this form would do. */
@@ -950,8 +944,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
 
   const initialRepoId = deps.initialRepoId ?? first.repoId;
   const initialRepo = repos.find((repo) => repo.repoId === initialRepoId) ?? first;
-  const initialSafeAgentId = safeAgentId(initialRepo.agents);
-  const initialAfterChoice: AfterChoice = initialSafeAgentId === undefined ? "terminal" : "agent";
+  const safeInitialAgentId = initialSafeAgentId(initialRepo.agents);
+  const initialAfterChoice: AfterChoice = safeInitialAgentId === undefined ? "terminal" : "agent";
   const draft: WorktreeCreateDraft = {
     repoId: initialRepoId,
     branchMode: "new",
@@ -1217,7 +1211,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     );
     repoSelect.addEventListener("change", () => {
       draft.repoId = repoSelect.value;
-      agentBox.setAgents(currentRepo().agents, safeAgentId(currentRepo().agents));
+      agentBox.setAgents(currentRepo().agents, initialSafeAgentId(currentRepo().agents));
       rebuildAfterOptions();
       // The branch list belongs to a repository. The same typed name can be an
       // existing branch in one and a new one in the next, and it can be held in
@@ -1701,7 +1695,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // The block itself is shared with the standalone launch dialog, so create-then-
   // launch and launch-here collect the same thing rather than two things that
   // happen to look alike (design.md D7).
-  const agentBox = createWorktreeAgentBox(currentRepo().agents, () => syncDerived(), initialSafeAgentId);
+  const agentBox = createWorktreeAgentBox(currentRepo().agents, () => syncDerived(), safeInitialAgentId);
   agentBox.setVisible(afterChoice === "agent");
   shell.dialog.appendChild(agentBox.element);
 
@@ -1854,16 +1848,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     if (afterChoice === "none") {
       afterNote.textContent = "No terminal, folder, or agent opens after creation.";
     } else if (afterChoice === "terminal") {
-      afterNote.textContent = "Opens a terminal in the new worktree.";
+      afterNote.textContent = "Opens a terminal in the worktree.";
     } else if (afterChoice === "folder") {
       afterNote.textContent =
         folderMode === "addToWorkspace"
-          ? "Adds the new folder to this workspace."
-          : "Opens the new folder in a separate window.";
+          ? "Adds the worktree folder to this workspace."
+          : "Opens the worktree folder in a separate window.";
     } else {
       const selected = agentBox.read().agentId;
       const label = currentRepo().agents.find((agent) => agent.id === selected)?.label ?? "the selected agent";
-      afterNote.textContent = `Starts ${label} in the new worktree using the selected permissions.`;
+      afterNote.textContent = `Starts ${label} in the worktree.`;
     }
   }
 
@@ -1884,7 +1878,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // always offered, so a repo switch that drops the agent one must leave it —
     // and its secondary selection — exactly where the user put them.
     if (!offered.some((o) => o.value === afterChoice)) {
-      afterChoice = safeAgentId(currentRepo().agents) === undefined ? "terminal" : "agent";
+      afterChoice = initialSafeAgentId(currentRepo().agents) === undefined ? "terminal" : "agent";
     }
     afterSelect.replaceChildren(
       ...offered.map((o) => {

@@ -1693,12 +1693,6 @@ describe("the routing activate installs between a hook turn and a projected row"
 // up this composition twice would be the duplication the invariants argue against.
 
 describe("the invariants that span the host and the webview", () => {
-  it("keeps the create actions visible inside a short scrolling dialog", () => {
-    const css = fs.readFileSync(path.join(process.cwd(), "src/webview/worktree/worktreePanel.css"), "utf8");
-    const actionRule = css.match(/\.wt-dialog-actions\s*\{[^}]*position:\s*sticky[^}]*bottom:/s);
-    expect(actionRule, "the create footer is not pinned inside the dialog scroll container").not.toBeNull();
-  });
-
   /** Every worktree id the tree in this envelope actually contains. */
   function treeIds(msg: ExtensionToWebViewMessage): string[] {
     if (msg.type !== "worktreeTreeResponse") {

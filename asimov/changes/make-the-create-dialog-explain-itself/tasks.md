@@ -11,3 +11,15 @@
     1. `src/webview/worktree/WorktreeCreateDialog.ts` and `src/webview/worktree/worktreeAgentBox.ts` — default the after-create choice per D2; add the dynamic action hint and truthful save, clear, and disabled-state text.
     2. `src/webview/worktree/WorktreeCreateDialog.test.ts`, `src/webview/worktree/worktreeAgentBox.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and `src/extension.worktreeAssembly.test.ts` — witness all defaults, repository switches, hints, disabled states, clear evidence, and unchanged submitted authority.
     3. `src/webview/worktree/worktreePanel.css` — reuse compact dialog styles and keep the action row visible in short viewports.
+
+- [x] 1_2 Reconcile the explanatory UI with review round 1 — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/worktreeAgentBox.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts && pnpm run check-types && pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/worktreeAgentBox.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts exit 0
+  - **Deps**: 1_1
+  - **Refs**: design.md D2, D3; .reviews/round-1.md F001, F002, F003, F004, F005
+  - **Boundary**: No message shape, host authority, execution order, destructive default, or new browser-test dependency changes
+  - **Acceptance**:
+    - Outcome: The dialog uses one safe-posture policy, mode-neutral truthful hints, and a complete disabled-reason witness inventory
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/worktreeAgentBox.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/worktreeAgentBox.ts` and `src/webview/worktree/WorktreeCreateDialog.ts` — centralize the initial-safe-agent policy and make every after-create hint true for no-axis, pending-posture, repair, and adoption states.
+    2. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/worktreeAgentBox.test.ts` — cover the shared safe selection and every disabled-reason arm, priority, accessible association, and enabled state.
+    3. `src/extension.worktreeAssembly.test.ts` — remove the source-text assertion that claimed to prove browser layout; the browser witness remains the declared follow-up because this repository has no browser layout test lane.

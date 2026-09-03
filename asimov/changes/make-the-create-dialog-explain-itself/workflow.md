@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -40,3 +40,5 @@ Planned at: 2d6a8436
 Oracle attack: accepted all material findings. No-axis agents are UNKNOWN rather than safe; save wording covers source + files; repo switches select an explicit-safe agent without reordering; disabled reasons distinguish selection checks from destination state and use a live region; the footer stays visible in short viewports. The spec delta MODIFIES the standing agent-block and save scenarios rather than appending contradictions.
 Oracle ledger: dangerous-default row refuted before triage and supported after the explicit-safe-only amendment; destructive-clearance and shared-gate rows supported, with the entry-list requirement narrowed to before Create becomes available.
 Verify gate baseline: `pnpm exec biome check src` retains the clean-tree formatter error in untouched `src/agentHooks/AgentHookController.test.ts`; all changed TypeScript/tests are clean, and the touched stylesheet's sole warning predates this change.
+Review round 1: accepted F001–F004 for immediate remediation; F005 remains a non-blocking follow-up because the repository has no browser layout test lane, and a DOM/source assertion cannot prove visibility.
+Follow-up: `prove-create-footer-in-browser` — add the smallest portable browser layout lane and constrain/scroll the create dialog to witness the sticky action footer.

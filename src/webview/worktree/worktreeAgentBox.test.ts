@@ -5,7 +5,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_CONTINUATION_INSTRUCTION } from "../../vault/continuationLimits";
-import { createWorktreeAgentBox } from "./worktreeAgentBox";
+import { createWorktreeAgentBox, initialSafeAgentId } from "./worktreeAgentBox";
 import type { WorktreeLaunchAgent } from "./worktreeViewTypes";
 
 const CLAUDE: WorktreeLaunchAgent = {
@@ -57,6 +57,11 @@ function mount(agents: WorktreeLaunchAgent[], onChange?: () => void) {
 }
 
 describe("createWorktreeAgentBox", () => {
+  it("owns the one policy for finding an explicitly safe initial agent", () => {
+    expect(initialSafeAgentId([BARE, DANGER_FIRST, CLAUDE])).toBe("df");
+    expect(initialSafeAgentId([BARE])).toBeUndefined();
+  });
+
   it("offers the agents it was given, in the order it was given them", () => {
     const { sel } = mount([CLAUDE, CODEX]);
     expect([...sel("wt-agent").options].map((o) => o.value)).toEqual(["claude", "codex"]);
