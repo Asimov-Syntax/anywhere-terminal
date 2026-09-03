@@ -238,7 +238,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 7. Close review round 4 — the undo's order, and the object's one name
 
-- [ ] 5_1 Put the link back before the entry goes, and refuse an object with a second name
+- [x] 5_1 Put the link back before the entry goes, and refuse an object with a second name — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 4_2
   - **Refs**: design.md D9, D4; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-undo-restores-only-the-git-entry-the-adoption-itself-replaced}; `.reviews/round-4.md` F005, F013, F014; `src/agentHooks/install/lockedJsonFile.ts`
   - **Acceptance**:

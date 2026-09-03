@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -65,3 +65,5 @@ Planned at: 0215afec
 - One planned guard turned out vacuous and the witness was fixed rather than the guard dropped: the pre-write identity check could be removed and every test still passed, because the post-write check refuses the same case. What separates them is whether the adoption TRUNCATED an object it had already been told was no longer the link, so the case now reads the detached inode.
 - Round-4 handback. F005's invariant survived a third attempt, so no third patch: D4's undo ORDER is amended (link back before the entry goes, so no instant of a withdrawal leaves `<wt>/.git` naming a directory that is gone) and D9 gains the `nlink` boundary. F013 is the one round-4 finding that is neither a race nor a residual — a hard-linked `.git` is observable in the `fstat` already taken, and this repo already refuses on it at `lockedJsonFile.ts`, so not checking it was a miss rather than a stated limit.
 - F014 was the SECOND vacuous witness found this cycle (after the pre-write identity one I caught myself): the opening-read case still overrode `AdoptFs.readFile`, which 4_1 stopped using for the link, so it failed later at the stale-entry read and its end-state assertions passed anyway. Both were witnesses that survived removing the guard they were named for; the lesson is that moving a read to a new seam silently unarms every test that injected at the old one.
+- Verify Gate after round 4: check-types clean, 7214 tests / 287 files, `gate:fs-deletion` and `build:check-requires` ok, biome clean on every file this change touches (the repo's 4 errors / 15 warnings are the pre-existing set already recorded above).
+- A THIRD vacuous witness turned up in 5_1's own arm-check, and it is the same mistake in a new place: the post-restore identity case passed with its guard reverted, because the fake returned the identity captured BEFORE the substitution — so the check could not see the move it was written for. Fixed by making the substitution land inside the restore's own write. Three for three this cycle, all found by reverting the guard rather than by reading the test; running the arm-check is not optional on this file.

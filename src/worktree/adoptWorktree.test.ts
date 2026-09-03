@@ -50,6 +50,8 @@ function fsOf(over: Partial<AdoptFs> = {}) {
   const at = new Map<string, bigint>();
   /** inode id → its bytes. Reachable after the path stops naming it. */
   const inodes = new Map<bigint, string>();
+  /** inode id → how many names reach it. A hard link is a second name, not a copy. */
+  const names = new Map<bigint, number>();
   const writes: string[] = [];
   const identities = new Map<string, { dev: bigint; ino: bigint }>();
   let nextIno = 1n;
@@ -59,6 +61,7 @@ function fsOf(over: Partial<AdoptFs> = {}) {
     const ino = nextIno++;
     at.set(p, ino);
     inodes.set(ino, data);
+    names.set(ino, 1);
     return ino;
   };
   put(`${WT}/.git`, ORIGINAL_LINK);
@@ -107,7 +110,7 @@ function fsOf(over: Partial<AdoptFs> = {}) {
         return run();
       };
       return {
-        identity: async () => live(() => ({ dev: 1n, ino: bound })),
+        identity: async () => live(() => ({ dev: 1n, ino: bound, nlink: names.get(bound) ?? 1 })),
         readAt: async (position) => live(() => (inodes.get(bound) ?? "").slice(position)),
         truncate: async (length) =>
           live(() => {
@@ -157,6 +160,14 @@ function fsOf(over: Partial<AdoptFs> = {}) {
     files,
     dirs,
     identities,
+    /** Give the link a SECOND name — a hard link, which no `O_NOFOLLOW` refuses. */
+    hardLinkTheLink: () => {
+      const ino = at.get(`${WT}/.git`);
+      if (ino === undefined) {
+        throw new Error("no link to alias");
+      }
+      names.set(ino, (names.get(ino) ?? 1) + 1);
+    },
     /** Another writer REPLACES the link — `rename` or unlink+create. New inode. */
     replaceLink: (data: string) => put(`${WT}/.git`, data),
     /** Another writer TRUNCATES the link in place — what git's own writer does. */
@@ -859,18 +870,31 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
   it("refuses before creating anything when the link cannot be read", async () => {
     // A read that FAILED is not an absent link. Answering `null` let the undo
     // remove a `.git` this adoption had never seen (round-2 F003).
-    const { runner } = runnerOf();
+    //
+    // Injected at the HANDLE. This case used to override `AdoptFs.readFile`,
+    // which stopped being the link's reader when the handle arrived — so it
+    // failed later, at the stale-entry read, and its end-state assertions passed
+    // whether or not the guard it is named for existed (round-4 F014).
+    const { runner, calls } = runnerOf();
     const store = fsOf();
     const fs: AdoptFs = {
       ...store.fs,
-      readFile: async () => {
-        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-      },
+      openLink: async (p) => ({
+        ...(await store.fs.openLink(p)),
+        readAt: async () => {
+          throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+        },
+      }),
     };
 
     const result = await adoptWorktree(runner, request, fs);
 
     expect(result).toMatchObject({ ok: false });
+    // Nothing happened AT ALL — no entry, no git, no write of any kind. The
+    // end state alone cannot say that, because a refusal further along leaves
+    // the same end state after undoing itself.
+    expect(store.writes, "something was written before the link was proved").toEqual([]);
+    expect(calls, "git ran before the link was proved").toEqual([]);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
     expect(store.dirs.has(ENTRY)).toBe(false);
   });
@@ -1005,5 +1029,108 @@ describe("adoptWorktree writes through the object it opened, not the name", () =
     }
     expect(withdrawn.linkBytes()).toBe(ORIGINAL_LINK);
     expect(withdrawn.wasClosed()).toBe(true);
+  });
+});
+
+describe("adoptWorktree will not write an object that has a second name", () => {
+  // `O_NOFOLLOW` refuses a symlink at the leaf. Nothing in it refuses a HARD
+  // LINK, and `isFile()` is true of an inode with two names — so truncating the
+  // descriptor would rewrite a file outside this checkout (round-4 F013).
+  it("refuses at the open, before anything is created", async () => {
+    const { runner, calls } = runnerOf();
+    const store = fsOf();
+    store.hardLinkTheLink();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(store.writes).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(store.linkBytes()).toBe(ORIGINAL_LINK);
+  });
+
+  it("refuses at the claim when the second name appears while it works", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      // The alias lands after the open, so only the re-read before the claim
+      // can catch it.
+      createFile: async (p, data) => {
+        const written = await store.fs.createFile(p, data);
+        if (p.endsWith("/HEAD")) {
+          store.hardLinkTheLink();
+        }
+        return written;
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(store.linkBytes(), "the aliased object was truncated anyway").toBe(ORIGINAL_LINK);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+});
+
+describe("adoptWorktree withdraws in an order that leaves no dangling link", () => {
+  function failingRepair() {
+    return runnerOf((args) =>
+      args[1] === "repair"
+        ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false }
+        : ok(`${TIP}\n`),
+    );
+  }
+
+  // Removing the entry first leaves an interval in which `<wt>/.git` names a
+  // directory that is already gone (round-4 F005).
+  it("puts the link back before it removes the entry", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    const restored = store.writes.lastIndexOf(`write ${WT}/.git`);
+    const removed = store.writes.indexOf(`rm ${ENTRY}`);
+    expect(restored, "the link was never put back").toBeGreaterThanOrEqual(0);
+    expect(removed, "the entry was never removed").toBeGreaterThanOrEqual(0);
+    expect(restored, "the entry was removed while the link still named it").toBeLessThan(removed);
+  });
+
+  // The sample before the restore expires the moment it returns. The handle
+  // keeps the write off anyone else's file, so what is left is a REPORT that
+  // says the link is back when the name points somewhere else entirely.
+  it("does not report a restore that landed on a detached object", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const REPLACEMENT = "gitdir: /repo/.git/worktrees/somebody-else\n";
+    const fs: AdoptFs = {
+      ...store.fs,
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        return {
+          ...handle,
+          writeAt: async (data, position) => {
+            const wrote = await handle.writeAt(data, position);
+            // The restore is the write of the ORIGINAL bytes. The substitution
+            // lands immediately after it, so the proof taken BEFORE the restore
+            // passed and only a second proof can see it. Rebinding the path is
+            // what makes the identity move — returning a stale identity from
+            // the reader would leave this case unable to see anything, which is
+            // how it passed with the guard removed the first time it was written.
+            if (data.toString("utf8") === ORIGINAL_LINK) {
+              store.replaceLink(REPLACEMENT);
+            }
+            return wrote;
+          },
+        };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false, leftBehind: { link: "leftAsFound" } });
+    expect(store.linkBytes()).toBe(REPLACEMENT);
   });
 });

@@ -543,3 +543,36 @@ describe("a repository that writes its worktree links relative", () => {
     }
   });
 });
+
+describe("a `.git` that is reachable under a second name", () => {
+  // `O_NOFOLLOW` refuses a symlink at the leaf and says nothing about a hard
+  // link. Truncating the descriptor would rewrite the alias too — a file the
+  // user never pointed this adoption at (round-4 F013).
+  it("is refused, and the alias keeps its bytes", async () => {
+    const alias = path.join(path.dirname(survivor), "alias-of-dot-git");
+    fs.linkSync(path.join(survivor, ".git"), alias);
+    const before = fs.readFileSync(alias, "utf8");
+    // The premise: one inode, two names, and the same object under both.
+    expect(fs.statSync(alias).nlink).toBe(2);
+    expect(fs.statSync(alias).ino).toBe(fs.statSync(path.join(survivor, ".git")).ino);
+
+    const result = await adoptWorktree(
+      runner,
+      {
+        repoPath: repo,
+        commonDir,
+        worktreePath: survivor,
+        branch: "survivor",
+        staleGitdir,
+        staleLink,
+        expectedBranchOid: tipOf("survivor"),
+      },
+      realFs,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(fs.readFileSync(alias, "utf8"), "the alias outside the checkout was rewritten").toBe(before);
+    expect(fs.readFileSync(path.join(survivor, ".git"), "utf8")).toBe(staleLink);
+    expect(fs.existsSync(path.join(commonDir, "worktrees", "survivor"))).toBe(false);
+  });
+});

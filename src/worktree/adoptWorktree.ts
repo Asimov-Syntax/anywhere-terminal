@@ -62,8 +62,14 @@ export interface AdoptRequest {
  * every test.
  */
 export interface LinkHandle {
-  /** `fstat` at `{ bigint: true }` — the object, not the name. */
-  identity(): Promise<FileIdentity>;
+  /**
+   * `fstat` at `{ bigint: true }` — the object, not the name.
+   *
+   * `nlink` comes with it and is load-bearing: `O_NOFOLLOW` refuses a symlink at
+   * the leaf but nothing refuses a HARD LINK, and truncating an inode with a
+   * second name rewrites a file outside this checkout (round-4 F013).
+   */
+  identity(): Promise<FileIdentity & { nlink: number | bigint }>;
   /**
    * The whole file from an EXPLICIT position.
    *
@@ -216,6 +222,16 @@ export async function adoptWorktree(
       message: `That directory's git link could not be read, so nothing was written: ${reasonOf(error)}`,
     };
   }
+  /**
+   * Exactly one name for the object we are about to truncate.
+   *
+   * Observable in the `fstat` already taken, so unlike the in-place writer this
+   * is a boundary that CAN be held — and this repository already holds it, at
+   * `src/agentHooks/install/lockedJsonFile.ts`. What stays open is an alias made
+   * after the last check, the same instant the identity comparison cannot cover.
+   */
+  const oneName = async (): Promise<boolean> => BigInt((await link.identity()).nlink) === 1n;
+
   /** Nothing has been created yet, so a refusal here is just a closed handle. */
   const refuse = async (message: string): Promise<AdoptResult> => {
     await link.close().catch(() => {});
@@ -229,6 +245,9 @@ export async function adoptWorktree(
   // live registration (round-2 F006).
   let opening: string;
   try {
+    if (!(await oneName())) {
+      return refuse("That directory's git link is also reachable under another name, so nothing was written.");
+    }
     opening = await link.readAt(0);
   } catch (error) {
     return refuse(`That directory's git link could not be read, so nothing was written: ${reasonOf(error)}`);
@@ -283,14 +302,26 @@ export async function adoptWorktree(
     }
   };
 
+  /**
+   * Does `<wt>/.git` still name the object this handle holds?
+   *
+   * Our handle can go on writing its object long after the path stopped naming
+   * it, and a restore that lands there would put the stale bytes somewhere
+   * nobody reads while the outcome claimed the link was back.
+   */
+  const stillOurName = async (): Promise<boolean> => {
+    try {
+      return sameIdentity(await fs.identify(linkPath), await link.identity());
+    } catch {
+      return false;
+    }
+  };
+
   /** Whether the link AT THAT NAME is still the object this adoption wrote its own into. */
   const stillOurLink = async (): Promise<boolean> => {
     let now: string;
     try {
-      // The name first. Our handle can still write its object long after the
-      // path stopped naming it, and restoring a detached inode would put the
-      // stale bytes somewhere nobody reads while reporting a restore.
-      if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
+      if (!(await stillOurName())) {
         return false;
       }
       now = await link.readAt(0);
@@ -307,6 +338,31 @@ export async function adoptWorktree(
   };
 
   const undo = async (): Promise<AdoptResidue | undefined> => {
+    // The LINK first, and the order is the claim: removing the entry before the
+    // link goes back leaves an interval in which `<wt>/.git` names a directory
+    // that is already gone, and a withdrawal interrupted there hands the user a
+    // checkout pointing at nothing (round-4 F005). Reversed, every instant is a
+    // coherent pair — git neither lists nor prunes an entry whose `gitdir` names
+    // a path that exists, so ours sits inert between the two steps (D4).
+    //
+    // And the link is left ALONE until this adoption installed its own: before
+    // that write there is nothing of ours there to undo, and writing the old
+    // bytes back over whatever is there now is how a refused adoption used to
+    // destroy another process's newly installed registration (round-2 F005).
+    let state: AdoptLinkState = "restored";
+    if (contentUnknown) {
+      state = "unknown";
+    } else if (installed) {
+      state = !(await stillOurLink()) ? "leftAsFound" : (await putLink(request.staleLink)) ? "restored" : "unknown";
+      // Proved on BOTH sides of the write. The sample before it expires the
+      // moment it returns, and while the handle keeps the restore off anyone
+      // else's file, a restore that landed on a detached object must not be
+      // reported as the link being back (round-4 F005).
+      if (state === "restored" && !(await stillOurName())) {
+        state = "leftAsFound";
+      }
+    }
+
     // Identity first, and it is the whole point: `prune` can remove an entry
     // whose `gitdir` is missing and an external `add` can mint the same id, so
     // removing by pathname alone could delete a registration we never made.
@@ -328,20 +384,6 @@ export async function adoptWorktree(
         .removeDir(entryPath)
         .then(() => true)
         .catch(() => false);
-    }
-    // The link is left ALONE until this adoption installed its own — before
-    // that write there is nothing of ours there to undo, and writing the old
-    // bytes back over whatever is there now is how a refused adoption used to
-    // destroy another process's newly installed registration (round-2 F005).
-    // The link is left ALONE until this adoption installed its own — before that
-    // write there is nothing of ours there to undo, and writing the old bytes
-    // back over whatever is there now is how a refused adoption used to destroy
-    // another process's newly installed registration (round-2 F005).
-    let state: AdoptLinkState = "restored";
-    if (contentUnknown) {
-      state = "unknown";
-    } else if (installed) {
-      state = !(await stillOurLink()) ? "leftAsFound" : (await putLink(request.staleLink)) ? "restored" : "unknown";
     }
     await link.close().catch(() => {});
     return removed && state === "restored" ? undefined : { entryPath: removed ? null : entryPath, link: state };
@@ -407,6 +449,9 @@ export async function adoptWorktree(
     // nothing points at — silently, which is what this turns into a refusal.
     if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
       return failed("That directory's git link was replaced while it was being re-registered.");
+    }
+    if (!(await oneName())) {
+      return failed("That directory's git link is also reachable under another name, so it was not re-registered.");
     }
     if (!(await putLink(ourLink))) {
       // Begun and not finished. The handle is still open, so the old bytes can

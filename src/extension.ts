@@ -955,6 +955,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         throw error;
       }
       return {
+        // `nlink` rides along on the stat this already takes (design.md D9).
         identity: () => handle.stat({ bigint: true }),
         // A gitfile is one short line. A file longer than this cap is not one,
         // and the truncated read simply fails the byte comparison above it.
