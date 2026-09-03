@@ -3,11 +3,14 @@
 // reads them — that the adopted directory lists, holds its branch, survives a
 // prune, and commits back, with nothing inside it touched.
 //
-// It also pins the fact D4's write order rests on, invisible from a unit test:
-// `prune` removes an entry whose `gitdir` file is missing OR names a path that
-// is gone, and spares one whose `gitdir` names a path that exists. `<wt>/.git`
-// is such a path for the whole adoption — it holds the stale link until the
-// last write replaces it — which is what lets `gitdir` be written first.
+// It also pins the two facts D4's write order rests on, invisible from a unit
+// test. First: `prune` removes an entry whose `gitdir` file is missing OR names
+// a path that is gone, and spares one whose `gitdir` names a path that exists.
+// `<wt>/.git` is such a path for the whole adoption — it holds the stale link
+// until the last write replaces it — so the entry is inert between `gitdir` and
+// that write, which is what lets the LINK be written last. Second: an entry
+// holding `locked` is spared whatever its `gitdir` says, which is what covers
+// the construction interval before `gitdir` holds its bytes.
 //
 // See: asimov/changes/re-register-a-surviving-checkout/design.md D4, D5
 //      docs/design/worktree-create.md § 2.4

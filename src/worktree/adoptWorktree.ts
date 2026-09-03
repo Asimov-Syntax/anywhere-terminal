@@ -141,7 +141,6 @@ export interface AdoptFs {
   createPinned(path: string): Promise<LinkHandle>;
   /** Remove ONE file. There is deliberately no recursive removal here (D4). */
   removeFile(path: string): Promise<void>;
-  /** Recursive removal of the entry directory this adoption created. */
 }
 
 /**
@@ -399,7 +398,7 @@ export async function adoptWorktree(
     // own link into relative form under `worktree.useRelativePaths`, and every
     // withdrawal D5 reaches runs AFTER repair — byte equality would report our
     // own link as a stranger's on the common failure path and leave `<wt>/.git`
-    // naming an entry this undo is about to remove (oracle finding 3).
+    // naming an entry this undo is about to empty (oracle finding 3).
     const named = gitdirOf(now, request.worktreePath);
     return named !== null && resolve(named) === resolve(entryPath);
   };

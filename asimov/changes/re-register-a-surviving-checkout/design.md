@@ -323,7 +323,8 @@ set, `git worktree repair` legitimately rewrites the link we just wrote into rel
 shape, where repair reported `.git file absolute/relative path mismatch` and left `gitdir: ../repo/...`
 behind. The undos D5 reaches — the branch-claim contender and the tip
 mismatch — all run AFTER `repair`, so byte equality would report our own link as a stranger's on the
-common failure path and leave `<wt>/.git` naming an entry the undo then removed. So the undo parses
+common failure path and leave `<wt>/.git` naming an entry the undo then emptied and handed to
+git's collection. So the undo parses
 the current link with the same grammar the detector uses and asks whether it resolves to the entry
 directory this adoption created, identified by dev/ino. A link that does not is left alone and
 reported as found.

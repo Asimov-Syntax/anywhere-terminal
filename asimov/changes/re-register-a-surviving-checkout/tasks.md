@@ -349,3 +349,15 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     2. `src/worktree/adoptWorktree.ts` — the undo's ordering comment still says "removing the entry".
     3. `src/worktree/adoptWorktree.test.ts` — two names assert the superseded contract: an undo failing at "cannot be removed" when the fake rejects the marker unlink, and "removes the entry even when a foreign link names it" with a comment block to match.
     4. `src/worktree/adoptWorktree.integration.test.ts` — "leaves no entry" names a listing, not a directory; and the three git-behaviour probes still credit `gitdir`-first for what `locked` now does.
+
+- [x] 12_1 Close F018 on a complete inventory rather than a fourth sweep — verified: bun run asm change validate re-register-a-surviving-checkout && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 11_1
+  - **Refs**: design.md D4; `.reviews/round-11.md` F018
+  - **Acceptance**:
+    - Outcome: The four enumerated passages match D4, and the inventory that found them is recorded
+    - Verify: command bun run asm change validate re-register-a-surviving-checkout
+  - **Boundary**: The four enumerated passages only — no assertion, no production behavior, no new prose elsewhere
+  - **Plan**:
+    1. `asimov/changes/re-register-a-surviving-checkout/design.md` — D9's ownership paragraph says byte equality would leave `<wt>/.git` "naming an entry the undo then removed".
+    2. `src/worktree/adoptWorktree.ts` — an orphan JSDoc for the deleted `removeDir` still stands after `removeFile`, documenting a member `AdoptFs` no longer has; and `stillOurEntry`'s comment says the undo "is about to remove" the entry.
+    3. `src/worktree/adoptWorktree.integration.test.ts` — the file header credits git's prune behaviour with letting `gitdir` be written first, where `locked` now covers the construction interval and the prune fact explains why the LINK is written last.
