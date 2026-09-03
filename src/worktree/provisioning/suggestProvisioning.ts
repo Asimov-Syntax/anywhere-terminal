@@ -9,7 +9,8 @@
 // wildcard can enumerate names this list does not carry.
 
 import * as path from "node:path";
-import type { ProvisionEntry, ProvisionModel, ProvisionSetupStep } from "../../types/messages";
+import type { ProvisionModel } from "../../types/messages";
+import { addEntry, addSetup, modelFromDraft, newDraft } from "./providerKit";
 
 /** The one answer detection needs from a stat. `node:fs/promises`' `lstat` satisfies it. */
 export interface SuggestStats {
@@ -66,10 +67,14 @@ export async function suggestProvisioning(
   repoRoot: string,
   nextId: () => string,
 ): Promise<ProvisionModel> {
-  const entries: ProvisionEntry[] = [];
+  // Through the kit's draft and its one assembly point, like every adapter: a
+  // field added to `ProvisionModel` must not reach the three adapters and miss
+  // this detector. There is no provider file behind these rows, so the context
+  // names the root file each row's own evidence is.
+  const draft = newDraft({ id: "native", file: "" });
   for (const name of SUGGESTED_ENV_FILES) {
     if (await ordinaryFile(deps, path.join(repoRoot, name))) {
-      entries.push({
+      addEntry(draft, {
         id: nextId(),
         path: name,
         mode: "copy",
@@ -78,11 +83,10 @@ export async function suggestProvisioning(
       });
     }
   }
-  const setup: ProvisionSetupStep[] = [];
   for (const manager of SUGGESTED_MANAGERS) {
     for (const lockfile of manager.lockfiles) {
       if (await ordinaryFile(deps, path.join(repoRoot, lockfile))) {
-        setup.push({
+        addSetup(draft, {
           id: nextId(),
           kind: "shell",
           script: manager.command,
@@ -93,7 +97,5 @@ export async function suggestProvisioning(
       }
     }
   }
-  // Fixed distinct literal names cannot fold together, so no contender group
-  // can exist among them.
-  return { entries, setup, ports: [], providers: [], excluded: [], contenders: [], problems: [] };
+  return modelFromDraft(draft);
 }

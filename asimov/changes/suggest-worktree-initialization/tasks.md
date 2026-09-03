@@ -35,3 +35,13 @@
   - **Plan**:
     1. `src/webview/worktree/WorktreeCreateDialog.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` — render suggestion provenance and effect, default suggestions off, update the summary and empty state, and retain current-create versus saved wording.
     2. `src/webview/worktree/WorktreeController.test.ts` and `src/extension.worktreeAssembly.test.ts` — prove suggestion text never becomes authority and a selected environment suggestion is copied; assert the lockfile-derived setup row is present, explained, and unchecked before asserting it does not run.
+
+- [x] 1_3 Assemble the suggestion model through the one owner — verified: pnpm exec vitest run src/worktree/provisioning/oneOwner.test.ts src/worktree/provisioning/suggestProvisioning.test.ts src/worktree/provisioning/readProvisioning.test.ts && pnpm run check-types && pnpm exec vitest run src/worktree/provisioning/ exit 0
+  - **Deps**: 1_1
+  - **Refs**: design.md D1, D2
+  - **Boundary**: No detection rule, suggestion text, provider-order, or persistence change
+  - **Acceptance**:
+    - Outcome: The fallback detector builds its model at the shared assembly point rather than from its own literal
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/oneOwner.test.ts src/worktree/provisioning/suggestProvisioning.test.ts src/worktree/provisioning/readProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/suggestProvisioning.ts` — emit rows into a draft and return `modelFromDraft`, so a field added to `ProvisionModel` cannot reach the adapters and miss this detector.
