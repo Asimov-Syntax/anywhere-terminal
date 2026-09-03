@@ -275,19 +275,48 @@ describe("adoptWorktree", () => {
   it("refuses when the entry it created has been replaced underneath it", async () => {
     const { runner } = runnerOf();
     const store = fsOf();
-    let reads = 0;
+    // The ENTRY's identity moves, and only the entry's. Answering for every
+    // path — which this case used to do, counting reads — made the link's own
+    // identity comparison refuse first, so the guard named here could be
+    // deleted with the case still green (self-audit after round 5).
+    let entryReads = 0;
     const fs: AdoptFs = {
       ...store.fs,
-      identify: async () => {
-        reads += 1;
-        return reads === 1 ? { dev: 1n, ino: 7n } : { dev: 1n, ino: 8n };
+      identify: async (p) => {
+        if (p !== ENTRY) {
+          return store.fs.identify(p);
+        }
+        entryReads += 1;
+        return entryReads === 1 ? { dev: 1n, ino: 7n } : { dev: 1n, ino: 8n };
       },
     };
 
     const result = await adoptWorktree(runner, request, fs);
 
-    expect(result.ok).toBe(false);
-    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+    expect(result).toMatchObject({ ok: false });
+    expect(
+      (result as { message: string }).message,
+      "a different guard refused, so this case does not witness the entry re-check",
+    ).toContain("administrative entry was replaced");
+    expect(store.linkBytes()).toBe(ORIGINAL_LINK);
+  });
+
+  // The link is proved against the corroborated bytes BEFORE anything is
+  // created. The later check catches bytes that move while the entry is being
+  // written; without this one, a link already rewritten when the adoption
+  // arrived would have an entry built for it first (round-2 F006).
+  it("refuses before creating anything when the link is not the one it was offered", async () => {
+    const { runner, calls } = runnerOf();
+    const store = fsOf();
+    store.rewriteLinkInPlace("gitdir: /repo/.git/worktrees/somebody-else\n");
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { message: string }).message).toContain("not the one this adoption was offered on");
+    expect(store.writes, "an entry was built for a link that had already moved").toEqual([]);
+    expect(calls).toEqual([]);
+    expect(store.dirs.has(ENTRY)).toBe(false);
   });
 
   it.each([
