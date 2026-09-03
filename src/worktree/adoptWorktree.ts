@@ -285,6 +285,13 @@ export async function adoptWorktree(
   const putLink = async (data: string): Promise<boolean> => {
     const bytes = Buffer.from(data, "utf8");
     try {
+      // Counted HERE, not at the callers. This has three of them — the claim,
+      // the failed-claim recovery and the undo's restore — and a guard written
+      // at the claim site covered one: an alias made after a successful claim
+      // was rewritten by both of the others (round-5 F013).
+      if (!(await oneName())) {
+        return false;
+      }
       await link.truncate(0);
       let at = 0;
       while (at < bytes.byteLength) {
@@ -360,6 +367,36 @@ export async function adoptWorktree(
       // reported as the link being back (round-4 F005).
       if (state === "restored" && !(await stillOurName())) {
         state = "leftAsFound";
+      }
+    }
+
+    // The one rule, applied: the entry goes only if nothing SOMEBODY ELSE put
+    // there is depending on it. Read BY PATHNAME, which is right here and
+    // nowhere else in this file — the question is exactly "what does that name
+    // say now", and the answer decides only whether we DELETE something of our
+    // own, never what we overwrite.
+    //
+    // The restored case is deliberately not this case. The stale link names the
+    // administrative directory git had already forgotten, and after a pruned
+    // checkout that is the very path `createEntry` claims first — so a correct
+    // restore leaves the link naming this entry, and removing it is what puts
+    // the directory back in the forgotten state the adoption found it in. What
+    // must not happen is removing an entry a link this adoption did NOT write
+    // is pointing at (round-5 F005).
+    if (state !== "restored") {
+      let named = true;
+      try {
+        const visible = await fs.readFile(linkPath);
+        const target = visible === null ? null : gitdirOf(visible, request.worktreePath);
+        named = target !== null && resolve(target) === resolve(entryPath);
+      } catch {
+        // Unreadable is not "nothing points at it". Keeping the entry is the
+        // answer that cannot strand a link.
+        named = true;
+      }
+      if (named) {
+        await link.close().catch(() => {});
+        return { entryPath, link: state };
       }
     }
 
@@ -449,9 +486,6 @@ export async function adoptWorktree(
     // nothing points at — silently, which is what this turns into a refusal.
     if (!sameIdentity(await fs.identify(linkPath), await link.identity())) {
       return failed("That directory's git link was replaced while it was being re-registered.");
-    }
-    if (!(await oneName())) {
-      return failed("That directory's git link is also reachable under another name, so it was not re-registered.");
     }
     if (!(await putLink(ourLink))) {
       // Begun and not finished. The handle is still open, so the old bytes can

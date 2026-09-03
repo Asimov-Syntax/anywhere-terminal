@@ -576,3 +576,42 @@ describe("a `.git` that is reachable under a second name", () => {
     expect(fs.existsSync(path.join(commonDir, "worktrees", "survivor"))).toBe(false);
   });
 });
+
+describe("a second name that appears after the claim", () => {
+  // The alias is created once the adoption has already installed its link, so
+  // neither the open nor the claim could have seen it. Only a count taken
+  // inside the write keeps the undo's restore off it (round-5 F013).
+  it("is not rewritten by the withdrawal", async () => {
+    const alias = path.join(path.dirname(survivor), "late-alias");
+    const watched = {
+      run: async (args: readonly string[], cwd: string) => {
+        if (args[1] === "repair") {
+          fs.linkSync(path.join(survivor, ".git"), alias);
+          return { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false };
+        }
+        return runner.run(args, cwd);
+      },
+    } as typeof runner;
+
+    const result = await adoptWorktree(
+      watched,
+      {
+        repoPath: repo,
+        commonDir,
+        worktreePath: survivor,
+        branch: "survivor",
+        staleGitdir,
+        staleLink,
+        expectedBranchOid: tipOf("survivor"),
+      },
+      realFs,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    // The premise: the alias really is the same object the adoption pinned.
+    expect(fs.statSync(alias).nlink).toBe(2);
+    // And the undo left it holding what the claim wrote, rather than reaching
+    // through it to a file outside the checkout.
+    expect(fs.readFileSync(alias, "utf8")).toBe(`gitdir: ${path.join(commonDir, "worktrees", "survivor")}\n`);
+  });
+});

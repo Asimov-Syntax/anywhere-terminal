@@ -254,7 +254,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 8. Close review round 5 — one rule for the withdrawal, one home for the link count
 
-- [ ] 6_1 Remove the entry only when nothing points at it, and count names inside the write
+- [x] 6_1 Remove the entry only when nothing points at it, and count names inside the write — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 5_1
   - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-undo-restores-only-the-git-entry-the-adoption-itself-replaced}; `.reviews/round-5.md` F005, F013
   - **Acceptance**:

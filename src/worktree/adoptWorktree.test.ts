@@ -1134,3 +1134,80 @@ describe("adoptWorktree withdraws in an order that leaves no dangling link", () 
     expect(store.linkBytes()).toBe(REPLACEMENT);
   });
 });
+
+describe("adoptWorktree does not remove an entry something else is pointing at", () => {
+  function failingRepair() {
+    return runnerOf((args) =>
+      args[1] === "repair"
+        ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false }
+        : ok(`${TIP}\n`),
+    );
+  }
+
+  // Round 4 separated the link's outcome from the entry's removal, and round 5
+  // found them disagreeing: the link is correctly left as somebody else's, and
+  // the entry it names is deleted a few lines later anyway.
+  it("keeps the entry when a foreign link names it, and says so", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        return {
+          ...handle,
+          writeAt: async (data, position) => {
+            const wrote = await handle.writeAt(data, position);
+            // A replacement that points at THIS adoption's entry — the case the
+            // `somebody-else` witness could not see, because it named a path
+            // nothing depended on.
+            if (data.toString("utf8") === ORIGINAL_LINK) {
+              store.replaceLink(`gitdir: ${ENTRY}\n`);
+            }
+            return wrote;
+          },
+        };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: ENTRY, link: "leftAsFound" } });
+    expect(store.dirs.has(ENTRY), "the entry the visible link names was removed under it").toBe(true);
+    expect(store.linkBytes()).toBe(`gitdir: ${ENTRY}\n`);
+  });
+
+  // `putLink` has three callers and the count used to be at one of them.
+  it("will not rewrite an alias that appears before the undo's restore", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      openLink: async (p) => {
+        const handle = await store.fs.openLink(p);
+        let claimed = false;
+        return {
+          ...handle,
+          writeAt: async (data, position) => {
+            const wrote = await handle.writeAt(data, position);
+            if (!claimed) {
+              claimed = true;
+              // The alias lands AFTER a successful claim, so only a count taken
+              // inside the write can see it when the undo comes back through.
+              store.hardLinkTheLink();
+            }
+            return wrote;
+          },
+        };
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false });
+    // The restore did not happen, and the outcome says so rather than claiming
+    // a withdrawal that rewrote a file outside the checkout.
+    expect(store.linkBytes(), "the aliased object was rewritten by the undo").toBe(`gitdir: ${ENTRY}\n`);
+    expect(result.ok === false && result.leftBehind?.link).toBe("unknown");
+  });
+});
