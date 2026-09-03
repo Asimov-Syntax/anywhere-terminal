@@ -15,7 +15,7 @@
 
 ## 2. Show a package's file as the file it is
 
-- [ ] 2_1 Name a workspace suggestion by its path, end to end
+- [x] 2_1 Name a workspace suggestion by its path, end to end — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/extension.worktreeAssembly.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-workspace-repository-s-package-environment-files-are-found,every-initialization-suggestion-is-explicit-and-explained}; design.md D4
   - **Boundary**: No automatic selection, save-semantics change, or webview-authored path

@@ -2099,6 +2099,86 @@ describe("the invariants that span the host and the webview", () => {
     }
   });
 
+  it("copies a workspace package's environment suggestion to the same relative place", async () => {
+    noProviderFiles();
+    registerCreates = true;
+    const pkgJson = path.join(REPO, "package.json");
+    const prior = fs.existsSync(pkgJson) ? fs.readFileSync(pkgJson, "utf8") : null;
+    fs.mkdirSync(path.join(REPO, "apps", "web"), { recursive: true });
+    fs.mkdirSync(path.join(REPO, "apps", "server"), { recursive: true });
+    fs.writeFileSync(pkgJson, JSON.stringify({ name: "mono", workspaces: ["apps/*"] }));
+    fs.writeFileSync(path.join(REPO, "apps", "web", ".env"), "WEB=1\n");
+    fs.writeFileSync(path.join(REPO, "apps", "server", ".env"), "SERVER=1\n");
+    try {
+      await assemble();
+
+      clickItem(openMenu("feature"), /new worktree/i);
+      await settleUntil(
+        () =>
+          [...document.querySelectorAll(".wt-brow")].some((row) =>
+            (row.textContent ?? "").includes("apps/server/.env"),
+          ),
+        "the workspace suggestion offer",
+      );
+      const drawn = [...document.querySelectorAll<HTMLElement>(".wt-brow")];
+      const webRow = drawn.find((row) => (row.textContent ?? "").includes("apps/web/.env"));
+      const serverRow = drawn.find((row) => (row.textContent ?? "").includes("apps/server/.env"));
+      if (webRow === undefined || serverRow === undefined) {
+        throw new Error("the form did not offer both package suggestions");
+      }
+      // Two files of the same NAME in different packages. A row showing the bare
+      // filename would make these two indistinguishable, which is the whole
+      // reason the path is what a row carries.
+      expect(webRow).not.toBe(serverRow);
+      const webBox = webRow.querySelector<HTMLInputElement>(".wt-brow-cb");
+      const serverBox = serverRow.querySelector<HTMLInputElement>(".wt-brow-cb");
+      // Still opt-in at depth: a nested secret is no less a secret.
+      expect(webBox?.checked).toBe(false);
+      expect(serverBox?.checked).toBe(false);
+      if (webBox == null) {
+        throw new Error("the workspace suggestion has no checkbox");
+      }
+      webBox.checked = true;
+      webBox.dispatchEvent(new Event("change", { bubbles: true }));
+
+      const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+      if (branch === null) {
+        throw new Error("the create form has no branch field");
+      }
+      branch.value = "feat/monorepo";
+      branch.dispatchEvent(new Event("input", { bubbles: true }));
+      branch.dispatchEvent(new Event("change", { bubbles: true }));
+      await settle();
+      const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+      if (destination === undefined || destination === "") {
+        throw new Error("the host resolved no destination");
+      }
+      fs.mkdirSync(destination, { recursive: true });
+
+      [...document.querySelectorAll<HTMLButtonElement>("button")]
+        .find((b) => /create worktree/i.test(b.textContent ?? ""))
+        ?.click();
+      await settleUntil(() => createNotices().length > 0, "the create to report back");
+      await settle();
+
+      // Same relative location, through the shipped bindings.
+      expect(fs.readFileSync(path.join(destination, "apps", "web", ".env"), "utf8")).toBe("WEB=1\n");
+      // The package nobody ticked contributed nothing.
+      expect(fs.existsSync(path.join(destination, "apps", "server", ".env"))).toBe(false);
+      // And the request still carried only opaque ids.
+      const create = outbound.find((message) => message.type === "worktreeCreate");
+      expect(create?.provision?.itemIds).toHaveLength(1);
+      expect(JSON.stringify(create)).not.toContain("apps/web/.env");
+    } finally {
+      fs.rmSync(path.join(REPO, "apps"), { recursive: true, force: true });
+      if (prior === null) {
+        fs.rmSync(pkgJson, { force: true });
+      } else {
+        fs.writeFileSync(pkgJson, prior);
+      }
+    }
+  });
+
   it("starts an ungated agent while selected setup is still running", async () => {
     noProviderFiles();
     registerCreates = true;

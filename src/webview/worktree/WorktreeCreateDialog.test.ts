@@ -5361,3 +5361,38 @@ describe("terms the form uses", () => {
     expect(host.querySelector<HTMLButtonElement>("#wt-detached")?.getAttribute("aria-pressed")).toBe("false");
   });
 });
+
+describe("workspace package suggestions in the form", () => {
+  const pkgSuggestion = (dir: string) => ({
+    id: `w-${dir}`,
+    path: `${dir}/.env`,
+    mode: "copy" as const,
+    source: `${dir}/.env`,
+    suggestion: `\`${dir}/.env\` is inside a workspace package this repository declares and may contain secrets.`,
+  });
+
+  it("[2_1] tells two packages' identically-named files apart, and starts both unticked", () => {
+    const { host } = open({
+      repos: [
+        createDefaults({
+          provisioning: provisionOffer({
+            model: provisionModel({ entries: [pkgSuggestion("apps/web"), pkgSuggestion("apps/server")], setup: [] }),
+          }),
+        }),
+      ],
+    });
+
+    const rows = [...host.querySelectorAll<HTMLElement>(".wt-brow")];
+    const web = rows.find((r) => (r.textContent ?? "").includes("apps/web/.env"));
+    const server = rows.find((r) => (r.textContent ?? "").includes("apps/server/.env"));
+    expect(web, "no apps/web row").toBeTruthy();
+    expect(server, "no apps/server row").toBeTruthy();
+    // Distinct rows, not one row matched twice — `.env` alone would be the same
+    // string in both, which is exactly what the path is here to prevent.
+    expect(web).not.toBe(server);
+    // A nested secret is no less a secret: consent is still per row.
+    expect(web?.querySelector<HTMLInputElement>(".wt-brow-cb")?.checked).toBe(false);
+    expect(server?.querySelector<HTMLInputElement>(".wt-brow-cb")?.checked).toBe(false);
+  });
+});
+
