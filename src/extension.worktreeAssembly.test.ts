@@ -622,33 +622,38 @@ function linkTheWorktree(): void {
  *
  * The old bound was a flat 40 turns, and the full suite outgrew it: adding ANY
  * test file to the run — including two pure modules this suite never imports —
- * reproduced a failure here, a different assertion each time, because the extra
- * scheduling pressure pushed the host past 40 turns before the walk read the
- * DOM.
+ * reproduced a failure here, a different assertion each time. It reproduces far
+ * harder under `asm change verify-task`, which polls its child with a
+ * `spawnSync("ps", …)` every 20ms for the whole run, so the suite is competing
+ * with ~50 process spawns a second on top of its own 13 workers.
  *
- * So the floor stays 40, and past it the pump keeps going WHILE THE DOM IS
- * STILL MOVING, up to 300. Raising the flat bound instead was measured and
- * rejected — it took this file from 12s to 40s, because every call site paid
- * the worst case.
+ * So the floor stays 40, and past it the pump keeps going WHILE THE WORK IS
+ * STILL LANDING, up to 300. Two signals, because this file asserts on two
+ * things: the rendered DOM, and the git argv the host issued. A host suspended
+ * mid-`await` paints nothing AND spawns nothing, so neither signal alone is
+ * settlement — but a host that is still working almost always moves one of
+ * them, and requiring both to hold still is what the assertions here mean by
+ * "settled".
  *
- * This is a MITIGATION, and a partial one. It never returns earlier than the
- * old helper did, so nothing that passed before can start failing here — but
- * DOM quiescence is not settlement: a host suspended in `await assess(...)`
- * changes no DOM at all, so five quiet turns can pass while the work that will
- * paint the report has not resumed. The durable answer is `settleUntil` at each
- * remaining call site, waiting on the thing that site is actually about.
+ * Still a MITIGATION. It never returns earlier than the old helper did, so
+ * nothing that passed before can start failing here, but quiescence is not
+ * completion. The durable answer is `settleUntil` at each call site, waiting on
+ * the thing that site is actually about.
  */
 async function settle(): Promise<void> {
   const FLOOR = 40;
-  const QUIET_TURNS = 5;
-  let previous = "";
+  const QUIET_TURNS = 8;
+  let painted = "";
+  let issued = -1;
   let quiet = 0;
   for (let turn = 0; turn < 300; turn++) {
     await Promise.resolve();
     await new Promise((r) => setTimeout(r, 0));
-    const painted = document.body.innerHTML;
-    quiet = painted === previous ? quiet + 1 : 0;
-    previous = painted;
+    const nowPainted = document.body.innerHTML;
+    const nowIssued = argv.length;
+    quiet = nowPainted === painted && nowIssued === issued ? quiet + 1 : 0;
+    painted = nowPainted;
+    issued = nowIssued;
     if (turn >= FLOOR - 1 && quiet >= QUIET_TURNS) {
       return;
     }
