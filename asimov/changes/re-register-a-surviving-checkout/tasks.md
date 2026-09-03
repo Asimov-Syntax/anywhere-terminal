@@ -336,3 +336,16 @@ thing here. Then a second detector, an executor, the form's action, and the guar
   - **Plan**:
     1. `asimov/changes/re-register-a-surviving-checkout/specs/worktree-panel/spec.md` — the two scenarios saying the registration "is removed" become the withdrawal D4 actually performs, and the undo that "cannot remove the entry" becomes one that cannot empty or unlock it.
     2. `asimov/changes/re-register-a-surviving-checkout/design.md` — the withdrawal ledger row restricts the reported entry path to a handoff that did not complete, matching `entryPath: collectable ? null : entryPath`; the risk map's "`gitdir` first" mitigation becomes locked-first with descriptor-owned initialization.
+
+- [x] 11_1 Reconcile every remaining passage against D4 in one sweep, artifacts and test names alike — verified: bun run asm change validate re-register-a-surviving-checkout && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 10_1
+  - **Refs**: design.md D4; `.reviews/round-10.md` F018
+  - **Acceptance**:
+    - Outcome: No passage in this change describes a withdrawal that removes an entry
+    - Verify: command bun run asm change validate re-register-a-surviving-checkout
+  - **Boundary**: Names, comments and artifact prose only — no assertion, no production behavior
+  - **Plan**:
+    1. `asimov/changes/re-register-a-surviving-checkout/design.md` — the `nlink === 0` ledger witness says the entry "is still removed" and that the STALE bytes survive; the test asserts a collectable entry, no reported path, and the REPLACEMENT's bytes (F018).
+    2. `src/worktree/adoptWorktree.ts` — the undo's ordering comment still says "removing the entry".
+    3. `src/worktree/adoptWorktree.test.ts` — two names assert the superseded contract: an undo failing at "cannot be removed" when the fake rejects the marker unlink, and "removes the entry even when a foreign link names it" with a comment block to match.
+    4. `src/worktree/adoptWorktree.integration.test.ts` — "leaves no entry" names a listing, not a directory; and the three git-behaviour probes still credit `gitdir`-first for what `locked` now does.

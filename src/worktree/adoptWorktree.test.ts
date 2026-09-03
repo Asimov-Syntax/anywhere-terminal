@@ -569,7 +569,7 @@ describe("adoptWorktree", () => {
 
   // An undo that cannot finish is not a clean failure, and reporting one would
   // send the user looking for a directory that is still registered.
-  it("names what it left behind when the entry cannot be removed", async () => {
+  it("names what it left behind when the entry cannot be unlocked", async () => {
     const { runner } = runnerOf((args) =>
       args[1] === "repair"
         ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false }
@@ -1517,13 +1517,12 @@ describe("adoptWorktree withdraws the entry it created whatever the link says", 
   }
 
   // Rounds 4 and 5 made the removal depend on what the visible link named, and
-  // round 6 found the schedule where that read expires before the `removeDir`.
+  // round 6 found the schedule where that read expires before the deletion.
   // The dependency is gone, and this is the case it used to protect: the entry
-  // is removed even though a replacement link names it. Verified on git 2.50.1,
-  // that leaves the destination in the state `probeAdopt` recognises and that
-  // `git worktree prune` produces unasked — whereas RETAINING it leaves a
-  // directory `git worktree list` omits and `prune` never collects.
-  it("removes the entry even when a foreign link names it", async () => {
+  // is handed to git's collection even though a replacement link names it.
+  // Nothing is deleted to do it (D4) — the entry is emptied and unlocked, which
+  // is the state `git worktree prune` collects and `git worktree list` omits.
+  it("hands the entry over collectable even when a foreign link names it", async () => {
     const { runner } = failingRepair();
     const store = fsOf();
     const fs: AdoptFs = {

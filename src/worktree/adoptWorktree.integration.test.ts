@@ -288,7 +288,7 @@ describe("what git does with a reconstructed entry", () => {
     );
   });
 
-  it("leaves no entry and reports a refusal when the branch is taken during the adoption", async () => {
+  it("leaves nothing listed and reports a refusal when the branch is taken during the adoption", async () => {
     // The window the pre-read cannot close. Driven here by taking the branch
     // BEFORE the write, which is what an external `git worktree add` landing in
     // the user's pause looks like from inside.
@@ -317,18 +317,19 @@ describe("what git does with a reconstructed entry", () => {
       expect(await result.undo(), "the undo could not put the directory back").toBeUndefined();
     }
     expect(listed()).toContain(rival);
-    expect(listed(), "the undo left the registration it wrote").not.toContain(survivor);
+    expect(listed(), "the undo left the registration it wrote listed").not.toContain(survivor);
     // And the link holds the bytes it held. Restored, not removed: this
     // directory HAD one — pointing at the entry that was deleted — and putting
     // back a different state would be the undo changing what it found.
     expect(fs.readFileSync(path.join(survivor, ".git"), "utf8")).toBe(linkBefore);
   });
 
-  it("removes an entry whose `gitdir` file is missing, which is why that file is written first", () => {
-    // Not a claim about our code — a claim about git, and the one D4's write
-    // order rests on. If this ever stops holding, the order is free to change;
-    // while it holds, writing `gitdir` last would let a concurrent prune delete
-    // the entry between the mkdir and the link.
+  it("removes an entry whose `gitdir` file is missing, which is the state a withdrawal leaves", () => {
+    // Not a claim about our code — a claim about git, and one of the four D4's
+    // state table rests on. It is why a withdrawal can empty `gitdir` and stop:
+    // an entry in this state is git's to collect. It is also why the whole
+    // construction runs under `locked`, since a half-written `gitdir` is
+    // indistinguishable from this one.
     const entry = path.join(commonDir, "worktrees", "handmade");
     fs.mkdirSync(entry, { recursive: true });
     fs.writeFileSync(path.join(entry, "commondir"), "../..\n", "utf8");
@@ -339,13 +340,16 @@ describe("what git does with a reconstructed entry", () => {
     expect(fs.existsSync(entry), "git kept an entry with no gitdir file").toBe(false);
   });
 
-  it("keeps an entry whose `gitdir` names a path that exists, which the adoption writes first", () => {
+  it("keeps an entry whose `gitdir` names a path that exists, which is why the link is written last", () => {
     // The other half, and the exact claim — not "a gitdir file is enough".
     // Git prunes an entry whose `gitdir` names a path that is GONE just as
     // readily as one with no `gitdir` at all, which the sibling below pins. What
     // spares the entry is naming a path that is there, and `<wt>/.git` IS there
     // throughout the adoption: it holds the stale link until the last write
-    // replaces it. That is why `gitdir` can be written first and still protect.
+    // replaces it. So between `gitdir` and that last write the entry is inert —
+    // neither listed nor collected — which is what lets the link be written last.
+    // The construction interval BEFORE `gitdir` holds its bytes is covered by
+    // `locked` instead, not by this.
     const entry = path.join(commonDir, "worktrees", "handmade");
     fs.mkdirSync(entry, { recursive: true });
     fs.writeFileSync(path.join(entry, "gitdir"), `${path.join(survivor, ".git")}\n`, "utf8");

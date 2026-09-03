@@ -434,10 +434,10 @@ export async function adoptWorktree(
   };
 
   const undo = async (): Promise<AdoptResidue | undefined> => {
-    // The LINK first, and the order is the claim: removing the entry before the
-    // link goes back leaves an interval in which `<wt>/.git` names a directory
-    // that is already gone, and a withdrawal interrupted there hands the user a
-    // checkout pointing at nothing (round-4 F005). Reversed, every instant is a
+    // The LINK first, and the order is the claim: emptying the entry before the
+    // link goes back leaves an interval in which `<wt>/.git` names an entry git
+    // is already free to collect, and a withdrawal interrupted there hands the
+    // user a checkout pointing at nothing (round-4 F005). Reversed, every instant is a
     // coherent pair — git neither lists nor prunes an entry whose `gitdir` names
     // a path that exists, so ours sits inert between the two steps (D4).
     //
