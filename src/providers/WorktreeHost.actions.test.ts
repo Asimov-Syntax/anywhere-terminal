@@ -4385,6 +4385,114 @@ describe("the host resolves a selection before the create runs", () => {
     dispose();
   });
 
+  /** Resolve an adopt, then submit whatever create a caller composes from it. */
+  async function adoptThenSubmit(
+    over: Record<string, unknown>,
+    compose: (published: { adoptPath: string; expectedBranchOid: string }) => Record<string, unknown>,
+  ): Promise<{ calls: [string, ...unknown[]][]; view: ReturnType<typeof surface>; dispose: () => void }> {
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+      ...over,
+    });
+    await probeFor(view, host);
+    const published = resolutionIn(view)?.mode as unknown as { adoptPath: string; expectedBranchOid: string };
+    host.handleMessage(view, {
+      type: "worktreeCreate",
+      repoId: REPO,
+      opening: 1,
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
+      ...compose(published),
+    } as never);
+    await settle();
+    return { calls, view, dispose };
+  }
+
+  const creates = (calls: readonly [string, ...unknown[]][]): unknown[] => calls.filter(([name]) => name === "createWorktree");
+
+  it("runs the adoption the answer published", async () => {
+    const { calls, dispose } = await adoptThenSubmit({}, (published) => ({
+      path: published.adoptPath,
+      mode: { kind: "adopt", branch: "idle", ...published },
+    }));
+
+    expect(creates(calls)).toHaveLength(1);
+    dispose();
+  });
+
+  it("refuses an adoption naming a directory the answer never published", async () => {
+    // The submitted fields reach git's own administrative directory, and the
+    // post-write tip check validates the CLAIM rather than where it came from.
+    // Without this the current opening could re-register any directory the
+    // permissive probe accepts, on any branch it knows (round-1 F001).
+    const { calls, view, dispose } = await adoptThenSubmit({}, (published) => ({
+      path: "/trees/somewhere-else",
+      mode: { kind: "adopt", branch: "idle", ...published, adoptPath: "/trees/somewhere-else" },
+    }));
+
+    expect(creates(calls)).toEqual([]);
+    // Refused OUT LOUD: a Create button that silently does nothing leaves the
+    // user with no way to learn that reopening the dialog is the recovery.
+    expect(view.posts.filter((m) => m.type === "worktreeMutationResult")).toHaveLength(1);
+    dispose();
+  });
+
+  it("refuses an adoption naming a branch the answer never published", async () => {
+    const { calls, dispose } = await adoptThenSubmit({}, (published) => ({
+      path: published.adoptPath,
+      mode: { kind: "adopt", branch: "main", ...published },
+    }));
+
+    expect(creates(calls)).toEqual([]);
+    dispose();
+  });
+
+  it("refuses an adoption naming a tip the answer never published", async () => {
+    const { calls, dispose } = await adoptThenSubmit({}, (published) => ({
+      path: published.adoptPath,
+      mode: { kind: "adopt", branch: "idle", adoptPath: published.adoptPath, expectedBranchOid: "oid-forged" },
+    }));
+
+    expect(creates(calls)).toEqual([]);
+    dispose();
+  });
+
+  it("refuses an adoption whose stated destination is not the directory it re-registers", async () => {
+    const { calls, dispose } = await adoptThenSubmit({}, (published) => ({
+      path: "/trees/repo-idle-2",
+      mode: { kind: "adopt", branch: "idle", ...published },
+    }));
+
+    expect(creates(calls)).toEqual([]);
+    dispose();
+  });
+
+  it("refuses an adoption after a newer probe withdrew the answer that offered it", async () => {
+    // The record is withdrawn when a newer probe is ADMITTED, not when its
+    // answer lands: the window between the two is the whole point.
+    const { host, view, calls, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+    const published = resolutionIn(view)?.mode as unknown as { adoptPath: string; expectedBranchOid: string };
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 1, query: "main" });
+    host.handleMessage(view, {
+      type: "worktreeCreate",
+      repoId: REPO,
+      opening: 1,
+      path: published.adoptPath,
+      mode: { kind: "adopt", branch: "idle", ...published },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
+    } as never);
+    await settle();
+
+    expect(creates(calls)).toEqual([]);
+    dispose();
+  });
+
   it("leaves the occupied candidate alone when the checkout belongs to another repository", async () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       ...adoptable,

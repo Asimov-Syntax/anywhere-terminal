@@ -2262,12 +2262,26 @@ describe("the invariants that span the host and the webview", () => {
     // here and the repair below would go unreached for the wrong reason.
     await host.handleMessage(surface, { type: "requestWorktreeCreateDefaults", repoId: REPO_ID, opening: 1 });
     await settle();
+    // And the RESOLUTION has to exist before the repair can submit: a repair
+    // runs on the directory and commit the host itself published, never on
+    // fields the message carried (round-1 F001). A hand-built submit is now
+    // refused for that reason, so this walk asks the same question the panel
+    // asks and submits the answer it gets back.
+    await host.handleMessage(surface, { type: "requestWorktreeRefs", repoId: REPO_ID, token: 1 });
+    await host.handleMessage(surface, { type: "worktreeCreateProbe", repoId: REPO_ID, token: 1, seq: 0, query: "feature" });
+    await settleUntil(
+      () => posted.some((m) => m.type === "worktreeCreateResolution" && m.mode?.kind === "reattach"),
+      "the reattach resolution the repair submits",
+    );
+    const published = posted
+      .filter((m) => m.type === "worktreeCreateResolution")
+      .at(-1)?.mode as unknown as { repairPath: string; expectedOid: string };
     await host.handleMessage(surface, {
       type: "worktreeCreate",
       repoId: REPO_ID,
       opening: 1,
-      path: LINKED,
-      mode: { kind: "reattach", branch: "feature", repairPath: LINKED, expectedOid: "2".repeat(40) },
+      path: published.repairPath,
+      mode: { kind: "reattach", branch: "feature", ...published },
       disposition: { kind: "free" },
       afterCreate: { kind: "none" },
     } as never);

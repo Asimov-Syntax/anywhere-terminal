@@ -134,7 +134,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     3. `src/extension.ts` — the production adapters treat only `ENOENT`/`ENOTDIR` as absence; any other read failure is an unreadable refusal, for `adminDirExists` and for the undo's `readFile` (F003).
     4. `src/worktree/adoptProbe.test.ts`, `src/providers/WorktreeHost.actions.test.ts`, `src/worktree/worktreeMutationService.test.ts` — a stale gitdir under another repository declines at the probe, is not offered by the host, and is refused by the mutation.
 
-- [ ] 2_3 Run an adoption only on the resolution the host published
+- [x] 2_3 Run an adoption only on the resolution the host published — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 2_2
   - **Refs**: design.md D1, D3; `.reviews/round-1.md` F001
   - **Acceptance**:
@@ -144,6 +144,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     1. `src/providers/WorktreeHost.ts` — the `Opening` record carries the repair mode this opening's latest answer published, set beside `debrisCandidate` and withdrawn with it.
     2. `src/providers/WorktreeHost.ts` — an inbound `worktreeCreate` naming `adopt` or `reattach` runs only when its path, branch, target and expected oid equal that record, and is refused with a stated reason otherwise (F001).
     3. `src/providers/WorktreeHost.actions.test.ts` — a substituted path, branch or tip refuses and says so, and the legitimate submission still runs.
+    4. `src/extension.worktreeAssembly.test.ts` — the assembled repair submits the resolution the host published rather than a hand-built one, which is what the rule now requires of the panel.
 
 - [ ] 2_4 Make the reconstruction non-destructive under substitution and leave nothing behind
   - **Deps**: 2_3

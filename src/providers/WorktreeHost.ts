@@ -1113,7 +1113,57 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
      * any readable non-git directory a message could name (round-1 B1).
      */
     debrisCandidate: string | null;
+    /**
+     * The repair this opening's latest answer actually published, if any.
+     *
+     * `adopt` and `reattach` are the two submissions that carry a directory and
+     * a commit the host RESOLVED rather than a name it can re-resolve, and both
+     * reach git's own administrative directory. Without this record the fields
+     * were taken from the message, so a current opening could re-register any
+     * directory the probe would accept, on any branch and tip it knew — the
+     * post-write checks validate the claim, not where the claim came from
+     * (round-1 F001). Same rule and same lifetime as `debrisCandidate`.
+     */
+    publishedRepair: PublishedRepair | null;
   }
+
+  /** The two resolved modes, as they were PUBLISHED, with the branch they were for. */
+  type PublishedRepair =
+    | { kind: "adopt"; branch: string; adoptPath: string; expectedBranchOid: string }
+    | { kind: "reattach"; branch: string; repairPath: string; expectedOid: string };
+
+  /**
+   * Is this submission the repair the host published, in every field?
+   *
+   * The stated destination is compared too: an adoption re-registers the
+   * directory it was offered on, and a create naming a different one is not the
+   * create the panel composed.
+   */
+  const matchesPublished = (
+    published: PublishedRepair | null | undefined,
+    mode: WorktreeCreateMode,
+    path: string,
+  ): boolean => {
+    if (published === undefined || published === null || published.kind !== mode.kind) {
+      return false;
+    }
+    if (published.kind === "adopt" && mode.kind === "adopt") {
+      return (
+        published.branch === mode.branch &&
+        published.adoptPath === mode.adoptPath &&
+        published.expectedBranchOid === mode.expectedBranchOid &&
+        published.adoptPath === path
+      );
+    }
+    return (
+      published.kind === "reattach" &&
+      mode.kind === "reattach" &&
+      published.branch === mode.branch &&
+      published.repairPath === mode.repairPath &&
+      published.expectedOid === mode.expectedOid &&
+      published.repairPath === path
+    );
+  };
   const openings = new Map<string, Opening>();
   const surfaceKeys = new WeakMap<WorktreeSurface, string>();
   let surfaceSeq = 0;
@@ -2004,6 +2054,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       offerable && occupiedCandidate !== undefined && occupiedCandidate.disposition.kind === "debris"
         ? occupiedCandidate.path
         : null;
+    // Recorded as it is PUBLISHED, beside the debris candidate and on the same
+    // rule: the only repair a submission may run is the one this opening's
+    // latest answer put on screen. `msg.query` is the branch that answer was
+    // about — the same value the form submits (round-1 F001).
+    publishing.publishedRepair =
+      mode.kind === "adopt"
+        ? { kind: "adopt", branch: msg.query, adoptPath: mode.adoptPath, expectedBranchOid: mode.expectedBranchOid }
+        : mode.kind === "reattach"
+          ? { kind: "reattach", branch: msg.query, repairPath: mode.repairPath, expectedOid: mode.expectedOid }
+          : null;
     surface.post({
       type: "worktreeCreateResolution",
       repoId: msg.repoId,
@@ -2247,6 +2307,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         if (msg.disposition.kind === "debris" && msg.disposition.authorization.path !== msg.path) {
           return;
         }
+        // A repair runs on the host's own resolution or not at all. Refused OUT
+        // LOUD, like a stale provisioning offer: a Create button that silently
+        // does nothing leaves the user no way to learn that reopening the
+        // dialog is the recovery (round-1 F001).
+        if (
+          (msg.mode.kind === "adopt" || msg.mode.kind === "reattach") &&
+          !matchesPublished(openingFor(surface, msg.repoId, msg.opening)?.publishedRepair, msg.mode, msg.path)
+        ) {
+          surface.post({
+            type: "worktreeMutationResult",
+            verb: "create",
+            repoId: msg.repoId,
+            result: {
+              kind: "error",
+              message:
+                "the directory this create was resolved against has changed — close and reopen the dialog, then create again",
+            },
+          });
+          return;
+        }
         // The selection names ITEMS; the host holds the model. Resolved here,
         // from the offer this surface was shown, so nothing the webview spelled
         // reaches the filesystem — the property offerStore.ts exists for
@@ -2425,6 +2505,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // authorizable, which is the whole window a user's edit was supposed to
         // close (round-2 B1).
         opening.debrisCandidate = null;
+        // WITHDRAWN with it, and for the same reason: between admitting a newer
+        // probe and posting its answer, the previous repair stayed submittable.
+        opening.publishedRepair = null;
         void answerCreateProbe(surface, msg, repo);
         return;
       }
@@ -2943,6 +3026,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           read: inFlight,
           latestSeq: Number.NEGATIVE_INFINITY,
           debrisCandidate: null,
+          publishedRepair: null,
         });
         void inFlight
           .then((answer) => {
