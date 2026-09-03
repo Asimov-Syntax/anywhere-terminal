@@ -4411,7 +4411,8 @@ describe("the host resolves a selection before the create runs", () => {
     return { calls, view, dispose };
   }
 
-  const creates = (calls: readonly [string, ...unknown[]][]): unknown[] => calls.filter(([name]) => name === "createWorktree");
+  const creates = (calls: readonly [string, ...unknown[]][]): unknown[] =>
+    calls.filter(([name]) => name === "createWorktree");
 
   it("runs the adoption the answer published", async () => {
     const { calls, dispose } = await adoptThenSubmit({}, (published) => ({

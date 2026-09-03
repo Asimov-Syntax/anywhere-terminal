@@ -2268,14 +2268,21 @@ describe("the invariants that span the host and the webview", () => {
     // refused for that reason, so this walk asks the same question the panel
     // asks and submits the answer it gets back.
     await host.handleMessage(surface, { type: "requestWorktreeRefs", repoId: REPO_ID, token: 1 });
-    await host.handleMessage(surface, { type: "worktreeCreateProbe", repoId: REPO_ID, token: 1, seq: 0, query: "feature" });
+    await host.handleMessage(surface, {
+      type: "worktreeCreateProbe",
+      repoId: REPO_ID,
+      token: 1,
+      seq: 0,
+      query: "feature",
+    });
     await settleUntil(
       () => posted.some((m) => m.type === "worktreeCreateResolution" && m.mode?.kind === "reattach"),
       "the reattach resolution the repair submits",
     );
-    const published = posted
-      .filter((m) => m.type === "worktreeCreateResolution")
-      .at(-1)?.mode as unknown as { repairPath: string; expectedOid: string };
+    const published = posted.filter((m) => m.type === "worktreeCreateResolution").at(-1)?.mode as unknown as {
+      repairPath: string;
+      expectedOid: string;
+    };
     await host.handleMessage(surface, {
       type: "worktreeCreate",
       repoId: REPO_ID,

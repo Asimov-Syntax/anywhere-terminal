@@ -31,7 +31,10 @@ describe("probeAdopt", () => {
   });
 
   it("declines while the administrative directory is still there", async () => {
-    const verdict = await probeAdopt({ candidatePath: "/wt/survivor", commonDir: COMMON }, deps({ adminDirExists: async () => true }));
+    const verdict = await probeAdopt(
+      { candidatePath: "/wt/survivor", commonDir: COMMON },
+      deps({ adminDirExists: async () => true }),
+    );
 
     expect(verdict).toEqual({ kind: "declined", because: "notAPrunedCheckout" });
   });
@@ -39,19 +42,28 @@ describe("probeAdopt", () => {
   // A `.git` DIRECTORY is a repository of its own, and adopting it would attach
   // someone else's repository to this one's branch.
   it("declines a repository", async () => {
-    const verdict = await probeAdopt({ candidatePath: "/wt/repo", commonDir: COMMON }, deps({ readGitLink: async () => ({ kind: "directory" }) }));
+    const verdict = await probeAdopt(
+      { candidatePath: "/wt/repo", commonDir: COMMON },
+      deps({ readGitLink: async () => ({ kind: "directory" }) }),
+    );
 
     expect(verdict).toEqual({ kind: "declined", because: "notAPrunedCheckout" });
   });
 
   it("declines a directory with no git entry at all — that is debris, not a checkout", async () => {
-    const verdict = await probeAdopt({ candidatePath: "/wt/debris", commonDir: COMMON }, deps({ readGitLink: async () => ({ kind: "absent" }) }));
+    const verdict = await probeAdopt(
+      { candidatePath: "/wt/debris", commonDir: COMMON },
+      deps({ readGitLink: async () => ({ kind: "absent" }) }),
+    );
 
     expect(verdict).toEqual({ kind: "declined", because: "notAPrunedCheckout" });
   });
 
   it("declines a `.git` that is neither a file nor a directory", async () => {
-    const verdict = await probeAdopt({ candidatePath: "/wt/odd", commonDir: COMMON }, deps({ readGitLink: async () => ({ kind: "notAFile" }) }));
+    const verdict = await probeAdopt(
+      { candidatePath: "/wt/odd", commonDir: COMMON },
+      deps({ readGitLink: async () => ({ kind: "notAFile" }) }),
+    );
 
     expect(verdict).toEqual({ kind: "declined", because: "notAPrunedCheckout" });
   });
@@ -60,7 +72,10 @@ describe("probeAdopt", () => {
   // read is still a `.git`, and reading unreadable as absent would adopt over a
   // live registration.
   it("declines an unreadable git entry rather than reading it as gone", async () => {
-    const verdict = await probeAdopt({ candidatePath: "/wt/locked", commonDir: COMMON }, deps({ readGitLink: async () => ({ kind: "unreadable" }) }));
+    const verdict = await probeAdopt(
+      { candidatePath: "/wt/locked", commonDir: COMMON },
+      deps({ readGitLink: async () => ({ kind: "unreadable" }) }),
+    );
 
     expect(verdict).toEqual({ kind: "declined", because: "unreadable" });
   });
@@ -111,14 +126,17 @@ describe("probeAdopt refuses a gitfile git itself rejects", () => {
   it("declines a `.git` whose `gitdir:` is not the first thing in it", async () => {
     // The authority to overwrite a `.git` cannot be weaker than git's own
     // reading of it (round-1 F007).
-    const verdict = await probeAdopt({ candidatePath: "/wt/stale", commonDir: COMMON }, {
-      readGitLink: (p: string) =>
-        readGitLink(p, {
-          lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
-          readFile: async () => "junk\ngitdir: /repo/.git/worktrees/stale\n",
-        }),
-      adminDirExists: async () => false,
-    });
+    const verdict = await probeAdopt(
+      { candidatePath: "/wt/stale", commonDir: COMMON },
+      {
+        readGitLink: (p: string) =>
+          readGitLink(p, {
+            lstat: async () => ({ isDirectory: () => false, isFile: () => true }),
+            readFile: async () => "junk\ngitdir: /repo/.git/worktrees/stale\n",
+          }),
+        adminDirExists: async () => false,
+      },
+    );
 
     expect(verdict).toEqual({ kind: "declined", because: "unreadable" });
   });

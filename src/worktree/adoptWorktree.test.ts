@@ -21,7 +21,9 @@ function ok(stdout = ""): GitCommandResult {
   return { code: 0, stdout: Buffer.from(stdout, "utf8"), stderr: "", timedOut: false, failedToSpawn: false };
 }
 
-function runnerOf(answer: (args: readonly string[]) => GitCommandResult = (args) => ok(args[0] === "rev-parse" ? `${TIP}\n` : "")) {
+function runnerOf(
+  answer: (args: readonly string[]) => GitCommandResult = (args) => ok(args[0] === "rev-parse" ? `${TIP}\n` : ""),
+) {
   const calls: { args: string[]; cwd: string }[] = [];
   const runner: GitCommandRunner = {
     run: async (args: readonly string[], cwd: string) => {
@@ -421,7 +423,7 @@ describe("adoptWorktree writes the link only while it is still the one it was of
     let reads = 0;
     const fs: AdoptFs = {
       ...store.fs,
-      readFile: async (p) => {
+      readFile: async (_p) => {
         reads += 1;
         return reads === 1 ? ORIGINAL_LINK : "gitdir: /repo/.git/worktrees/restored\n";
       },
@@ -531,7 +533,10 @@ describe("adoptWorktree checks the tip before it rebuilds the index", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect((result as { message: string }).message).toContain("moved");
-    expect(calls.some((c) => c.args[0] === "reset"), "the index was rebuilt against a branch that moved").toBe(false);
+    expect(
+      calls.some((c) => c.args[0] === "reset"),
+      "the index was rebuilt against a branch that moved",
+    ).toBe(false);
     expect(store.dirs.has(ENTRY)).toBe(false);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
   });

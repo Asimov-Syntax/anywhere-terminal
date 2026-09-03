@@ -109,7 +109,11 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
     corroborateRepair: async ({ repairPath }) => ({ kind: "offer", repairPath, expectedOid: "oid-1" }),
     listWorktrees: async () => [{ displayPath: "/repo-wt/stale", branch: "feat", prunable: true }],
     // A surviving checkout git has forgotten, unless a test moves one of these.
-    corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt" as const, adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+    corroborateAdopt: async ({ candidatePath }) => ({
+      kind: "adopt" as const,
+      adoptPath: candidatePath,
+      staleGitdir: STALE_GITDIR,
+    }),
     reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
     pathDeps: {
       platform: "darwin",
@@ -1896,7 +1900,11 @@ describe("re-registering a surviving checkout", () => {
 
   it("writes nothing when the directory is gone", async () => {
     const h = harness({
-      corroborateAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      corroborateAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+      }),
       reconstructEntry: async () => {
         throw new Error("the reconstruction ran against a directory that is gone");
       },
