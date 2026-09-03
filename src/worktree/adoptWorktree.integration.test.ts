@@ -63,8 +63,27 @@ const realFs: AdoptFs = {
   createFile: async (p, data) => {
     fs.writeFileSync(p, data, { encoding: "utf8", flag: "wx" });
   },
-  removeDir: async (p) => {
-    fs.rmSync(p, { recursive: true, force: true });
+  createPinned: async (p, data) => {
+    const fd = fs.openSync(p, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR);
+    fs.writeSync(fd, data, 0, "utf8");
+    return {
+      identity: async () => fs.fstatSync(fd, { bigint: true }),
+      readAt: async (position) => {
+        const buffer = Buffer.alloc(8192);
+        const read = fs.readSync(fd, buffer, 0, buffer.byteLength, position);
+        return buffer.subarray(0, read).toString("utf8");
+      },
+      truncate: async (length) => {
+        fs.ftruncateSync(fd, length);
+      },
+      writeAt: async (d, position) => fs.writeSync(fd, d, 0, d.byteLength, position),
+      close: async () => {
+        fs.closeSync(fd);
+      },
+    };
+  },
+  removeFile: async (p) => {
+    fs.rmSync(p, { force: true });
   },
 };
 
@@ -654,13 +673,20 @@ describe("a withdrawn adoption leaves the directory adoptable again", () => {
 
     expect(result).toMatchObject({ ok: false });
 
-    // Nothing of the attempt is left for git to trip over — and unlike a unit
-    // assertion on `removeDir`, this reads the directory git itself reads.
+    // The withdrawal deletes NOTHING, so the entry is still on disk here — and
+    // that is the contract: it is invisible to git, and git's own collection
+    // takes it. Both halves are asserted against real git rather than against a
+    // fake's bookkeeping.
+    expect(listed()).not.toContain(survivor);
+    const between = fs.readdirSync(path.join(commonDir, "worktrees"));
+    expect(between.length, "the attempt left nothing at all, so this proves nothing").toBeGreaterThan(before.length);
+
+    git(["worktree", "prune"]);
+
     const after = fs.existsSync(path.join(commonDir, "worktrees"))
       ? fs.readdirSync(path.join(commonDir, "worktrees"))
       : [];
-    expect(after).toEqual(before);
-    expect(listed()).not.toContain(survivor);
+    expect(after, "a routine prune did not collect what the failed attempt created").toEqual(before);
 
     // And the destination is back in the state the detector recognises: a
     // populated checkout whose `.git` names an administrative entry that is gone.
@@ -675,5 +701,50 @@ describe("a withdrawn adoption leaves the directory adoptable again", () => {
       },
     );
     expect(verdict).toMatchObject({ kind: "adopt", adoptPath: survivor });
+  });
+});
+
+// `git worktree add` writes `locked` before `gitdir` because an exclusive create
+// publishes an empty inode before its bytes; without the marker a concurrent
+// prune can classify a half-built entry as malformed and delete it once it has
+// become valid (design.md D4, round-7 oracle).
+describe("the entry is locked for the whole time it is being built", () => {
+  it("holds a marker from before gitdir until after the tip is proved, and a prune spares it", async () => {
+    let lockedDuringBuild: boolean | undefined;
+    let entryDuringBuild: string | undefined;
+
+    const watched = {
+      run: async (args: readonly string[], cwd: string) => {
+        if (args[1] === "repair") {
+          const dir = fs.readdirSync(path.join(commonDir, "worktrees"))[0];
+          entryDuringBuild = path.join(commonDir, "worktrees", dir as string);
+          lockedDuringBuild = fs.existsSync(path.join(entryDuringBuild, "locked"));
+          // Real git, mid-construction: the entry must survive this.
+          fixture.git(["worktree", "prune"], repo);
+        }
+        return runner.run(args, cwd);
+      },
+    };
+
+    const result = await adoptWorktree(
+      watched,
+      {
+        repoPath: repo,
+        commonDir,
+        worktreePath: survivor,
+        branch: "survivor",
+        staleGitdir,
+        staleLink,
+        expectedBranchOid: tipOf("survivor"),
+      },
+      realFs,
+    );
+
+    expect(lockedDuringBuild, "the entry was unmarked while it was still being built").toBe(true);
+    expect(result).toMatchObject({ ok: true });
+    expect(fs.existsSync(entryDuringBuild as string), "a mid-build prune collected the entry").toBe(true);
+    // And it comes off, or git would refuse to remove the worktree later.
+    expect(fs.existsSync(path.join(entryDuringBuild as string, "locked"))).toBe(false);
+    expect(listed()).toContain(survivor);
   });
 });

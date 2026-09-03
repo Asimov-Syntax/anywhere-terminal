@@ -990,7 +990,45 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // overwrite its registration before the identity re-check sees it
     // (round-1 F005).
     createFile: (path, data) => fsp.writeFile(path, data, { encoding: "utf8", flag: "wx" }),
-    removeDir: (path) => fsp.rm(path, { recursive: true, force: true }),
+    /**
+     * The entry's `gitdir`, created exclusively and then HELD.
+     *
+     * The withdrawal empties this file rather than deleting the directory that
+     * holds it, so the descriptor is what makes the withdrawal address an object
+     * instead of a name — a replacement of the entry rebinds the pathname and
+     * leaves this handle on a detached inode, where a truncate harms nobody
+     * (design.md D4). The same-inode limit D9 states for `<wt>/.git` applies
+     * here too and is stated, not closed.
+     */
+    createPinned: async (path, data) => {
+      const handle = await fsp.open(path, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR);
+      try {
+        const bytes = Buffer.from(data, "utf8");
+        let at = 0;
+        while (at < bytes.byteLength) {
+          const { bytesWritten } = await handle.write(bytes, at, bytes.byteLength - at, at);
+          if (bytesWritten <= 0) {
+            throw Object.assign(new Error(`${path} could not be written`), { code: "EIO" });
+          }
+          at += bytesWritten;
+        }
+      } catch (error) {
+        await handle.close().catch(() => {});
+        throw error;
+      }
+      return {
+        identity: () => handle.stat({ bigint: true }),
+        readAt: async (position) => {
+          const buffer = Buffer.alloc(LINK_READ_CAP);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
+          return buffer.subarray(0, bytesRead).toString("utf8");
+        },
+        truncate: (length) => handle.truncate(length),
+        writeAt: async (d, position) => (await handle.write(d, 0, d.byteLength, position)).bytesWritten,
+        close: () => handle.close(),
+      };
+    },
+    removeFile: (path) => fsp.rm(path, { force: true }),
   };
 
   const gitEntryReads = {

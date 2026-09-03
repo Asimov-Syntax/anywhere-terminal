@@ -241,9 +241,10 @@ function residueNote(residue: AdoptResidue | undefined, adoptPath: string): stri
   // put back, so `<wt>/.git` names nothing anybody can act on. It is reported
   // whether or not an entry was left behind (round-3 F012).
   //
-  // `entryPath` is non-null only where `removeDir` actually FAILED. The undo no
-  // longer retains an entry on purpose, so "could not be removed" below says
-  // what happened rather than covering for a deliberate choice (round-6 F005).
+  // `entryPath` is non-null only where the withdrawal could not hand the entry
+  // to git — it could not empty the entry's `gitdir`, or could not prove the
+  // entry was still its own. An entry it DID hand over is not mentioned: git
+  // collects it and there is nothing for a person to do (round-7 F005).
   const link =
     residue.link === "restored"
       ? "its own .git entry was restored"
@@ -252,7 +253,7 @@ function residueNote(residue: AdoptResidue | undefined, adoptPath: string): stri
         : `the .git entry in ${adoptPath} could not be left in a known state`;
   return residue.entryPath === null
     ? ` The ${link}.`
-    : ` The administrative entry at ${residue.entryPath} could not be removed, and ${link}.`;
+    : ` The administrative entry at ${residue.entryPath} could not be handed back to git, and ${link}.`;
 }
 
 /** Why a re-corroborated repair was refused, in the user's terms. */

@@ -129,8 +129,17 @@ export interface AdoptFs {
    * registration before the identity re-check can notice (round-1 F005).
    */
   createFile(path: string, data: string): Promise<void>;
+  /**
+   * Create a file exclusively and hand back a handle on the object created.
+   *
+   * Used for `<entry>/gitdir` alone. The withdrawal empties that file instead of
+   * removing the directory around it, and only a descriptor makes that address
+   * an object rather than a name (design.md D4).
+   */
+  createPinned(path: string, data: string): Promise<LinkHandle>;
+  /** Remove ONE file. There is deliberately no recursive removal here (D4). */
+  removeFile(path: string): Promise<void>;
   /** Recursive removal of the entry directory this adoption created. */
-  removeDir(path: string): Promise<void>;
 }
 
 /**
@@ -209,6 +218,11 @@ const UP = "..";
  * request nobody makes. `join` rather than a template, because the same gate
  * fails a template whose head is relative. The bytes git reads are identical.
  */
+/** git's own name for the marker that keeps an entry out of `prune` (D4). */
+const LOCK_MARKER = "locked";
+/** What git writes there is free text; this says who to ask when one is found. */
+const LOCK_REASON = "being re-registered by the worktree panel\n";
+
 const COMMON_DIR_ROUTE = `${[UP, UP].join("/")}\n`;
 
 export async function adoptWorktree(
@@ -294,6 +308,8 @@ export async function adoptWorktree(
    * by reading a file whose content nobody can vouch for.
    */
   let contentUnknown = false;
+  /** The handle on `<entry>/gitdir`, held from its creation so the undo can empty it. */
+  let entry: LinkHandle | null = null;
 
   /**
    * Write `data` whole, through the handle, at position 0.
@@ -428,44 +444,64 @@ export async function adoptWorktree(
       state = "leftAsFound";
     }
 
-    // And the entry goes REGARDLESS of what the link says — there is no pathname
-    // read here at all.
+    // And the entry is NOT DELETED — not by this process, and not by a git
+    // command this process runs.
     //
-    // Rounds 2 through 6 each made this removal conditional on a fact about
-    // `<wt>/.git`, and each time the next round found the schedule where the
-    // fact expired between the check and the `removeDir`; nothing in Node
-    // couples them (WT-012.19). The conditional was also defending the wrong
-    // state. Verified on git 2.50.1: a `<wt>/.git` naming an entry that is gone
-    // is exactly what `probeAdopt` recognises and what `git worktree prune`
-    // itself produces unasked, and a retry re-offers adopt — whereas an entry
-    // RETAINED here is listed by nothing and collected by nothing, accumulating
-    // one directory per attempt because the retry takes `EEXIST` and mints the
-    // next id. So the withdrawal returns the destination to the state adopt
-    // recognises, and the entry it created always goes (D4).
-    // Identity first, and it is the whole point: `prune` can remove an entry
-    // whose `gitdir` is missing and an external `add` can mint the same id, so
-    // removing by pathname alone could delete a registration we never made.
-    let stillOurs = false;
-    // An entry that is GONE leaves nothing behind; one this adoption cannot
-    // prove it owns belongs to another process and is left where it is — AND
-    // said. Folding the two into "not ours, so nothing to remove" reported a
-    // clean withdrawal over a foreign directory this run had written into
-    // (round-1 F005).
-    let vanished = false;
+    // Rounds 2 through 6 made the removal conditional on a fact about
+    // `<wt>/.git`; round 7 found the same check-then-mutate pair one level up,
+    // where `identify` proves a directory by inode and `removeDir` deletes it by
+    // name. Handing the deletion to `git worktree prune` does not fix it either:
+    // `should_prune_worktree()` returns an entry NAME and `delete_git_dir()`
+    // resolves it a second time before removing it recursively, with no recheck
+    // (2.50.1 `worktree.c:919-963`). So the withdrawal empties the one file it
+    // authored, through the descriptor it has held since creating it, and drops
+    // the marker that keeps the entry out of collection. git takes it from
+    // there, on its own schedule, and this process never names a victim (D4).
+    let collectable = false;
     try {
-      stillOurs = sameIdentity(await fs.identify(entryPath), identity);
-    } catch (error) {
-      vanished = readsAsAbsent(error);
+      if (entry !== null) {
+        // The alias rule travels with the descriptor, for D9's reason: this
+        // truncate would otherwise reach a second name for the same object.
+        if (BigInt((await entry.identity()).nlink) !== 1n) {
+          throw Object.assign(new Error("the entry's gitdir has a second name"), { code: "EMLINK" });
+        }
+        await entry.truncate(0);
+      }
+      // The ONE act left here that addresses a NAME, and deliberately the
+      // smallest available: a single non-recursive unlink of a marker this
+      // adoption wrote, inside a directory it minted exclusively. It cannot be
+      // made atomic with the check above it — that residual is stated in D4 —
+      // but its worst case is another process's entry becoming eligible for
+      // git's collection, where `rm -r` on a pathname destroyed one outright
+      // (round-7 F005). Gated on the best evidence there is: an entry this
+      // adoption cannot prove it owns is not touched at all, and is reported.
+      let ours: boolean;
+      try {
+        ours = sameIdentity(await fs.identify(entryPath), identity);
+      } catch (error) {
+        // An entry that is GONE leaves nothing to collect and nothing to say.
+        // Folding that into "not ours" reported a residue over a directory that
+        // no longer exists (round-1 F005).
+        if (!readsAsAbsent(error)) {
+          throw error;
+        }
+        collectable = true;
+        ours = false;
+      }
+      if (ours) {
+        await fs.removeFile(`${entryPath}/${LOCK_MARKER}`);
+        collectable = true;
+      }
+    } catch {
+      collectable = false;
     }
-    let removed = vanished;
-    if (stillOurs) {
-      removed = await fs
-        .removeDir(entryPath)
-        .then(() => true)
-        .catch(() => false);
-    }
+    await entry?.close().catch(() => {});
     await link.close().catch(() => {});
-    return removed && state === "restored" ? undefined : { entryPath: removed ? null : entryPath, link: state };
+    // A withdrawal that emptied and unlocked its entry has nothing for a person
+    // to do — git collects it — so it reports only what it could not finish.
+    // The path is named only where a person has something to do about it. An
+    // entry git will collect is not that; a link left in doubt is.
+    return collectable && state === "restored" ? undefined : { entryPath: collectable ? null : entryPath, link: state };
   };
 
   const failed = async (message: string): Promise<AdoptResult> => {
@@ -474,10 +510,16 @@ export async function adoptWorktree(
   };
 
   try {
-    // `gitdir` FIRST. `git worktree prune` removes an entry whose gitdir file is
-    // missing, and the link it names already exists, so from this write onwards
-    // the entry survives a concurrent prune (design.md D4).
-    await fs.createFile(`${entryPath}/gitdir`, `${linkPath}\n`);
+    // `locked` FIRST, which is what `git worktree add` itself does before it
+    // writes `gitdir` (2.50.1 `builtin/worktree.c:490-508`). An exclusive create
+    // publishes a ZERO-LENGTH inode before its bytes land, so without this an
+    // entry under construction is indistinguishable from a malformed one and a
+    // concurrent prune can classify it invalid and delete it once it is valid.
+    // `should_prune_worktree` consults `locked` before anything else (D4).
+    await fs.createFile(`${entryPath}/${LOCK_MARKER}`, LOCK_REASON);
+    // Held from here. The withdrawal empties THIS object rather than removing
+    // the directory around it.
+    entry = await fs.createPinned(`${entryPath}/gitdir`, `${linkPath}\n`);
     await fs.createFile(`${entryPath}/commondir`, COMMON_DIR_ROUTE);
     await fs.createFile(`${entryPath}/HEAD`, `ref: refs/heads/${request.branch}\n`);
   } catch (error) {
@@ -578,7 +620,25 @@ export async function adoptWorktree(
     return failed(rebuilt.message);
   }
 
-  return { ok: true, id, undo, release: () => link.close().catch(() => {}) };
+  // LAST, and only once everything above held: the marker comes off and the
+  // entry becomes an ordinary registration. Removing it earlier would expose a
+  // finished-looking entry that a concurrent prune could still act on; leaving
+  // it on would ship a worktree git refuses to remove (D4).
+  try {
+    await fs.removeFile(`${entryPath}/${LOCK_MARKER}`);
+  } catch (error) {
+    return failed(`The administrative entry at ${entryPath} could not be unlocked: ${reasonOf(error)}`);
+  }
+
+  return {
+    ok: true,
+    id,
+    undo,
+    release: async () => {
+      await entry?.close().catch(() => {});
+      await link.close().catch(() => {});
+    },
+  };
 }
 
 /**

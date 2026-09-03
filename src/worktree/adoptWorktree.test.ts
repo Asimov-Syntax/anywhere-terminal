@@ -53,6 +53,8 @@ function fsOf(over: Partial<AdoptFs> = {}) {
   /** inode id → how many names reach it. A hard link is a second name, not a copy. */
   const names = new Map<bigint, number>();
   const writes: string[] = [];
+  /** How many times the entry's own handle was closed — exactly once, ever. */
+  let entryClosed = 0;
   /** Every path read BY NAME. The undo must not appear in here at all. */
   const reads: string[] = [];
   const identities = new Map<string, { dev: bigint; ino: bigint }>();
@@ -143,8 +145,31 @@ function fsOf(over: Partial<AdoptFs> = {}) {
       put(p, data);
       writes.push(`write ${p}`);
     },
-    removeDir: async (p) => {
-      dirs.delete(p);
+    createPinned: async (p, data) => {
+      if (at.has(p)) {
+        throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      }
+      const bound = put(p, data);
+      writes.push(`write ${p}`);
+      return {
+        identity: async () => ({ dev: 1n, ino: bound, nlink: names.get(bound) ?? 1 }),
+        readAt: async (position) => (inodes.get(bound) ?? "").slice(position),
+        truncate: async (length) => {
+          inodes.set(bound, (inodes.get(bound) ?? "").slice(0, length));
+          writes.push(`truncate ${p}`);
+        },
+        writeAt: async (data2, position) => {
+          const held = inodes.get(bound) ?? "";
+          inodes.set(bound, held.slice(0, position) + data2.toString("utf8"));
+          return data2.byteLength;
+        },
+        close: async () => {
+          entryClosed += 1;
+        },
+      };
+    },
+    removeFile: async (p) => {
+      at.delete(p);
       writes.push(`rm ${p}`);
     },
   };
@@ -163,9 +188,29 @@ function fsOf(over: Partial<AdoptFs> = {}) {
     fs: { ...base, ...over },
     writes,
     reads,
+    entryClosed: () => entryClosed,
+    /**
+     * Did the attempt leave NO live registration?
+     *
+     * True either because nothing was ever created, or because the withdrawal
+     * emptied `gitdir` and dropped `locked` — which is what re-admits the entry
+     * to `git worktree prune` (design.md D4, verified on 2.50.1). The withdrawal
+     * no longer deletes the directory, so "withdrawn" cannot be read as the
+     * absence of one.
+     */
+    collectable: (entryPath: string) =>
+      !dirs.has(entryPath) || ((bytesAt(`${entryPath}/gitdir`) ?? "") === "" && !at.has(`${entryPath}/locked`)),
     files,
     dirs,
     identities,
+    /** Give the ENTRY's gitdir a second name, so the withdrawal's truncate would reach it. */
+    hardLinkEntryGitdir: (entryPath: string) => {
+      const ino = at.get(`${entryPath}/gitdir`);
+      if (ino === undefined) {
+        throw new Error("no entry gitdir to alias");
+      }
+      names.set(ino, (names.get(ino) ?? 1) + 1);
+    },
     /** Give the link a SECOND name — a hard link, which no `O_NOFOLLOW` refuses. */
     hardLinkTheLink: () => {
       const ino = at.get(`${WT}/.git`);
@@ -216,14 +261,20 @@ const request = {
 };
 
 describe("adoptWorktree", () => {
-  it("writes gitdir first, so a prune never sees an entry it would collect", async () => {
+  // `locked` before `gitdir`, which is the order `git worktree add` itself uses.
+  // An exclusive create publishes a ZERO-LENGTH inode before its bytes land, so
+  // without the marker a half-built entry reads as malformed to a concurrent
+  // prune, which can then delete it once it is valid (round-7 oracle).
+  it("locks the entry before it writes anything a prune would judge", async () => {
     const { runner } = runnerOf();
     const { fs, writes } = fsOf();
 
     const result = await adoptWorktree(runner, request, fs);
 
     expect(result.ok).toBe(true);
-    expect(writes.slice(0, 3)).toEqual([`mkdir ${ENTRY}`, `write ${ENTRY}/gitdir`, `write ${ENTRY}/commondir`]);
+    expect(writes.slice(0, 3)).toEqual([`mkdir ${ENTRY}`, `write ${ENTRY}/locked`, `write ${ENTRY}/gitdir`]);
+    // And it comes off only at the very end, once the tip has been re-proved.
+    expect(writes.at(-1)).toBe(`rm ${ENTRY}/locked`);
   });
 
   it("writes the worktree's own link last, so an unfinished entry is inert", async () => {
@@ -334,7 +385,7 @@ describe("adoptWorktree", () => {
     expect((result as { message: string }).message).toContain("not the one this adoption was offered on");
     expect(store.writes, "an entry was built for a link that had already moved").toEqual([]);
     expect(calls).toEqual([]);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   it.each([
@@ -352,12 +403,18 @@ describe("adoptWorktree", () => {
         }
         return store.fs.createFile(p, data);
       },
+      createPinned: async (p, data) => {
+        if (p === failing) {
+          throw new Error("ENOSPC");
+        }
+        return store.fs.createPinned(p, data);
+      },
     };
 
     const result = await adoptWorktree(runner, request, fs);
 
     expect(result.ok).toBe(false);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
   });
 
@@ -394,7 +451,7 @@ describe("adoptWorktree", () => {
       const result = await adoptWorktree(runner, request, brokenClaim(store, true));
 
       expect(result.ok).toBe(false);
-      expect(store.dirs.has(ENTRY)).toBe(false);
+      expect(store.collectable(ENTRY)).toBe(true);
       expect(store.linkBytes()).toBe(ORIGINAL_LINK);
       expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
     });
@@ -409,9 +466,10 @@ describe("adoptWorktree", () => {
       // The entry IS withdrawn — the thing that is not withdrawn is the link,
       // and a failure that says nothing changed would be a lie about a `.git`
       // that now names nothing.
-      expect(store.dirs.has(ENTRY)).toBe(false);
+      expect(store.collectable(ENTRY)).toBe(true);
       expect(store.linkBytes()).not.toBe(ORIGINAL_LINK);
       expect(result.ok === false && result.leftBehind).toEqual({ entryPath: null, link: "unknown" });
+      // The entry is named only when it is NOT collectable; here git takes it.
     });
 
     // A fulfilled write is not a completed one. `FileHandle.write` answers with
@@ -475,7 +533,7 @@ describe("adoptWorktree", () => {
       const result = await adoptWorktree(runner, request, fs);
 
       expect(result.ok).toBe(false);
-      expect(store.dirs.has(ENTRY)).toBe(false);
+      expect(store.collectable(ENTRY)).toBe(true);
       expect(store.linkBytes()).toBe(ORIGINAL_LINK);
     });
   });
@@ -491,7 +549,7 @@ describe("adoptWorktree", () => {
     const result = await adoptWorktree(runner, request, store.fs);
 
     expect(result.ok).toBe(false);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
   });
 
@@ -518,7 +576,7 @@ describe("adoptWorktree", () => {
         : ok(),
     );
     const store = fsOf({
-      removeDir: async () => {
+      removeFile: async () => {
         throw new Error("EPERM");
       },
     });
@@ -526,6 +584,8 @@ describe("adoptWorktree", () => {
     const result = await adoptWorktree(runner, request, store.fs);
 
     expect(result.ok).toBe(false);
+    // The entry was emptied but could not be unlocked, so git will not collect
+    // it yet and the path is what the user is given to act on.
     expect(result.ok === false && result.leftBehind).toEqual({ entryPath: ENTRY, link: "restored" });
   });
 
@@ -578,7 +638,7 @@ describe("adoptWorktree", () => {
       await result.undo();
     }
 
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
   });
 
@@ -711,7 +771,7 @@ describe("adoptWorktree writes the link only while it is still the one it was of
 
     expect(result.ok).toBe(false);
     expect(store.files.get(`${WT}/.git`), "a link nobody proved was ours was overwritten").toBe(replacement);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   it("refuses when the registration it was offered against came back", async () => {
@@ -726,7 +786,7 @@ describe("adoptWorktree writes the link only while it is still the one it was of
 
     expect(result.ok).toBe(false);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   it("proceeds when the stale path holds a registration for some other checkout", async () => {
@@ -814,7 +874,7 @@ describe("adoptWorktree checks the tip before it rebuilds the index", () => {
       calls.some((c) => c.args[0] === "reset"),
       "the index was rebuilt against a branch that moved",
     ).toBe(false);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
   });
 
@@ -832,7 +892,7 @@ describe("adoptWorktree checks the tip before it rebuilds the index", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(calls.some((c) => c.args[0] === "reset")).toBe(false);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 });
 
@@ -914,7 +974,7 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
     expect(result).toMatchObject({ ok: false });
     expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   it("refuses before creating anything when the link cannot be read", async () => {
@@ -946,7 +1006,7 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
     expect(store.writes, "something was written before the link was proved").toEqual([]);
     expect(calls, "git ran before the link was proved").toEqual([]);
     expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   it("refuses before creating anything when a live registration was restored first", async () => {
@@ -961,7 +1021,7 @@ describe("adoptWorktree leaves a link it did not install alone", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(store.files.get(`${WT}/.git`)).toBe(REPLACEMENT);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 });
 
@@ -999,7 +1059,7 @@ describe("adoptWorktree writes through the object it opened, not the name", () =
 
     expect(result).toMatchObject({ ok: false });
     expect(store.linkBytes(), "the replacement was overwritten").toBe(REPLACEMENT);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
     // And the refusal came BEFORE the write, not after it. Checking only that
     // the replacement survived cannot tell the two apart — the write would have
     // landed on the detached object either way, and the post-write check would
@@ -1055,7 +1115,7 @@ describe("adoptWorktree writes through the object it opened, not the name", () =
     // very entry this adoption created.
     expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
     expect(store.linkBytes()).toBe(ORIGINAL_LINK);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   // The handle outlives the call because the undo does. Closing it on return
@@ -1119,7 +1179,7 @@ describe("adoptWorktree will not write an object that has a second name", () => 
 
     expect(result).toMatchObject({ ok: false });
     expect(store.linkBytes(), "the aliased object was truncated anyway").toBe(ORIGINAL_LINK);
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 });
 
@@ -1132,9 +1192,11 @@ describe("adoptWorktree withdraws in an order that leaves no dangling link", () 
     );
   }
 
-  // Removing the entry first leaves an interval in which `<wt>/.git` names a
-  // directory that is already gone (round-4 F005).
-  it("puts the link back before it removes the entry", async () => {
+  // Emptying the entry first leaves an interval in which `<wt>/.git` names an
+  // entry git would collect (round-4 F005). The entry is no longer DELETED, but
+  // the ordering claim is the same one: the link goes back before the entry is
+  // made collectable.
+  it("puts the link back before it makes the entry collectable", async () => {
     const { runner } = failingRepair();
     const store = fsOf();
 
@@ -1142,10 +1204,12 @@ describe("adoptWorktree withdraws in an order that leaves no dangling link", () 
 
     expect(result).toMatchObject({ ok: false });
     const restored = store.writes.lastIndexOf(`write ${WT}/.git`);
-    const removed = store.writes.indexOf(`rm ${ENTRY}`);
+    const emptied = store.writes.indexOf(`truncate ${ENTRY}/gitdir`);
+    const unlocked = store.writes.lastIndexOf(`rm ${ENTRY}/locked`);
     expect(restored, "the link was never put back").toBeGreaterThanOrEqual(0);
-    expect(removed, "the entry was never removed").toBeGreaterThanOrEqual(0);
-    expect(restored, "the entry was removed while the link still named it").toBeLessThan(removed);
+    expect(emptied, "the entry was never emptied").toBeGreaterThanOrEqual(0);
+    expect(restored, "the entry was emptied while the link still named it").toBeLessThan(emptied);
+    expect(emptied, "the marker came off before the entry was emptied").toBeLessThan(unlocked);
   });
 
   // The sample before the restore expires the moment it returns. The handle
@@ -1210,6 +1274,46 @@ describe("adoptWorktree's withdrawal does not consult the link's name", () => {
     expect(store.reads.filter((p) => p === `${WT}/.git`)).toEqual([]);
   });
 
+  // The alias rule travels with the descriptor. Emptying the entry's `gitdir`
+  // through a handle rewrites every name for that object, so a second one is
+  // refused for exactly D9's reason — and then the entry is NOT collectable, so
+  // the withdrawal must say where it is instead of reporting a clean failure.
+  it("refuses to empty an entry gitdir that has a second name, and reports the entry", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      createFile: async (p, data) => {
+        await store.fs.createFile(p, data);
+        // The alias lands once the entry is fully built, so the refusal can only
+        // come from the count taken at the withdrawal.
+        if (p === `${ENTRY}/HEAD`) {
+          store.hardLinkEntryGitdir(ENTRY);
+        }
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: ENTRY } });
+    expect(store.files.get(`${ENTRY}/gitdir`), "the aliased object was emptied anyway").not.toBe("");
+    expect(store.files.has(`${ENTRY}/locked`), "an entry it could not empty was unlocked").toBe(true);
+  });
+
+  // Round 7: the pathname deletion is what remained, and it is gone. The only
+  // `rm` a withdrawal issues is the marker — never the entry directory, which
+  // `AdoptFs` no longer offers a way to remove at all.
+  it("never removes the entry directory, only its marker", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result.ok).toBe(false);
+    expect(store.writes.filter((w) => w.startsWith("rm "))).toEqual([`rm ${ENTRY}/locked`]);
+    expect(store.dirs.has(ENTRY), "the entry directory was deleted by this process").toBe(true);
+  });
+
   // The same distinction at the OPEN. Both counts refuse, so only the message
   // separates them — and a user told "also reachable under another name" about a
   // link somebody deleted is being told the wrong thing to go look at.
@@ -1259,7 +1363,7 @@ describe("adoptWorktree's withdrawal does not consult the link's name", () => {
 
     expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: null, link: "leftAsFound" } });
     expect(store.linkBytes(), "the replacement was overwritten").toBe(TAKEN_OVER);
-    expect(store.dirs.has(ENTRY), "the entry this adoption made was left for nothing to collect").toBe(false);
+    expect(store.collectable(ENTRY), "the entry this adoption made was left for nothing to collect").toBe(true);
   });
 
   // POSIX: an unsuccessful `ftruncate` leaves the file unaffected, which is what
@@ -1288,7 +1392,7 @@ describe("adoptWorktree's withdrawal does not consult the link's name", () => {
     // Nothing was installed, so there is no residue to report at all — the
     // failure changed nothing and the entry went by the ordinary path.
     expect(result.ok === false && result.leftBehind).toBeUndefined();
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 
   // Round-6 F016: every late-alias witness so far aliased AFTER a successful
@@ -1323,7 +1427,7 @@ describe("adoptWorktree's withdrawal does not consult the link's name", () => {
     // The recovery refused on the second name, so the aliased object still holds
     // what the truncate left — not the stale bytes written through an alias.
     expect(result.ok === false && result.leftBehind?.link).toBe("unknown");
-    expect(store.dirs.has(ENTRY)).toBe(false);
+    expect(store.collectable(ENTRY)).toBe(true);
   });
 });
 
@@ -1369,7 +1473,7 @@ describe("adoptWorktree withdraws the entry it created whatever the link says", 
     const result = await adoptWorktree(runner, request, fs);
 
     expect(result).toMatchObject({ ok: false, leftBehind: { entryPath: null, link: "leftAsFound" } });
-    expect(store.dirs.has(ENTRY), "an entry nothing will ever collect was left behind").toBe(false);
+    expect(store.collectable(ENTRY), "an entry nothing will ever collect was left behind").toBe(true);
     // The replacement's bytes are untouched — the undo refuses to write a link
     // it does not own, which is a separate rule from whether the entry goes.
     expect(store.linkBytes()).toBe(`gitdir: ${ENTRY}\n`);

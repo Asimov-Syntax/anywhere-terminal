@@ -298,7 +298,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 > withdrawal promises instead is that it deletes nothing and leaves the entry where git's own
 > collection takes it.
 
-- [ ] 8_1 Withdraw by truncating a held descriptor and unlocking, never by removing a directory
+- [x] 8_1 Withdraw by truncating a held descriptor and unlocking, never by removing a directory — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/worktreeMutationService.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
   - **Deps**: 7_1
   - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, a-withdrawal-states-what-it-could-not-put-back}; `.reviews/round-7.md` F005
   - **Acceptance**:

@@ -127,9 +127,13 @@ The withdrawal therefore DELETES NOTHING. It leaves the entry in the state git a
 1. Settle the LINK first, through the handle D9 pins.
 2. `ftruncate` `<entry>/gitdir` to zero through a descriptor held since `createEntry` wrote it — safe
    against a different-inode replacement for D9's reason, and never a pathname resolution.
-3. Remove the `locked` marker (below), which is what re-admits the entry to collection.
-4. Report the entry's path. It is omitted from `git worktree list` from step 2 onward, and the next
-   `git worktree prune` anyone runs collects it.
+3. Remove the `locked` marker (below), which is what re-admits the entry to collection — and ONLY
+   where the entry is still provably this adoption's. This single non-recursive unlink of a file this
+   adoption wrote is the one act left that addresses a name; it cannot be made atomic with the
+   identity check above it, and its worst case is another process's entry becoming eligible for git's
+   collection rather than being destroyed by an `rm -r` on a pathname.
+4. Report the entry's path only where steps 2 or 3 could not be completed. An entry git will collect
+   is not something a person has to act on; it is omitted from `git worktree list` from step 2 onward.
 
 **`locked` is written FIRST, and it fixes a defect in this decision that predates the amendment.**
 `wx` publishes a zero-length inode before the bytes land, so an entry under construction is briefly
