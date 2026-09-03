@@ -262,4 +262,13 @@
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts`: reuse a create-notice selector for waits and assertions instead of treating any panel notice as create completion.
 
-**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4 | 5_5 | 5_6`
+- [x] 5_7 Wait for the assembled repair command — verified: pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts' && pnpm run check-types && pnpm run test:unit --maxWorkers=1 exit 0
+  - **Deps**: 5_6
+  - **Refs**: none
+  - **Acceptance**:
+    - Outcome: The repair wiring assertion waits until the selected repair reaches Git
+    - Verify: command pnpm exec vitest run 'src/extension.worktreeAssembly.test.ts'
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts`: replace the post-submit quiescence guess with the repair argv condition the assertion consumes.
+
+**Waves**: `1_1 | 1_2 | 1_3 | 1_4 | 2_1 | 2_2 | 2_3 | 2_4 | 3_1 | 3_2 | 4_1 | 4_2 | 4_3 | 4_4 | 4_5 | 4_6 | 5_1 | 5_2 | 5_3 | 5_4 | 5_5 | 5_6 | 5_7`

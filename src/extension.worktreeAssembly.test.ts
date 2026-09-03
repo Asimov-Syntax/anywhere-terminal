@@ -2231,7 +2231,10 @@ describe("the invariants that span the host and the webview", () => {
     // Read while the form is still open — the submit disposes it.
     const shown = displayedDestination();
     create.click();
-    await settle();
+    await settleUntil(
+      () => argv.some((call) => call.args[0] === "worktree" && call.args[1] === "repair" && call.args[2] === LINKED),
+      "the selected repair command",
+    );
 
     const issued = argv.map((c) => c.args);
     expect(issued.some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
