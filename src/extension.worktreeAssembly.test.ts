@@ -2034,7 +2034,8 @@ describe("the invariants that span the host and the webview", () => {
       // By content, not by count: `REPO` outlives the suite, so other root
       // files earlier tests wrote may be suggested beside these two.
       await settleUntil(
-        () => [...document.querySelectorAll(".wt-brow")].some((row) => (row.textContent ?? "").includes("pnpm install")),
+        () =>
+          [...document.querySelectorAll(".wt-brow")].some((row) => (row.textContent ?? "").includes("pnpm install")),
         "the suggestion offer",
       );
       // Presence first, so "did not run" below cannot pass by the row having

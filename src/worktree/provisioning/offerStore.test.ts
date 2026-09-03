@@ -94,9 +94,7 @@ describe("createProvisionOfferStore", () => {
     const offer = store.issue(A, {
       ...model(".env.local"),
       entries: [{ id: "i1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: "root file" }],
-      setup: [
-        { id: "i2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "lockfile" },
-      ],
+      setup: [{ id: "i2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "lockfile" }],
       providers: [],
     });
 

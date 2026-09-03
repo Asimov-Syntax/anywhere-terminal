@@ -3,12 +3,7 @@
 // (suggest-worktree-initialization design.md D1, D2).
 
 import { describe, expect, it } from "vitest";
-import {
-  SUGGESTED_ENV_FILES,
-  SUGGESTED_MANAGERS,
-  type SuggestDeps,
-  suggestProvisioning,
-} from "./suggestProvisioning";
+import { SUGGESTED_ENV_FILES, SUGGESTED_MANAGERS, type SuggestDeps, suggestProvisioning } from "./suggestProvisioning";
 
 const ROOT = "/repo";
 
@@ -111,10 +106,9 @@ describe("suggestProvisioning", () => {
 
     await suggestProvisioning(deps, ROOT, seq());
 
-    const expected = [
-      ...SUGGESTED_ENV_FILES,
-      ...SUGGESTED_MANAGERS.flatMap((m) => m.lockfiles),
-    ].map((name) => `${ROOT}/${name}`);
+    const expected = [...SUGGESTED_ENV_FILES, ...SUGGESTED_MANAGERS.flatMap((m) => m.lockfiles)].map(
+      (name) => `${ROOT}/${name}`,
+    );
     // Every call accounted for: no wildcard, no extra probe, no re-stat. The
     // interface already withholds `readFile` and `readdir`; this pins the one
     // capability it does hold to the fixed list.

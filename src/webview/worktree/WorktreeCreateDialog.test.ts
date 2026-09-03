@@ -1533,8 +1533,10 @@ describe("Move uncommitted work", () => {
 });
 
 describe("Bring over — fallback suggestions are explicit, explained, and current-create-only", () => {
-  const ENV_WHY = "`.env.local` is at the repository root and may contain secrets. Copy creates an independent file in the new worktree.";
-  const SETUP_WHY = "`pnpm-lock.yaml` is at the repository root. Run setup executes `pnpm install` in the worktree after file provisioning.";
+  const ENV_WHY =
+    "`.env.local` is at the repository root and may contain secrets. Copy creates an independent file in the new worktree.";
+  const SETUP_WHY =
+    "`pnpm-lock.yaml` is at the repository root. Run setup executes `pnpm install` in the worktree after file provisioning.";
 
   function suggested() {
     return provisionModel({

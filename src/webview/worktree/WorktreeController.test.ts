@@ -1752,7 +1752,13 @@ describe("the create a toolbar with no repository opens", () => {
           { id: "s1", path: ".env.local", mode: "copy", source: ".env.local", suggestion: "may contain secrets" },
         ],
         setup: [
-          { id: "s2", kind: "shell", script: "pnpm install", source: "pnpm-lock.yaml", suggestion: "from the lockfile" },
+          {
+            id: "s2",
+            kind: "shell",
+            script: "pnpm install",
+            source: "pnpm-lock.yaml",
+            suggestion: "from the lockfile",
+          },
         ],
         ports: [],
         providers: [],
