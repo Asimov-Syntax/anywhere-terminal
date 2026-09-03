@@ -23,6 +23,7 @@ import type { AdoptVerdict } from "../worktree/adoptProbe";
 import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { createGitCapabilities, type GitCapabilities } from "../worktree/gitCapabilities";
 import type { GitCommandResult, GitCommandRunner } from "../worktree/gitCommandRunner";
+import type { MigrationOfferEvidence } from "../worktree/migrateChanges";
 import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
@@ -36,11 +37,40 @@ import type { GitApiAccessor } from "../worktree/repoRoots";
 import type { WorktreeTree } from "../worktree/types";
 import type { WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
 import type { PaneFact, SessionRecord } from "../worktree/worktreeBlockers";
-import { createWorktreeHost, type WorktreeActions, type WorktreeHost, type WorktreeSurface } from "./WorktreeHost";
+import {
+  createWorktreeHost,
+  type WorktreeActions,
+  type WorktreeHost,
+  type WorktreeHostOptions,
+  type WorktreeSurface,
+} from "./WorktreeHost";
 
 const MAIN_PATH = "/repo";
 const FEAT_PATH = "/repo-wt/feat";
 const SESSION = "claude:s1";
+
+function migrationEvidence(count = 1): MigrationOfferEvidence {
+  return {
+    source: {
+      path: FEAT_PATH,
+      directory: {
+        path: FEAT_PATH,
+        platform: "darwin",
+        components: [{ path: FEAT_PATH, identity: { dev: 1, ino: 10 } }],
+      },
+      git: {
+        path: `${FEAT_PATH}/.git`,
+        kind: "file",
+        identity: { dev: 1, ino: 11 },
+        contentHash: "gitfile-a",
+        adminPath: "/repo/.git/worktrees/feat",
+        adminIdentity: { dev: 1, ino: 12 },
+        adminFiles: [{ name: "HEAD", kind: "file", identity: { dev: 1, ino: 13 }, hash: "head-a" }],
+      },
+    },
+    snapshot: { count, records: [], states: [] },
+  };
+}
 
 function res(over: Partial<GitCommandResult> = {}): GitCommandResult {
   return { code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, failedToSpawn: false, ...over };
@@ -106,6 +136,12 @@ const apiWithSibling: GitApiAccessor = () =>
     repositories: [{ rootUri: { fsPath: "/repo" } }, { rootUri: { fsPath: OTHER_ROOT } }],
   }) as ReturnType<GitApiAccessor>;
 
+const repositoryRegistration = (repoId: string) => ({
+  path: repoId,
+  platform: "darwin" as const,
+  components: [{ path: repoId, identity: { dev: 1, ino: repoId === REPO ? 1 : 2 } }],
+});
+
 /** `gone` makes the feat worktree prunable AND absent, which is `missing`. */
 function deps(
   gone: boolean | (() => boolean) = false,
@@ -120,6 +156,7 @@ function deps(
     runner: r,
     capabilities: capabilities ?? createGitCapabilities(r),
     normalize: async (p: string) => p.replace(/\/+$/, "") || "/",
+    authorizeCommonDirectory: async (repoId) => repositoryRegistration(repoId),
     stat: async (path: string) => {
       if (isGone() && path === FEAT_PATH) {
         throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -310,6 +347,9 @@ async function builtHost(
   over: {
     extra?: string[][];
     createRoot?: string;
+    probeMigrationSource?: WorktreeHostOptions["probeMigrationSource"];
+    authorizeCommonDirectory?: WorktreeTreeDeps["authorizeCommonDirectory"];
+    migrationOfferId?: () => string;
     exists?: (p: string) => boolean;
     probeGitEntry?: (p: string) => "present" | "absent" | "unknown";
     issueDebrisAuthorization?: (p: string) => Promise<DebrisIssueResult>;
@@ -321,6 +361,7 @@ async function builtHost(
     resumeSessionAt?: WorktreeActions["resumeSessionAt"];
     launchTargets?: WorktreeActions["launchTargets"];
     readProvisioning?: (mainWorktree: string) => Promise<ProvisionModel>;
+    previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
     writeNativeConfig?: (mainWorktree: string, divergence: NativeConfigDivergence) => Promise<NativeConfigWrite>;
     /** What the ref reader should answer. */
     readRefs?: (input: RepoRefsInput) => Promise<RepoRefsRead>;
@@ -415,7 +456,12 @@ async function builtHost(
       gitUsable.now ? await probed.probeVersion() : { kind: "absent", reason: "git is no longer on PATH" },
   };
   const host = createWorktreeHost({
-    deps: deps(isGone, over.extra ?? [], shared, over.sibling === true, capabilities),
+    deps: {
+      ...deps(isGone, over.extra ?? [], shared, over.sibling === true, capabilities),
+      ...(over.authorizeCommonDirectory === undefined
+        ? {}
+        : { authorizeCommonDirectory: over.authorizeCommonDirectory }),
+    },
     workspaceFolders: () => [...folders.now],
     pool: {
       subscribePattern: () =>
@@ -456,7 +502,10 @@ async function builtHost(
     ...(over.probeGitEntry === undefined ? {} : { probeGitEntry: over.probeGitEntry }),
     ...(over.issueDebrisAuthorization === undefined ? {} : { issueDebrisAuthorization: over.issueDebrisAuthorization }),
     ...(over.createRoot === undefined ? {} : { createRoot: () => ({ value: over.createRoot, explicitlySet: true }) }),
+    ...(over.probeMigrationSource === undefined ? {} : { probeMigrationSource: over.probeMigrationSource }),
+    ...(over.migrationOfferId === undefined ? {} : { migrationOfferId: over.migrationOfferId }),
     ...(over.readProvisioning === undefined ? {} : { readProvisioning: over.readProvisioning }),
+    ...(over.previewProvisioningPorts === undefined ? {} : { previewProvisioningPorts: over.previewProvisioningPorts }),
     ...(over.writeNativeConfig === undefined ? {} : { writeNativeConfig: over.writeNativeConfig }),
     ...(over.readRefs === undefined && over.refsInputs === undefined
       ? {}
@@ -2542,6 +2591,614 @@ describe("an assessment that spans two observations", () => {
   });
 });
 
+describe("the migration offer the create form is given", () => {
+  const migrationOffers = (view: ReturnType<typeof surface>) =>
+    view.posts.filter((message) => message.type === "worktreeMigrationOffer");
+
+  it("offers only the exact owned source with a positive complete count", async () => {
+    const probed: Parameters<NonNullable<WorktreeHostOptions["probeMigrationSource"]>>[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (...input) => {
+        probed.push(input);
+        return migrationEvidence(3);
+      },
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    expect(probed).toEqual([
+      [
+        FEAT_PATH,
+        {
+          registration: repositoryRegistration(REPO),
+          sourceKind: "linked",
+        },
+      ],
+    ]);
+    expect(migrationOffers(h.view)).toEqual([
+      {
+        type: "worktreeMigrationOffer",
+        repoId: REPO,
+        opening: 1,
+        sourceWorktreeId: FEAT_PATH,
+        offerId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        count: 3,
+      },
+    ]);
+    expect(Object.keys(migrationOffers(h.view)[0] ?? {}).sort()).toEqual([
+      "count",
+      "offerId",
+      "opening",
+      "repoId",
+      "sourceWorktreeId",
+      "type",
+    ]);
+  });
+
+  it("probes the normalized source identity rather than Git's display spelling", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      extra: [RAW],
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: RAW_ID,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    expect(probes).toEqual([RAW_ID]);
+    expect(probes).not.toContain(RAW_DISPLAY);
+  });
+
+  it("requires the selected publication generation before probing", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 2,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: (gen() ?? 0) + 1,
+    });
+    await settle();
+
+    expect(probes).toEqual([]);
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("offers nothing from a degraded retained group", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+    const priorGeneration = gen();
+    await h.degrade();
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: priorGeneration,
+    });
+    await settle();
+
+    expect(probes).toEqual([]);
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("does not probe a guessed hidden generation while Git is unavailable", async () => {
+    const probe = vi.fn(async () => migrationEvidence());
+    const h = await builtHost([], false, { probeMigrationSource: probe });
+    const priorGeneration = gen() as number;
+    await h.loseGit();
+    await h.host.mutationBindings().forceRebuild(REPO);
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: priorGeneration + 1,
+    });
+    await settle();
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("drops a pending probe when its publication becomes degraded", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    await h.degrade();
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("keeps a pending offer only while the selected private registration remains current", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    let current = repositoryRegistration(REPO);
+    const h = await builtHost([], false, {
+      authorizeCommonDirectory: async () => current,
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    current = {
+      ...current,
+      components: [{ path: REPO, identity: { dev: 1, ino: 99 } }],
+    };
+    await h.relist();
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("allows a repo-scoped generation advance that retains the selected registration", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    await h.host.mutationBindings().forceRebuild(REPO);
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toHaveLength(1);
+  });
+
+  it("never substitutes another worktree into the same opening", async () => {
+    const probed: string[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (sourcePath) => {
+        probed.push(sourcePath);
+        return migrationEvidence();
+      },
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: MAIN_PATH,
+      sourceGeneration: gen(),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    expect(probed).toEqual([MAIN_PATH]);
+    expect(migrationOffers(h.view)).toEqual([expect.objectContaining({ sourceWorktreeId: MAIN_PATH })]);
+  });
+
+  it("offers nothing for an absent, foreign, empty, unavailable, or incapable source", async () => {
+    const probes: string[] = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: async (sourcePath) => {
+        probes.push(sourcePath);
+        return undefined;
+      },
+    });
+
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: "/not/owned",
+    });
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 2,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    expect(probes).toEqual([FEAT_PATH]);
+    expect(migrationOffers(h.view)).toEqual([]);
+
+    const missingProbe = vi.fn(async () => migrationEvidence());
+    const missing = await builtHost([], true, { probeMigrationSource: missingProbe });
+    missing.host.handleMessage(missing.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+    expect(missingProbe).not.toHaveBeenCalled();
+    expect(migrationOffers(missing.view)).toEqual([]);
+
+    const incapable = await builtHost();
+    incapable.host.handleMessage(incapable.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+    expect(migrationOffers(incapable.view)).toEqual([]);
+  });
+
+  it("drops a probe that resolves after close, supersession, or detach", async () => {
+    const resolvers: Array<(value: MigrationOfferEvidence | undefined) => void> = [];
+    const h = await builtHost([], false, {
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    resolvers.shift()?.(migrationEvidence());
+    await settle();
+    expect(migrationOffers(h.view)).toEqual([]);
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 2,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 3,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    resolvers.shift()?.(migrationEvidence());
+    await settle();
+    expect(migrationOffers(h.view)).toEqual([]);
+
+    h.attachment.dispose();
+    resolvers.shift()?.(migrationEvidence());
+    await settle();
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("drops a result when the source stops being live before the probe resolves", async () => {
+    let resolveProbe: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+
+    await h.vanish();
+    resolveProbe?.(migrationEvidence());
+    await settle();
+
+    expect(migrationOffers(h.view)).toEqual([]);
+  });
+
+  it("retires a delivered token on close and supersession", async () => {
+    const h = await builtHost([], false, {
+      probeMigrationSource: async () => migrationEvidence(),
+      migrationOfferId: () => "fixed-opaque-token",
+    });
+
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 2,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 3,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    expect(migrationOffers(h.view).map((offer) => offer.offerId)).toEqual([
+      "fixed-opaque-token",
+      "fixed-opaque-token",
+      "fixed-opaque-token",
+    ]);
+  });
+});
+
+describe("redeeming a migration offer", () => {
+  const request = (offerId: string) =>
+    ({
+      type: "worktreeCreate",
+      repoId: REPO,
+      opening: 1,
+      path: "/trees/new-feat",
+      mode: { kind: "fresh", branch: "new-feat" },
+      disposition: { kind: "free" },
+      afterCreate: { kind: "none" },
+      migrateChanges: { offerId },
+    }) as const;
+
+  async function offeredHost(rechecks: readonly MigrationOfferEvidence[] = [migrationEvidence()]) {
+    let probe = 0;
+    const h = await builtHost([], false, {
+      probeMigrationSource: async () => rechecks[Math.min(probe++, rechecks.length - 1)],
+      migrationOfferId: () => "migration-token",
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+    return h;
+  }
+
+  it("passes only host-held evidence after the delivered token rechecks", async () => {
+    const evidence = migrationEvidence(3);
+    const h = await offeredHost([evidence, evidence]);
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([
+      [
+        "createWorktree",
+        expect.objectContaining({
+          migration: {
+            sourcePath: FEAT_PATH,
+            source: evidence.source,
+            snapshot: evidence.snapshot,
+            binding: { registration: repositoryRegistration(REPO), sourceKind: "linked" },
+          },
+        }),
+      ],
+    ]);
+    expect(
+      (h.calls.find(([name]) => name === "createWorktree")?.[1] as { migration: object }).migration,
+    ).not.toHaveProperty("offerId");
+    h.dispose();
+  });
+
+  it.each([
+    ["unknown", { ...request("unknown") }],
+    ["cross-opening", { ...request("migration-token"), opening: 2 }],
+    [
+      "cross-source data",
+      { ...request("migration-token"), migrateChanges: { offerId: "migration-token", sourcePath: "/tmp" } },
+    ],
+    ["malformed", { ...request("migration-token"), migrateChanges: { offerId: 7 } }],
+    [
+      "excluded mode",
+      {
+        ...request("migration-token"),
+        mode: { kind: "reattach", branch: "feat", repairPath: FEAT_PATH, expectedOid: "def" },
+      },
+    ],
+  ])("refuses %s redemption before create", async (_name, message) => {
+    const h = await offeredHost();
+
+    h.host.handleMessage(h.view, message as never);
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    h.dispose();
+  });
+
+  it("spends a delivered token once", async () => {
+    const evidence = migrationEvidence();
+    const h = await offeredHost([evidence, evidence]);
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toHaveLength(1);
+    h.dispose();
+  });
+
+  it("refuses an issued offer after its publication becomes degraded", async () => {
+    const h = await offeredHost();
+    await h.degrade();
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    h.dispose();
+  });
+
+  it("refuses final handoff when authority is withdrawn during the source recheck", async () => {
+    let probes = 0;
+    let resolveFinal: ((value: MigrationOfferEvidence | undefined) => void) | undefined;
+    const h = await builtHost([], false, {
+      probeMigrationSource: () => {
+        probes += 1;
+        if (probes === 1) {
+          return Promise.resolve(migrationEvidence());
+        }
+        return new Promise((resolve) => {
+          resolveFinal = resolve;
+        });
+      },
+      migrationOfferId: () => "migration-token",
+    });
+    h.host.handleMessage(h.view, {
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO,
+      opening: 1,
+      sourceWorktreeId: FEAT_PATH,
+      sourceGeneration: gen(),
+    });
+    await settle();
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+    await h.degrade();
+    resolveFinal?.(migrationEvidence());
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    h.dispose();
+  });
+
+  it.each([
+    [
+      "replaced source directory",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        source: {
+          ...evidence.source,
+          directory: {
+            ...evidence.source.directory,
+            components: [{ path: FEAT_PATH, identity: { dev: 1, ino: 99 } }],
+          },
+        },
+      }),
+    ],
+    [
+      "rewritten .git file",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        source: { ...evidence.source, git: { ...evidence.source.git, contentHash: "gitfile-b" } },
+      }),
+    ],
+    [
+      "replaced admin directory",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        source: {
+          ...evidence.source,
+          git: { ...evidence.source.git, adminIdentity: { dev: 1, ino: 99 } },
+        },
+      }),
+    ],
+    [
+      "stale work snapshot",
+      (evidence: MigrationOfferEvidence) => ({
+        ...evidence,
+        snapshot: { ...evidence.snapshot, count: evidence.snapshot.count + 1 },
+      }),
+    ],
+  ])("refuses %s after the final source recheck", async (_name, change) => {
+    const offered = migrationEvidence();
+    const h = await offeredHost([offered, change(offered)]);
+
+    h.host.handleMessage(h.view, request("migration-token"));
+    await settle();
+
+    expect(h.calls.filter(([name]) => name === "createWorktree")).toEqual([]);
+    expect(h.view.posts).toContainEqual(
+      expect.objectContaining({
+        type: "worktreeMutationResult",
+        verb: "create",
+        result: expect.objectContaining({ kind: "error", message: expect.stringContaining("source work changed") }),
+      }),
+    );
+    h.dispose();
+  });
+});
+
 describe("the provisioning offer the create form is given", () => {
   function model(path: string): ProvisionModel {
     return {
@@ -3085,9 +3742,13 @@ describe("[D5] a switch is a new request with its own identity", () => {
   }
 
   /** A host whose form is already open with the asimov offer published. */
-  async function opened(readProvisioning: (main: string, prefer?: string) => Promise<ProvisionModel>) {
+  async function opened(
+    readProvisioning: (main: string, prefer?: string) => Promise<ProvisionModel>,
+    previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"],
+  ) {
     const h = await builtHost(undefined, false, {
       readProvisioning: readProvisioning as never,
+      ...(previewProvisioningPorts === undefined ? {} : { previewProvisioningPorts }),
     });
     h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
     await settle();
@@ -3113,6 +3774,40 @@ describe("[D5] a switch is a new request with its own identity", () => {
     // A NEW id, and the old one evicted with it: a submission naming the
     // superseded offer would name the model the user stopped looking at.
     expect((offers[1] as { offerId: string }).offerId).not.toBe((offers[0] as { offerId: string }).offerId);
+    h.dispose();
+  });
+
+  it("previews once for the initial offer and once for a switched-provider offer", async () => {
+    const previewed: string[][] = [];
+    const h = await opened(
+      async (_main, prefer) => ({
+        ...forProvider(prefer),
+        ports: [
+          {
+            id: "port",
+            name: prefer === "orca" ? "ORCA_PORT" : "APP_PORT",
+            source: prefer === "orca" ? "orca.yaml" : "asimov/worktree.yaml",
+          },
+        ],
+      }),
+      async (ports) => {
+        previewed.push(ports.map((item) => item.name));
+        return ports.map((item) => ({ ...item, port: item.name === "ORCA_PORT" ? 5184 : 5183 }));
+      },
+    );
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+
+    const offers = offersIn(h.view);
+    expect(previewed).toEqual([["APP_PORT"], ["ORCA_PORT"]]);
+    expect(offers.map((offer) => offer.model.ports[0]?.port)).toEqual([5183, 5184]);
     h.dispose();
   });
 
@@ -3176,6 +3871,55 @@ describe("[D5] a switch is a new request with its own identity", () => {
     const offers = offersIn(h.view);
     expect(offers).toHaveLength(2);
     expect(pathsIn(offers[1])).toEqual([".env"]);
+    h.dispose();
+  });
+
+  it("does not publish a superseded offer whose preview resolves late", async () => {
+    let releaseOrca: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      releaseOrca = resolve;
+    });
+    const h = await opened(
+      async (_main, prefer) => ({
+        ...forProvider(prefer),
+        ports: [
+          {
+            id: "port",
+            name: prefer === "orca" ? "ORCA_PORT" : "APP_PORT",
+            source: "provider",
+          },
+        ],
+      }),
+      async (ports) => {
+        if (ports[0]?.name === "ORCA_PORT") {
+          await held;
+        }
+        return ports.map((item) => ({ ...item, port: item.name === "ORCA_PORT" ? 5184 : 5183 }));
+      },
+    );
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 1,
+      provider: "orca",
+    });
+    await settle();
+    h.host.handleMessage(h.view, {
+      type: "worktreeProvisionSwitch",
+      repoId: REPO,
+      opening: 1,
+      switch: 2,
+      provider: "asimov",
+    });
+    await settle();
+    expect(offersIn(h.view)).toHaveLength(2);
+
+    releaseOrca?.();
+    await settle();
+    expect(offersIn(h.view)).toHaveLength(2);
+    expect(offersIn(h.view).at(-1)?.model.ports[0]).toMatchObject({ name: "APP_PORT", port: 5183 });
     h.dispose();
   });
 
@@ -6120,6 +6864,92 @@ describe("the provisioning a create is actually given", () => {
   const given = (calls: Array<[string, ...unknown[]]>) =>
     (creates(calls)[0]?.[1] as { provision?: readonly { path: string; mode: string }[] } | undefined)?.provision;
 
+  it("previews named ports before issuing the offer", async () => {
+    const previews: Array<{ names: readonly string[]; paths: readonly string[] }> = [];
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      ports: [{ id: "port-a", name: "APP", source: "asimov/worktree.yaml" }],
+    };
+    const built = await builtHost(undefined, false, {
+      readProvisioning: async () => model,
+      previewProvisioningPorts: async (ports, paths) => {
+        previews.push({ names: ports.map((item) => item.name), paths });
+        return ports.map((item) => ({ ...item, port: 5183 }));
+      },
+    });
+
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    expect(offer?.type === "worktreeProvisionOffer" && offer.model.ports[0]).toMatchObject({ name: "APP", port: 5183 });
+    expect(previews).toEqual([{ names: ["APP"], paths: expect.arrayContaining([MAIN_PATH]) }]);
+    built.dispose();
+  });
+
+  it("issues one unavailable preview when previewing fails", async () => {
+    let attempts = 0;
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      ports: [{ id: "port-a", name: "APP", source: "asimov/worktree.yaml", port: 5000 }],
+    };
+    const built = await builtHost(undefined, false, {
+      readProvisioning: async () => model,
+      previewProvisioningPorts: async () => {
+        attempts += 1;
+        throw new Error("probe failed");
+      },
+    });
+
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    expect(attempts).toBe(1);
+    expect(offer?.type === "worktreeProvisionOffer" && offer.model.ports[0]?.port).toBeUndefined();
+    built.dispose();
+  });
+
+  it("hands selected ports to create separately from selected entries", async () => {
+    const model: ProvisionModel = {
+      ...twoEntries(),
+      ports: [
+        { id: "port-a", name: "APP", source: "asimov/worktree.yaml", port: 5183 },
+        { id: "port-b", name: "APP", source: "asimov/worktree.yaml", port: 5183 },
+      ],
+    };
+    const built = await builtHost(undefined, false, { readProvisioning: async () => model });
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    await settle();
+    const offer = (built.view.posts as ExtensionToWebViewMessage[]).find(
+      (message) => message.type === "worktreeProvisionOffer",
+    );
+    if (offer?.type !== "worktreeProvisionOffer") {
+      throw new Error("expected provisioning offer");
+    }
+
+    built.host.handleMessage(built.view, {
+      ...REQ,
+      provision: {
+        offerId: offer.offerId,
+        itemIds: [offer.model.entries[0]?.id ?? "", offer.model.ports[1]?.id ?? ""],
+      },
+    });
+    await settle();
+
+    const request = creates(built.calls)[0]?.[1] as
+      | { provision?: readonly ProvisionModel["entries"][number][]; ports?: readonly ProvisionModel["ports"][number][] }
+      | undefined;
+    expect(new Set(offer.model.ports.map((item) => item.id)).size).toBe(2);
+    expect(request?.provision).toEqual([offer.model.entries[0]]);
+    expect(request?.ports).toEqual([offer.model.ports[1]]);
+    built.dispose();
+  });
+
   it("hands over the host's own entries, never a path the webview spelled", async () => {
     const { host, view, calls, offer, dispose } = await formWithOffer();
     host.handleMessage(view, {
@@ -6270,6 +7100,7 @@ describe("the provisioning a create is actually given", () => {
         type: "worktreeProvisionResult",
         worktreeId: "/trees/feat",
         steps: [{ id: "a", path: ".env", outcome: { kind: "copied" } }],
+        ports: [],
       },
     });
 

@@ -17,8 +17,9 @@
 // it back inside a root, which would turn a suspicious entry into a silently
 // different one.
 
-import path from "node:path";
+import path, { posix, win32 } from "node:path";
 import type { ProvisionEntry } from "../../types/messages";
+import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { isWindowsAbsPath } from "../../utils/pathBoundary";
 import {
   isResolvedPathInsideRoot,
@@ -32,6 +33,12 @@ import { foldWin32Name, platformUsesWin32FilenameRules } from "./providerKit";
 export interface GateRoot {
   readonly path: string;
   readonly prepared: PreparedRoot;
+  readonly authorization: AuthorizedDirectory;
+}
+
+export interface EntryAuthorizations {
+  readonly source: AuthorizedDirectory;
+  readonly destination: AuthorizedDirectory;
 }
 
 export interface EntryGateRoots {
@@ -88,8 +95,21 @@ const REFUSED_OUTSIDE_DESTINATION = "resolves outside the worktree being created
 export async function prepareEntryGate(
   mainCheckout: string,
   worktree: string,
+  authorization: EntryAuthorizations,
   deps: ResolvedPathInsideDeps = {},
 ): Promise<EntryGateRoots | null> {
+  const authorityNames = (target: string, observed: AuthorizedDirectory): boolean => {
+    const windows = observed.platform === "win32";
+    const paths = windows ? win32 : posix;
+    const normalizedTarget = paths.normalize(target);
+    const normalizedObserved = paths.normalize(observed.path);
+    return windows
+      ? normalizedTarget.toLowerCase() === normalizedObserved.toLowerCase()
+      : normalizedTarget === normalizedObserved;
+  };
+  if (!authorityNames(mainCheckout, authorization.source) || !authorityNames(worktree, authorization.destination)) {
+    return null;
+  }
   const [source, destination] = await Promise.all([
     prepareResolvedRoot(mainCheckout, deps),
     prepareResolvedRoot(worktree, deps),
@@ -98,8 +118,8 @@ export async function prepareEntryGate(
     return null;
   }
   return {
-    source: { path: mainCheckout, prepared: source },
-    destination: { path: worktree, prepared: destination },
+    source: { path: mainCheckout, prepared: source, authorization: authorization.source },
+    destination: { path: worktree, prepared: destination, authorization: authorization.destination },
   };
 }
 

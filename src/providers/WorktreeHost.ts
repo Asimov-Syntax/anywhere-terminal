@@ -6,6 +6,8 @@
 // it; attaching costs no git command and no watcher, so a second panel showing
 // the same tree is free.
 
+import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type * as vscode from "vscode";
 import type {
   BaseVerdict,
@@ -16,6 +18,7 @@ import type {
   ProbeBase,
   ProvisionEntry,
   ProvisionModel,
+  ProvisionPort,
   ProvisionProblem,
   ProvisionProvider,
   ProvisionSelection,
@@ -46,6 +49,7 @@ import type { DebrisIssueResult } from "../worktree/debrisAuthorization";
 import { classifyDestination, type GitEntryProbe } from "../worktree/debrisClassification";
 import { hasGitRepo } from "../worktree/hasGitRepo";
 import type { IgnoredMaterial } from "../worktree/ignoredMaterial";
+import type { MigrationOfferEvidence, MigrationRepositoryBinding } from "../worktree/migrateChanges";
 import type { OrphanProofs } from "../worktree/orphanProofs";
 import type { PresenceProjector } from "../worktree/presenceProjector";
 import type {
@@ -70,7 +74,11 @@ import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRe
 import type { RepoRefsInput, RepoRefsRead } from "../worktree/repoRefs";
 import type { WorktreeInfo, WorktreeRepo } from "../worktree/types";
 import { createWorktreeCache } from "../worktree/WorktreeCache";
-import { buildWorktreeTreeDetailed, listRepoWorktrees, type WorktreeTreeDeps } from "../worktree/WorktreeDiscovery";
+import {
+  buildWorktreeTreeDetailed,
+  listRegisteredRepoWorktrees,
+  type WorktreeTreeDeps,
+} from "../worktree/WorktreeDiscovery";
 import {
   evaluateRemoval,
   type PaneFact,
@@ -245,6 +253,13 @@ export interface WorktreeHostOptions {
   clock?: RebuildGateClock;
   /** `anywhereTerminal.worktree.createRoot`, read through `SettingsReader`. */
   createRoot?(): { value: string | undefined; explicitlySet: boolean };
+  /** Prove that one exact source can currently be migrated. */
+  probeMigrationSource?(
+    sourcePath: string,
+    binding: MigrationRepositoryBinding,
+  ): Promise<MigrationOfferEvidence | undefined>;
+  /** Cryptographically random in production; deterministic only in tests. */
+  migrationOfferId?(): string;
   /**
    * The two evidence sources a removal assessment needs and the tree does not
    * carry. Absent in the tests that only exercise routing; supplied in
@@ -343,6 +358,11 @@ export interface WorktreeHostOptions {
    * checkout that declares it, not to the worktree being made from it.
    */
   readProvisioning?(mainWorktree: string, prefer?: ProvisionProvider["id"]): Promise<ProvisionModel>;
+  /** Best-effort numeric previews, computed from the current sibling paths before each offer is issued. */
+  previewProvisioningPorts?(
+    ports: readonly ProvisionPort[],
+    worktreePaths: readonly string[],
+  ): Promise<readonly ProvisionPort[]>;
   /**
    * Record the user's choice in the repository's OWN provisioning file, and in
    * no other (worktree-provisioning.md § 6). Absent on every surface but the
@@ -478,6 +498,14 @@ export interface WorktreeActions {
      * nothing, which is every create made before this existed.
      */
     provision?: readonly ProvisionEntry[];
+    /** Ports resolved from the same host-held offer, kept separate from path-bearing entries. */
+    ports?: readonly ProvisionPort[];
+    migration?: {
+      readonly sourcePath: string;
+      readonly source: MigrationOfferEvidence["source"];
+      readonly snapshot: MigrationOfferEvidence["snapshot"];
+      readonly binding: MigrationRepositoryBinding;
+    };
     origin?: WorktreeSurface;
   }): Promise<void>;
   removeWorktree?(
@@ -577,6 +605,8 @@ export interface WorktreeMutationBindings {
   resolve(target: WorktreeMutationTarget): ResolvedMutationTarget | null;
   /** The repository's main worktree path, for the repo-scoped verbs. */
   repoPath(repoId: string): string | null;
+  /** The migration registration paired with the currently published generation. */
+  migrationRegistration(repoId: string): MigrationRepositoryBinding["registration"] | undefined;
   /**
    * The observation the current tree holds of this repository, or `undefined`
    * when it holds none — the listing is stale, failed, absent, or git is
@@ -708,6 +738,10 @@ interface SurfaceState {
 export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
   const now = options.now ?? Date.now;
   const cache = createWorktreeCache();
+  const currentMigrationRegistration = (repoId: string): MigrationRepositoryBinding["registration"] | undefined => {
+    const generation = cache.readRepo(repoId)?.generation;
+    return generation === undefined ? undefined : cache.registrationFor(repoId, generation);
+  };
   const surfaces = new Map<WorktreeSurface, SurfaceState>();
   const watches = new Map<string, WorktreeWatch>();
   const projector = options.projector;
@@ -747,6 +781,26 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * unreachable — which is the same answer as an expired id.
    */
   const offers = createProvisionOfferStore();
+  const previewProvisioning = async (repo: WorktreeRepo, model: ProvisionModel): Promise<ProvisionModel> => {
+    const preview = options.previewProvisioningPorts;
+    if (preview === undefined) {
+      return model;
+    }
+    try {
+      return {
+        ...model,
+        ports: await preview(
+          model.ports,
+          repo.worktrees.map((worktree) => worktree.displayPath),
+        ),
+      };
+    } catch {
+      return {
+        ...model,
+        ports: model.ports.map(({ port: _preview, ...item }) => item),
+      };
+    }
+  };
   /**
    * Provider reads in flight, marked BEFORE the await.
    *
@@ -756,6 +810,20 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * closes the guard has to be the pass in flight, not the pass that finished.
    */
   const provisionReading = new Map<string, number>();
+  const migrationReading = new Map<string, { sequence: number; sourceWorktreeId: string; sourceGeneration: number }>();
+  const migrationOffers = new Map<
+    string,
+    {
+      surface: string;
+      opening: number;
+      repoId: string;
+      sourceWorktreeId: string;
+      sourcePath: string;
+      binding: MigrationRepositoryBinding;
+      evidence: MigrationOfferEvidence;
+    }
+  >();
+  let migrationSequence = 0;
   /**
    * The OPENING each surface's create form is currently on, as the PANEL named
    * it.
@@ -862,6 +930,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       }
     }
     offers.forgetSurface(key);
+    const migrationPrefix = `${key}::`;
+    for (const slot of [...migrationReading.keys()]) {
+      if (slot.startsWith(migrationPrefix)) {
+        migrationReading.delete(slot);
+      }
+    }
+    for (const [offerId, offer] of migrationOffers) {
+      if (offer.surface === key) {
+        migrationOffers.delete(offerId);
+      }
+    }
     // And the per-repository enumeration records, which are what
     // `worktreeCreateProbe` and `worktreeAuthorizeDebris` read to decide whether
     // a request belongs to a live form. Retiring only the provisioning half left
@@ -1679,6 +1758,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     );
   }
 
+  function isKnownMigration(value: unknown): value is { readonly offerId: string } {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      onlyKeys(value, ["offerId"]) &&
+      typeof (value as { offerId?: unknown }).offerId === "string" &&
+      (value as { offerId: string }).offerId.length > 0
+    );
+  }
+
   /**
    * A branch-delete opt-in: five non-empty strings echoed back from a report
    * the host itself issued, and nothing else. Shape only — the guard replaces
@@ -2339,6 +2428,8 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // a named follow-up, so the user's recovery today is to reopen the
         // dialog.
         let selected: readonly ProvisionEntry[] | undefined;
+        let selectedPorts: readonly ProvisionPort[] | undefined;
+        let migrationOffer: ReturnType<typeof migrationOffers.get>;
         if (msg.provision !== undefined) {
           // Checked at RUNTIME like its three neighbours above. It was the one
           // field that got only a `!== undefined` before `.offerId` and
@@ -2368,7 +2459,42 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             return;
           }
           const wanted = new Set(msg.provision.itemIds);
-          selected = offered.entries.filter((e) => wanted.has(e.id));
+          selected = offered.entries.filter((entry) => wanted.has(entry.id));
+          selectedPorts = offered.ports.filter((port) => wanted.has(port.id));
+        }
+        if (msg.migrateChanges !== undefined) {
+          if (
+            !isKnownMigration(msg.migrateChanges) ||
+            (msg.mode.kind !== "fresh" && msg.mode.kind !== "fresh-detached" && msg.mode.kind !== "reuse")
+          ) {
+            return;
+          }
+          const offered = migrationOffers.get(msg.migrateChanges.offerId);
+          const source = cache
+            .read()
+            .repos.find((repo) => repo.repoId === msg.repoId)
+            ?.worktrees.find(
+              (row) =>
+                row.id === offered?.sourceWorktreeId &&
+                row.kind === offered?.binding.sourceKind &&
+                !row.bare &&
+                !row.missing &&
+                !row.prunable,
+            );
+          if (
+            offered === undefined ||
+            offered.surface !== surfaceKey(surface) ||
+            offered.opening !== msg.opening ||
+            offered.repoId !== msg.repoId ||
+            !isDeepStrictEqual(currentMigrationRegistration(msg.repoId), offered.binding.registration) ||
+            liveOpening.get(surfaceKey(surface)) !== msg.opening ||
+            source === undefined ||
+            options.probeMigrationSource === undefined
+          ) {
+            return;
+          }
+          migrationOffers.delete(msg.migrateChanges.offerId);
+          migrationOffer = offered;
         }
         if (create && typeof msg.path === "string" && msg.path.length > 0 && msg.repoId.length > 0) {
           const request = {
@@ -2378,10 +2504,60 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             disposition: msg.disposition,
             afterCreate: msg.afterCreate,
             ...(selected === undefined ? {} : { provision: selected }),
+            ...(selectedPorts === undefined ? {} : { ports: selectedPorts }),
             origin: surface,
           };
+          const runCreate = async (): Promise<void> => {
+            if (migrationOffer === undefined) {
+              await create(request);
+              return;
+            }
+            const current = await options
+              .probeMigrationSource?.(migrationOffer.sourcePath, migrationOffer.binding)
+              .catch(() => undefined);
+            const source = cache
+              .read()
+              .repos.find((repo) => repo.repoId === migrationOffer.repoId)
+              ?.worktrees.find(
+                (row) =>
+                  row.id === migrationOffer.sourceWorktreeId &&
+                  row.kind === migrationOffer.binding.sourceKind &&
+                  !row.bare &&
+                  !row.missing &&
+                  !row.prunable,
+              );
+            if (
+              source === undefined ||
+              current === undefined ||
+              !isDeepStrictEqual(
+                currentMigrationRegistration(migrationOffer.repoId),
+                migrationOffer.binding.registration,
+              ) ||
+              !isDeepStrictEqual(current, migrationOffer.evidence)
+            ) {
+              surface.post({
+                type: "worktreeMutationResult",
+                verb: "create",
+                repoId: msg.repoId,
+                result: {
+                  kind: "error",
+                  message: "the source work changed — close and reopen the dialog, then create again",
+                },
+              });
+              return;
+            }
+            await create({
+              ...request,
+              migration: {
+                sourcePath: migrationOffer.sourcePath,
+                source: migrationOffer.evidence.source,
+                snapshot: migrationOffer.evidence.snapshot,
+                binding: migrationOffer.binding,
+              },
+            });
+          };
           if (msg.afterCreate.kind !== "agent") {
-            perform(() => create(request));
+            perform(runCreate);
             return;
           }
           const asked = msg.afterCreate;
@@ -2389,7 +2565,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // refused its launch would leave the user a directory they did not
           // ask for on its own.
           if (admissibleLaunch(surface, asked)) {
-            perform(() => create(request));
+            perform(runCreate);
           }
         }
         return;
@@ -2573,7 +2749,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         const mine = msg.switch;
         void options
           .readProvisioning(repo.mainPath, msg.provider)
-          .then((model) => {
+          .then(async (model) => {
             if (disposed || !surfaces.has(surface)) {
               return;
             }
@@ -2590,10 +2766,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
             if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
               return;
             }
+            const previewed = await previewProvisioning(repo, model);
+            if (
+              disposed ||
+              !surfaces.has(surface) ||
+              provisionSwitch.get(slot) !== mine ||
+              liveOpening.get(key) !== msg.opening
+            ) {
+              return;
+            }
             // A fresh id, and the old one evicted with it: a submission naming
             // the superseded offer would name the model the user is no longer
             // looking at.
-            const offer = offers.issue(offerKey, model);
+            const offer = offers.issue(offerKey, previewed);
             deliver(surface, {
               type: "worktreeProvisionOffer",
               repoId: msg.repoId,
@@ -2652,13 +2837,22 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         }
         provisionSwitch.set(slot, msg.switch);
         const mine = msg.switch;
-        const publish = (model: ProvisionModel): void => {
+        const publish = async (model: ProvisionModel): Promise<void> => {
           // Checked AGAIN, after whatever this save did. A save is slower than a
           // switch and this is the window D8 exists for.
           if (provisionSwitch.get(slot) !== mine || liveOpening.get(key) !== msg.opening) {
             return;
           }
-          const offer = offers.issue(offerKey, model);
+          const previewed = await previewProvisioning(repo, model);
+          if (
+            disposed ||
+            !surfaces.has(surface) ||
+            provisionSwitch.get(slot) !== mine ||
+            liveOpening.get(key) !== msg.opening
+          ) {
+            return;
+          }
+          const offer = offers.issue(offerKey, previewed);
           deliver(surface, {
             type: "worktreeProvisionOffer",
             repoId: msg.repoId,
@@ -2681,7 +2875,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               if (disposed || !surfaces.has(surface)) {
                 return;
               }
-              publish(model);
+              return publish(model);
             })
             .catch(() => {});
           return;
@@ -2825,6 +3019,78 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         } else if (liveOpening.get(key) !== msg.opening) {
           return;
         }
+        if (
+          opening &&
+          msg.sourceWorktreeId !== undefined &&
+          Number.isSafeInteger(msg.sourceGeneration) &&
+          (msg.sourceGeneration as number) > 0 &&
+          options.probeMigrationSource !== undefined
+        ) {
+          const slot = `${key}::${msg.opening}`;
+          const reading = migrationReading.get(slot);
+          if (reading === undefined) {
+            const sourceGeneration = msg.sourceGeneration as number;
+            const mine = { sequence: ++migrationSequence, sourceWorktreeId: msg.sourceWorktreeId, sourceGeneration };
+            migrationReading.set(slot, mine);
+            const source = repo.worktrees.find(
+              (row) => row.id === msg.sourceWorktreeId && !row.bare && !row.missing && !row.prunable,
+            );
+            const registration = cache.registrationFor(msg.repoId, sourceGeneration);
+            if (source !== undefined && registration !== undefined) {
+              const sourcePath = source.id;
+              const binding = { registration, sourceKind: source.kind };
+              void options
+                .probeMigrationSource(sourcePath, binding)
+                .then((evidence) => {
+                  const currentReading = migrationReading.get(slot);
+                  const currentSource = cache
+                    .read()
+                    .repos.find((candidate) => candidate.repoId === msg.repoId)
+                    ?.worktrees.find(
+                      (row) =>
+                        row.id === source.id && row.kind === source.kind && !row.bare && !row.missing && !row.prunable,
+                    );
+                  if (
+                    disposed ||
+                    !surfaces.has(surface) ||
+                    liveOpening.get(key) !== msg.opening ||
+                    currentReading?.sequence !== mine.sequence ||
+                    currentReading.sourceWorktreeId !== mine.sourceWorktreeId ||
+                    currentReading.sourceGeneration !== mine.sourceGeneration ||
+                    !isDeepStrictEqual(currentMigrationRegistration(msg.repoId), registration) ||
+                    currentSource === undefined ||
+                    evidence === undefined ||
+                    !Number.isSafeInteger(evidence.snapshot.count) ||
+                    evidence.snapshot.count <= 0
+                  ) {
+                    return;
+                  }
+                  const offerId = (options.migrationOfferId ?? randomUUID)();
+                  if (migrationOffers.has(offerId)) {
+                    return;
+                  }
+                  migrationOffers.set(offerId, {
+                    surface: key,
+                    opening: msg.opening,
+                    repoId: msg.repoId,
+                    sourceWorktreeId: source.id,
+                    sourcePath,
+                    binding,
+                    evidence,
+                  });
+                  deliver(surface, {
+                    type: "worktreeMigrationOffer",
+                    repoId: msg.repoId,
+                    opening: msg.opening,
+                    sourceWorktreeId: source.id,
+                    offerId,
+                    count: evidence.snapshot.count,
+                  });
+                })
+                .catch(() => {});
+            }
+          }
+        }
         // A DIFFERENT opening supersedes: it starts its own read and retires the
         // previous one's right to publish. A repeat of the one already reading
         // JOINS it — starting a second would let a duplicated message suppress
@@ -2838,7 +3104,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           provisionReading.set(reading, mine);
           void options
             .readProvisioning(repo.mainPath)
-            .then((model) => {
+            .then(async (model) => {
               // The surface may have detached while the file was being read. A
               // post to a dead surface is at best wasted and at worst revives an
               // offer the detach was supposed to forget (B6).
@@ -2871,7 +3137,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
               if (!provisionBaseline.has(start)) {
                 provisionBaseline.set(start, model.providers.find((p) => p.active)?.id ?? "");
               }
-              const offer = offers.issue(offerKey, model);
+              const previewed = await previewProvisioning(repo, model);
+              if (
+                disposed ||
+                !surfaces.has(surface) ||
+                provisionReading.get(reading) !== mine ||
+                liveOpening.get(key) !== mine
+              ) {
+                return;
+              }
+              const offer = offers.issue(offerKey, previewed);
               deliver(surface, {
                 type: "worktreeProvisionOffer",
                 repoId: msg.repoId,
@@ -3728,7 +4003,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     } else {
       const root = cache.rootFor(scope);
       if (root) {
-        cache.applyRepo(scope, await listRepoWorktrees(root.rootPath, discoveryDeps), discoveryDeps.rank);
+        cache.applyRepo(scope, await listRegisteredRepoWorktrees(root, discoveryDeps), discoveryDeps.rank);
         treeVersion += 1;
       }
     }
@@ -3970,6 +4245,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         };
       },
       repoPath: (repoId) => cache.read().repos.find((r) => r.repoId === repoId)?.mainPath ?? null,
+      migrationRegistration: currentMigrationRegistration,
       // The claim a launch is admitted against, published as its value and
       // never derived from `degraded` (round-2 B7, round-7 W8, design.md D12).
       observation: (repoId) => observationOf(repoById(repoId)),

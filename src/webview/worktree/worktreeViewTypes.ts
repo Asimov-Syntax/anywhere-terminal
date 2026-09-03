@@ -22,6 +22,8 @@ import type {
   BranchDeleteOffer,
   DestinationDisposition,
   ProvisionModel,
+  ProvisionPortResult,
+  ProvisionPortWarning,
   ProvisionResultContest,
   ProvisionStepResult,
   PullRequestOffer,
@@ -148,6 +150,8 @@ export interface WorktreeActionResult {
   canonicalId?: string;
   /** The action succeeded; what it was asked to do next did not. */
   openFailed?: string;
+  /** The checkout exists, but the move's final location could not be established. */
+  migrationIndeterminate?: string;
   /**
    * The opted-in branch delete's own outcome, riding the removal's own
    * result rather than replacing it — a refused branch delete never turns a
@@ -162,6 +166,8 @@ export interface WorktreeActionResult {
    * worktree exists AND its files arrived — is one sentence, not two.
    */
   provisioned?: readonly ProvisionStepResult[];
+  ports?: readonly ProvisionPortResult[];
+  portWarnings?: readonly ProvisionPortWarning[];
   /**
    * Each contest's membership, once — referenced by a step's `contest` index.
    *
@@ -183,6 +189,11 @@ export interface WorktreeActionResult {
 export interface WorktreeProvisionOffer {
   readonly offerId: string;
   readonly model: ProvisionModel;
+}
+
+export interface WorktreeMigrationOffer {
+  readonly offerId: string;
+  readonly count: number;
 }
 
 /** Host-computed seed for the create form (`requestWorktreeCreateDefaults`). */
@@ -222,6 +233,8 @@ export interface WorktreeCreateDefaults {
    * model, and the two say different things.
    */
   provisioning?: WorktreeProvisionOffer;
+  /** The current source snapshot this form may explicitly choose to move. */
+  migration?: WorktreeMigrationOffer;
   /**
    * The repository's local branches, and whether the list is partial.
    *
@@ -329,6 +342,8 @@ export interface WorktreeCreateDraft {
    * never told what the repository needs asks for nothing.
    */
   provision?: { readonly offerId: string; readonly itemIds: readonly string[] };
+  /** Present only when the user checked the current move offer. */
+  migrateChanges?: { readonly offerId: string };
 }
 
 /** Re-exported so the view reads one module for the shapes it renders. */

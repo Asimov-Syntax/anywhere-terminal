@@ -50,6 +50,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeMigrationOfferMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
   WorktreeProvisionResultMessage,
@@ -128,6 +129,7 @@ export interface MessageHandlers {
   // ── Mutating actions (wire-worktree-mutating-actions) ──
   /** The destination a create will actually take, resolved by the host. */
   onWorktreeCreateDefaults?(msg: WorktreeCreateDefaultsMessage): void;
+  onWorktreeMigrationOffer?(msg: WorktreeMigrationOfferMessage): void;
   onWorktreeProvisionOffer?(msg: WorktreeProvisionOfferMessage): void;
   onWorktreeRefs?(msg: WorktreeRefsMessage): void;
   onWorktreePullRequests?(msg: WorktreePullRequestsMessage): void;
@@ -290,6 +292,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "worktreeCreateDefaults":
         handlers.onWorktreeCreateDefaults?.(msg);
+        break;
+      case "worktreeMigrationOffer":
+        handlers.onWorktreeMigrationOffer?.(msg);
         break;
       case "worktreeProvisionOffer":
         handlers.onWorktreeProvisionOffer?.(msg);

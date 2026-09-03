@@ -652,7 +652,7 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Labels** | cross-boundary |
 | **Notes** | Sequenced before setup because setup consumes the values. The lock is what makes the guarantee real — two VS Code windows scanning the same sibling set and probing independently can both pick the same port, so a file scan without a lock proves nothing. The guarantee is bounded on purpose and the acceptance says so: it covers worktrees this extension creates, not unrelated processes |
 | **Acceptance** | Reading claims, choosing values and writing the claim happen under one lock taken in the repository's common git directory, so two windows creating worktrees concurrently never claim the same port; a value already written in any sibling worktree's port file is never handed out; an existing port file in the new checkout is parsed and reused rather than overwritten or ignored, and allocation is skipped where it already covers every name; the port file is added to the repository-local exclude rather than `.gitignore`; a number that differs from what the dialog previewed is reported rather than silently swapped; one name failing to allocate does not prevent the others; the acceptance records that an unrelated process may still bind the port before setup runs |
-| **Status** | todo |
+| **Status** | done |
 
 ### [WT-012.7] One Box for Every Way a Worktree Starts
 
@@ -707,8 +707,8 @@ task that writes a config file, and it lands after the states it has to round-tr
 | **Size** | S |
 | **Labels** | None |
 | **Notes** | The Git extension already exposes `migrateChanges`; this is a call and a conditional row, not a reimplementation. Ordering matters — the move lands before setup runs so a setup command sees the moved work |
-| **Acceptance** | The row appears only when the source worktree actually has changes to move and states how many; the move happens after git reports success and before provisioning; a failed move is reported with the worktree standing and the changes left where they were; declining leaves both worktrees untouched |
-| **Status** | todo |
+| **Acceptance** | A row-context create offers the move only for that source directory and `.git` state when Git can produce a bounded positive snapshot, states the distinct record count as current, and states that Git acts on execution-time uncommitted work; repository-level creates and unresolved merges offer no move; observed drift before API entry refuses, while changes after the final check may enter the operation and make its result indeterminate; the attempt happens after git creates a fresh, detached, or reused checkout and before provisioning or launch, with nested destinations excluded first; only an empty source plus an exact non-conflicted destination snapshot counts as moved; every other outcome is potentially partial with the created worktree standing, later steps stopped, and no claim of source restoration or single-report ownership; declining invokes no migration |
+| **Status** | done |
 
 ### [WT-012.11] Setup Runs What the User Actually Saw
 

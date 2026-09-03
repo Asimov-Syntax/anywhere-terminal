@@ -63,6 +63,19 @@ describe("createWorktreeTreeDeps", () => {
     await expect(deps.stat(root)).resolves.toBeDefined();
   });
 
+  it("authorizes a repository common directory with retained component identities", async () => {
+    const deps = createWorktreeTreeDeps();
+    const root = await makeTempDir();
+    const normalized = await deps.normalize(root);
+    expect(normalized).not.toBeNull();
+
+    const registration = await deps.authorizeCommonDirectory?.(normalized as string);
+
+    expect(registration?.path).toBe(normalized);
+    expect(registration?.components.at(-1)?.path).toBe(normalized);
+    expect(registration?.components.at(-1)?.identity.ino).not.toBe(0);
+  });
+
   it("shares one capability cache across the returned deps", () => {
     const first = createWorktreeTreeDeps();
     const second = createWorktreeTreeDeps();

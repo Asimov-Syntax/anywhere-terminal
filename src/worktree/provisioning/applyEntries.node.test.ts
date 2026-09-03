@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
+import { authorizeDirectory, directoryStillAuthorized } from "../../utils/authorizedDirectory";
 import { afterDelay } from "../deadline";
 import { type ApplyBudget, applyEntry, nodeApplyFsDeps } from "./applyEntries";
 import { type EntryGateRoots, prepareEntryGate, refusedLockfile } from "./entryGate";
@@ -40,7 +41,8 @@ const entry = (over: Partial<ProvisionEntry> = {}): ProvisionEntry => ({
   ...over,
 });
 
-const apply = (e: ProvisionEntry, b: ApplyBudget = budget()) => applyEntry(e, roots, b, nodeApplyFsDeps);
+const apply = (e: ProvisionEntry, b: ApplyBudget = budget()) =>
+  applyEntry(e, roots, b, nodeApplyFsDeps, { directoryStillAuthorized });
 
 beforeEach(async () => {
   // `realpath` the temp root: macOS hands out `/var/...`, a symlink to
@@ -52,7 +54,11 @@ beforeEach(async () => {
   worktree = path.join(tmp, "wt");
   await fs.mkdir(main, { recursive: true });
   await fs.mkdir(worktree, { recursive: true });
-  const prepared = await prepareEntryGate(main, worktree, nodeApplyFsDeps);
+  const [source, destination] = await Promise.all([authorizeDirectory(main), authorizeDirectory(worktree)]);
+  if (source === undefined || destination === undefined) {
+    throw new Error("the gate could not authorize its roots");
+  }
+  const prepared = await prepareEntryGate(main, worktree, { source, destination }, nodeApplyFsDeps);
   if (prepared === null) {
     throw new Error("the gate would not prepare its roots");
   }
@@ -69,6 +75,53 @@ describe("the binding production actually passes", () => {
 
     expect((await apply(entry())).outcome).toEqual({ kind: "copied" });
     expect(await fs.readFile(path.join(worktree, ".env"), "utf8")).toBe("TOKEN=1");
+  });
+
+  it("does not read replacement source bytes after the observed checkout is recreated", async () => {
+    const original = `${main}-original`;
+    await fs.rename(main, original);
+    await fs.mkdir(main);
+    await fs.writeFile(path.join(main, ".env"), "REPLACEMENT=1");
+
+    const result = await apply(entry());
+
+    expect(result.outcome.kind).toBe("failed");
+    await expect(fs.readFile(path.join(worktree, ".env"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not read through a recreated source ancestor", async () => {
+    const sourceParent = path.join(tmp, "source-parent");
+    const sourceRoot = path.join(sourceParent, "main");
+    await fs.mkdir(sourceRoot, { recursive: true });
+    await fs.writeFile(path.join(sourceRoot, ".env"), "ORIGINAL=1");
+    const [source, destination] = await Promise.all([authorizeDirectory(sourceRoot), authorizeDirectory(worktree)]);
+    if (source === undefined || destination === undefined) {
+      throw new Error("the test roots could not be authorized");
+    }
+    const localRoots = await prepareEntryGate(sourceRoot, worktree, { source, destination }, nodeApplyFsDeps);
+    if (localRoots === null) {
+      throw new Error("the test roots did not prepare");
+    }
+    await fs.rename(sourceParent, `${sourceParent}-original`);
+    await fs.mkdir(sourceRoot, { recursive: true });
+    await fs.writeFile(path.join(sourceRoot, ".env"), "REPLACEMENT=1");
+
+    const result = await applyEntry(entry(), localRoots, budget(), nodeApplyFsDeps, { directoryStillAuthorized });
+
+    expect(result.outcome.kind).toBe("failed");
+    await expect(fs.readFile(path.join(worktree, ".env"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not write through a recreated destination root", async () => {
+    await fs.writeFile(path.join(main, ".env"), "TOKEN=1");
+    const original = `${worktree}-original`;
+    await fs.rename(worktree, original);
+    await fs.mkdir(worktree);
+
+    const result = await apply(entry());
+
+    expect(result.outcome.kind).toBe("failed");
+    await expect(fs.readFile(path.join(worktree, ".env"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("[F003] refuses a link whose REAL directory is outside, though its lexical one is inside", async () => {
@@ -401,8 +454,12 @@ describe("[round-5 F021] a transfer that fails partway is charged for the bytes 
     await fs.writeFile(path.join(main, "after.bin"), "a".repeat(60 * 1024));
     const shared = budget({ maxBytes: CAP });
 
-    const failed = await applyEntry(entry({ path: "grows.bin" }), roots, shared, growsAfterStat(grows, 150 * 1024));
-    const after = await applyEntry(entry({ id: "e2", path: "after.bin" }), roots, shared, nodeApplyFsDeps);
+    const failed = await applyEntry(entry({ path: "grows.bin" }), roots, shared, growsAfterStat(grows, 150 * 1024), {
+      directoryStillAuthorized,
+    });
+    const after = await applyEntry(entry({ id: "e2", path: "after.bin" }), roots, shared, nodeApplyFsDeps, {
+      directoryStillAuthorized,
+    });
 
     expect(failed.outcome.kind).toBe("failed");
     // The claim D10 makes is over the worktree, not over the counter — so this
@@ -421,8 +478,12 @@ describe("[round-5 F021] a transfer that fails partway is charged for the bytes 
     const shared = budget({ maxBytes: 64 * 1024 });
     await fs.writeFile(path.join(main, "fine.txt"), "f".repeat(1024));
 
-    const missing = await applyEntry(entry({ path: "gone.txt" }), roots, shared, nodeApplyFsDeps);
-    const fine = await applyEntry(entry({ id: "e2", path: "fine.txt" }), roots, shared, nodeApplyFsDeps);
+    const missing = await applyEntry(entry({ path: "gone.txt" }), roots, shared, nodeApplyFsDeps, {
+      directoryStillAuthorized,
+    });
+    const fine = await applyEntry(entry({ id: "e2", path: "fine.txt" }), roots, shared, nodeApplyFsDeps, {
+      directoryStillAuthorized,
+    });
 
     expect(missing.outcome.kind).toBe("failed");
     expect(fine.outcome.kind).toBe("copied");

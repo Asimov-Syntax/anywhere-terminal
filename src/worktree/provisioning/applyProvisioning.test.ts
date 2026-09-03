@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProvisionEntry, ProvisionResultContest, ProvisionStepResult } from "../../types/messages";
+import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import { afterDelay } from "../deadline";
 import { fakeFs } from "./applyEntries.fake";
 import { applyProvisioning, failEveryEntry } from "./applyProvisioning";
@@ -7,6 +8,13 @@ import { prepareEntryGate } from "./entryGate";
 
 const MAIN = "/repo";
 const WT = "/wt";
+
+function observed(path: string): AuthorizedDirectory {
+  return { path, platform: "darwin", components: [{ path, identity: { dev: 7, ino: path.length } }] };
+}
+
+const AUTHORIZATION = { source: observed(MAIN), destination: observed(WT) };
+const AUTHORITY = { directoryStillAuthorized: async () => true };
 
 function entry(path: string, mode: ProvisionEntry["mode"], source: string, id = path): ProvisionEntry {
   return { id, path, mode, source };
@@ -18,13 +26,19 @@ async function applyTo(
   options: Parameters<typeof fakeFs>[1] = {},
 ) {
   const fs = fakeFs({ [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...nodes }, options);
-  const roots = await prepareEntryGate(MAIN, WT, fs);
+  const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
   if (roots === null) {
     throw new Error("the fake could not prepare its roots");
   }
   const deadline = afterDelay(60_000);
   try {
-    const applied = await applyProvisioning(entries, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+    const applied = await applyProvisioning(
+      entries,
+      roots,
+      { maxNodes: 1000, maxBytes: 1_000_000, deadline },
+      fs,
+      AUTHORITY,
+    );
     return { steps: applied.steps, contests: applied.contests, fs };
   } finally {
     deadline.cancel();
@@ -88,7 +102,7 @@ describe("applyProvisioning", () => {
       [`${MAIN}/b`]: { kind: "file" },
       [`${MAIN}/c`]: { kind: "file" },
     });
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("the fake could not prepare its roots");
     }
@@ -99,9 +113,33 @@ describe("applyProvisioning", () => {
         roots,
         { maxNodes: 2, maxBytes: 1_000_000, deadline },
         fs,
+        AUTHORITY,
       );
 
       expect(steps.map((s) => s.outcome.kind)).toEqual(["copied", "copied", "failed"]);
+    } finally {
+      deadline.cancel();
+    }
+  });
+
+  it("fails every selected entry before contest reads when a frozen checkout identity changed", async () => {
+    const fs = fakeFs({ [MAIN]: { kind: "dir" }, [WT]: { kind: "dir" }, ...MATERIAL });
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
+    if (roots === null) {
+      throw new Error("the fake could not prepare its roots");
+    }
+    const deadline = afterDelay(60_000);
+    try {
+      const { steps } = await applyProvisioning(
+        [entry(".env", "copy", "s")],
+        roots,
+        { maxNodes: 1000, maxBytes: 1_000_000, deadline },
+        fs,
+        { directoryStillAuthorized: async (authorization) => authorization.path !== WT },
+      );
+
+      expect(steps.map((step) => step.outcome.kind)).toEqual(["failed"]);
+      expect(fs.created).toEqual([]);
     } finally {
       deadline.cancel();
     }
@@ -451,13 +489,19 @@ describe("absence is established, never assumed", () => {
         throw error;
       }
     };
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("the fake could not prepare its roots");
     }
     const deadline = afterDelay(60_000);
     try {
-      const { steps } = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+      const { steps } = await applyProvisioning(
+        PAIR,
+        roots,
+        { maxNodes: 1000, maxBytes: 1_000_000, deadline },
+        fs,
+        AUTHORITY,
+      );
 
       expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
       expect(fs.created).toEqual([]);
@@ -482,13 +526,19 @@ describe("absence is established, never assumed", () => {
         fs.nodes.set(`${WT}/MixedCase`, { kind: "dir", mode: 0o700 });
       }
     };
-    const roots = await prepareEntryGate(MAIN, WT, fs);
+    const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, fs);
     if (roots === null) {
       throw new Error("the fake could not prepare its roots");
     }
     const deadline = afterDelay(60_000);
     try {
-      const { steps } = await applyProvisioning(PAIR, roots, { maxNodes: 1000, maxBytes: 1_000_000, deadline }, fs);
+      const { steps } = await applyProvisioning(
+        PAIR,
+        roots,
+        { maxNodes: 1000, maxBytes: 1_000_000, deadline },
+        fs,
+        AUTHORITY,
+      );
 
       expect(steps.map((s) => s.outcome.kind)).toEqual(["refused", "refused"]);
       // The other writer's mode is untouched, and neither declaration's

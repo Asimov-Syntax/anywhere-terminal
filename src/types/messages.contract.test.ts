@@ -15,6 +15,7 @@ import type {
   BranchDeleteRequest,
   DestinationDisposition,
   ExtensionToWebViewMessage,
+  ProvisionPortResult,
   ProvisionProblem,
   ProvisionProvider,
   ProvisionSelection,
@@ -214,10 +215,50 @@ const stepForDirectory: ProvisionStepResult = {
   details: [{ path: "config/local.json", reason: "already there" }],
 };
 
+const allocatedPort: ProvisionPortResult = {
+  id: "i5",
+  name: "APP",
+  preview: 5183,
+  outcome: { kind: "allocated", port: 5184 },
+};
+const reusedPort: ProvisionPortResult = {
+  id: "i6",
+  name: "DB",
+  outcome: { kind: "reused", port: 5433 },
+};
+const failedPort: ProvisionPortResult = {
+  id: "i7",
+  name: "CACHE",
+  preview: 6380,
+  outcome: { kind: "failed", reason: "no distinct port could be allocated" },
+};
+const failedPortWithoutReason: ProvisionPortResult = {
+  id: "i8",
+  name: "BAD",
+  // @ts-expect-error a failed port states its reason
+  outcome: { kind: "failed" },
+};
+const portWithPath: ProvisionPortResult = {
+  id: "i9",
+  name: "PATHLESS",
+  outcome: { kind: "allocated", port: 7000 },
+  // @ts-expect-error a port result does not disguise its name as a path
+  path: ".env.worktree",
+};
+
 const provisionResult: WorktreeProvisionResultMessage = {
   type: "worktreeProvisionResult",
   worktreeId: "w1",
   steps: [stepForFile, stepForDirectory],
+  ports: [allocatedPort, reusedPort, failedPort],
+  portWarnings: ["lockReleaseFailed", "excludeFailed", "lockRetained", "temporaryCleanupFailed"],
+};
+
+// @ts-expect-error every producer states the complete per-port result list, including an empty one
+const _provisionResultWithoutPorts: WorktreeProvisionResultMessage = {
+  type: "worktreeProvisionResult",
+  worktreeId: "w1",
+  steps: [],
 };
 
 // It is an extension → webview message, so a panel switching on the union sees it.
@@ -229,6 +270,7 @@ const provisionResultWithVerdict: WorktreeProvisionResultMessage = {
   type: "worktreeProvisionResult",
   worktreeId: "w1",
   steps: [],
+  ports: [],
   // @ts-expect-error a provision result carries no verdict on the create
   ok: false,
 };
@@ -361,8 +403,15 @@ describe("the wire contract", () => {
       "failed",
     ]);
     expect(stepForDirectory.details).toHaveLength(1);
+    expect(provisionResult.ports?.map((port) => port.outcome.kind)).toEqual(["allocated", "reused", "failed"]);
     expect(provisionResultInUnion.type).toBe("worktreeProvisionResult");
-    expect([refusedNoReason, copiedWithReason, provisionResultWithVerdict]).toHaveLength(3);
+    expect([
+      refusedNoReason,
+      copiedWithReason,
+      failedPortWithoutReason,
+      portWithPath,
+      provisionResultWithVerdict,
+    ]).toHaveLength(5);
     expect(save.kept).toHaveLength(2);
     expect(detectedProvider.present).toEqual([".worktreeinclude"]);
     expect(refusedSaveProblem.reason).toBe("unsaved");

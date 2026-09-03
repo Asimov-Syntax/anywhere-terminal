@@ -26,6 +26,16 @@ function makeRunner(table: Record<string, Reply>) {
 
 const identityNormalize = async (p: string) => p.replace(/\/+$/, "") || "/";
 
+const registration = {
+  path: "/repo/.git",
+  platform: "darwin" as const,
+  components: [
+    { path: "/", identity: { dev: 1, ino: 1 } },
+    { path: "/repo", identity: { dev: 1, ino: 2 } },
+    { path: "/repo/.git", identity: { dev: 1, ino: 3 } },
+  ],
+};
+
 function deps(runner: GitCommandRunner, getGitApi?: GitApiAccessor) {
   return {
     runner,
@@ -54,6 +64,32 @@ describe("resolveRepoRoots", () => {
   it("uses the git API's repository root when one matches the folder", async () => {
     const { runner } = makeRunner({ [`/repo|${PATH_FORMAT}`]: { stdout: "/repo/.git\n" } });
     const repos = await resolveRepoRoots(["/repo/packages/api"], deps(runner, api("initialized", ["/repo"])));
+    expect(repos).toEqual([{ repoId: "/repo/.git", rootPath: "/repo" }]);
+  });
+
+  it("retains authorized common-directory evidence from repository resolution", async () => {
+    const { runner } = makeRunner({ [`/repo|${PATH_FORMAT}`]: { stdout: "/repo/.git\n" } });
+    const authorizeCommonDirectory = vi.fn(async () => registration);
+
+    const repos = await resolveRepoRoots(["/repo"], {
+      ...deps(runner, api("initialized", ["/repo"])),
+      authorizeCommonDirectory,
+    });
+
+    expect(authorizeCommonDirectory).toHaveBeenCalledWith("/repo/.git");
+    expect(repos).toEqual([{ repoId: "/repo/.git", rootPath: "/repo", registration }]);
+  });
+
+  it("keeps ordinary repository discovery when common-directory evidence is unavailable", async () => {
+    const { runner } = makeRunner({ [`/repo|${PATH_FORMAT}`]: { stdout: "/repo/.git\n" } });
+
+    const repos = await resolveRepoRoots(["/repo"], {
+      ...deps(runner, api("initialized", ["/repo"])),
+      authorizeCommonDirectory: async () => {
+        throw new Error("unreadable identity");
+      },
+    });
+
     expect(repos).toEqual([{ repoId: "/repo/.git", rootPath: "/repo" }]);
   });
 

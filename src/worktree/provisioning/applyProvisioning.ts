@@ -12,7 +12,14 @@
 
 import type { ProvisionEntry, ProvisionResultContest, ProvisionStepResult } from "../../types/messages";
 import type { ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
-import { type ApplyBudget, type ApplyFsDeps, applyEntry, applyExclusiveEntry, CLAIM_LOST } from "./applyEntries";
+import {
+  type ApplyAuthorizationDeps,
+  type ApplyBudget,
+  type ApplyFsDeps,
+  applyEntry,
+  applyExclusiveEntry,
+  CLAIM_LOST,
+} from "./applyEntries";
 import { admitEntry, type EntryGateRoots } from "./entryGate";
 import { NATIVE_PROVIDER_FILE } from "./nativeProvider";
 import { contendersOf } from "./providerKit";
@@ -176,7 +183,21 @@ export async function applyProvisioning(
   roots: EntryGateRoots,
   budget: ApplyBudget,
   deps: ApplyFsDeps & ResolvedPathInsideDeps,
+  authority: ApplyAuthorizationDeps,
 ): Promise<ApplyProvisioningResult> {
+  // The contest pass reads destinations before it dispatches entries. Re-check
+  // both frozen checkout identities first so that pass cannot classify a
+  // replacement and bypass the per-entry authority checks below.
+  for (const [root, label] of [
+    [roots.source, "source"],
+    [roots.destination, "destination"],
+  ] as const) {
+    const stable = await authority.directoryStillAuthorized(root.authorization).catch(() => false);
+    if (!stable) {
+      return failEveryEntry(entries, `the observed ${label} checkout changed before provisioning could begin`);
+    }
+  }
+
   const answered = new Map<ProvisionEntry, ProvisionStepResult>();
   const contests = contestsOf(entries);
   const indexOf = new Map<Contest, number>(contests.map((contest, at) => [contest, at]));
@@ -318,8 +339,8 @@ export async function applyProvisioning(
     // (.reviews/round-2.md F001).
     const applied =
       contest === undefined
-        ? await applyEntry(entry, roots, budget, deps)
-        : await applyExclusiveEntry(entry, roots, budget, deps);
+        ? await applyEntry(entry, roots, budget, deps, authority)
+        : await applyExclusiveEntry(entry, roots, budget, deps, authority);
     if (contest !== undefined && applied === CLAIM_LOST) {
       await refuseContest(
         contest,

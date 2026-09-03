@@ -1929,6 +1929,106 @@ not make.
 - **WHEN** a link entry is applied on a platform that refuses the symlink
 - **THEN** the entry's content is copied and the entry is reported as a copy that was asked to be a link
 
+### Requirement: Selected post-create writes retain observed checkout identity
+
+After Git creates a worktree, the extension SHALL freeze the first stable filesystem identities it observes for the source and destination of selected provisioning work.
+
+- Stable identity unavailable → Git create remains successful and the affected selected work fails.
+- Identity change observed before a selected write begins → that work fails and no write begins through the observed replacement.
+
+### Requirement: Sibling claim reads sample stable listing-time identity
+
+A sibling claim SHALL contribute to port allocation only when the sibling's listing-time identity matches immediately before and after its claim read.
+
+- Stable identity unavailable or mismatched → fresh allocation fails rather than using an incomplete claimed set.
+- A normalized listing row that identifies the new worktree SHALL be excluded from its sibling set by filesystem identity.
+
+### Requirement: A dirty port-write timeout retains serialization
+
+WHEN a port-claim deadline expires while lock acquisition or a protected mutation may still land, the selected uncommitted ports SHALL fail, the cross-process lock SHALL remain or become held, and the panel SHALL warn that cleanup is required.
+
+### Requirement: A clean port-write timeout releases serialization
+
+WHEN a port-claim deadline expires with no protected mutation in flight, the selected uncommitted ports SHALL fail and the cross-process lock SHALL be released.
+
+### Requirement: An expired port write starts no later publication
+
+After a port-claim deadline expires, the extension SHALL NOT begin another claim publication in that transaction. Inode-owned temporary and lock cleanup MAY still complete afterward when they cannot alter the committed target or release a successor.
+
+### Requirement: Successful work remains successful when cleanup is late
+
+WHERE a port claim committed before inode-owned temporary cleanup or lock release exceeded its bound, the committed outcome SHALL remain successful and the panel SHALL identify the incomplete cleanup.
+
+### Requirement: A named port carries a numeric preview
+
+The create form SHALL present each offered port as its configured name and a numeric preview, while keeping the file that declared it as the row's source. The preview SHALL be presented as provisional rather than as a reservation. WHEN a preview cannot be obtained, the row SHALL keep the configured name and state that no preview is available rather than inventing a number.
+
+### Requirement: Successful port claims do not collide across sibling worktrees
+
+A port value the extension successfully writes for one worktree SHALL differ from every port value already claimed by a sibling worktree of the same repository. Two creates the extension performs concurrently for one repository SHALL NOT successfully claim the same value.
+
+#### Scenario: Two windows create worktrees together
+
+- **WHEN** two extension windows create worktrees for the same repository at the same time and both allocate a port
+- **THEN** each successful claim has a different value
+
+### Requirement: The port claim file has one strict format
+
+A valid `.env.worktree` SHALL contain only blank lines, comment lines, and assignments whose names match `[A-Za-z_][A-Za-z0-9_]*` and whose decimal values are from 1 through 65535. Repeating a name or a numeric value SHALL make the file invalid.
+
+### Requirement: Port names are safe environment identifiers
+
+A configured port name SHALL be written only when it matches `[A-Za-z_][A-Za-z0-9_]*`. A name outside that grammar SHALL be reported as failed without preventing valid names from being allocated.
+
+### Requirement: Existing non-conflicting assignments are reused
+
+WHERE the new checkout already carries a valid `.env.worktree`, the extension SHALL reuse each selected assignment whose value no sibling claims. Missing selected names whose allocation succeeds SHALL be appended without changing any existing assignment.
+
+#### Scenario: The file already covers every selected name
+
+- **WHEN** `.env.worktree` contains one valid, non-conflicting assignment for every selected configured name
+- **THEN** those values are reused and no fresh value is allocated or written
+
+### Requirement: A conflicting existing assignment is retained but not adopted
+
+WHERE a sibling already claims a value in the new checkout's `.env.worktree`, the extension SHALL leave the assignment unchanged and report that configured name as failed.
+
+#### Scenario: An existing value conflicts with a sibling
+
+- **WHEN** `.env.worktree` and a sibling worktree both assign the same value
+- **THEN** the existing assignment is left unchanged and that configured name is reported as failed
+
+### Requirement: An unsupported existing claim file is left untouched
+
+WHEN the new checkout's `.env.worktree` cannot be read, is not a regular file, or is invalid under the claim-file format, the extension SHALL write nothing to it and SHALL report every selected name as failed.
+
+### Requirement: One configured name gets one claim
+
+WHERE more than one selected row carries the same configured name, the extension SHALL allocate or reuse one value for that name, write at most one assignment, and report the same outcome against each selected row.
+
+### Requirement: Unproven sibling claims prevent fresh allocation
+
+WHEN the sibling listing is incomplete, or a registered sibling's present claim file cannot be read as valid port assignments, the extension SHALL fail fresh allocations rather than choose from an incomplete claimed set. The successful worktree create SHALL remain standing.
+
+### Requirement: Every selected port gets its own outcome
+
+After a create, the panel SHALL report the outcome of every selected port name. A name whose allocation fails SHALL NOT prevent another name from succeeding, and no port outcome SHALL change whether the worktree create is reported as successful.
+
+### Requirement: A changed preview is reported by variable
+
+WHERE the authoritative allocated or reused value for a configured name differs from the value previewed in the create form, the result on the created worktree SHALL name that variable, the authoritative value, and the preview it replaced. Names whose authoritative value equals their preview SHALL NOT appear in that change report.
+
+### Requirement: The port claim file stays local to the repository
+
+The extension SHALL add `.env.worktree` to the repository-local exclude file and SHALL NOT add it to `.gitignore`. A failed exclude update SHALL be reported and SHALL NOT change the worktree create or any port outcome.
+
+### Requirement: A committed allocation stays successful when lock cleanup fails
+
+WHERE port values were committed but releasing their allocation lock fails, those port outcomes SHALL remain successful and the panel SHALL warn that a later allocation may be blocked.
+
+### Requirement: A claimed port is not described as reserved from other processes
+
+The create form and its result SHALL NOT claim that a preview or written value prevents an unrelated process from binding that port before setup runs.
 ### Requirement: Two declarations are one path only when they are spelled alike
 
 Two declared paths SHALL count as the same path only WHERE their written spellings match after the
@@ -2838,4 +2938,118 @@ reconstruction fails.
 - **WHEN** a surviving checkout is resolved on a platform the reconstruction has not been recorded on
 - **THEN** adopt is not offered, the reason given is that the platform is not yet verified, and the
   resolution falls back to the suffixed fresh path
+### Requirement: A move offer requires an identified source worktree
+
+WHERE a create action came from a specific worktree row, that source has work the host can count
+completely, and the editor can migrate it, the form SHALL offer to move the work. A create opened
+without a unique source row, or against an unavailable source or integration, SHALL NOT offer it.
+
+#### Scenario: There is work to move
+
+- **WHEN** a worktree row opens create and that worktree has movable changes
+- **THEN** the form offers to move them
+
+#### Scenario: The create has no source row
+
+- **WHEN** the create form was opened from a repository-level or toolbar action
+- **THEN** no move option is offered
+
+#### Scenario: Nothing can be offered
+
+- **WHEN** the source has no changes, has an unresolved merge, cannot be read completely, or migration is unavailable
+- **THEN** the form does not offer to move anything and create remains available
+
+### Requirement: The move offer states one complete distinct-path count
+
+The offer SHALL state the number of distinct movable paths Git reports as staged, changed in the
+working tree, or untracked. A path in more than one state and a renamed path SHALL each count once;
+a changed path set SHALL withdraw the earlier consent.
+
+#### Scenario: A path is both staged and edited
+
+- **WHEN** one path is staged and also changed in the working tree
+- **THEN** the form states it as one change
+
+#### Scenario: The count changes before create
+
+- **WHEN** the user selected the move at one count and the host observes a changed snapshot while redeeming consent
+- **THEN** no worktree is created and the earlier selection authorizes no move
+
+#### Scenario: The count changes after create
+
+- **WHEN** git created the destination but the final pre-migration snapshot no longer matches
+- **THEN** the checkout remains created, no move or later step runs, and migration is reported indeterminate
+
+### Requirement: Move consent applies to execution-time source work
+
+The row SHALL identify its number as the current snapshot and SHALL state that Git moves the source's
+uncommitted work present when the operation runs. A change after the final host check MAY enter the
+Git operation; observable divergence SHALL make the result indeterminate.
+
+#### Scenario: Work changes after the final check
+
+- **WHEN** another process changes the source after the host's final snapshot and before Git stashes it
+- **THEN** the operation may include that work and any observed mismatch is reported as indeterminate
+
+### Requirement: The work moves between a new checkout and every later step
+
+For a fresh, detached, or reused-branch create, migration SHALL run after git creates the checkout and
+before any provisioning authorization, materialization, allocation, opening, or launch in it. Reattach and adopt
+SHALL NOT offer or perform migration because they act on surviving directories.
+
+#### Scenario: A setup command sees the moved work
+
+- **WHEN** a create carries both migration and provisioning entries
+- **THEN** migration completes before the first provisioning entry is materialized
+
+#### Scenario: The move is uncertain
+
+- **WHEN** the integration does not establish that the work moved
+- **THEN** no provisioning or after-create action runs in the created checkout
+
+#### Scenario: Untracked files move too
+
+- **WHEN** the moved work includes a file git is not tracking
+- **THEN** the integration is asked to include that file with the rest
+
+#### Scenario: A surviving checkout is repaired
+
+- **WHEN** the create mode is reattach or adopt
+- **THEN** no move option is offered and no migration is attempted
+
+### Requirement: Migration uncertainty does not undo a successful create
+
+WHERE migration is not established, the extension SHALL keep and report the created worktree rather
+than reporting a failed create or rolling it back. No later create step SHALL run.
+
+#### Scenario: The move rejects
+
+- **WHEN** the migration promise rejects after the worktree was created
+- **THEN** the create remains successful and later steps do not run
+
+### Requirement: An uncertain migration report claims only proven state
+
+The report SHALL call migration potentially partial, direct inspection of both worktrees and Git
+stashes, and SHALL NOT claim source restoration or single-location ownership. Because the integration
+exposes no report-ownership signal, the contract SHALL NOT promise exactly one report.
+
+#### Scenario: The integration resolves without moving everything
+
+- **WHEN** the migration promise resolves but the source still reports uncommitted work
+- **THEN** the notice makes no claim about where every change now resides
+
+#### Scenario: The integration already warned
+
+- **WHEN** the integration warns and then rejects during its own recovery
+- **THEN** the extension may also report uncertainty rather than suppressing an unclassified rejection
+
+### Requirement: Declining to move performs no migration
+
+WHERE the user does not select the move offer, the extension SHALL NOT invoke migration and the source
+worktree's changes SHALL remain untouched by this option.
+
+#### Scenario: The offer is declined
+
+- **WHEN** the user creates a worktree without selecting the move
+- **THEN** no migration is attempted
 

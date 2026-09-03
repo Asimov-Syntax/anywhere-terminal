@@ -144,4 +144,3 @@ once the answer arrives.
 - **WHEN** a different source is chosen and reading it fails
 - **THEN** the failure is reported
 - **AND** the control that records the selection is offered again
-

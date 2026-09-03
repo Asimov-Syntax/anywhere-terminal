@@ -20,7 +20,10 @@ const FEAT = ["worktree /repo-wt/feat", "HEAD def", "branch refs/heads/feat"];
 
 /** Runner that answers the `-z` listing and the line-delimited listing. */
 function makeRunner(z: GitCommandResult, plain: GitCommandResult = res()) {
-  const run = vi.fn(async (args: readonly string[]) => (args.includes("-z") ? z : plain));
+  const run = vi.fn(
+    async (args: readonly string[], _cwd?: string, _options?: { timeoutMs?: number; maxBufferBytes?: number }) =>
+      args.includes("-z") ? z : plain,
+  );
   return { runner: { run } as unknown as GitCommandRunner, run };
 }
 
@@ -104,6 +107,39 @@ describe("listRepoWorktrees", () => {
     const listing = await listRepoWorktrees("/repo", deps(runner, { normalize }));
     expect(listing.worktrees.map((w) => w.id)).toEqual(["/repo"]);
     expect(listing.reasons).toHaveLength(1);
+  });
+
+  it("passes one bounded timeout and output cap to the Git listing", async () => {
+    const { runner, run } = makeRunner(res({ stdout: nul(MAIN) }));
+    await listRepoWorktrees("/repo", deps(runner), {
+      timeoutMs: 250,
+      maxBufferBytes: 4096,
+      maxWorktrees: 10,
+    });
+
+    expect(run).toHaveBeenCalledWith(
+      ["worktree", "list", "--porcelain", "-z"],
+      "/repo",
+      expect.objectContaining({ timeoutMs: expect.any(Number), maxBufferBytes: 4096 }),
+    );
+    expect(run.mock.calls[0]?.[2]?.timeoutMs).toBeLessThanOrEqual(250);
+  });
+
+  it("rejects an over-cap listing before normalization or missing probes", async () => {
+    const { runner } = makeRunner(res({ stdout: nul(MAIN, FEAT) }));
+    const normalize = vi.fn(async (p: string) => p);
+    const stat = vi.fn(async () => undefined);
+
+    const listing = await listRepoWorktrees("/repo", deps(runner, { normalize, stat }), {
+      timeoutMs: 250,
+      maxBufferBytes: 4096,
+      maxWorktrees: 1,
+    });
+
+    expect(listing.worktrees).toEqual([]);
+    expect(listing.degraded).toMatch(/limit/i);
+    expect(normalize).not.toHaveBeenCalled();
+    expect(stat).not.toHaveBeenCalled();
   });
 });
 

@@ -1155,6 +1155,8 @@ export interface WorktreeCreateRequestMessage {
    * against the model it issued (worktree-rpc.md § 2.4).
    */
   provision?: ProvisionSelection;
+  /** Opaque consent only; the host retains the source path, count, and evidence. */
+  migrateChanges?: { readonly offerId: string };
 }
 
 /** WebView → Extension: start a fresh agent session in a worktree. */
@@ -1217,6 +1219,10 @@ export interface WorktreeCreateDefaultsRequestMessage {
    * authority.
    */
   opening: number;
+  /** The worktree row that opened this form, absent for repository and toolbar doors. */
+  sourceWorktreeId?: string;
+  /** The published repository observation that contained `sourceWorktreeId`. */
+  sourceGeneration?: number;
   /**
    * The branch the form currently holds, if any.
    *
@@ -2524,7 +2530,12 @@ export interface WorktreeMutationResultMessage {
   /** The row the notice attaches to. Absent for the repo-scoped verbs. */
   worktreeId?: string;
   result:
-    | { kind: "ok"; openFailed?: string; branchDelete?: WorktreeBranchDeleteOutcome }
+    | {
+        kind: "ok";
+        openFailed?: string;
+        branchDelete?: WorktreeBranchDeleteOutcome;
+        migrationIndeterminate?: string;
+      }
     | { kind: "error"; message: string }
     | { kind: "indeterminate"; observed: string }
     | { kind: "unavailable"; unreadable: readonly string[] }
@@ -2628,6 +2639,15 @@ export interface WorktreeCreateResolutionMessage {
  *
  * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
  */
+export interface WorktreeMigrationOfferMessage {
+  type: "worktreeMigrationOffer";
+  repoId: string;
+  opening: number;
+  sourceWorktreeId: string;
+  offerId: string;
+  count: number;
+}
+
 export interface WorktreeProvisionOfferMessage {
   type: "worktreeProvisionOffer";
   repoId: string;
@@ -2714,6 +2734,23 @@ export interface ProvisionStepResult {
   readonly contest?: number;
 }
 
+/** One selected named port's authoritative outcome. */
+export interface ProvisionPortResult {
+  /** The opaque, per-offer item id the host issued. */
+  readonly id: string;
+  /** Configured environment name. Never a path or command. */
+  readonly name: string;
+  /** What the dialog showed, when a preview probe succeeded. */
+  readonly preview?: number;
+  readonly outcome:
+    | { readonly kind: "allocated"; readonly port: number }
+    | { readonly kind: "reused"; readonly port: number }
+    | { readonly kind: "failed"; readonly reason: string };
+}
+
+/** A batch condition that does not change any committed per-port outcome. */
+export type ProvisionPortWarning = "lockReleaseFailed" | "excludeFailed" | "lockRetained" | "temporaryCleanupFailed";
+
 /**
  * Extension → WebView: what provisioning did, per item, after a create.
  *
@@ -2727,6 +2764,8 @@ export interface WorktreeProvisionResultMessage {
   type: "worktreeProvisionResult";
   worktreeId: string;
   steps: readonly ProvisionStepResult[];
+  ports: readonly ProvisionPortResult[];
+  portWarnings?: readonly ProvisionPortWarning[];
   /** Referenced by `ProvisionStepResult.contest`; absent when nothing contested. */
   contests?: readonly ProvisionResultContest[];
 }
@@ -2800,6 +2839,7 @@ export type ExtensionToWebViewMessage =
   | WorktreePullRequestsMessage
   | WorktreeCreateResolutionMessage
   | WorktreeDebrisAuthorizedMessage
+  | WorktreeMigrationOfferMessage
   | WorktreeProvisionOfferMessage
   | WorktreeProvisionResultMessage
   | InitMessage

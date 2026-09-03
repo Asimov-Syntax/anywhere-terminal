@@ -2395,6 +2395,71 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").not.toMatch(/couldn.t create/i);
   });
 
+  it("keeps an uncertain migration successful and states only what is proven", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          migrationIndeterminate: "Migration failed; changes were restored to the source and this is the only report.",
+        },
+      ],
+    });
+
+    const notice = view.element.querySelector(".wt-notice");
+    const text = notice?.textContent ?? "";
+    expect(notice?.className ?? "").toContain("wt-notice--warn");
+    expect(text).toContain("Create done.");
+    expect(text).toContain("Migration may be partial");
+    expect(text).toContain("no provisioning, port allocation, opening, or launch ran afterwards");
+    expect(text).toContain("source worktree");
+    expect(text).toContain("destination worktree");
+    expect(text).toContain("Git stashes");
+    const detail = notice?.querySelector(".wt-reason")?.textContent ?? "";
+    expect(detail).toBe(
+      "Unverified Git integration detail: Migration failed; changes were restored to the source and this is the only report.",
+    );
+    expect(text.replace(detail, "")).not.toMatch(/restor|only report|one place|couldn.t create|migration failed/i);
+  });
+
+  it("redraws when only the migration uncertainty reason changes", () => {
+    const { view } = mount();
+    const result = (migrationIndeterminate: string): WorktreeActionResult => ({
+      action: "create",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      outcome: "ok",
+      migrationIndeterminate,
+    });
+
+    view.setData({ ...populated(), actionResults: [result("first observation")] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("first observation");
+    view.setData({ ...populated(), actionResults: [result("second observation")] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("second observation");
+  });
+
+  it("keeps another post-create failure beside migration uncertainty", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          migrationIndeterminate: "migration evidence changed",
+          openFailed: "no window available",
+        },
+      ],
+    });
+
+    const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
+    expect(text).toContain("migration evidence changed");
+    expect(text).toContain("no window available");
+  });
+
   it("names a branch the removal also deleted", () => {
     const { view } = mount();
     view.setData({
@@ -2680,6 +2745,79 @@ describe("a mutation's outcome reads as what it was (design.md D11)", () => {
     expect(notice?.textContent ?? "").toContain("not a file, a directory or a link");
     // And the notice says so rather than reading as an unqualified success.
     expect(notice?.className ?? "").toContain("wt-notice--warn");
+  });
+
+  it("counts unique successful ports and names only movement or failure", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          ports: [
+            { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+            { id: "p2", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+            { id: "p3", name: "DB", preview: 5432, outcome: { kind: "allocated", port: 5432 } },
+            { id: "p4", name: "CACHE", outcome: { kind: "failed", reason: "no distinct port" } },
+            { id: "p5", name: "METRICS", outcome: { kind: "reused", port: 9000 } },
+          ],
+        },
+      ],
+    });
+
+    const text = view.element.querySelector(".wt-notice")?.textContent ?? "";
+    expect(text).toContain("3 of 4 ports ready.");
+    expect(text).toMatch(/APP.*5183.*5184/s);
+    expect(text.match(/APP/g)).toHaveLength(1);
+    expect(text).toContain("CACHE");
+    expect(text).toContain("no distinct port");
+    expect(text).not.toContain("DB");
+    expect(text).not.toContain("METRICS");
+    expect(text).not.toMatch(/reserv/i);
+  });
+
+  it("renders each port cleanup warning without changing the authoritative success", () => {
+    const { view } = mount();
+    view.setData({
+      ...populated(),
+      actionResults: [
+        {
+          action: "create",
+          repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+          outcome: "ok",
+          ports: [{ id: "p1", name: "APP", outcome: { kind: "allocated", port: 5183 } }],
+          portWarnings: ["lockReleaseFailed", "lockRetained", "temporaryCleanupFailed", "excludeFailed"],
+        },
+      ],
+    });
+
+    const notice = view.element.querySelector(".wt-notice");
+    const text = notice?.textContent ?? "";
+    expect(notice?.className ?? "").toContain("wt-notice--warn");
+    expect(text).toContain("1 of 1 ports ready");
+    expect(text).toContain("could not be released");
+    expect(text).toContain("A repository lock was retained because a timed-out write may still finish");
+    expect(text).toContain("related worktree setup may remain blocked");
+    expect(text).not.toContain("later port allocations remain blocked");
+    expect(text).toContain("temporary-file cleanup did not finish");
+    expect(text).toContain(".env.worktree may appear in Git status");
+  });
+
+  it("redraws when only an authoritative port value changes", () => {
+    const { view } = mount();
+    const result = (port: number): WorktreeActionResult => ({
+      action: "create",
+      repoId: "/Users/dev/Projects/ai-oss/anywhere-terminal/.git",
+      outcome: "ok",
+      ports: [{ id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port } }],
+    });
+
+    view.setData({ ...populated(), actionResults: [result(5184)] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("5184");
+    view.setData({ ...populated(), actionResults: [result(5185)] });
+    expect(view.element.querySelector(".wt-notice")?.textContent ?? "").toContain("5185");
   });
 
   it("[F005] says nothing about provisioning on a create that provisioned nothing", () => {

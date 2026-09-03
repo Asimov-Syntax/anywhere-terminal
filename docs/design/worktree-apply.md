@@ -111,6 +111,19 @@ so that it holds across VS Code windows and across processes:
 3. Write `.env.worktree` into the new worktree as `<NAME>=<port>` lines, atomically.
 4. Release.
 
+The lock and write share one deadline beginning before lock acquisition. Once expiry is observed,
+no later publication starts. If an exclusive open or mutation may still land, the lock is retained
+rather than released underneath it; a timeout with no mutation in flight starts identity-checked
+release. Staging, create/link or replace/rename publication, pre-publication discard, post-commit
+temporary cleanup, repository-local exclude update, and lock cleanup all report bounded outcomes.
+A committed target remains successful when cleanup is late, with a separate warning for any lock or
+temporary whose removal is not yet proven.
+
+The directory written is the one authorized immediately after Git created the worktree. That
+authority freezes every path component by nonzero filesystem identity and is rechecked around target
+reads and publication. Sibling claims use equivalent authority issued by the fresh normalized Git
+listing, so replacing a worktree or one of its ancestors cannot redirect or hide a successful claim.
+
 **What this guarantees and what it does not.** It guarantees that two worktrees created by this
 extension never claim the same port, which is the collision the feature exists to prevent — and
 which a bare OS probe cannot prevent, because a port nobody is listening on right now is free to

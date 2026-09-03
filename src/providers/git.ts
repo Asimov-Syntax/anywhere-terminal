@@ -27,11 +27,21 @@ export interface API {
   readonly repositories: Repository[];
   readonly onDidOpenRepository: Event<Repository>;
   readonly onDidCloseRepository: Event<Repository>;
+  /** Optional across the extension's supported VS Code range. */
+  openRepository?(root: Uri): Promise<Repository | null>;
+}
+
+export interface MigrateChangesOptions {
+  confirmation?: boolean;
+  deleteFromSource?: boolean;
+  untracked?: boolean;
 }
 
 export interface Repository {
   readonly rootUri: Uri;
   readonly state: RepositoryState;
+  /** Optional across the extension's supported VS Code range. */
+  migrateChanges?(sourceRepositoryPath: string, options?: MigrateChangesOptions): Promise<void>;
 }
 
 export interface RepositoryState {

@@ -149,6 +149,7 @@ describe("createGitDecorationProvider — lifecycle", () => {
       onDidChangeExtensions: onDidChange as never,
       logger,
     });
+    expect(provider.getApi?.()).toBeUndefined();
     expect(provider.getStatus("/x").status).toBeUndefined();
     expect(provider.getStatus("/x").revision).toBe(0);
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("not found"));
@@ -166,8 +167,10 @@ describe("createGitDecorationProvider — lifecycle", () => {
     });
     // Allow the awaited activate() chain to settle.
     await new Promise((r) => setImmediate(r));
+    expect(provider.getApi?.()).toBe(api);
     expect(provider.getStatus("/repo/a.ts").status).toBe<GitStatus>("modified");
     provider.dispose();
+    expect(provider.getApi?.()).toBeUndefined();
   });
 
   it("waits for enablement to flip before binding the API", async () => {

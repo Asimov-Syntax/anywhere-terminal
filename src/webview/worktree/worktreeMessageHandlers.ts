@@ -18,6 +18,7 @@ export type WorktreeDelegatedHandlers = Pick<
   | "onWorktreeShowPreview"
   | "onWorktreeActivatePane"
   | "onWorktreeCreateDefaults"
+  | "onWorktreeMigrationOffer"
   | "onWorktreeProvisionOffer"
   | "onWorktreeRefs"
   | "onWorktreePullRequests"
@@ -53,6 +54,7 @@ export function worktreeDelegatedHandlers(
       controller()?.activatePane(msg.paneId);
     },
     onWorktreeCreateDefaults: (msg) => controller()?.handleCreateDefaults(msg),
+    onWorktreeMigrationOffer: (msg) => controller()?.handleMigrationOffer(msg),
     onWorktreeProvisionOffer: (msg) => controller()?.handleProvisionOffer(msg),
     onWorktreeRefs: (msg) => controller()?.handleRefs(msg),
     onWorktreePullRequests: (msg) => controller()?.handlePullRequests(msg),

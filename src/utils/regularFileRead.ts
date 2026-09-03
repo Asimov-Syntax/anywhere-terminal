@@ -46,6 +46,8 @@ export interface OpenRegularFileOptions {
   constants?: Constants;
   /** Overridable so a substitution can be scheduled after the inspection. */
   lstatFile?: (path: string) => Promise<FileIdentity & { isSymbolicLink(): boolean }>;
+  /** Observe the opened handle immediately, before the type check awaits. */
+  onOpen?: (handle: FileHandle) => void;
 }
 
 /**
@@ -69,8 +71,12 @@ export interface OpenRegularFileOptions {
 export async function openRegularFile(
   filePath: string,
   openFile: OpenLike = open,
-  options: OpenRegularFileOptions = {},
+  optionsOrOnOpen: OpenRegularFileOptions | ((handle: FileHandle) => void) = {},
 ): Promise<FileHandle> {
+  // Keep the callback form for the migration reader: it must capture a late
+  // handle synchronously so its deadline can close it. New callers use the
+  // options shape, which also carries the stronger no-follow identity proof.
+  const options = typeof optionsOrOnOpen === "function" ? { onOpen: optionsOrOnOpen } : optionsOrOnOpen;
   const platform = options.constants ?? constants;
   const noFollow = options.noFollow === true;
 
@@ -89,6 +95,7 @@ export async function openRegularFile(
   const handle = await openFile(filePath, readFlags(platform, noFollow));
   let regular = false;
   try {
+    options.onOpen?.(handle);
     const opened = await handle.stat({ bigint: true });
     // A link installed between the inspection and the open makes the open land
     // on a DIFFERENT object, and the two identities diverge. Bounded on purpose:

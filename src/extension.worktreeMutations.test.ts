@@ -9,13 +9,14 @@
 // actually hands the host.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorktreeActions, WorktreeSurface } from "./providers/WorktreeHost";
+import type { WorktreeActions, WorktreeHostOptions, WorktreeSurface } from "./providers/WorktreeHost";
 import type { BranchDeleteRequest } from "./types/messages";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import type { MutationOutcome, MutationServiceDeps } from "./worktree/worktreeMutationService";
 
 const received: {
   actions?: WorktreeActions;
+  previewProvisioningPorts?: WorktreeHostOptions["previewProvisioningPorts"];
   deps?: MutationServiceDeps;
   reports: { outcome: MutationOutcome; origin: WorktreeSurface | undefined }[];
 } = { reports: [] };
@@ -27,6 +28,28 @@ let forceUndegraded = false;
  * between the two reads `observeAfter` makes. Empty means "it never moved".
  */
 let observations: number[] = [];
+const migrationCalls: Array<{ input: unknown; deps: unknown }> = [];
+const destinationCaptureCalls: Array<{ repoId: string; destinationPath: string; registration: unknown }> = [];
+
+vi.mock("./worktree/migrateChanges", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/migrateChanges")>();
+  return {
+    ...real,
+    captureMigrationDestination: async (
+      repoId: string,
+      destinationPath: string,
+      _deps: unknown,
+      registration: unknown,
+    ) => {
+      destinationCaptureCalls.push({ repoId, destinationPath, registration });
+      return { path: destinationPath } as never;
+    },
+    migrateChanges: async (input: unknown, deps: unknown) => {
+      migrationCalls.push({ input, deps });
+      return { kind: "moved" as const };
+    },
+  };
+});
 
 vi.mock("./worktree/worktreeMutationService", async (importOriginal) => {
   const real = await importOriginal<typeof import("./worktree/worktreeMutationService")>();
@@ -52,8 +75,9 @@ vi.mock("./providers/WorktreeHost", async (importOriginal) => {
   const real = await importOriginal<typeof import("./providers/WorktreeHost")>();
   return {
     ...real,
-    createWorktreeHost: (options: { actions: WorktreeActions }) => {
+    createWorktreeHost: (options: WorktreeHostOptions) => {
       received.actions = options.actions;
+      received.previewProvisioningPorts = options.previewProvisioningPorts;
       const host = real.createWorktreeHost(options as never);
       if (!forceUndegraded) {
         return host;
@@ -75,14 +99,22 @@ beforeEach(() => {
   received.reports = [];
   forceUndegraded = false;
   observations = [];
+  migrationCalls.length = 0;
+  destinationCaptureCalls.length = 0;
   vi.resetModules();
 });
 
 /** Runs `activate` against the mock host, exactly as the B1 test does. */
-async function activateExtension(): Promise<void> {
+async function activateExtension(gitApi?: object): Promise<void> {
   const { activate } = await import("./extension");
   const vscode = await import("./test/__mocks__/vscode");
   vscode.__resetAll();
+  if (gitApi !== undefined) {
+    const event = () => ({ dispose: () => {} });
+    vscode.__setExtension({
+      activate: async () => ({ enabled: true, onDidChangeEnablement: event, getAPI: () => gitApi }),
+    } as never);
+  }
   (vscode.extensions as { onDidChange?: unknown }).onDidChange = () => ({ dispose: () => {} });
   const win = vscode.window as Record<string, unknown>;
   win.state ??= { focused: true, active: true };
@@ -131,6 +163,7 @@ describe("the shipped extension supplies its mutating capabilities", () => {
 
     // Named individually: a `toBeDefined` on the object would pass on the very
     // shape B1 found, where the object existed and the five keys did not.
+    expect(typeof received.previewProvisioningPorts).toBe("function");
     expect(typeof received.actions?.createWorktree).toBe("function");
     expect(typeof received.actions?.removeWorktree).toBe("function");
     expect(typeof received.actions?.lockWorktree).toBe("function");
@@ -141,6 +174,74 @@ describe("the shipped extension supplies its mutating capabilities", () => {
     // lazily, so something has to ask for it first.
     received.actions?.reconcileFingerprints?.([]);
     expect(typeof received.deps?.observation).toBe("function");
+    expect(typeof received.deps?.authorizeDirectory).toBe("function");
+    expect(typeof received.deps?.applyPorts).toBe("function");
+    expect(typeof received.deps?.captureMigrationDestination).toBe("function");
+    expect(typeof received.deps?.migrationGitExcludeDirFor).toBe("function");
+    expect(typeof received.deps?.migrationRegistration).toBe("function");
+    expect(typeof received.deps?.migrateChanges).toBe("function");
+  });
+
+  it("binds migration to the active Git API, shared runner, and exact host evidence", async () => {
+    const event = () => ({ dispose: () => {} });
+    const api = {
+      state: "initialized",
+      onDidChangeState: event,
+      repositories: [],
+      onDidOpenRepository: event,
+      onDidCloseRepository: event,
+      openRepository: async () => null,
+    };
+    await activateExtension(api);
+    received.actions?.reconcileFingerprints?.([]);
+    const registration = {
+      path: "/repo/.git",
+      platform: "darwin" as const,
+      components: [{ path: "/repo/.git", identity: { dev: 1, ino: 1 } }],
+    };
+    const input = {
+      sourcePath: "/repo-wt/source",
+      destinationPath: "/repo-wt/destination",
+      source: {
+        path: "/repo-wt/source",
+        directory: { path: "/repo-wt/source", platform: "darwin", components: [] },
+        git: {
+          path: "/repo-wt/source/.git",
+          kind: "file",
+          identity: { dev: 1, ino: 2 },
+          adminPath: "/repo/.git/worktrees/source",
+          adminIdentity: { dev: 1, ino: 3 },
+          adminFiles: [],
+        },
+      },
+      destination: { path: "/repo-wt/destination" } as never,
+      snapshot: { count: 1, records: [], states: [] },
+      binding: { registration, sourceKind: "linked" },
+    } as Parameters<NonNullable<MutationServiceDeps["migrateChanges"]>>[0];
+
+    await received.deps?.captureMigrationDestination?.("/repo/.git", "/repo-wt/destination", registration);
+    await received.deps?.migrateChanges?.(input);
+
+    expect(destinationCaptureCalls).toEqual([
+      { repoId: "/repo/.git", destinationPath: "/repo-wt/destination", registration },
+    ]);
+    expect(migrationCalls).toEqual([
+      {
+        input,
+        deps: expect.objectContaining({ api, runner: received.deps?.runner, uri: expect.any(Function) }),
+      },
+    ]);
+  });
+
+  it("derives migration exclusion from the selected source rather than the main checkout", async () => {
+    await activateExtension();
+    received.actions?.reconcileFingerprints?.([]);
+
+    expect(received.deps?.migrationGitExcludeDirFor("/repo/.git", "/linked/source", "/linked/source/new")).toEqual({
+      gitDir: "/repo/.git",
+      relativePath: "new",
+    });
+    expect(received.deps?.migrationGitExcludeDirFor("/repo/.git", "/linked/source", "/repo/wt/new")).toBeNull();
   });
 });
 

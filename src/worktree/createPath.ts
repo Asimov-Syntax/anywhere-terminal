@@ -6,7 +6,8 @@
 
 import * as nodePath from "node:path";
 import type { DebrisAuthorization, DestinationDisposition, WorktreeCreateMode } from "../types/messages";
-import { isPathInside } from "../utils/pathBoundary";
+import { fileIdentityOf } from "../utils/authorizedDirectory";
+import { isPathInside, normalizePathForCompare } from "../utils/pathBoundary";
 
 export interface CreatePathDeps {
   platform: NodeJS.Platform;
@@ -44,10 +45,8 @@ export interface LstatLike {
  * proposal.md:49-50 already declares unsupported, now stated where it bites.
  */
 export function identityOf(stat: LstatLike | null): string | null {
-  if (stat === null || stat.ino === 0) {
-    return null;
-  }
-  return `${stat.dev}:${stat.ino}`;
+  const identity = fileIdentityOf(stat ?? undefined);
+  return identity === undefined ? null : `${identity.dev}:${identity.ino}`;
 }
 
 export interface CreatePathContext {
@@ -107,6 +106,11 @@ export function intentFor(mode: WorktreeCreateMode, disposition: DestinationDisp
   }
 }
 
+export interface CreatePathOptions {
+  /** One linked worktree that may contain this destination because migration will exclude it first. */
+  allowedContainingWorktree?: string;
+}
+
 export type CreatePathResult =
   | {
       ok: true;
@@ -140,6 +144,7 @@ export async function validateCreatePath(
   ctx: CreatePathContext,
   deps: CreatePathDeps,
   intent: CreatePathIntent = { kind: "mustBeFreeOrEmpty" },
+  options: CreatePathOptions = {},
 ): Promise<CreatePathResult> {
   const api = deps.platform === "win32" ? nodePath.win32 : nodePath.posix;
   if (raw.trim().length === 0 || !api.isAbsolute(raw)) {
@@ -200,8 +205,14 @@ export async function validateCreatePath(
     return { ok: false, reason: "That is the repository's main worktree." };
   }
   for (const linked of ctx.linkedWorktrees) {
-    if (normalized === linked || isPathInside(normalized, linked)) {
+    if (normalizePathForCompare(normalized) === normalizePathForCompare(linked)) {
       return { ok: false, reason: "That path is inside another worktree of this repository." };
+    }
+    if (isPathInside(normalized, linked)) {
+      const selected = options.allowedContainingWorktree;
+      if (selected === undefined || normalizePathForCompare(selected) !== normalizePathForCompare(linked)) {
+        return { ok: false, reason: "That path is inside another worktree of this repository." };
+      }
     }
   }
 

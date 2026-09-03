@@ -8,11 +8,18 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProvisionEntry } from "../../types/messages";
+import type { AuthorizedDirectory } from "../../utils/authorizedDirectory";
 import type { ResolvedPathInsideDeps } from "../../utils/resolvedPathBoundary";
 import { admitEntry, prepareEntryGate, refusedLockfile } from "./entryGate";
 
 const MAIN = "/repo";
 const WT = "/wt/feature";
+
+function observed(path: string): AuthorizedDirectory {
+  return { path, platform: "darwin", components: [{ path, identity: { dev: 7, ino: path.length } }] };
+}
+
+const AUTHORIZATION = { source: observed(MAIN), destination: observed(WT) };
 
 /**
  * A filesystem as a link table: a path present here resolves to its value,
@@ -52,7 +59,7 @@ const entry = (path: string, mode: "copy" | "link" = "copy"): ProvisionEntry => 
 });
 
 async function gate(deps: ResolvedPathInsideDeps) {
-  const roots = await prepareEntryGate(MAIN, WT, deps);
+  const roots = await prepareEntryGate(MAIN, WT, AUTHORIZATION, deps);
   if (roots === null) {
     throw new Error("roots did not prepare");
   }
@@ -64,6 +71,33 @@ async function verdictFor(e: ProvisionEntry, deps: ResolvedPathInsideDeps = fs()
 }
 
 describe("an entry is admitted or refused before anything opens it", () => {
+  it("rejects a source authority issued for another root", async () => {
+    const roots = await prepareEntryGate(MAIN, WT, { ...AUTHORIZATION, source: observed("/other") }, fs());
+
+    expect(roots).toBeNull();
+  });
+
+  it("rejects a destination authority issued for another root", async () => {
+    const roots = await prepareEntryGate(MAIN, WT, { ...AUTHORIZATION, destination: observed("/other") }, fs());
+
+    expect(roots).toBeNull();
+  });
+
+  it("uses Win32 case-insensitive path semantics for authority binding", async () => {
+    const source = { ...observed("C:\\Repo"), platform: "win32" as const };
+    const destination = { ...observed("C:\\Worktree"), platform: "win32" as const };
+    const roots = await prepareEntryGate("c:\\repo", "c:\\worktree", { source, destination }, fs());
+
+    expect(roots).not.toBeNull();
+  });
+
+  it("retains the mutation-issued source and destination authorizations", async () => {
+    const roots = await gate(fs());
+
+    expect(roots.source.authorization).toBe(AUTHORIZATION.source);
+    expect(roots.destination.authorization).toBe(AUTHORIZATION.destination);
+  });
+
   it("admits an ordinary entry with a path under each root", async () => {
     const verdict = await verdictFor(entry(".env"));
     expect(verdict.ok).toBe(true);

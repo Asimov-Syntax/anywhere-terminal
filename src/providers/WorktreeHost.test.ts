@@ -427,6 +427,45 @@ describe("WorktreeHost — watch targets", () => {
     expect(second.tree.repos[0].worktrees).toHaveLength(2);
   });
 
+  it("degrades a repo-scoped rebuild when its retained registration changed", async () => {
+    const { runner } = growingRepo(MAIN);
+    const watchPool = fakePool();
+    const stable = {
+      path: "/repo/.git",
+      platform: "darwin" as const,
+      components: [{ path: "/repo/.git", identity: { dev: 1, ino: 1 } }],
+    };
+    const changed = {
+      ...stable,
+      components: [{ path: "/repo/.git", identity: { dev: 1, ino: 2 } }],
+    };
+    const authorizations = [stable, stable, changed];
+    const discoveryDeps = deps(runner, ["/repo"]);
+    discoveryDeps.authorizeCommonDirectory = async () => authorizations.shift();
+    const worktrees = createWorktreeHost({
+      deps: discoveryDeps,
+      workspaceFolders: () => ["/repo"],
+      pool: watchPool,
+      now: () => 1000,
+    });
+    const view = surface();
+    attachShown(worktrees, view);
+    worktrees.handleMessage(view, { type: "worktreeViewVisibility", visible: true });
+    worktrees.handleMessage(view, { type: "requestWorktreeTree" });
+    await settle();
+
+    watchPool.fire("/repo/.git", "HEAD", "change");
+    await settle();
+
+    const second = view.posts.at(-1);
+    if (second?.type !== "worktreeTreeResponse") {
+      throw new Error("expected a worktreeTreeResponse");
+    }
+    expect(second.tree.repos[0].worktrees).toHaveLength(1);
+    expect(second.tree.repos[0].degraded).toMatch(/registration changed/i);
+    expect(second.tree.repos[0].generation).toBeUndefined();
+  });
+
   it("marks the repository degraded when only some of its four targets fail", async () => {
     const { runner } = oneRepo(MAIN, FEAT);
     // Only W2 (`worktrees`, create/delete) fails; W1, W3, W4 stay live.

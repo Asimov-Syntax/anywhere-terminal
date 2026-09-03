@@ -22,7 +22,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentHookRuntime } from "./agentHooks/AgentHookRuntime";
 import type { WorktreeHost, WorktreeSurface } from "./providers/WorktreeHost";
 import { type PaneEvidenceStore, TURN_FRESHNESS_MS } from "./session/PaneEvidenceStore";
-import type { ExtensionToWebViewMessage, WebViewToExtensionMessage } from "./types/messages";
+import type {
+  ExtensionToWebViewMessage,
+  WebViewToExtensionMessage,
+  WorktreeProvisionResultMessage,
+} from "./types/messages";
 import type { VaultSessionEntry } from "./vault/types";
 import type { CreateSessionOptions } from "./vault/VaultLauncher";
 import { createMessageRouter, type MessageHandlers } from "./webview/messaging/MessageRouter";
@@ -88,6 +92,10 @@ let watchers: { path: string; deliver: () => void }[] = [];
  * goes, the registration stays, so the listing and the filesystem genuinely differ.
  */
 let removeLeavesRegistration = false;
+/** Enable the migration composition walk without changing every assembly case. */
+let migrationWalk = false;
+let migrationExcludeFails = false;
+let migrationEvents: string[] = [];
 
 /** Every envelope the host posted to the surface, and every message the webview sent back. */
 let posted: ExtensionToWebViewMessage[] = [];
@@ -174,6 +182,9 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
     createGitCommandRunner: () => ({
       run: async (args: readonly string[], cwd: string, runOptions?: { timeoutMs?: number }) => {
         argv.push({ args: [...args], cwd, timeoutMs: runOptions?.timeoutMs });
+        if (migrationWalk && args[0] === "worktree" && args[1] === "add") {
+          migrationEvents.push("worktree-add");
+        }
         if (args[0] === "worktree" && args[1] === "repair") {
           // Real `worktree repair` rewrites the two-way link, and the listing
           // stops reporting the registration as stale. A fake that left the
@@ -231,6 +242,68 @@ vi.mock("./worktree/gitCommandRunner", async (importOriginal) => {
         };
       },
     }),
+  };
+});
+
+vi.mock("./worktree/migrateChanges", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/migrateChanges")>();
+  return {
+    ...real,
+    probeMigrationSource: async (...args: Parameters<typeof real.probeMigrationSource>) =>
+      migrationWalk && args[3] !== undefined
+        ? ({
+            source: {
+              path: args[1],
+              directory: { path: args[1], platform: process.platform, components: [] },
+              git: {
+                path: path.join(args[1], ".git"),
+                kind: "file",
+                identity: { dev: 1, ino: 2 },
+                adminPath: path.join(REPO_ID, "worktrees", "feature"),
+                adminIdentity: { dev: 1, ino: 3 },
+                adminFiles: [],
+                commonPath: REPO_ID,
+                commonIdentity: { dev: 1, ino: 4 },
+                backPointerPath: path.join(args[1], ".git"),
+              },
+            },
+            snapshot: { count: 1, records: [], states: [] },
+          } as never)
+        : real.probeMigrationSource(...args),
+    captureMigrationDestination: async (...args: Parameters<typeof real.captureMigrationDestination>) => {
+      if (!migrationWalk) {
+        return real.captureMigrationDestination(...args);
+      }
+      if (args[3] === undefined) {
+        return undefined;
+      }
+      migrationEvents.push("destination-capture");
+      return { path: args[1] } as never;
+    },
+    migrateChanges: async (...args: Parameters<typeof real.migrateChanges>) => {
+      if (!migrationWalk) {
+        return real.migrateChanges(...args);
+      }
+      if (args[0].binding === undefined) {
+        return { kind: "indeterminate" as const, reason: "missing repository binding" };
+      }
+      migrationEvents.push("migrate-changes");
+      return { kind: "moved" as const };
+    },
+  };
+});
+
+vi.mock("./worktree/gitExclude", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./worktree/gitExclude")>();
+  return {
+    ...real,
+    addToGitExclude: async (...args: Parameters<typeof real.addToGitExclude>) => {
+      if (!migrationWalk) {
+        return real.addToGitExclude(...args);
+      }
+      migrationEvents.push(`exclude:${args[1]}`);
+      return migrationExcludeFails ? { failed: "assembly exclusion failed" } : { added: true };
+    },
   };
 });
 
@@ -367,6 +440,21 @@ const STORED_ENTRY: VaultSessionEntry = {
 
 /** One entry per call of the session registry reader, so a second scan is visible. */
 const registryReads: number[] = [];
+const authorizedPaths: string[] = [];
+let provisioningAuthorizationStable = true;
+
+vi.mock("./utils/authorizedDirectory", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./utils/authorizedDirectory")>();
+  return {
+    ...real,
+    authorizeDirectory: async (...args: Parameters<typeof real.authorizeDirectory>) => {
+      authorizedPaths.push(args[0]);
+      return real.authorizeDirectory(...args);
+    },
+    directoryStillAuthorized: (...args: Parameters<typeof real.directoryStillAuthorized>) =>
+      provisioningAuthorizationStable ? real.directoryStillAuthorized(...args) : Promise.resolve(false),
+  };
+});
 
 vi.mock("./vault/readers/runningSessions", async (importOriginal) => {
   const real = await importOriginal<typeof import("./vault/readers/runningSessions")>();
@@ -438,6 +526,8 @@ beforeEach(() => {
   argv = [];
   launched = [];
   publishedRow = null;
+  authorizedPaths.length = 0;
+  provisioningAuthorizationStable = true;
   noStartableAgents = false;
   lockedRow = false;
   prunableRow = false;
@@ -445,6 +535,9 @@ beforeEach(() => {
   dirtyPaths = [];
   removeTimesOut = false;
   removeLeavesRegistration = false;
+  migrationWalk = false;
+  migrationExcludeFails = false;
+  migrationEvents = [];
   watchRepos = false;
   watchers = [];
   posted = [];
@@ -602,6 +695,13 @@ async function assemble(): Promise<{ controller: WorktreeController; host: Workt
     previousRows = rows;
     return steady >= 8;
   }, "the worktree tree to stop growing");
+  await settleUntil(
+    () =>
+      [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')].some((row) =>
+        (row.textContent ?? "").includes("feature"),
+      ),
+    "the linked worktree row",
+  );
   return { controller, host, surface };
 }
 
@@ -789,6 +889,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(gitCalls("remove")).toEqual([]);
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(() => gitCalls("remove").length === 1, "the removal command");
     // The unforced removal the confirmation posts, carried all the way down. A
     // `--force` here would mean the assessment was skipped.
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
@@ -821,6 +922,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     expect(dialog?.querySelector("#wt-confirm-name")).toBeNull();
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(() => gitCalls("remove").length === 1, "the removal command");
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
@@ -846,6 +948,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
 
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(() => gitCalls("remove").length === 1, "the removal command");
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
   });
 
@@ -867,6 +970,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
 
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(() => gitCalls("remove").length === 1, "the forced removal command");
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", "--force", LINKED]]);
   });
@@ -884,11 +988,16 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await host.mutationBindings().forceRebuild(REPO_ID);
     await settle();
 
+    const assessmentsBefore = posted.filter((message) => message.type === "worktreeRemoveAssessment").length;
     clickItem(openMenu("feature"), /remove/i);
     // A plain pump, deliberately: this test's claim is that NO report and no
     // removal follow, and waiting for a dialog that must never appear would
     // fail on the assertion this test exists to make.
     await settle();
+    await settleUntil(
+      () => posted.filter((message) => message.type === "worktreeRemoveAssessment").length > assessmentsBefore,
+      "the refused removal assessment",
+    );
 
     expect(gitCalls("remove")).toEqual([]);
   });
@@ -952,6 +1061,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
 
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(() => gitCalls("remove").length === 1, "the replacement removal command");
 
     // The confirmation reached git, and reached it for the replacement: the
     // report was issued against generation two and generation two is what the
@@ -973,6 +1083,7 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(() => document.body.textContent?.includes("Remove done.") === true, "the removal outcome");
     expect(document.body.textContent).toContain("Remove done.");
     expect(document.body.textContent).toContain("feature");
   });
@@ -1021,12 +1132,94 @@ describe("a mutating verb reaches git from the menu item a user can see", () => 
     // a cost rather than one that waits for the thing being asserted.
     await settleUntil(() => gitCalls("add").length > 0, "the create to reach `git worktree add`");
     await settle();
+    await settleUntil(() => gitCalls("add").length > 0, "the create command");
 
     const added = gitCalls("add");
     expect(added).toHaveLength(1);
     // The branch the user typed, and a destination the HOST resolved.
     expect(added[0]).toContain("feat/login");
     expect(added[0]?.some((a) => a.startsWith(TMP))).toBe(true);
+  });
+
+  it.each([
+    ["moves after", false],
+    ["stops on", true],
+  ])("%s the production selected-source exclusion", async (_case, exclusionFails) => {
+    migrationWalk = true;
+    migrationExcludeFails = exclusionFails;
+    fs.mkdirSync(REPO_ID, { recursive: true });
+    await assemble();
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    expect(
+      outbound.find(
+        (message) => message.type === "requestWorktreeCreateDefaults" && message.sourceWorktreeId === LINKED,
+      ),
+    ).toMatchObject({ sourceGeneration: expect.any(Number) });
+    await settleUntil(
+      () => posted.some((message) => message.type === "worktreeMigrationOffer"),
+      "the migration offer to reach the create form",
+    );
+    const branchInput = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branchInput === null) {
+      throw new Error("no branch input");
+    }
+    branchInput.focus();
+    branchInput.value = "migration-target";
+    branchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    branchInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () =>
+        posted.some((message) => message.type === "worktreeCreateResolution" && message.query === "migration-target"),
+      "the migration branch resolution",
+    );
+
+    const advanced = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.classList.contains("wt-advanced-toggle"),
+    );
+    advanced?.click();
+    const pathInput = document.querySelector<HTMLInputElement>("#wt-path");
+    if (pathInput === null) {
+      throw new Error("no destination override input");
+    }
+    const destination = path.join(LINKED, "nested");
+    pathInput.focus();
+    pathInput.value = destination;
+    pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+    pathInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await settleUntil(
+      () => outbound.some((message) => message.type === "worktreeCreateProbe" && message.candidatePath === destination),
+      "the nested source destination probe",
+    );
+    await settle();
+
+    document.querySelector<HTMLInputElement>("#wt-migrate-changes")?.click();
+    const create = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.startsWith("Create worktree"),
+    );
+    if (create === undefined) {
+      throw new Error("no Create button");
+    }
+    expect(create.disabled, "the migration form would not submit").toBe(false);
+    create.click();
+    await settleUntil(
+      () => outbound.some((message) => message.type === "worktreeCreate"),
+      "the migration create request",
+    );
+    await settle();
+
+    expect(outbound.find((message) => message.type === "worktreeCreate")).toMatchObject({
+      path: destination,
+      migrateChanges: { offerId: expect.any(String) },
+    });
+    expect(gitCalls("add"), document.body.textContent ?? "no rendered outcome").toHaveLength(1);
+    expect(migrationEvents.slice(0, 3)).toEqual(["worktree-add", "destination-capture", "exclude:/nested/"]);
+    if (exclusionFails) {
+      expect(migrationEvents).not.toContain("migrate-changes");
+      expect(document.body.textContent).toContain("Migration may be partial");
+    } else {
+      expect(migrationEvents).toEqual(["worktree-add", "destination-capture", "exclude:/nested/", "migrate-changes"]);
+    }
   });
 
   it("prunes on a confirmed count, from the menu item the count unlocks", async () => {
@@ -1525,6 +1718,56 @@ describe("the invariants that span the host and the webview", () => {
     ]);
   });
 
+  it("fails selected provisioning when production observes a changed checkout identity", async () => {
+    fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
+    fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
+    const { surface } = await assemble();
+    const provisionResults: WorktreeProvisionResultMessage[] = [];
+    const deliver = surface.post;
+    surface.post = (message: ExtensionToWebViewMessage) => {
+      if (message.type === "worktreeProvisionResult") {
+        provisionResults.push(message);
+      }
+      return deliver(message);
+    };
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settleUntil(
+      () => document.querySelectorAll(".wt-bring-box .wt-brow-cb").length > 0,
+      "the create form to offer the provider's file",
+    );
+    const branch = document.querySelector<HTMLInputElement>("#wt-branch");
+    if (branch === null) {
+      throw new Error("the create form has no branch field");
+    }
+    branch.value = "feat/unstable";
+    branch.dispatchEvent(new Event("input", { bubbles: true }));
+    branch.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    const box = document.querySelector<HTMLInputElement>(".wt-bring-box .wt-brow-cb");
+    if (box === null) {
+      throw new Error("the form did not offer the file");
+    }
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value;
+    if (destination === undefined || destination === "") {
+      throw new Error("the host resolved no destination");
+    }
+    fs.mkdirSync(destination, { recursive: true });
+    provisioningAuthorizationStable = false;
+
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => /create worktree/i.test(button.textContent ?? ""))
+      ?.click();
+    await settleUntil(() => provisionResults.length > 0, "the failed provisioning result");
+
+    expect(provisionResults[0]?.steps[0]?.outcome.kind).toBe("failed");
+    expect(fs.existsSync(path.join(destination, ".env"))).toBe(false);
+  });
+
   it("[3_2] brings a ticked file over and reports it on the create's OWN notice", async () => {
     // Round-2 F017, end to end. The create outcome carried no `worktreeId`, so
     // the merge key the provisioning message arrives under matched nothing and
@@ -1534,8 +1777,16 @@ describe("the invariants that span the host and the webview", () => {
     // is whatever `normalizeWorktreeId` returns for the path the host resolved.
     fs.mkdirSync(path.join(REPO, "asimov"), { recursive: true });
     fs.writeFileSync(path.join(REPO, ".env"), "TOKEN=1\n");
-    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\n");
-    await assemble();
+    fs.writeFileSync(path.join(REPO, "asimov", "worktree.yaml"), "copy:\n  - .env\nports:\n  APP: 5183\n");
+    const { surface } = await assemble();
+    const provisionResults: WorktreeProvisionResultMessage[] = [];
+    const deliver = surface.post;
+    surface.post = (message: ExtensionToWebViewMessage) => {
+      if (message.type === "worktreeProvisionResult") {
+        provisionResults.push(message);
+      }
+      return deliver(message);
+    };
 
     clickItem(openMenu("feature"), /new worktree/i);
     await settleUntil(
@@ -1554,12 +1805,14 @@ describe("the invariants that span the host and the webview", () => {
     branch.dispatchEvent(new Event("change", { bubbles: true }));
     await settle();
 
-    const box = document.querySelector<HTMLInputElement>(".wt-bring-box .wt-brow-cb");
-    if (box === null) {
-      throw new Error("the form offered no file to bring over");
+    const boxes = [...document.querySelectorAll<HTMLInputElement>(".wt-bring-box .wt-brow-cb")];
+    if (boxes.length !== 2) {
+      throw new Error("the form did not offer both the file and port");
     }
-    box.checked = true;
-    box.dispatchEvent(new Event("change", { bubbles: true }));
+    for (const box of boxes) {
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     await settle();
 
     // git is a recorder here, so nothing materializes the destination. The
@@ -1582,11 +1835,26 @@ describe("the invariants that span the host and the webview", () => {
     // the wrong condition rather than a wait that is too short.
     await settleUntil(() => createNotices().length > 0, "the create to report something back to the panel");
     await settle();
+    await settleUntil(
+      () => provisionResults.length === 1 && createNotices().length > 0,
+      "the create and provisioning results",
+    );
 
-    // The file actually arrived, through the production binding.
+    // The file and port claim actually arrived, through the production bindings.
     expect(fs.readFileSync(path.join(destination, ".env"), "utf8")).toBe("TOKEN=1\n");
+    expect(fs.readFileSync(path.join(destination, ".env.worktree"), "utf8")).toMatch(/^APP=[1-9][0-9]{0,4}\n$/);
+    expect(provisionResults).toHaveLength(1);
+    expect(provisionResults[0]?.steps).toHaveLength(1);
+    expect(provisionResults[0]?.ports).toHaveLength(1);
+    expect(provisionResults[0]?.ports[0]?.outcome.kind).toBe("allocated");
+    expect(authorizedPaths).toContain(REPO);
+    expect(authorizedPaths).toContain(LINKED);
+    expect(authorizedPaths).toContain(destination);
+    expect(fs.readFileSync(path.join(REPO, ".git", "info", "exclude"), "utf8")).toContain("/.env.worktree\n");
     // ONE notice. Two means the provisioning message found no create to land on
     // and made its own — which is what shipped.
+    // ONE create notice. The panel also carries an unrelated "not being watched"
+    // notice in this assembly, so the count is taken over the create's own.
     const notices = createNotices();
     expect(notices).toHaveLength(1);
     expect(notices[0]?.textContent).toContain("1 of 1 brought over.");
@@ -1637,15 +1905,10 @@ describe("the invariants that span the host and the webview", () => {
     [...document.querySelectorAll<HTMLButtonElement>("button")]
       .find((b) => /create worktree/i.test(b.textContent ?? ""))
       ?.click();
-    await settleUntil(
-      () => document.querySelectorAll(".wt-notice").length > 0,
-      "the create to report something back to the panel",
-    );
+    await settleUntil(() => createNotices().length > 0, "the create to report something back to the panel");
     await settle();
 
-    const created = [...document.querySelectorAll(".wt-notice")].filter((n) =>
-      (n.textContent ?? "").includes("Create done."),
-    );
+    const created = createNotices();
     expect(created).toHaveLength(1);
     const reason = [...(created[0]?.querySelectorAll(".wt-reason") ?? [])].map((n) => n.textContent ?? "").join("\n");
 
@@ -2018,7 +2281,10 @@ describe("the invariants that span the host and the webview", () => {
     // Read while the form is still open — the submit disposes it.
     const shown = displayedDestination();
     create.click();
-    await settle();
+    await settleUntil(
+      () => argv.some((call) => call.args[0] === "worktree" && call.args[1] === "repair" && call.args[2] === LINKED),
+      "the selected repair command",
+    );
 
     const issued = argv.map((c) => c.args);
     expect(issued.some((a) => a[0] === "worktree" && a[1] === "repair" && a[2] === LINKED)).toBe(true);
@@ -2465,6 +2731,10 @@ describe("the invariants that span the host and the webview", () => {
     await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(
+      () => document.body.textContent?.includes("stopped before git reported an outcome") === true,
+      "the indeterminate removal outcome",
+    );
 
     // Not "Couldn't remove": git never reported an outcome, so a clean failure
     // would be a claim nobody made. Asserted on the reason the TIMEOUT leg
@@ -2489,6 +2759,10 @@ describe("the invariants that span the host and the webview", () => {
     await settleUntil(() => document.querySelector('[role="dialog"]') !== null, "the removal report");
     await confirmRemoval("feature");
     await settle();
+    await settleUntil(
+      () => document.body.textContent?.includes("is still registered") === true,
+      "the inconsistent removal outcome",
+    );
 
     expect(gitCalls("remove")).toEqual([["worktree", "remove", LINKED]]);
     expect(document.body.textContent).toContain("partly applied");

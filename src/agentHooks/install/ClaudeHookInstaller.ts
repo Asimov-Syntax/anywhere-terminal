@@ -1,7 +1,15 @@
 import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { posix } from "node:path";
-import { type FileIdentity, sameIdentity } from "../../utils/fileIdentity";
+import { dirname } from "node:path";
+import {
+  type AuthorizedDirectory,
+  authorizeDirectory,
+  directoryStillAuthorized,
+  type FileIdentity,
+  fileIdentityOf,
+  sameFileIdentity,
+} from "../../utils/authorizedDirectory";
+import { isNotFound, LockedFile, type LockedFileSystem, type Platform } from "../../utils/lockedFile";
 import type { HookInstallOutcome, HookRemoveOutcome } from "../AgentHookController";
 import {
   type ClaudeConfigLocation,
@@ -9,7 +17,6 @@ import {
   reconcileClaudeSettings,
   resolveClaudeConfigPath,
 } from "./claudeConfig";
-import { isNotFound, LockedFile, type LockedFileSystem, type Platform } from "./lockedJsonFile";
 
 /**
  * D7: the one frozen POSIX shell literal registered on Darwin and Linux. It consumes stdin,
@@ -35,11 +42,9 @@ export interface ClaudeHookInstallerDependencies {
 
 type FileSystem = LockedFileSystem;
 
-type Identity = FileIdentity;
-type ComponentIdentity = Identity & { path: string };
-type FinalIdentity = { kind: "missing" } | ({ kind: "file" } & Identity);
+type FinalIdentity = { kind: "missing" } | ({ kind: "file" } & FileIdentity);
 interface PathAuthorization {
-  components: readonly ComponentIdentity[];
+  directory: AuthorizedDirectory;
   final: FinalIdentity;
 }
 
@@ -209,23 +214,18 @@ export class ClaudeHookInstaller {
 
   /** Freezes every ancestor and the final regular-file identity under the sibling lock. */
   private async authorize(path: string): Promise<PathAuthorization | undefined> {
-    const components: ComponentIdentity[] = [];
-    for (const componentPath of parentComponents(path)) {
-      try {
-        const entry = await this.fs.lstat(componentPath);
-        if (entry.isSymbolicLink() || !entry.isDirectory()) {
-          return undefined;
-        }
-        components.push({ path: componentPath, dev: entry.dev, ino: entry.ino });
-      } catch {
-        return undefined;
-      }
+    const directory = await authorizeDirectory(dirname(path), {
+      platform: this.platform,
+      lstat: (candidate) => this.fs.lstat(candidate, { bigint: true }),
+    });
+    if (directory === undefined) {
+      return undefined;
     }
     let entry: Awaited<ReturnType<FileSystem["lstat"]>>;
     try {
       entry = await this.fs.lstat(path);
     } catch (error) {
-      return isNotFound(error) ? { components, final: { kind: "missing" } } : undefined;
+      return isNotFound(error) ? { directory, final: { kind: "missing" } } : undefined;
     }
     if (entry.isSymbolicLink() || !entry.isFile()) {
       return undefined;
@@ -233,11 +233,12 @@ export class ClaudeHookInstaller {
     try {
       const handle = await this.fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
-        const opened = await handle.stat();
-        if (!opened.isFile() || !sameIdentity(entry, opened)) {
+        const opened = await handle.stat({ bigint: true });
+        const identity = fileIdentityOf(opened);
+        if (!opened.isFile() || identity === undefined || !sameFileIdentity(identity, entry)) {
           return undefined;
         }
-        return { components, final: { kind: "file", dev: opened.dev, ino: opened.ino } };
+        return { directory, final: { kind: "file", ...identity } };
       } finally {
         await handle.close();
       }
@@ -247,7 +248,7 @@ export class ClaudeHookInstaller {
   }
 
   private async readAuthorized(path: string, authorization: PathAuthorization): Promise<AuthorizedRead> {
-    if (!(await this.componentsMatch(authorization.components))) {
+    if (!(await this.directoryMatches(authorization.directory))) {
       return { kind: "mismatch" };
     }
     if (authorization.final.kind === "missing") {
@@ -289,7 +290,7 @@ export class ClaudeHookInstaller {
     authorization: PathAuthorization,
     source: Extract<AuthorizedRead, { kind: "missing" | "document" }>,
   ): Promise<boolean> {
-    if (!(await this.componentsMatch(authorization.components))) {
+    if (!(await this.directoryMatches(authorization.directory))) {
       return false;
     }
     if (source.kind === "missing") {
@@ -314,37 +315,30 @@ export class ClaudeHookInstaller {
     }
   }
 
-  private async componentsMatch(components: readonly ComponentIdentity[]): Promise<boolean> {
-    for (const expected of components) {
-      try {
-        const current = await this.fs.lstat(expected.path);
-        if (current.isSymbolicLink() || !current.isDirectory() || !sameIdentity(expected, current)) {
-          return false;
-        }
-      } catch {
-        return false;
-      }
-    }
-    return true;
+  private directoryMatches(directory: AuthorizedDirectory): Promise<boolean> {
+    return directoryStillAuthorized(directory, {
+      platform: this.platform,
+      lstat: (candidate) => this.fs.lstat(candidate, { bigint: true }),
+    });
   }
 
   private async openAuthorized(
     path: string,
-    expected: Identity,
+    expected: FileIdentity,
   ): Promise<{ handle: Awaited<ReturnType<FileSystem["open"]>>; mode: number } | undefined> {
     let handle: Awaited<ReturnType<FileSystem["open"]>> | undefined;
     try {
-      const entry = await this.fs.lstat(path);
-      if (entry.isSymbolicLink() || !entry.isFile() || !sameIdentity(expected, entry)) {
+      const entry = await this.fs.lstat(path, { bigint: true });
+      if (entry.isSymbolicLink() || !entry.isFile() || !sameFileIdentity(expected, entry)) {
         return undefined;
       }
       handle = await this.fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const opened = await handle.stat();
-      if (!opened.isFile() || !sameIdentity(expected, opened) || !sameIdentity(entry, opened)) {
+      const opened = await handle.stat({ bigint: true });
+      if (!opened.isFile() || !sameFileIdentity(expected, opened)) {
         await handle.close();
         return undefined;
       }
-      return { handle, mode: opened.mode & 0o777 };
+      return { handle, mode: Number(opened.mode) & 0o777 };
     } catch {
       await handle?.close().catch(() => undefined);
       return undefined;
@@ -364,18 +358,6 @@ export class ClaudeHookInstaller {
       platform: this.platform,
     });
   }
-}
-
-function parentComponents(path: string): string[] {
-  const parent = posix.dirname(path);
-  const root = posix.parse(parent).root;
-  const result = [root];
-  let current = root;
-  for (const segment of parent.slice(root.length).split("/").filter(Boolean)) {
-    current = posix.join(current, segment);
-    result.push(current);
-  }
-  return result;
 }
 
 function uniquePaths(paths: readonly string[]): string[] {

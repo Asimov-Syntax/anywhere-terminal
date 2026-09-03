@@ -49,6 +49,7 @@ import type {
   WorktreeMutationResultMessage,
   WorktreeRemoveAssessmentPayload,
 } from "./types/messages";
+import { authorizeDirectory, directoryStillAuthorized } from "./utils/authorizedDirectory";
 import { isPathInside } from "./utils/pathBoundary";
 import { createTrackedPathResolver, ResolvedPathMemo } from "./utils/resolvedPathMemo";
 import { escapePathForShell } from "./utils/shellEscape";
@@ -69,6 +70,7 @@ import { deleteBranch as runDeleteBranch } from "./worktree/deleteBranch";
 import { createGitCommandRunner } from "./worktree/gitCommandRunner";
 import { addToGitExclude } from "./worktree/gitExclude";
 import { diskIgnoredDeps, measureIgnoredMaterial } from "./worktree/ignoredMaterial";
+import { captureMigrationDestination, migrateChanges, probeMigrationSource } from "./worktree/migrateChanges";
 import { normalizeWorktreePath } from "./worktree/normalizePath";
 import { readOrphanProofs } from "./worktree/orphanProofs";
 import { createPresenceProjectorDeps } from "./worktree/presenceDeps";
@@ -90,9 +92,13 @@ import { listRepoWorktrees } from "./worktree/WorktreeDiscovery";
 import type { RemovalAssessment } from "./worktree/worktreeBlockers";
 import { createWorktreeTreeDeps } from "./worktree/worktreeDeps";
 import { readWorktreeGitDir } from "./worktree/worktreeGitDir";
-import type { MutationOutcome } from "./worktree/worktreeMutationService";
-import { createWorktreeMutationService, existenceFromStatError } from "./worktree/worktreeMutationService";
+import {
+  createWorktreeMutationService,
+  existenceFromStatError,
+  type MutationOutcome,
+} from "./worktree/worktreeMutationService";
 import { worktreeHeadOid } from "./worktree/worktreeMutations";
+import { allocateWorktreePorts, previewWorktreePorts } from "./worktree/worktreePorts";
 
 /**
  * What the worktree panel's read-only actions need from the world, injected so
@@ -240,6 +246,9 @@ function toResultMessage(outcome: MutationOutcome): WorktreeMutationResultMessag
         result: {
           kind: "ok",
           ...(outcome.openFailed === undefined ? {} : { openFailed: outcome.openFailed }),
+          ...(outcome.migrationIndeterminate === undefined
+            ? {}
+            : { migrationIndeterminate: outcome.migrationIndeterminate }),
           // The optional branch outcome rides beside `openFailed` rather than
           // dropping it — a refused branch delete is not the removal failing.
           ...(outcome.branchDelete === undefined ? {} : { branchDelete: outcome.branchDelete }),
@@ -587,12 +596,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (worktreeMutations === undefined) {
       const bindings = worktreeHost.mutationBindings();
       worktreeMutations = createWorktreeMutationService({
+        authorizeDirectory,
         // Sequential, and every entry answers. `applyProvisioning` never
         // throws, so a rejection here would be a bug rather than a bad entry —
         // the call site catches one anyway, because the create has already
         // succeeded by then.
-        applyProvision: async (mainCheckout, worktreePath, entries) => {
-          const roots = await prepareEntryGate(mainCheckout, worktreePath);
+        provisionUnavailable: (worktreePath, entries, reason) => {
+          const unavailable = failEveryEntry(entries, reason);
+          if (unavailable.contests.length > 0) {
+            provisionContests.set(worktreePath, unavailable.contests);
+          }
+          return unavailable.steps;
+        },
+        applyProvision: async (mainCheckout, worktreePath, entries, authorization) => {
+          const roots = await prepareEntryGate(mainCheckout, worktreePath, authorization);
           if (roots === null) {
             // Through the same builder as the ordinary path, and staging its
             // memberships the same way: a contested declaration is in a contest
@@ -616,7 +633,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             deadline: afterDelay(60_000),
           };
           try {
-            const applied = await applyProvisioning(entries, roots, budget, nodeApplyFsDeps);
+            const applied = await applyProvisioning(entries, roots, budget, nodeApplyFsDeps, {
+              directoryStillAuthorized,
+            });
             if (applied.contests.length > 0) {
               provisionContests.set(worktreePath, applied.contests);
             }
@@ -625,13 +644,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             budget.deadline.cancel();
           }
         },
+        applyPorts: (input) =>
+          allocateWorktreePorts(input, {
+            listWorktrees: async (repoPath, options) => {
+              const listing = await listRepoWorktrees(repoPath, worktreeTreeDeps, options);
+              const worktrees = await Promise.all(
+                listing.worktrees.map(async (worktree) => {
+                  const authorization = await authorizeDirectory(worktree.id, {}, options.authorizationBudget);
+                  if (authorization === undefined) {
+                    throw new Error(`could not authorize listed worktree: ${worktree.id}`);
+                  }
+                  return { id: worktree.id, path: worktree.displayPath, authorization };
+                }),
+              );
+              return {
+                worktrees,
+                reasons: listing.reasons,
+                skipped: listing.skipped,
+                ...(listing.degraded === undefined ? {} : { degraded: listing.degraded }),
+              };
+            },
+          }),
         // The SAME call the tree's own `normalize` makes at `:648`. Spelled
         // identically on purpose: two normalizations of one path are two ids.
         normalizeWorktreeId: (raw) => normalizeWorktreePath(raw),
+        captureMigrationDestination: (repoId, destinationPath, registration) =>
+          captureMigrationDestination(repoId, destinationPath, {}, registration),
+        migrateChanges: (input) =>
+          migrateChanges(input, {
+            api: gitDecorationProvider.getApi?.(),
+            runner: worktreeTreeDeps.runner,
+            uri: vscode.Uri.file,
+          }),
         runner: worktreeTreeDeps.runner,
         forceRebuild: bindings.forceRebuild,
         resolve: bindings.resolve,
         repoPath: bindings.repoPath,
+        migrationRegistration: bindings.migrationRegistration,
         assessRemoval: bindings.assessRemoval,
         corroborateRepair,
         // The SAME probe that offered the adoption, so the offer and the
@@ -686,7 +735,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         },
         // D8: a create under a root INSIDE the main worktree would otherwise
         // show up as an untracked directory in the parent's status.
-        gitExcludeDirFor: (repoPath, createdPath) => {
+        gitExcludeDirFor: (repoId, repoPath, createdPath) => {
           if (!isPathInside(createdPath, repoPath)) {
             return null;
           }
@@ -697,14 +746,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const root = path.dirname(createdPath);
           // Unless the root IS the repository — excluding that hides everything.
           const dir = isPathInside(root, repoPath) ? root : createdPath;
-          return { gitDir: path.join(repoPath, ".git"), relativePath: path.relative(repoPath, dir) };
+          return { gitDir: repoId, relativePath: path.relative(repoPath, dir) };
         },
+        migrationGitExcludeDirFor: (repoId, sourcePath, createdPath) =>
+          isPathInside(createdPath, sourcePath)
+            ? { gitDir: repoId, relativePath: path.relative(sourcePath, createdPath) }
+            : null,
         addToGitExclude: async (gitDir, entry) => {
-          // Reported, never fatal: the worktree exists either way, and failing
-          // the create over a hygiene write would be the worse outcome.
           const outcome = await addToGitExclude(gitDir, entry);
           if ("failed" in outcome) {
             console.warn(`[AnyWhere Terminal] could not update info/exclude: ${outcome.failed}`);
+            throw new Error(outcome.failed);
           }
         },
         report: (outcome, origin) => {
@@ -725,6 +777,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     type: "worktreeProvisionResult" as const,
                     worktreeId: outcome.provision.path,
                     steps: outcome.provision.steps,
+                    ports: outcome.provision.ports,
+                    ...(outcome.provision.portWarnings === undefined
+                      ? {}
+                      : { portWarnings: outcome.provision.portWarnings }),
                     ...takeContests(outcome.provision.path),
                   },
                 }
@@ -1041,10 +1097,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // in the shipped extension, however well the host is tested — the same
     // failure shape a past review round caught for the provisioning offer.
     probeAdopt: (subject) => probeAdopt(subject, gitEntryReads),
+    probeMigrationSource: (sourcePath, binding) =>
+      probeMigrationSource(
+        gitDecorationProvider.getApi?.(),
+        sourcePath,
+        {
+          runner: worktreeTreeDeps.runner,
+          uri: vscode.Uri.file,
+        },
+        binding,
+      ),
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
     readProvisioning: (mainWorktree, prefer) => readProvisioning(createProvisioningDeps(), mainWorktree, prefer),
+    previewProvisioningPorts: (ports, worktreePaths) => previewWorktreePorts(ports, worktreePaths),
     // And the same reason again for the save: without this the Configure
     // control is inert in the shipped extension while every module test passes
     // against its own fake.

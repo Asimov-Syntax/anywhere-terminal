@@ -6,6 +6,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeTreeResponseMessage,
 } from "../../types/messages";
+import { createMessageRouter, type MessageHandlers } from "../messaging/MessageRouter";
 import type { PaneAttribution, PaneReport } from "../paneAttribution";
 import { WorktreeController, worktreeMenuActions } from "./WorktreeController";
 import { openWorktreeCreateDialog } from "./WorktreeCreateDialog";
@@ -751,6 +752,30 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
     });
 
     expect(h.posts[0]).not.toHaveProperty("provision");
+    expect(h.posts[0]).not.toHaveProperty("migrateChanges");
+  });
+
+  it("carries only the checked opaque migration offer onto create", () => {
+    const h = mount();
+    h.controller.handleTreeResponse(response());
+    h.controller.openCreate();
+    h.posts.length = 0;
+    const view = (h.controller as unknown as { view: { deps: { onCreateSubmit(d: unknown): void } } }).view;
+    view.deps.onCreateSubmit({
+      repoId: "/repo/.git",
+      branchMode: "new",
+      branchName: "feat",
+      baseRef: "main",
+      path: "/wt",
+      openAfter: "none",
+      migrateChanges: { offerId: "migration-7" },
+    });
+
+    expect(h.posts[0]).toMatchObject({
+      type: "worktreeCreate",
+      migrateChanges: { offerId: "migration-7" },
+    });
+    expect((h.posts[0] as { migrateChanges: object }).migrateChanges).toEqual({ offerId: "migration-7" });
   });
 
   it("[F005] routes worktreeProvisionResult through the table production shares", () => {
@@ -767,10 +792,30 @@ describe("the mutating capabilities WT-005.2 supplies", () => {
       type: "worktreeProvisionResult",
       worktreeId: "/wt/feat",
       steps: [],
+      ports: [],
     });
 
     expect(handled).toEqual(["/wt/feat"]);
     void h;
+  });
+
+  it("routes a migration offer through the production router and delegated table", () => {
+    const handled: string[] = [];
+    const stub = {
+      handleMigrationOffer: (msg: { offerId: string }) => handled.push(msg.offerId),
+    } as unknown as WorktreeController;
+    const route = createMessageRouter(worktreeDelegatedHandlers(() => stub) as MessageHandlers);
+
+    route({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_ID,
+      opening: 1,
+      sourceWorktreeId: "/repo",
+      offerId: "migration-1",
+      count: 1,
+    });
+
+    expect(handled).toEqual(["migration-1"]);
   });
 
   it("maps a new-branch draft onto the create request", () => {
@@ -1411,9 +1456,9 @@ describe("the create a toolbar with no repository opens", () => {
     return { type: "worktreeTreeResponse", tree: twoRepoTree(), presence: singleRepoPresence(1_000_000) };
   }
   /** The asks a DOOR made. The open form asks for its own branch; those carry one. */
+  const defaultsRequests = (h: Harness) => h.posts.filter((m) => m.type === "requestWorktreeCreateDefaults");
   const asks = (h: Harness) =>
-    h.posts
-      .filter((m) => m.type === "requestWorktreeCreateDefaults")
+    defaultsRequests(h)
       .filter((m) => m.branch === undefined)
       .map((m) => m.repoId);
   const open = () => document.querySelector("#wt-branch") !== null;
@@ -1425,6 +1470,154 @@ describe("the create a toolbar with no repository opens", () => {
     h.controller.openCreate();
 
     expect(asks(h)).toEqual([REPO_A, REPO_B]);
+  });
+
+  it("carries the exact main or linked row only on that repository's opening", () => {
+    const h = ready(twoRepoResponse());
+    const rows = singleRepoTree().repos[0]?.worktrees ?? [];
+    const main = rows[0];
+    const linked = rows[1];
+    if (main === undefined || linked === undefined) {
+      throw new Error("fixture lost its source rows");
+    }
+
+    menuActions(h).createWorktree(main);
+    expect(defaultsRequests(h).filter((message) => message.branch === undefined)).toEqual([
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_A, opening: 1, sourceWorktreeId: main.id },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_B, opening: 1 },
+    ]);
+
+    h.posts.length = 0;
+    menuActions(h).createWorktree(linked);
+    expect(defaultsRequests(h).filter((message) => message.branch === undefined)).toEqual([
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_A, opening: 2, sourceWorktreeId: linked.id },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO_B, opening: 2 },
+    ]);
+  });
+
+  it("freezes the selected row's repository generation in its opening request", () => {
+    const tree = twoRepoTree();
+    tree.repos[0].generation = 41;
+    const h = ready({ type: "worktreeTreeResponse", tree, presence: singleRepoPresence(1_000_000) });
+    const source = tree.repos[0].worktrees[1];
+    if (source === undefined) {
+      throw new Error("fixture lost its linked source");
+    }
+
+    menuActions(h).createWorktree(source);
+
+    expect(defaultsRequests(h)).toContainEqual({
+      type: "requestWorktreeCreateDefaults",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      sourceGeneration: 41,
+    });
+  });
+
+  it("repository and toolbar doors carry no source row", () => {
+    const h = ready(twoRepoResponse());
+
+    h.controller.openCreateForRepo(REPO_A);
+    expect(defaultsRequests(h).every((message) => message.sourceWorktreeId === undefined)).toBe(true);
+
+    h.posts.length = 0;
+    h.controller.openCreate();
+    expect(defaultsRequests(h).every((message) => message.sourceWorktreeId === undefined)).toBe(true);
+  });
+
+  it("drops the row source while the form is switched to another repository", () => {
+    const h = ready(twoRepoResponse());
+    const source = firstWorktree();
+    menuActions(h).createWorktree(source);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.posts.length = 0;
+    const select = document.querySelector<HTMLSelectElement>("#wt-repo-select");
+    if (select === null) {
+      throw new Error("expected the repository picker");
+    }
+
+    select.value = REPO_B;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(defaultsRequests(h)).toContainEqual(expect.objectContaining({ repoId: REPO_B }));
+    expect(defaultsRequests(h).some((message) => "sourceWorktreeId" in message)).toBe(false);
+
+    h.posts.length = 0;
+    select.value = REPO_A;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(defaultsRequests(h)).toContainEqual(
+      expect.objectContaining({ repoId: REPO_A, sourceWorktreeId: source.id }),
+    );
+  });
+
+  it("applies only the live opening's offer for the exact source row", () => {
+    const h = ready(twoRepoResponse());
+    const source = firstWorktree();
+    menuActions(h).createWorktree(source);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    const row = document.querySelector<HTMLElement>(".wt-migration");
+    expect(row?.hidden).toBe(true);
+
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 0,
+      sourceWorktreeId: source.id,
+      offerId: "stale",
+      count: 1,
+    });
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: `${source.id}-other`,
+      offerId: "wrong-source",
+      count: 1,
+    });
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_B,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      offerId: "wrong-repo",
+      count: 1,
+    });
+    expect(row?.hidden).toBe(true);
+
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      offerId: "migration-1",
+      count: 2,
+    });
+    expect(row?.hidden).toBe(false);
+    expect(row?.textContent).toContain("Move 2 changes (current snapshot)");
+  });
+
+  it("withdraws the visible offer when another opening replaces it", () => {
+    const h = ready(twoRepoResponse());
+    const source = firstWorktree();
+    menuActions(h).createWorktree(source);
+    h.controller.handleCreateDefaults(answer(REPO_A, "/trees/a"));
+    h.controller.handleCreateDefaults(answer(REPO_B, "/trees/b"));
+    h.controller.handleMigrationOffer({
+      type: "worktreeMigrationOffer",
+      repoId: REPO_A,
+      opening: 1,
+      sourceWorktreeId: source.id,
+      offerId: "migration-1",
+      count: 1,
+    });
+    const row = document.querySelector<HTMLElement>(".wt-migration");
+    expect(row?.hidden).toBe(false);
+
+    h.controller.openCreate();
+
+    expect(row?.hidden).toBe(true);
   });
 
   it("[1_1] waits for every repository it asked before opening", () => {
@@ -2193,7 +2386,7 @@ describe("the destination a create opens on", () => {
     // one conversation, and a form that asked under two identities could have a
     // reply from each honoured against the other.
     expect(h.posts).toEqual([
-      { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 },
+      { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1, sourceWorktreeId: first.id },
       { type: "requestWorktreeRefs", repoId: REPO, token: 1 },
     ]);
   });
@@ -2347,6 +2540,34 @@ describe("what a mutation did comes back to the panel", () => {
     ]);
   });
 
+  it("carries migration uncertainty on the successful create result", () => {
+    const h = ready();
+    const worktreeId = "/Users/dev/Projects/ai-oss/anywhere-terminal-wt/migrated";
+
+    h.controller.handleMutationResult({
+      type: "worktreeMutationResult",
+      verb: "create",
+      repoId: REPO,
+      worktreeId,
+      result: {
+        kind: "ok",
+        migrationIndeterminate: "the migration result could not be verified",
+        openFailed: "coexisting follow-up",
+      },
+    });
+
+    expect(results(h)).toEqual([
+      expect.objectContaining({
+        action: "create",
+        repoId: REPO,
+        orphanedLabel: worktreeId,
+        outcome: "ok",
+        migrationIndeterminate: "the migration result could not be verified",
+        openFailed: "coexisting follow-up",
+      }),
+    ]);
+  });
+
   it("[round-4 F017] a second create in one repo does not replace the first worktree's notice", () => {
     // Both worktrees are made a moment ago, so neither is in the tree yet and
     // `rescope` drops the `worktreeId` off each notice — leaving the dedupe key
@@ -2386,6 +2607,11 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [
+        { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+        { id: "p2", name: "DB", outcome: { kind: "failed", reason: "no distinct port" } },
+      ],
+      portWarnings: ["excludeFailed"],
     });
 
     expect(results(h)).toHaveLength(1);
@@ -2395,6 +2621,11 @@ describe("what a mutation did comes back to the panel", () => {
       repoId: REPO,
       outcome: "ok",
       provisioned: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [
+        { id: "p1", name: "APP", preview: 5183, outcome: { kind: "allocated", port: 5184 } },
+        { id: "p2", name: "DB", outcome: { kind: "failed", reason: "no distinct port" } },
+      ],
+      portWarnings: ["excludeFailed"],
     });
   });
 
@@ -2417,6 +2648,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [],
     });
     // The premise, so the assertion below is not passing for the wrong reason:
     // the merged notice really is repository-scoped at this point.
@@ -2478,6 +2710,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId,
       steps: [{ id: "i1", path: ".env", outcome: { kind: "copied" } }],
+      ports: [],
     });
 
     expect(results(h)).toHaveLength(1);
@@ -2497,6 +2730,7 @@ describe("what a mutation did comes back to the panel", () => {
       type: "worktreeProvisionResult",
       worktreeId: "/wt/gone",
       steps: [{ id: "i1", path: ".env", outcome: { kind: "refused", reason: "a lockfile is never brought over" } }],
+      ports: [],
     });
 
     expect(results(h)).toHaveLength(1);

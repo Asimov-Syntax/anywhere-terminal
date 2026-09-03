@@ -386,7 +386,7 @@ export class WorktreeView {
             // Provisioning lands as a SECOND message folded onto the same
             // notice, so its summary is part of the key — without it the merged
             // result is byte-different and renders identically.
-            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
+            `${r.action}:${r.worktreeId ?? r.repoId ?? ""}:${r.orphanedLabel ?? ""}:${r.outcome}:${r.openFailed ?? ""}:${r.migrationIndeterminate ?? ""}:${r.error ?? ""}${r.observed ?? ""}:${r.needsConfirm?.fingerprint ?? ""}:${provisionKey(r.provisioned, r.provisionContests, r.ports, r.portWarnings)}:${r.branchDelete ? `${r.branchDelete.kind}:${r.branchDelete.kind === "deleted" ? r.branchDelete.branch : r.branchDelete.reason}` : ""}`,
         )
         .join("|"),
     ].join(String.fromCharCode(4));
@@ -1519,6 +1519,11 @@ export class WorktreeView {
     }
     if (result.outcome === "ok") {
       const brought = provisionSummary(result.provisioned, result.provisionContests);
+      const ported = portSummary(result.ports, result.portWarnings);
+      const migrationDetail =
+        result.migrationIndeterminate === undefined
+          ? undefined
+          : `Unverified Git integration detail: ${result.migrationIndeterminate}`;
       // Stated, not implied: the tree refreshing underneath is not a report,
       // and a user who started a mutation is owed its result either way.
       // Still a success — the worktree exists — but the notice says plainly
@@ -1531,21 +1536,32 @@ export class WorktreeView {
         // same shape: the removal still succeeded, but "done" alone would
         // hide that the opt-in did not go through.
         tone:
-          result.openFailed === undefined && result.branchDelete?.kind !== "refused" && brought?.tone !== "warn"
+          result.openFailed === undefined &&
+          result.migrationIndeterminate === undefined &&
+          result.branchDelete?.kind !== "refused" &&
+          brought?.tone !== "warn" &&
+          ported?.tone !== "warn"
             ? "neutral"
             : "warn",
         live: "status",
         title: `${titleForAction(result.action)} done.`,
         body: withAbout(
           [
+            result.migrationIndeterminate === undefined
+              ? undefined
+              : "Migration may be partial, so no provisioning, port allocation, opening, or launch ran afterwards. Inspect the source worktree, destination worktree, and Git stashes.",
             result.openFailed === undefined ? undefined : "It could not be opened afterwards.",
             branchDeleteLine(result.branchDelete),
             brought?.body,
+            ported?.body,
           ]
             .filter((line) => line !== undefined)
             .join(" ") || undefined,
         ),
-        reason: result.openFailed ?? branchDeleteReason(result.branchDelete) ?? brought?.reason,
+        reason:
+          [migrationDetail, result.openFailed, branchDeleteReason(result.branchDelete), brought?.reason, ported?.reason]
+            .filter((line) => line !== undefined)
+            .join("\n") || undefined,
         onDismiss: dismiss,
       });
     }
@@ -1839,13 +1855,71 @@ function titleForAction(action: WorktreeActionResult["action"]): string {
 function provisionKey(
   steps: readonly ProvisionStepResult[] | undefined,
   contests: readonly ProvisionResultContest[] | undefined,
+  ports: WorktreeActionResult["ports"],
+  warnings: WorktreeActionResult["portWarnings"],
 ): string {
-  // Structural, over exactly what `provisionSummary` reads. Concatenating the
-  // fields I happened to remember is what let a second result with a corrected
-  // membership — and then a changed path, and a changed descendant detail —
-  // compare equal and leave a stale notice on screen (.reviews/round-2.md
-  // F006). Free text in a delimiter-joined string can collide; this cannot.
-  return steps === undefined ? "" : JSON.stringify([steps, contests ?? []]);
+  // Structural, over exactly what the two provisioning summaries read. Free
+  // text in a delimiter-joined key can collide and leave a stale notice.
+  return JSON.stringify([steps ?? [], contests ?? [], ports ?? [], warnings ?? []]);
+}
+
+function portSummary(
+  ports: WorktreeActionResult["ports"],
+  warnings: WorktreeActionResult["portWarnings"],
+): { body: string; tone: "neutral" | "warn"; reason?: string } | undefined {
+  if ((ports === undefined || ports.length === 0) && (warnings === undefined || warnings.length === 0)) {
+    return undefined;
+  }
+  const byName = new Map<string, NonNullable<WorktreeActionResult["ports"]>[number]>();
+  const priority = (port: NonNullable<WorktreeActionResult["ports"]>[number]): number => {
+    if (port.outcome.kind === "failed") {
+      return 3;
+    }
+    return port.preview !== undefined && port.preview !== port.outcome.port ? 2 : 1;
+  };
+  for (const port of ports ?? []) {
+    const current = byName.get(port.name);
+    if (current === undefined || priority(port) > priority(current)) {
+      byName.set(port.name, port);
+    }
+  }
+  const unique = [...byName.values()];
+  const ready = unique.filter((port) => port.outcome.kind !== "failed");
+  const failed = unique.filter((port) => port.outcome.kind === "failed");
+  const moved = ready.filter(
+    (port) => port.preview !== undefined && port.outcome.kind !== "failed" && port.preview !== port.outcome.port,
+  );
+  const warningText = [
+    ...(warnings?.includes("lockReleaseFailed")
+      ? ["The allocation lock could not be released; later port allocations may be blocked."]
+      : []),
+    ...(warnings?.includes("lockRetained")
+      ? [
+          "A repository lock was retained because a timed-out write may still finish; related worktree setup may remain blocked until cleanup.",
+        ]
+      : []),
+    ...(warnings?.includes("temporaryCleanupFailed")
+      ? ["Port claims were saved, but temporary-file cleanup did not finish."]
+      : []),
+    ...(warnings?.includes("excludeFailed")
+      ? ["The repository-local exclude could not be updated; .env.worktree may appear in Git status."]
+      : []),
+  ];
+  const body = [
+    ...(unique.length === 0 ? [] : [`${ready.length} of ${unique.length} ports ready.`]),
+    ...warningText,
+  ].join(" ");
+  const reasons = [
+    ...moved.map(
+      (port) => `${port.name}: ${port.preview} → ${port.outcome.kind === "failed" ? "failed" : port.outcome.port}`,
+    ),
+    ...failed.map((port) => `${port.name}: ${port.outcome.kind === "failed" ? port.outcome.reason : "failed"}`),
+  ];
+  return {
+    body,
+    tone: failed.length > 0 || warningText.length > 0 ? "warn" : "neutral",
+    ...(reasons.length === 0 ? {} : { reason: reasons.join("\n") }),
+  };
 }
 
 /**

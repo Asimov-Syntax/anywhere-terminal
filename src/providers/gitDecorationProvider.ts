@@ -35,6 +35,9 @@ export interface GitStatusDelta {
 }
 
 export interface GitDecorationProvider {
+  /** The already-activated Git API, while this provider is live. */
+  getApi?(): API | undefined;
+
   /** Current status + revision for an absolute path. status === undefined when not decorated. */
   getStatus(absPath: string): { status: GitStatus | undefined; revision: number };
 
@@ -602,6 +605,9 @@ export function createGitDecorationProvider(options: CreateGitDecorationProvider
   // --- Public surface ------------------------------------------------------
 
   const provider: GitDecorationProvider = {
+    getApi() {
+      return disposed ? undefined : api;
+    },
     getStatus(absPath: string) {
       // Snapshot stamping must observe a status/revision pair that has already
       // been emitted. If a repo rebuild updated `repoMaps` but is still waiting

@@ -15,6 +15,7 @@ import type {
   WorktreeCreateDefaultsMessage,
   WorktreeCreateResolutionMessage,
   WorktreeDebrisAuthorizedMessage,
+  WorktreeMigrationOfferMessage,
   WorktreeMutationResultMessage,
   WorktreeProvisionOfferMessage,
   WorktreeProvisionResultMessage,
@@ -37,6 +38,7 @@ import type {
   WorktreeCreateMode,
   WorktreeInfo,
   WorktreeLaunchAgent,
+  WorktreeMigrationOffer,
   WorktreeOpenAfter,
   WorktreePresence,
   WorktreeProvisionOffer,
@@ -315,6 +317,8 @@ export class WorktreeController {
    * would either re-mint it on every character or drop it on the second answer.
    */
   private readonly provisionOffers = new Map<string, WorktreeProvisionOfferMessage>();
+  /** The source snapshot move offer, held separately from per-keystroke defaults. */
+  private readonly migrationOffers = new Map<string, WorktreeMigrationOfferMessage>();
   /**
    * The repository's local branches, per repo.
    *
@@ -352,7 +356,8 @@ export class WorktreeController {
    * `repoId` is the same on both (round-2 W2).
    */
   private refsToken = 0;
-  /** The repo a create was invoked for, waiting on its defaults. */
+  /** The row source for the live create opening, absent for repository and toolbar doors. */
+  private createSource: { repoId: string; worktreeId: string; generation?: number } | null = null;
   /**
    * The create waiting on the host, and the repositories it has yet to hear
    * from. A set rather than one id because an unscoped create asks every
@@ -371,6 +376,7 @@ export class WorktreeController {
    * (.reviews/round-1.md B4).
    */
   private applyProvisionOffer: ((repoId: string, offer: WorktreeProvisionOffer) => void) | null = null;
+  private applyMigrationOffer: ((repoId: string, offer: WorktreeMigrationOffer | undefined) => void) | null = null;
   /**
    * Push the repository's branch list into the open form. Null when none is
    * open — which is what drops an answer that outlived its dialog.
@@ -496,11 +502,18 @@ export class WorktreeController {
         // The destination depends on the branch, so every settled branch edit
         // re-asks and the answer replaces the seed in place (round-3 B12).
         onSelectionChange: (selection) => {
+          const source = this.createSource;
           deps.postMessage({
             type: "requestWorktreeCreateDefaults",
             repoId: selection.repoId,
             opening: this.refsToken,
             branch: selection.branch,
+            ...(source?.repoId === selection.repoId
+              ? {
+                  sourceWorktreeId: source.worktreeId,
+                  ...(source.generation === undefined ? {} : { sourceGeneration: source.generation }),
+                }
+              : {}),
           });
           // The same settled edit, asked as the other question: the defaults
           // answer where a create would GO, and this one answers what it would
@@ -527,6 +540,9 @@ export class WorktreeController {
         },
         bindProvisioning: (apply) => {
           this.applyProvisionOffer = apply;
+        },
+        bindMigration: (apply) => {
+          this.applyMigrationOffer = apply;
         },
         // A source the HOST detected, named by id. The message carries no file,
         // no path and no model — the host re-resolves that provider itself, and
@@ -701,6 +717,7 @@ export class WorktreeController {
           disposition: draft.disposition ?? { kind: "free" },
           // Ids only, resolved host-side against the model it displayed.
           ...(draft.provision === undefined ? {} : { provision: draft.provision }),
+          ...(draft.migrateChanges === undefined ? {} : { migrateChanges: draft.migrateChanges }),
           // The launch details travel with the agent variant and with no other —
           // the union is what makes any other pairing unrepresentable.
           afterCreate:
@@ -889,7 +906,7 @@ export class WorktreeController {
     if (repo === undefined) {
       return;
     }
-    this.openCreateForRepo(repo.repoId);
+    this.openCreateForRepo(repo.repoId, info.id);
   }
 
   /**
@@ -897,20 +914,40 @@ export class WorktreeController {
    * repository, that one; without, every repository in the tree — a door that
    * names none must offer them all rather than pick one for the user.
    */
-  openCreateForRepo(repoId?: string): void {
+  openCreateForRepo(repoId?: string, sourceWorktreeId?: string): void {
     // EVERY door asks every repository. The picker is built from the answers the
     // seed holds, so a door that asked about one would offer one — and the doors
     // are required to differ only in which repository the form opens ON.
-    const targets = (this.tree?.repos ?? []).map((r) => r.repoId);
+    const repos = this.tree?.repos ?? [];
+    const targets = repos.map((repo) => repo.repoId);
     if (targets.length === 0 || (repoId !== undefined && !targets.includes(repoId))) {
       return;
     }
+    const sourceRepo = repoId === undefined ? undefined : repos.find((repo) => repo.repoId === repoId);
+    const source =
+      sourceWorktreeId === undefined
+        ? null
+        : sourceRepo?.worktrees.some((row) => row.id === sourceWorktreeId)
+          ? {
+              repoId: sourceRepo.repoId,
+              worktreeId: sourceWorktreeId,
+              ...(sourceRepo.generation === undefined ? {} : { generation: sourceRepo.generation }),
+            }
+          : undefined;
+    if (source === undefined) {
+      return;
+    }
+    this.createSource = source;
     // A new form starts with no provisioning. Seeding it from the previous
     // form's offer meant a fresh read that FAILED left the old model on screen,
     // still resolvable, attributed to a form that had closed
     // (.reviews/round-2.md B6). Absent renders as "not told yet", which is the
     // honest state until the host answers.
     this.provisionOffers.clear();
+    for (const migrationRepoId of this.migrationOffers.keys()) {
+      this.applyMigrationOffer?.(migrationRepoId, undefined);
+    }
+    this.migrationOffers.clear();
     // Cleared on the same terms as the offer: a list seeded from the previous
     // form describes a repository state that may have moved, and the honest
     // opening state is "not told yet".
@@ -927,7 +964,17 @@ export class WorktreeController {
       ...(repoId === undefined ? {} : { initialRepoId: repoId }),
     };
     for (const target of targets) {
-      this.deps.postMessage({ type: "requestWorktreeCreateDefaults", repoId: target, opening: this.refsToken });
+      this.deps.postMessage({
+        type: "requestWorktreeCreateDefaults",
+        repoId: target,
+        opening: this.refsToken,
+        ...(source?.repoId === target
+          ? {
+              sourceWorktreeId: source.worktreeId,
+              ...(source.generation === undefined ? {} : { sourceGeneration: source.generation }),
+            }
+          : {}),
+      });
       // Not awaited by `pendingCreate`: the form opens on the destination alone
       // and gains the list when it lands, so a repository whose enumeration is
       // slow or fails never holds the dialog shut.
@@ -1171,6 +1218,7 @@ export class WorktreeController {
         continue;
       }
       const offer = this.provisionOffers.get(repo.repoId);
+      const migration = this.migrationOffers.get(repo.repoId);
       const refs = this.repoRefs.get(repo.repoId);
       const prs = this.repoPullRequests.get(repo.repoId);
       repos.push({
@@ -1192,6 +1240,7 @@ export class WorktreeController {
         // Absent until the offer arrives, which the form renders as "not told
         // yet" rather than as "nothing to bring over".
         ...(offer === undefined ? {} : { provisioning: { offerId: offer.offerId, model: offer.model } }),
+        ...(migration === undefined ? {} : { migration: { offerId: migration.offerId, count: migration.count } }),
         // Same terms as the offer: absent renders as "not told yet", never as
         // "this repository has no branches".
         ...(refs === undefined ? {} : { refs: { list: refs.refs, truncated: refs.truncated } }),
@@ -1201,6 +1250,23 @@ export class WorktreeController {
       });
     }
     return repos;
+  }
+
+  handleMigrationOffer(msg: WorktreeMigrationOfferMessage): void {
+    const source = this.createSource;
+    if (
+      msg.opening !== this.refsToken ||
+      source === null ||
+      source.repoId !== msg.repoId ||
+      source.worktreeId !== msg.sourceWorktreeId ||
+      msg.offerId.length === 0 ||
+      !Number.isSafeInteger(msg.count) ||
+      msg.count <= 0
+    ) {
+      return;
+    }
+    this.migrationOffers.set(msg.repoId, msg);
+    this.applyMigrationOffer?.(msg.repoId, { offerId: msg.offerId, count: msg.count });
   }
 
   /**
@@ -1415,6 +1481,8 @@ export class WorktreeController {
     this.showActionResult({
       ...(existing ?? { action: "create", worktreeId: msg.worktreeId, outcome: "ok" as const }),
       provisioned: msg.steps,
+      ports: msg.ports,
+      ...(msg.portWarnings === undefined ? {} : { portWarnings: msg.portWarnings }),
       provisionContests: msg.contests,
     });
   }
@@ -1604,6 +1672,23 @@ export class WorktreeController {
         this.provisionOffers.delete(repoId);
       }
     }
+    for (const repoId of this.migrationOffers.keys()) {
+      if (!repos.has(repoId)) {
+        this.migrationOffers.delete(repoId);
+        this.applyMigrationOffer?.(repoId, undefined);
+      }
+    }
+    const source = this.createSource;
+    if (
+      source !== null &&
+      !next.repos
+        .find((repo) => repo.repoId === source.repoId)
+        ?.worktrees.some((row) => row.id === source.worktreeId && !row.bare && !row.missing && !row.prunable)
+    ) {
+      this.createSource = null;
+      this.migrationOffers.delete(source.repoId);
+      this.applyMigrationOffer?.(source.repoId, undefined);
+    }
     for (const repoId of this.repoRefs.keys()) {
       if (!repos.has(repoId)) {
         this.repoRefs.delete(repoId);
@@ -1765,6 +1850,9 @@ function toActionResult(msg: WorktreeMutationResultMessage): WorktreeActionResul
         ...scope,
         outcome: "ok",
         ...(msg.result.openFailed === undefined ? {} : { openFailed: msg.result.openFailed }),
+        ...(msg.result.migrationIndeterminate === undefined
+          ? {}
+          : { migrationIndeterminate: msg.result.migrationIndeterminate }),
         ...(msg.result.branchDelete === undefined ? {} : { branchDelete: msg.result.branchDelete }),
       };
     case "indeterminate":
