@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -32,3 +32,8 @@
 Blueprint: none
 Lane: full
 Planned at: 7abcebf7
+
+Blueprint: none
+Lane: full — escalation flags: new-api-contract (a new request and a new reply on the worktree wire)
+Planned at: 71b53ca1
+Plan attack: the oracle refuted row 1 and left row 2 unresolved, and both were repaired in design rather than accepted. Writing `pathInput.value` is not the transition a typed override performs — `selection()` reads `pathIsDerived`/`supplied` and `syncDerived` overwrites an unfocused input — so the transition gained one owner both callers use. The opening must be snapshotted at construction, because a predecessor dialog reading the controller's token at reply time would read its successor's. It also named five wire surfaces the first plan omitted: the inbound allowlist, the exhaustive inbound sample, the router, the worktree handler map, and the destination row's stylesheet.

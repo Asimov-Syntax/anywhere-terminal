@@ -1,27 +1,41 @@
 ## 1. Ask the host for a folder
 
-- [ ] 1_1 Carry the request and its answer on the wire
+- [ ] 1_1 Carry the request and its answer on the wire, and open the picker
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2, D3
-  - **Boundary**: No new destination field on the create request, and no reply for a cancelled or failed dialog
+  - **Boundary**: No new destination field on the create request, and no reply for a cancelled dialog, a failed one, or one whose form is gone
   - **Acceptance**:
-    - Outcome: The host opens the system folder picker on request and answers only the form that asked
-    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.test.ts src/types/messages.contract.test.ts
+    - Outcome: The host opens the folder picker and answers only a form still asking
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts
   - **Plan**:
-    1. `src/types/messages.ts` — the request naming repository and opening, and the reply echoing the opening beside the chosen path.
-    2. `src/providers/WorktreeHost.ts` — open the picker through the same `showOpenDialog` shape the file tree already uses, and post the reply only on a confirmed choice.
-    3. `src/providers/WorktreeHost.test.ts` — witness the dialog options, the echoed opening, and that cancel and failure post nothing.
+    1. `src/types/messages.ts` — the request naming repository and opening, the reply echoing that opening beside the chosen path, and the request's entry in the inbound `WORKTREE_MESSAGE_TYPES` allowlist whose exhaustiveness assertion would otherwise refuse to compile.
+    2. `src/providers/WorktreeHost.ts` — open the picker through the same `showOpenDialog` shape the file tree already uses, and post only on a confirmed choice whose opening is still the live one after the await.
+    3. `src/providers/WorktreeHost.test.ts` — witness the dialog options, the echoed opening, and that cancel, failure, and a dismissed form each post nothing.
+    4. `src/providers/TerminalViewProvider.worktree.test.ts` — extend the exhaustive inbound sample record the new request type obliges.
+
+- [ ] 1_2 Route the answer to the webview that asked
+  - **Deps**: 1_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2
+  - **Boundary**: No handling of the reply's meaning here — routing only, and no second place that decides whether an opening matches
+  - **Acceptance**:
+    - Outcome: A posted answer reaches the worktree controller instead of being dropped in the router
+    - Verify: command pnpm exec vitest run src/webview/messaging/MessageRouter.test.ts
+  - **Plan**:
+    1. `src/webview/messaging/MessageRouter.ts` and `src/webview/worktree/worktreeMessageHandlers.ts` — carry the new answer to the worktree surface, the way every other host-to-webview worktree reply is carried.
+    2. `src/webview/messaging/MessageRouter.test.ts` — witness the route, so a reply declared on the wire cannot stay production-dark.
 
 ## 2. Offer it where the destination is stated
 
-- [ ] 2_1 Put the chosen folder into the destination the form already has
-  - **Deps**: 1_1
+- [ ] 2_1 Make one transition own a supplied destination, and let the picker use it
+  - **Deps**: 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D1, D2, D3
-  - **Boundary**: No change to how a destination is derived, shortened, validated, or displayed, and no persistence of a chosen folder
+  - **Boundary**: No change to how a destination is derived, shortened, validated, or displayed; no persistence of a chosen folder; and no caller may set the override input's value directly
   - **Acceptance**:
-    - Outcome: A chosen folder becomes the override and composes the same create typing it would
-    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts
+    - Outcome: A chosen folder composes the same create typing it would, and the action is unavailable wherever the override is
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeCreateDialog.ts` — an action beside the destination that requests the picker, and applies an answer only when it names this opening.
-    2. `src/webview/worktree/WorktreeController.ts` — bind the request and route the reply to the open form.
-    3. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — witness that the two ways of naming one destination compose identical creates, that a foreign opening is ignored, and that cancelling changes nothing.
+    1. `src/webview/worktree/WorktreeCreateDialog.ts` — extract the state change the override's `input` listener performs into one named transition, call it from both the listener and the picker's answer, take the opening as a dependency, and disable the action wherever the override is disabled.
+    2. `src/webview/worktree/WorktreeController.ts` — bind the request and hand each opening's dialog its own opening number.
+    3. `src/webview/worktree/worktreePanel.css` — lay the action out beside the destination, whose wrapper is a column today.
+    4. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — witness that the two ways of naming one destination compose identical creates, that a foreign or superseded opening is ignored, that cancelling changes nothing, and that the action follows the override's disabled modes.
+    5. `src/extension.worktreeAssembly.test.ts` — prove the whole path is live in the shipped wiring rather than only declared.
