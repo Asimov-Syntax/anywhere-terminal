@@ -12,8 +12,8 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -68,3 +68,8 @@ the per-repository key vs the form-wide picker, the pending state between a pick
 `detach` as a third retirement path. Five citation defects fixed. The spec's "nothing SHALL be read"
 was unachievable — vetting must stat — and is now the checkable claim: no occupancy read outside the
 configured root.
+
+Verify gate: 7690/7690, type check clean, bundle and I10 gates green. Biome reports 18 diagnostics,
+identical file-for-file to the change's base 7abcebf7 measured in a detached worktree; two format
+findings this change did introduce were fixed with `biome format --write` scoped to the two files,
+never the `--write --unsafe` form the lint script runs.

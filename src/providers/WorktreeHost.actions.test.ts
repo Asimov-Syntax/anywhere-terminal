@@ -7464,12 +7464,7 @@ describe("deriving a destination inside a folder this host offered", () => {
     built.view.posts.length = 0;
   }
 
-  const probe = (
-    h: Awaited<ReturnType<typeof builtHost>>,
-    repoId: string,
-    token: number,
-    seq: number,
-  ) =>
+  const probe = (h: Awaited<ReturnType<typeof builtHost>>, repoId: string, token: number, seq: number) =>
     h.host.handleMessage(h.view, {
       type: "worktreeCreateProbe",
       repoId,

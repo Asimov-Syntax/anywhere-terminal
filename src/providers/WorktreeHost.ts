@@ -2328,16 +2328,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   function isWellFormedProbe(msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>): boolean {
     const ordinal = (v: unknown): boolean => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-    const declared = new Set([
-      "type",
-      "repoId",
-      "token",
-      "seq",
-      "query",
-      "candidatePath",
-      "useChosenFolder",
-      "base",
-    ]);
+    const declared = new Set(["type", "repoId", "token", "seq", "query", "candidatePath", "useChosenFolder", "base"]);
     for (const key of Object.keys(msg)) {
       if (!declared.has(key)) {
         return false;
