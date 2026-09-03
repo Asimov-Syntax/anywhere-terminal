@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved — no fork; § 2.4 fixes the mechanism and the wire fixes the shape _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -71,3 +71,4 @@ Planned at: 0215afec
 - Verify Gate after round 5: check-types clean, 7217 tests / 287 files, `gate:fs-deletion` and `build:check-requires` ok, `verify-status` exit 0, biome clean on every file this change touches.
 - The first cut of the round-5 rule was too coarse and two tests caught it: `state === "restored"` also leaves the link naming this entry, because after a pruned checkout the stale link names the very path `createEntry` claims first. Removing the entry THERE is correct — it is what returns the directory to the forgotten state the adoption found it in. The rule fires only where the link is not ours.
 - Post-round-5 self-audit, no review round consumed: I armed-out all 10 guards in `adoptWorktree.ts` one at a time and re-ran both suites. Two more were vacuous, bringing the cycle total to FIVE. (1) The opening `bytes == staleLink` check — round-2 F006's own guard — had no witness at all; added "refuses before creating anything when the link is not the one it was offered", asserting the store saw zero writes and zero calls. (2) The entry-identity re-check before the final write: its test overrode `identify` for EVERY path, so the link's own identity comparison refused first and the entry's was never reached; now only `ENTRY`'s identity is substituted and the message is asserted. Every vacuous witness this cycle was found by reverting the guard, never by reading the test.
+- Round-6 handback, cycle 2 closed under thrash-stop option 1. F005 six appearances / five fix attempts; the chair reached option 1 independently. Reopening Gate 2: D4's undo stops claiming an absolute and joins D5/D9 in stating a residual, and the visible-link read — the source of F005 in rounds 5 and 6 — is DELETED rather than re-guarded, since it exists only to rescue the non-restored outcomes and those now retain the entry unconditionally. F015 gives `putLink` three outcomes so a refusal that mutated nothing stops being reported as unvouchable content.
