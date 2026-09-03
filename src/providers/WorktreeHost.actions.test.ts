@@ -27,6 +27,7 @@ import type { PresenceProjector } from "../worktree/presenceProjector";
 import type { WorktreeAgentRow, WorktreePresence } from "../worktree/presenceTypes";
 import { MAX_MODEL_ROWS } from "../worktree/provisioning/providerKit";
 import type { NativeConfigDivergence, NativeConfigWrite } from "../worktree/provisioning/writeNativeConfig";
+import type { AdoptVerdict } from "../worktree/adoptProbe";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import type { RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsRead } from "../worktree/repoPullRequests";
@@ -345,6 +346,11 @@ async function builtHost(
     /** § 2.3's corroboration, and every subject it was asked about. */
     probeReattach?: (input: { repoPath: string; branch: string; repairPath: string }) => Promise<ReattachVerdict>;
     probeSubjects?: { repoPath: string; branch: string; repairPath: string }[];
+    /** D3's adopt corroboration at the occupied candidate, and its subjects. */
+    probeAdopt?: (input: { candidatePath: string }) => Promise<AdoptVerdict>;
+    adoptSubjects?: string[];
+    /** D7's platform predicate. Left undefined the host reads the platform. */
+    adoptSupported?: boolean;
     /** D7's base resolution: the commit a ref names, or undefined for none. */
     resolveBase?: (input: { repoPath: string; ref: string }) => Promise<string | undefined>;
     /**
@@ -465,6 +471,15 @@ async function builtHost(
       realpath: async (p: string) => over.symlinks?.[p] ?? p,
       lstat: async () => ({}),
     },
+    ...(over.adoptSupported === undefined ? {} : { adoptSupported: over.adoptSupported }),
+    ...(over.probeAdopt === undefined && over.adoptSubjects === undefined
+      ? {}
+      : {
+          probeAdopt: async (input: { candidatePath: string }) => {
+            over.adoptSubjects?.push(input.candidatePath);
+            return (await over.probeAdopt?.(input)) ?? { kind: "declined" as const, because: "notAPrunedCheckout" };
+          },
+        }),
     ...(over.probeReattach === undefined && over.probeSubjects === undefined
       ? {}
       : {
@@ -4237,10 +4252,12 @@ describe("the host resolves a selection before the create runs", () => {
     dispose();
   });
 
-  it("validates the base for adopt too, which the form turns into a new create", async () => {
-    // The dialog has no adopt action yet and falls back to creating one, so a
-    // withheld verdict here is a withheld verdict on the path that is actually
-    // taken (round-3 B4).
+  it("refuses the base for adopt, which starts from a checkout that already exists", async () => {
+    // It used to VALIDATE one. The dialog had no adopt action and fell back to
+    // creating a worktree, so a withheld verdict there let an unresolvable base
+    // through the path actually taken (round-3 B4). The dialog has that action
+    // now, and adoption takes its starting point from the surviving directory —
+    // so the control is refused on the same rule `reuse` follows (design.md D6).
     const { host, view, dispose } = await builtHost([windowRow()], true, {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
@@ -4261,7 +4278,221 @@ describe("the host resolves a selection before the create runs", () => {
     });
     await settle();
 
-    expect(resolutionIn(view)).toMatchObject({ mode: { kind: "adopt" }, baseValid: { ok: false } });
+    const answer = resolutionIn(view);
+    // Asserted, not assumed: with the mode resolved anywhere else this passes
+    // for the wrong reason, since every other non-fresh mode withholds too.
+    expect(answer?.mode.kind, "the setup did not produce an adopt resolution").toBe("adopt");
+    expect(answer?.baseValid).toBeUndefined();
+    dispose();
+  });
+
+  // ── Adopt at the destination the suffixing stepped over (design.md D1, D2) ──
+  //
+  // The other adopt producer. `probeReattach` reaches the case git still holds a
+  // registration for; this one reaches the case git has forgotten entirely, where
+  // there is no record left to downgrade and the only evidence is the directory.
+
+  /** A branch that exists, held by nothing, whose derived destination is occupied. */
+  const adoptable = {
+    createRoot: "/trees",
+    exists: (p: string) => p === "/trees/repo-idle",
+    readRefs: async () => ({ ok: true as const, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
+  };
+
+  async function probeFor(view: ReturnType<typeof surface>, host: WorktreeHost, query = "idle"): Promise<void> {
+    // The form opens first: refs rides an opening the host already holds, and the
+    // branch-less defaults ask is the only door that establishes one (round-3 B2).
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreeCreateProbe", repoId: REPO, token: 1, seq: 0, query });
+    await settle();
+  }
+
+  it("adopts the destination the suffixing stepped over, at the branch tip it enumerated", async () => {
+    const subjects: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      adoptSubjects: subjects,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+
+    const answer = resolutionIn(view);
+    // The OCCUPIED path, never the free one the suffixing moved to: adopt is a
+    // state of the directory that is already there (design.md D1).
+    expect(answer?.mode).toEqual({
+      kind: "adopt",
+      adoptPath: "/trees/repo-idle",
+      expectedBranchOid: "oid-idle",
+    });
+    expect(subjects, "the probe was asked about a path other than the skipped one").toEqual(["/trees/repo-idle"]);
+    // And the free path is still carried, so a form that declines the adoption
+    // has somewhere to go without a second probe.
+    expect(answer?.freePath).not.toBe("/trees/repo-idle");
+    dispose();
+  });
+
+  it("withholds adopt as unverified on a platform the reconstruction has not been recorded on", async () => {
+    // Withheld, not refused: nobody has established that the reconstruction
+    // FAILS on win32, and stating that it does would be a claim from no
+    // evidence. WT-012.14 owns the value; this is the predicate (design.md D7).
+    const subjects: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      adoptSupported: false,
+      adoptSubjects: subjects,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "reuse" });
+    // Not merely unoffered — unasked. A read of the user's disk for a mode that
+    // cannot be offered is a cost with no answer behind it.
+    expect(subjects, "an unverified platform still corroborated the candidate").toEqual([]);
+    dispose();
+  });
+
+  it("offers adopt where the predicate is set, which is what makes the withholding above meaningful", async () => {
+    // The arm check for the test above: with the same fixture and the predicate
+    // ON, the mode does resolve — so `adoptSupported: false` is what withheld
+    // it, not a fixture that never produced an adopt at all.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      adoptSupported: true,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode.kind).toBe("adopt");
+    dispose();
+  });
+
+  it("leaves the occupied candidate alone when it is not a pruned checkout", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeAdopt: async () => ({ kind: "declined", because: "notAPrunedCheckout" }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "reuse" });
+    dispose();
+  });
+
+  it("does not adopt on a read it could not make", async () => {
+    // `unreadable` is its own answer and not a weak `adopt`: a directory whose
+    // `.git` entry cannot be read is exactly the one to leave untouched.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeAdopt: async () => ({ kind: "declined", because: "unreadable" }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "reuse" });
+    dispose();
+  });
+
+  it("never adopts onto a branch a live worktree holds", async () => {
+    // The listing's own `feat` worktree is live and holds the branch. The
+    // executor refuses this again at the moment of the write, because the
+    // listing can move while the user decides — but a mode that will always be
+    // refused is not one to put on screen either.
+    const subjects: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-feat",
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
+      adoptSubjects: subjects,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host, "feat");
+
+    const answer = resolutionIn(view);
+    expect(answer?.mode).toEqual({ kind: "reuse" });
+    expect(answer?.blockedBy, "the setup produced no live holder").toEqual({ ownerPath: FEAT_PATH });
+    expect(subjects, "a branch a live worktree holds was still corroborated").toEqual([]);
+    dispose();
+  });
+
+  it("does not adopt for a branch that does not exist", async () => {
+    // D2: there would be no ref to attach the surviving checkout to, and no tip
+    // to promise. A `fresh` selection never reaches the adopt arm at all.
+    const subjects: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-idle",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      adoptSubjects: subjects,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "fresh" });
+    expect(subjects, "a branch that does not exist was still corroborated").toEqual([]);
+    dispose();
+  });
+
+  it("does not adopt a destination the suffixing never stepped over", async () => {
+    // No occupied candidate means the derived path was free, and there is no
+    // surviving checkout to adopt — the probe has no subject to be given.
+    const subjects: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
+      adoptSubjects: subjects,
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "reuse" });
+    expect(subjects).toEqual([]);
+    dispose();
+  });
+
+  it("does not adopt when the enumeration carries no tip for the branch", async () => {
+    // The offer promises the user a commit. A ref line the enumeration could not
+    // attribute a tip to is dropped upstream, so this is the shape a truncated or
+    // malformed read leaves behind — and it falls back rather than inventing one.
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => p === "/trees/repo-idle",
+      readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "" }], truncated: false }),
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+    });
+    await probeFor(view, host);
+
+    expect(resolutionIn(view)?.mode).toEqual({ kind: "reuse" });
+    dispose();
+  });
+
+  it("issues no delete authorization for the directory it is offering to adopt", async () => {
+    // Stronger than the reattach rule it joins. A repair's skipped candidate is
+    // merely a path no form puts on screen; an adoption's IS the directory being
+    // adopted, so minting a clearance would offer to delete the work (D4).
+    const asked: string[] = [];
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      ...adoptable,
+      probeGitEntry: () => "absent",
+      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath }),
+      issueDebrisAuthorization: async (p: string) => {
+        asked.push(p);
+        return { ok: true as const, fingerprint: "fp", entries: [] };
+      },
+    });
+    await probeFor(view, host);
+    const answer = resolutionIn(view);
+    expect(answer?.mode.kind, "the setup did not produce an adopt resolution").toBe("adopt");
+    expect(answer?.occupiedCandidate?.disposition, "the setup reported no debris").toEqual({ kind: "debris" });
+
+    host.handleMessage(view, {
+      type: "worktreeAuthorizeDebris",
+      repoId: REPO,
+      token: 1,
+      ask: 1,
+      path: "/trees/repo-idle",
+    });
+    await settle();
+
+    expect(asked, "the host authorized deleting the checkout it offered to adopt").toEqual([]);
     dispose();
   });
 

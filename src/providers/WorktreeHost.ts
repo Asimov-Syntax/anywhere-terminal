@@ -63,6 +63,7 @@ import {
   type NativeConfigRefusal,
   type NativeConfigWrite,
 } from "../worktree/provisioning/writeNativeConfig";
+import type { AdoptVerdict } from "../worktree/adoptProbe";
 import type { ReattachVerdict } from "../worktree/reattachProbe";
 import { createRebuildGate, type RebuildGateClock } from "../worktree/rebuildGate";
 import type { PullRequestsInput, PullRequestsRead } from "../worktree/repoPullRequests";
@@ -381,6 +382,30 @@ export interface WorktreeHostOptions {
    * is a git read, and the host holds a listing, not a ref database.
    */
   probeReattach?(input: { repoPath: string; branch: string; repairPath: string }): Promise<ReattachVerdict>;
+  /**
+   * Whether the destination's occupied candidate is a checkout git has
+   * forgotten — the adopt state `probeReattach` cannot reach, because git has
+   * no registration left to downgrade (design.md D3).
+   *
+   * Absent, as with `probeReattach`, means the candidate stays occupied and the
+   * suffixed free path stands. That is the same fail-closed a `declined`
+   * verdict produces.
+   */
+  probeAdopt?(input: { candidatePath: string }): Promise<AdoptVerdict>;
+  /**
+   * Whether the reconstruction has been executed and recorded on this platform.
+   *
+   * A defaulted parameter rather than a bare `process.platform` read at the call
+   * site, so BOTH arms are witnessable from either platform — the shape
+   * `readFlags` uses in `src/utils/regularFileRead.ts`.
+   *
+   * Default `process.platform !== "win32"`: the recipe writes into git's own
+   * administrative directory and has been run only on darwin, and WT-012.14
+   * owns the Windows answer. Until it lands, adopt is WITHHELD there as
+   * unverified — never refused as failing, which is a claim nobody has
+   * established (design.md D7).
+   */
+  adoptSupported?: boolean;
   /**
    * The commit a base ref names, or `undefined` when it names none (D7).
    *
@@ -1891,31 +1916,51 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     const refs = read !== undefined && read.ok === true ? read.refs : [];
     const selection = resolveSelection({ query: msg.query, refs, worktrees: repo.worktrees });
 
+    // The tip comes from the enumeration this probe already took, for both adopt
+    // producers (design.md D3). No tip, no adopt: the offer promises the user a
+    // commit, and the form must not have to invent one.
+    const named = refs.find((ref) => ref.name === msg.query)?.oid;
+    const tip = named !== undefined && named.length > 0 ? named : undefined;
+    // WT-012.14 owns the value; this is the predicate it sets. Withholding an
+    // unverified mode is what that spike's acceptance asks for — claiming it
+    // FAILS here is what it forbids (design.md D7).
+    const adoptable = options.adoptSupported ?? process.platform !== "win32";
+
     let mode: ResolvedMode;
     switch (selection.mode.kind) {
       case "none":
       case "fresh":
         mode = { kind: "fresh" };
         break;
-      case "reuse":
-        mode = { kind: "reuse" };
+      case "reuse": {
+        // Adopt is a state of the DESTINATION, and the destination that matters
+        // is the one the suffixing skipped — not the free path it moved to. A
+        // branch that does not exist never reaches here, which is D2: there
+        // would be no ref to attach the checkout to and no tip to promise.
+        // A live holder is `reuse`'s other shape, and it is not adoptable: the
+        // executor refuses that branch again at the moment of the write, and a
+        // mode that will always be refused is not one to put on screen either.
+        const occupied = selection.blockedBy === undefined ? occupiedCandidate?.path : undefined;
+        const verdict =
+          adoptable && occupied !== undefined && tip !== undefined
+            ? await corroborateAdopt(occupied)
+            : undefined;
+        mode =
+          verdict?.kind === "adopt" && occupied !== undefined && tip !== undefined
+            ? { kind: "adopt", adoptPath: occupied, expectedBranchOid: tip }
+            : { kind: "reuse" };
         break;
+      }
       case "reattachCandidate": {
         // A candidate is a claim, not an answer. Failing corroboration does NOT
         // degrade to `fresh` at the same path — that would suffix a
         // near-duplicate beside a checkout already there — it falls back to the
         // FREE path the suffixing already computed (D3).
         const verdict = await corroborate(repo, msg.query, selection.mode.repairPath);
-        // The tip comes from the enumeration this probe already took, never
-        // from a second read: adopt promises the user a commit, and a tip read
-        // apart from the listing beside it would be a promise about a different
-        // instant. No tip means no promise, so the offer falls back to the free
-        // path rather than degrading to one the form would have to invent.
-        const tip = refs.find((ref) => ref.name === msg.query)?.oid;
         mode =
           verdict?.kind === "offer"
             ? { kind: "reattach", repairPath: verdict.repairPath, expectedOid: verdict.expectedOid }
-            : verdict?.kind === "adopt" && tip !== undefined
+            : verdict?.kind === "adopt" && adoptable && tip !== undefined
               ? { kind: "adopt", adoptPath: verdict.adoptPath, expectedBranchOid: tip }
               : { kind: "fresh" };
         break;
@@ -1930,11 +1975,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // Only where a base can actually apply. `reuse` and `reattach` take their
     // starting point from something that already exists, and a verdict on a
     // control the form has disabled would imply it is still live (D7).
-    // Every mode the FORM turns into a new create, which is `adopt` as well as
-    // `fresh` — the dialog has no adopt action yet and falls back to creating
-    // one, so withholding the verdict there let an unresolvable base through
-    // the one path that still uses it (round-3 B4).
-    const takesBase = mode.kind === "fresh" || mode.kind === "adopt";
+    // `adopt` used to be here too, because the dialog had no adopt action and
+    // fell back to creating one. It has one now, and adoption takes its
+    // starting point from the checkout that already exists — so the base is
+    // refused for it on the same rule `reuse` and `reattach` follow
+    // (design.md D6).
+    const takesBase = mode.kind === "fresh";
     const baseValid = takesBase ? await resolveBaseVerdict(repo, msg.base) : undefined;
     const publishing = stillOurs();
     if (disposed || !surfaces.has(surface) || publishing === undefined) {
@@ -1950,7 +1996,12 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // put on screen (round-2 B1). The one exception is a detached probe: the
     // toggle discards the classification (D5), so the form takes the free path
     // and does offer. `base.kind` is how the probe says so.
-    const offerable = mode.kind !== "reattach" || msg.base?.kind === "detached";
+    // `adopt` joins `reattach`: both act on a directory of their own, so the
+    // skipped candidate is never a path either form puts on screen — and
+    // recording it would leave a path authorizable for a delete no form offers.
+    // Adopt is stronger still: its own directory IS the skipped candidate, and
+    // minting a clearance for it would offer to delete the work being adopted.
+    const offerable = (mode.kind !== "reattach" && mode.kind !== "adopt") || msg.base?.kind === "detached";
     publishing.debrisCandidate =
       offerable && occupiedCandidate !== undefined && occupiedCandidate.disposition.kind === "debris"
         ? occupiedCandidate.path
@@ -2117,6 +2168,21 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       return undefined;
     }
     return probe({ repoPath: repo.mainPath, branch, repairPath }).catch(() => undefined);
+  }
+
+  /**
+   * Whether the destination's occupied candidate is an adoptable checkout.
+   *
+   * One filesystem read, and only for a candidate the derivation already
+   * produced — the common path adds no I/O at all, which is the rule
+   * `corroborate` follows for the same reason (design.md D1).
+   */
+  async function corroborateAdopt(candidatePath: string): Promise<AdoptVerdict | undefined> {
+    const probe = options.probeAdopt;
+    if (probe === undefined) {
+      return undefined;
+    }
+    return probe({ candidatePath }).catch(() => undefined);
   }
 
   /**

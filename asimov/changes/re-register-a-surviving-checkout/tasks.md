@@ -60,7 +60,7 @@ thing here. Then a second detector, an executor, the form's action, and the guar
 
 ## 2. Resolve it and run it
 
-- [ ] 1_4 Resolve adopt from the occupied candidate and withhold it where unverified
+- [x] 1_4 Resolve adopt from the occupied candidate and withhold it where unverified — verified: bun test 'src/providers/WorktreeHost.actions.test.ts' && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: 1_0, 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-surviving-checkout-is-offered-as-adopt-not-skipped, adoption-is-offered-only-where-the-reconstruction-has-been-verified, the-base-ref-is-refused-where-the-mode-cannot-apply-it}; design.md D1, D2, D3, D6, D7
   - **Acceptance**:
@@ -68,10 +68,11 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     - Verify: unit src/providers/WorktreeHost.actions.test.ts
   - **Plan**:
     1. `src/providers/WorktreeHost.ts` calls `probeAdopt` on `occupiedCandidate.path` inside `answerCreateProbe`, only when the selection resolved to `reuse` and an `occupiedCandidate` is present, and never when it resolved to `fresh`.
-    2. In the same file, the new occupied-candidate producer fills `expectedBranchOid` on the rule 1_0 established for the existing one.
-    3. In the same file, add an `adoptSupported` option defaulting to `process.platform !== "win32"`, and when it is false answer the suffixed fresh path instead of adopt, with the reason stating the platform is not yet verified rather than that the reconstruction fails.
-    4. In the same file, change `takesBase` to exclude `adopt`, and extend the `offerable` rule so an adopt resolution never records a debris candidate.
-    5. `src/extension.ts` — supply `probeAdopt` to `createWorktreeHost`, built from the same `readGitLink` and `adminDirExists` the existing `corroborateRepair` already constructs. Without it the option is undefined in the shipped extension and adopt is dark however well the host is tested — the failure shape a past review round already caught for the provisioning offer.
+    2. In the same file, the new occupied-candidate producer fills `expectedBranchOid` on the rule 1_0 established for the existing one, and a ref the enumeration attributed no tip to counts as no tip for both producers — an empty string is what a line the reader could not attribute leaves behind.
+    3. In the same file, a selection carrying a live holder is never corroborated: the executor refuses that branch at the moment of the write, and a mode that will always be refused is not one to offer.
+    4. In the same file, add an `adoptSupported` option defaulting to `process.platform !== "win32"`, and when it is false leave the mode as the selection resolved it and never take the corroborating read at all, so the resolution stands on the suffixed free path it already carries, with the reason stating the platform is not yet verified rather than that the reconstruction fails.
+    5. In the same file, change `takesBase` to exclude `adopt`, and extend the `offerable` rule so an adopt resolution never records a debris candidate.
+    6. `src/extension.ts` — supply `probeAdopt` to `createWorktreeHost`, built from the same `readGitLink` and `adminDirExists` the existing `corroborateRepair` already constructs. Without it the option is undefined in the shipped extension and adopt is dark however well the host is tested — the failure shape a past review round already caught for the provisioning offer.
   - **Boundary**: The prunable detector stays where it is — `probeReattach` keeps producing the listed case's adopt.
 
 - [ ] 1_5 Execute adopt behind the claim refusal, the re-probe and the post-write tip check

@@ -78,6 +78,7 @@ import { prepareEntryGate } from "./worktree/provisioning/entryGate";
 import { createProvisioningDeps } from "./worktree/provisioning/provisioningDeps";
 import { readProvisioning } from "./worktree/provisioning/readProvisioning";
 import { writeNativeConfig } from "./worktree/provisioning/writeNativeConfig";
+import { probeAdopt } from "./worktree/adoptProbe";
 import { probeReattach, type ReattachVerdict, readGitLink } from "./worktree/reattachProbe";
 import { branchDeleteOfferFor, checksFor } from "./worktree/removalChecks";
 import { readPullRequests } from "./worktree/repoPullRequests";
@@ -871,11 +872,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   }
 
+  /**
+   * The two filesystem reads both probes need, built once.
+   *
+   * `corroborateRepair` constructs the same pair inline; adopt takes them from
+   * here so the two answers about one `.git` cannot come from two differently
+   * built readers.
+   */
+  const gitEntryReads = {
+    readGitLink: (worktreePath: string) =>
+      readGitLink(worktreePath, {
+        lstat: (p: string) => fsp.lstat(p).catch(() => null),
+        readFile: (p: string) => fsp.readFile(p, "utf8").catch(() => null),
+      }),
+    adminDirExists: async (gitdir: string) => (await fsp.stat(gitdir).catch(() => null))?.isDirectory() === true,
+  };
+
   // `gh` is the forge client (design.md D1). One runner, built here, so the
   // read below is the only thing that knows the executable is not git.
   const ghRunner = createGitCommandRunner({ executable: "gh" });
   const worktreeHost = createWorktreeHost({
     deps: worktreeTreeDeps,
+    // Without this the create form never resolves a surviving checkout to adopt
+    // in the shipped extension, however well the host is tested — the same
+    // failure shape a past review round caught for the provisioning offer.
+    probeAdopt: ({ candidatePath }) => probeAdopt(candidatePath, gitEntryReads),
     // Without this the create form never receives an offer and the whole
     // provisioning section is dark in the shipped extension — every test passed
     // because they all supplied their own (.reviews/round-1.md B1).
