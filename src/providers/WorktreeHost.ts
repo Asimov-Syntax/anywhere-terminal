@@ -38,7 +38,12 @@ import type {
   WorktreeRemoveAssessmentMessage,
   WorktreeSubscriptionLevel,
 } from "../types/messages";
-import { isResolvedPathInside, type ResolvedPathInsideDeps } from "../utils/resolvedPathBoundary";
+import {
+  isResolvedPathInside,
+  type PreparedRoot,
+  prepareResolvedRoot,
+  type ResolvedPathInsideDeps,
+} from "../utils/resolvedPathBoundary";
 import { MAX_CONTINUATION_INSTRUCTION } from "../vault/continuationLimits";
 import type { VaultLaunchTarget } from "../vault/types";
 import type { CreateSessionOptions } from "../vault/VaultLauncher";
@@ -1222,6 +1227,20 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
      * (round-1 F001). Same rule and same lifetime as `debrisCandidate`.
      */
     publishedRepair: PublishedRepair | null;
+    /**
+     * The folder THIS host handed THIS form from its own dialog, already resolved.
+     *
+     * A `PreparedRoot`, not a spelling. A recorded string is re-resolved when it
+     * is next used, so retargeting a link between the dialog and the probe would
+     * move the honoured area onto a directory the user never saw. The resolution
+     * happens ONCE, in the pick continuation — the same "root resolved once by
+     * the caller" contract every other holder of a `PreparedRoot` follows.
+     *
+     * Singular: the LAST folder handed out. Same shape and same lifetime as
+     * `debrisCandidate` and `publishedRepair` above, and the smallest area that
+     * covers what one form can actually be using (design.md D4).
+     */
+    chosenRoot: PreparedRoot | null;
   }
 
   /** The two resolved modes, as they were PUBLISHED, with the branch they were for. */
@@ -2009,6 +2028,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     branch: string,
     /** A destination override ALREADY proven to resolve inside the create root. */
     override?: string,
+    /**
+     * Derive inside THIS folder instead of the configured root.
+     *
+     * Already resolved, and resolved by the host's own dialog rather than named
+     * by any message — the caller passes `Opening.chosenRoot`, never a value a
+     * probe carried (design.md D4, D5).
+     */
+    chosen?: string,
   ): {
     root: string;
     /** The directory NAME the candidate is built from, not a path to it. */
@@ -2017,7 +2044,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     freePath: string;
     occupiedCandidate?: { path: string; disposition: ResolvedDisposition };
   } {
-    const root = createRootFor(repo);
+    const root = chosen ?? createRootFor(repo);
     const registered = new Set(repo.worktrees.map((w) => w.id));
     // Registrations AND the filesystem: a directory nobody registered still
     // makes `git worktree add` fail, so proving a path free against the listing
@@ -2088,9 +2115,20 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (chosen === undefined || chosen === "") {
       return;
     }
-    if (disposed || !surfaces.has(surface) || openingFor(surface, msg.repoId, msg.token) === undefined) {
+    // Resolved HERE, once, on the answer the dialog returned. Recording the
+    // spelling instead would leave it to be re-resolved when the probe uses it,
+    // and a link retargeted in between would move the honoured area onto a
+    // directory the user never selected (design.md D4).
+    const resolved = await prepareResolvedRoot(chosen, options.resolvedPathDeps).catch(() => null);
+    // Re-read AFTER both awaits, not once at the top: the form can be dismissed
+    // or superseded while either is suspended, and writing the record onto an
+    // object the retirement already dropped is the same mistake as posting to a
+    // form that is gone.
+    const opening = disposed || !surfaces.has(surface) ? undefined : openingFor(surface, msg.repoId, msg.token);
+    if (opening === undefined || resolved === null) {
       return;
     }
+    opening.chosenRoot = resolved;
     surface.post({ type: "worktreeDestinationPicked", repoId: msg.repoId, token: msg.token, path: chosen });
   }
 
@@ -2114,7 +2152,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (opening === undefined) {
       return;
     }
-    const { freePath, occupiedCandidate } = resolveDestination(repo, msg.query, override);
+    // Read from the opening `stillOurs()` just returned, with NO await between
+    // here and the derivation. Vetting a webview-named folder would have needed
+    // two more awaits, and `stillOurs()` proves neither that the same `Opening`
+    // object survived them nor that its record still says what it said — a
+    // same-token refs replay replaces the object outright (design.md D5).
+    //
+    // Branched on the FIELD's presence, never on what `vettedOverride` returned:
+    // reading its result would let a typed path refused for being out of root
+    // fall through to the chosen folder, which is a widening this does not claim.
+    const chosen =
+      msg.candidatePath === undefined && msg.useChosenFolder === true ? opening.chosenRoot?.resolved : undefined;
+    const { freePath, occupiedCandidate } = resolveDestination(repo, msg.query, override, chosen);
 
     // The enumeration the dialog's opening already took, not a second one: a
     // probe per settled edit that re-asks git is the per-keystroke read D2
@@ -2279,7 +2328,16 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    */
   function isWellFormedProbe(msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>): boolean {
     const ordinal = (v: unknown): boolean => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-    const declared = new Set(["type", "repoId", "token", "seq", "query", "candidatePath", "base"]);
+    const declared = new Set([
+      "type",
+      "repoId",
+      "token",
+      "seq",
+      "query",
+      "candidatePath",
+      "useChosenFolder",
+      "base",
+    ]);
     for (const key of Object.keys(msg)) {
       if (!declared.has(key)) {
         return false;
@@ -2293,7 +2351,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       !ordinal(msg.token) ||
       !ordinal(msg.seq) ||
       typeof msg.query !== "string" ||
-      (msg.candidatePath !== undefined && typeof msg.candidatePath !== "string")
+      (msg.candidatePath !== undefined && typeof msg.candidatePath !== "string") ||
+      // Exactly `true` or absent. A flag whose only meaning is "use the record"
+      // has no second value, and admitting `false` would put two spellings of
+      // "the configured root" on the wire.
+      (msg.useChosenFolder !== undefined && msg.useChosenFolder !== true)
     ) {
       return false;
     }
@@ -3415,6 +3477,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           latestSeq: Number.NEGATIVE_INFINITY,
           debrisCandidate: null,
           publishedRepair: null,
+          // A fresh opening was offered no folder. This is also what a REPLAY of
+          // this request costs a form that had one: the record is dropped, which
+          // narrows the honoured area to the configured root and can never widen
+          // it (design.md D4).
+          chosenRoot: null,
         });
         void inFlight
           .then((answer) => {

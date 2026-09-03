@@ -2,7 +2,7 @@
 
 - [x] 1_1 Carry the request and its answer on the wire, and open the picker — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts src/extension.worktreeActions.test.ts && pnpm run check-types && pnpm run test:unit exit 0
   - **Deps**: none
-  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2, D3
+  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker,only-a-folder-this-extension-offered-is-derived-under}; design.md D2, D3
   - **Boundary**: No new destination field on the create request, and no reply for a cancelled dialog, a failed one, or one whose form is gone
   - **Acceptance**:
     - Outcome: The host opens the folder picker and answers only a form still asking
@@ -17,27 +17,50 @@
 
 - [x] 1_2 Route the answer to the webview that asked — verified: pnpm exec vitest run src/webview/messaging/MessageRouter.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 1_1
-  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D2
+  - **Refs**: specs/worktree-panel/spec.md#{only-a-folder-this-extension-offered-is-derived-under}; design.md D2
   - **Boundary**: No handling of the reply's meaning here — routing only, and no second place that decides whether an opening matches
   - **Acceptance**:
     - Outcome: A posted answer is carried by the router instead of being dropped there
     - Verify: command pnpm exec vitest run src/webview/messaging/MessageRouter.test.ts
   - **Plan**:
     1. `src/webview/messaging/MessageRouter.ts` — carry the new answer, the way every other host-to-webview worktree reply is carried.
-    2. `src/webview/messaging/MessageRouter.test.ts` — witness the route, so a reply declared on the wire cannot stay production-dark. The worktree handler map is 2_1's, because its entry names a controller method that does not exist until then.
+    2. `src/webview/messaging/MessageRouter.test.ts` — witness the route, so a reply declared on the wire cannot stay production-dark. The worktree handler map is 2_2's, because its entry names a controller method that does not exist until then.
 
-## 2. Offer it where the destination is stated
+## 2. Derive the destination inside the folder that was chosen
 
-- [ ] 2_1 Make one transition own a supplied destination, and let the picker use it
-  - **Deps**: 1_2
-  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D1, D2, D3
-  - **Boundary**: No change to how a destination is derived, shortened, validated, or displayed; no persistence of a chosen folder; and no caller may set the override input's value directly
+- [x] 2_1 Record the folder the dialog resolved, and derive under it — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
+  - **Deps**: 1_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker,only-a-folder-this-extension-offered-is-derived-under}; design.md D1, D4, D5
+  - **Boundary**: No path from any message is resolved to decide this; no change to what a TYPED override may name, to the collision or occupancy rules, or to the create path's handling of `path`; no configuration, workspace-state or storage write on a pick; no sweep of the record separate from the one that already retires an opening
   - **Acceptance**:
-    - Outcome: A chosen folder composes the same create typing it would, and the action is unavailable wherever the override is
-    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts src/extension.worktreeAssembly.test.ts
+    - Outcome: A destination is derived inside a chosen folder only where this host offered it to this form
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeCreateDialog.ts` — extract the state change the override's `input` listener performs into one named transition, call it from both the listener and the picker's answer, take the opening as a dependency, and disable the action wherever the override is disabled.
+    1. `src/types/messages.ts` — the probe's new optional flag, documented as what D5 makes it: a request to use the host's own record, carrying no path because there is none the host did not give.
+    2. `src/providers/WorktreeHost.ts` — the `Opening` field D4 names, written by `pickDestination` from `prepareResolvedRoot` on the answer the dialog returned, on the opening it re-read after the await; the probe's three-way root choice branching on FIELD PRESENCE and reading the record with no await between `stillOurs()` and `resolveDestination`; and `resolveDestination` taking that root instead of the configured one, changing nothing else about how it derives, suffixes, or reports the candidate it skipped. `vettedOverride` and its call are untouched.
+    3. `src/providers/WorktreeHost.actions.test.ts` — where the probe's own `candidatePath` witnesses already live. One witness per ledger row: a form never offered a folder; close, supersede and detach each followed by a flagged probe; a second repository unaffected by the first's pick; a `realpath` that answers differently the second time; a `requestWorktreeRefs` replay on the live token; and an out-of-root `candidatePath` sent WITH the flag, which is the case that fails if the branch reads the vetting's result instead of the field.
+    4. Same file — that a pick records against the live opening and that a dropped answer records nothing.
+    5. `src/types/messages.contract.test.ts` — the wire's own witness for the added field.
+
+- [ ] 2_2 State the chosen folder from the create form, and show what it resolves to
+  - **Deps**: 2_1, 1_2
+  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker,only-a-folder-this-extension-offered-is-derived-under}; design.md D1, D2, D3, D6
+  - **Boundary**: No path composed or sent by the webview, no persistence of a chosen folder, no caller setting the override input's value directly, and no change to how a destination is shortened or displayed
+  - **Acceptance**:
+    - Outcome: Choosing a folder makes the form state the host's destination inside that folder
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts` — the three-state destination D6 draws: one named transition owning every way the destination changes, including the repository switch; the flag travelling on the selection and entering the key that decides whether to ask; and the action rendered beside the field, sharing the override's own availability.
     2. `src/webview/worktree/WorktreeController.ts` and `src/webview/worktree/worktreeMessageHandlers.ts` — bind the request, hand each opening's dialog its own opening number, and route the answer from the router to the controller.
     3. `src/webview/worktree/worktreePanel.css` — lay the action out beside the destination, whose wrapper is a column today.
-    4. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — witness that the two ways of naming one destination compose identical creates, that a foreign or superseded opening is ignored, that cancelling changes nothing, and that the action follows the override's disabled modes.
-    5. `src/extension.worktreeAssembly.test.ts` — prove the whole path is live in the shipped wiring rather than only declared.
+    4. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — witness each edge of D6's transition table including the switch, that the pending state between a pick and its answer submits nothing, that a foreign or superseded opening is ignored, that cancelling changes nothing, and that the action follows the override's disabled modes.
+
+- [ ] 2_3 Prove a chosen folder reaches git through the shipped wiring
+  - **Deps**: 2_2
+  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D1
+  - **Boundary**: No production change here — a witness only; if it fails, the defect belongs to 2_1 or 2_2
+  - **Acceptance**:
+    - Outcome: A worktree created after choosing a folder is added inside that folder, under the branch's derived name
+    - Verify: command pnpm exec vitest run src/extension.worktreeAssembly.test.ts
+  - **Plan**:
+    1. `src/extension.worktreeAssembly.test.ts` — drive the real wiring: choose a folder, submit, and read the `worktree add` argv. Wait on the argv the assertion reads, never a bare `settle()` — a wait that does not name the thing being asserted is the defect this suite already carries.

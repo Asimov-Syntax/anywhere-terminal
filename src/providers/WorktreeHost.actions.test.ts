@@ -407,6 +407,12 @@ async function builtHost(
      * filesystem has no links in it at all.
      */
     symlinks?: Record<string, string>;
+    /**
+     * `realpath` outright, for a test whose answer has to CHANGE mid-run.
+     * `symlinks` is a fixed record and cannot express a link retargeted between
+     * the folder dialog and the probe that derives under its answer.
+     */
+    realpath?: (p: string) => Promise<string>;
   } = {},
 ) {
   // Mutable, so a test can make a repository LEAVE the workspace — the one
@@ -525,7 +531,7 @@ async function builtHost(
     // candidate reach `exists`. These tests name paths that are not on disk, so
     // the resolver is the fake one and `symlinks` is what makes it lie.
     resolvedPathDeps: {
-      realpath: async (p: string) => over.symlinks?.[p] ?? p,
+      realpath: over.realpath ?? (async (p: string) => over.symlinks?.[p] ?? p),
       lstat: async () => ({}),
     },
     ...(over.adoptSupported === undefined ? {} : { adoptSupported: over.adoptSupported }),
@@ -7425,5 +7431,235 @@ describe("choosing a destination with the system picker", () => {
 
     expect(opened(view)).toEqual([]);
     dispose();
+  });
+});
+
+describe("deriving a destination inside a folder this host offered", () => {
+  /** The LAST answer, not the first: several of these probe twice on purpose. */
+  const latest = (view: { posts: ExtensionToWebViewMessage[] }) =>
+    view.posts.filter((m) => m.type === "worktreeCreateResolution").at(-1) as
+      | { freePath: string; occupiedCandidate?: { path: string } }
+      | undefined;
+
+  /**
+   * Open a form, and optionally take the folder its picker offers.
+   *
+   * Both doors in this order, as everywhere else here: the branch-less defaults
+   * ask is what establishes an opening at all, and refs is what records the
+   * token the picker and the probe answer to.
+   */
+  async function formOn(
+    built: Awaited<ReturnType<typeof builtHost>>,
+    repoId: string,
+    token: number,
+    pick = true,
+  ): Promise<void> {
+    built.host.handleMessage(built.view, { type: "requestWorktreeCreateDefaults", repoId, opening: token });
+    built.host.handleMessage(built.view, { type: "requestWorktreeRefs", repoId, token });
+    await settle();
+    if (pick) {
+      built.host.handleMessage(built.view, { type: "worktreePickDestination", repoId, token });
+      await settle();
+    }
+    built.view.posts.length = 0;
+  }
+
+  const probe = (
+    h: Awaited<ReturnType<typeof builtHost>>,
+    repoId: string,
+    token: number,
+    seq: number,
+  ) =>
+    h.host.handleMessage(h.view, {
+      type: "worktreeCreateProbe",
+      repoId,
+      token,
+      seq,
+      query: "feat",
+      useChosenFolder: true,
+    });
+
+  const hostOffering = (folder: string, over: Record<string, unknown> = {}) =>
+    builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      pickFolder: async () => folder,
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      ...over,
+    });
+
+  it("[2_1] derives inside the folder it offered this form", async () => {
+    const h = await hostOffering("/elsewhere/trees");
+    await formOn(h, REPO, 1);
+
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    // The branch's own derived name, inside the chosen folder — not the folder
+    // itself, which `showOpenDialog` can only ever return as an EXISTING
+    // directory and which the suffixing would therefore have skipped.
+    expect(latest(h.view)?.freePath).toBe("/elsewhere/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] suffixes inside the chosen folder, and names what it skipped", async () => {
+    const h = await hostOffering("/elsewhere/trees", {
+      exists: (p: string) => p === "/elsewhere/trees/repo-feat",
+    });
+    await formOn(h, REPO, 1);
+
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    const answer = latest(h.view);
+    expect(answer?.freePath).toBe("/elsewhere/trees/repo-feat-2");
+    expect(answer?.occupiedCandidate?.path).toBe("/elsewhere/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] answers under the configured root for a form offered nothing, reading nowhere else", async () => {
+    const probed: string[] = [];
+    const h = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      exists: (p: string) => {
+        probed.push(p);
+        return false;
+      },
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+    });
+    await formOn(h, REPO, 1, false);
+
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    // Not merely a different answer: nothing outside the configured root was read.
+    expect(probed.filter((p) => !p.startsWith("/trees/"))).toEqual([]);
+    h.dispose();
+  });
+
+  it("[2_1] forgets the folder when the form that chose it closes", async () => {
+    const h = await hostOffering("/elsewhere/trees");
+    await formOn(h, REPO, 1);
+    h.host.handleMessage(h.view, { type: "worktreeCreateClosed", opening: 1 });
+    await settle();
+
+    await formOn(h, REPO, 2, false);
+    probe(h, REPO, 2, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] forgets the folder when a newer form supersedes the one that chose it", async () => {
+    const h = await hostOffering("/elsewhere/trees");
+    await formOn(h, REPO, 1);
+
+    await formOn(h, REPO, 2, false);
+    probe(h, REPO, 2, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] forgets the folder when the surface detaches", async () => {
+    const h = await hostOffering("/elsewhere/trees");
+    await formOn(h, REPO, 1);
+    h.attachment.dispose();
+    await settle();
+
+    // A detached surface drops its opening HISTORY too, so the same token opens
+    // afresh — and it must open without the folder its predecessor was given.
+    const again = h.host.attach(h.view);
+    again.setDisplayed(true);
+    await settle();
+    await formOn(h, REPO, 1, false);
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] offers a folder to one repository only", async () => {
+    // The form is form-wide across repositories while the record is keyed per
+    // repository, so a sibling must be untouched by its neighbour's choice.
+    const h = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      sibling: true,
+      pickFolder: async () => "/elsewhere/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+    });
+    await formOn(h, REPO, 1);
+
+    h.host.handleMessage(h.view, { type: "requestWorktreeCreateDefaults", repoId: OTHER_REPO, opening: 1 });
+    h.host.handleMessage(h.view, { type: "requestWorktreeRefs", repoId: OTHER_REPO, token: 1 });
+    await settle();
+    h.view.posts.length = 0;
+    probe(h, OTHER_REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/other-feat");
+    h.dispose();
+  });
+
+  it("[2_1] derives inside the folder as it resolved when it was chosen", async () => {
+    // A recorded SPELLING is re-resolved when it is next used, so a link
+    // retargeted between the dialog and the probe would move the honoured area
+    // onto a directory the user never saw. The record is the resolution.
+    const links: Record<string, string> = { "/elsewhere/trees": "/real/trees" };
+    const h = await hostOffering("/elsewhere/trees", {
+      realpath: async (p: string) => links[p] ?? p,
+    });
+    await formOn(h, REPO, 1);
+    links["/elsewhere/trees"] = "/somewhere-private";
+
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/real/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] loses the folder to a refs replay rather than keeping a stale one", async () => {
+    // `requestWorktreeRefs` replaces the whole opening even for a token it
+    // already holds. The webview is untrusted and a replay must be assumed, so
+    // what matters is the DIRECTION of the loss: it narrows to the configured
+    // root and can never widen.
+    const h = await hostOffering("/elsewhere/trees");
+    await formOn(h, REPO, 1);
+    h.host.handleMessage(h.view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+    h.view.posts.length = 0;
+
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[2_1] keeps a typed path outside the create root refused, folder or no folder", async () => {
+    // The branch is on the FIELD's presence, not on what the vetting returned:
+    // reading the vetting's result would let a typed path refused for being out
+    // of root fall through to the chosen folder, which is a widening this
+    // change does not claim.
+    const h = await hostOffering("/elsewhere/trees");
+    await formOn(h, REPO, 1);
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      candidatePath: "/etc/secrets",
+      useChosenFolder: true,
+    });
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    h.dispose();
   });
 });

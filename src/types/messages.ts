@@ -1453,6 +1453,22 @@ export interface WorktreeCreateProbeMessage {
    */
   candidatePath?: string;
   /**
+   * Derive the destination inside the folder this form chose, if the host still
+   * holds one for it.
+   *
+   * A FLAG, not a path. The form has no folder to send that the host did not
+   * give it, so sending one back would create a webview-supplied path to
+   * resolve — and that door does not close cleanly: the containment predicate
+   * refuses a candidate equal to its root and admits the root's unselected
+   * descendants, which is wrong in both directions. Nothing the webview says is
+   * resolved here, so there is no predicate to get wrong (design.md D5).
+   *
+   * It exists rather than the host simply always using its record because the
+   * user needs a way back: absent means the configured create root, which is how
+   * a form that cleared its destination says so.
+   */
+  useChosenFolder?: true;
+  /**
    * What the form would start a NEW branch from, so the host can resolve it.
    *
    * D5 puts this validation host-side "riding the resolution"; without the

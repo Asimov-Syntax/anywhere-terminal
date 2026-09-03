@@ -27,6 +27,7 @@ import type {
   ResolvedMode,
   WorktreeAfterCreate,
   WorktreeCreateMode,
+  WorktreeCreateProbeMessage,
   WorktreeProvisionResultMessage,
   WorktreeProvisionSaveMessage,
   WorktreeRemoveAssessmentPayload,
@@ -34,6 +35,52 @@ import type {
   WorktreeSetupRetryMessage,
   WorktreeSetupViewOutputMessage,
 } from "./messages";
+
+// --- The chosen-folder flag has exactly one value ----------------------------
+//
+// It says "derive inside the folder you already hold for me". Absent says "the
+// configured create root". A `false` would be a second spelling of the second
+// answer, and the host's runtime guard admits only `true` — so the wire must
+// admit only `true` too, or the two disagree about what a well-formed probe is
+// (design.md D5).
+
+const probeUsingTheChosenFolder: WorktreeCreateProbeMessage = {
+  type: "worktreeCreateProbe",
+  repoId: "/repo/.git",
+  token: 1,
+  seq: 0,
+  query: "feat",
+  useChosenFolder: true,
+};
+
+// The way back is the field's ABSENCE, not a second value.
+const probeUsingTheConfiguredRoot: WorktreeCreateProbeMessage = {
+  type: "worktreeCreateProbe",
+  repoId: "/repo/.git",
+  token: 1,
+  seq: 0,
+  query: "feat",
+};
+
+const probeDecliningTheChosenFolder: WorktreeCreateProbeMessage = {
+  type: "worktreeCreateProbe",
+  repoId: "/repo/.git",
+  token: 1,
+  seq: 0,
+  query: "feat",
+  // @ts-expect-error the flag has no false; absence is how a form says the configured root
+  useChosenFolder: false,
+};
+
+const probeNamingAFolder: WorktreeCreateProbeMessage = {
+  type: "worktreeCreateProbe",
+  repoId: "/repo/.git",
+  token: 1,
+  seq: 0,
+  query: "feat",
+  // @ts-expect-error the form states a flag, never a folder — nothing it sends is resolved
+  candidateParent: "/elsewhere/trees",
+};
 
 type Mode<K extends WorktreeCreateMode["kind"]> = Extract<WorktreeCreateMode, { kind: K }>;
 type After<K extends WorktreeAfterCreate["kind"]> = Extract<WorktreeAfterCreate, { kind: K }>;
@@ -539,5 +586,8 @@ describe("the wire contract", () => {
     expect(Object.keys(savedButLockedProblem)).not.toContain("lockPath");
     expect(lockedProblemWithNoOutcome.reason).toBe("locked");
     expect([saveNamingASource, providerWithoutPresence, problemWithAnInventedReason]).toHaveLength(3);
+    expect(probeUsingTheChosenFolder.useChosenFolder).toBe(true);
+    expect(probeUsingTheConfiguredRoot.useChosenFolder).toBeUndefined();
+    expect([probeDecliningTheChosenFolder, probeNamingAFolder]).toHaveLength(2);
   });
 });

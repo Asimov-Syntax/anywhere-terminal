@@ -2,22 +2,63 @@
 
 ### Requirement: A destination can be chosen with the system folder picker
 
-The create form SHALL offer an action that opens the system folder picker, and the chosen folder
-SHALL become the form's destination override. The chosen folder SHALL reach the create in the same
-untrusted field a typed override uses, and SHALL face every check a typed destination faces.
+The create form SHALL offer an action, unavailable wherever the destination override is unavailable,
+that opens the system folder picker. The chosen folder SHALL become the folder the worktree is created
+IN, keeping the name the form derives from its branch and resolving a collision inside that folder the
+way one is resolved inside the configured create root.
 
 #### Scenario: A folder is chosen
 
 - **WHEN** the user opens the picker from the create form and confirms a folder
-- **THEN** the form's destination becomes that folder
-- **AND** the create it composes is indistinguishable from one composed by typing that folder
+- **THEN** the form states a destination inside that folder, named after the branch
+- **AND** the worktree is created at that destination
+
+#### Scenario: The chosen folder already holds that name
+
+- **WHEN** the folder the user chose already contains a directory of the derived name
+- **THEN** the form states the free name the host chose inside that same folder
+- **AND** the form names the directory that was skipped, as it does for the configured root
 
 #### Scenario: The picker is dismissed
 
 - **WHEN** the user opens the picker and cancels it, or the picker fails
 - **THEN** the form's destination and its ability to create are what they were before
 
+#### Scenario: A typed destination replaces a chosen folder
+
+- **WHEN** the user chooses a folder and then types a destination
+- **THEN** the typed destination is answered exactly as it is when no folder was chosen
+
+### Requirement: Only a folder this extension offered is derived under
+
+A destination SHALL be resolved inside a folder outside the configured create root only when the
+extension itself offered that folder to that create form, for that repository. In every other case the
+destination SHALL be resolved under the configured create root, and no occupancy SHALL be read inside
+the folder that was not offered.
+
 #### Scenario: An answer arrives for a form that did not ask
 
 - **WHEN** a picker answer names a different create form than the open one
 - **THEN** the open form's destination is unchanged
+
+#### Scenario: A form that was never offered a folder
+
+- **WHEN** a create form asks to use a chosen folder without one having been offered to it
+- **THEN** the destination is resolved under the configured create root
+- **AND** no occupancy is read outside that root
+
+#### Scenario: A chosen folder does not outlive its form
+
+- **WHEN** the create form that chose a folder is closed, superseded or detached, and a later form
+  asks to use a chosen folder
+- **THEN** the destination is resolved under the configured create root
+
+#### Scenario: A chosen folder belongs to one repository
+
+- **WHEN** a folder is chosen for one repository and the form switches to another
+- **THEN** the destination for the other repository is resolved under its configured create root
+
+#### Scenario: The folder is the one the user saw
+
+- **WHEN** the folder chosen in the dialog resolves elsewhere by the time the destination is resolved
+- **THEN** the destination is resolved inside the folder as it resolved when it was chosen
