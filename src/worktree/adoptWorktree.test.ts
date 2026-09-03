@@ -931,9 +931,7 @@ describe("adoptWorktree writes through the object it opened, not the name", () =
     // landed on the detached object either way, and the post-write check would
     // have refused just the same. What separates them is whether this adoption
     // truncated an object it had already been told was no longer the link.
-    expect(ours !== undefined && store.inodeBytes(ours), "the detached object was written anyway").toBe(
-      ORIGINAL_LINK,
-    );
+    expect(ours !== undefined && store.inodeBytes(ours), "the detached object was written anyway").toBe(ORIGINAL_LINK);
   });
 
   // The case the handle does NOT close, asserted as parity rather than left to
@@ -965,13 +963,16 @@ describe("adoptWorktree writes through the object it opened, not the name", () =
   // it without any race at all: repair legitimately rewrites OUR link, and every
   // withdrawal D5 reaches runs after repair.
   it("still recognises its own link after repair normalises it to a relative one", async () => {
-    const { runner } = runnerOf((args) =>
-      args[1] === "repair"
-        ? (store.rewriteLinkInPlace("gitdir: ../../repo/.git/worktrees/survivor\n"),
-          { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false })
-        : ok(`${TIP}\n`),
-    );
     const store = fsOf();
+    const { runner } = runnerOf((args) => {
+      if (args[1] !== "repair") {
+        return ok(`${TIP}\n`);
+      }
+      // Exactly what git does here: the SAME inode, rewritten in place, into the
+      // relative form `worktree.useRelativePaths` asks for.
+      store.rewriteLinkInPlace("gitdir: ../../repo/.git/worktrees/survivor\n");
+      return { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false };
+    });
 
     const result = await adoptWorktree(runner, request, store.fs);
 

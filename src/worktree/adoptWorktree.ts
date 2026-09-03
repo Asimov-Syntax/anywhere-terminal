@@ -10,8 +10,8 @@
 import { basename, resolve } from "node:path";
 import { type FileIdentity, sameIdentity } from "../utils/fileIdentity";
 import { readsAsFlag } from "../utils/readsAsFlag";
-import { gitdirOf } from "./reattachProbe";
 import type { GitCommandRunner } from "./gitCommandRunner";
+import { gitdirOf } from "./reattachProbe";
 import { repairWorktree, resetMixedIndex } from "./worktreeMutations";
 
 export interface AdoptRequest {
@@ -234,9 +234,7 @@ export async function adoptWorktree(
     return refuse(`That directory's git link could not be read, so nothing was written: ${reasonOf(error)}`);
   }
   if (opening !== request.staleLink) {
-    return refuse(
-      "That directory's git link is not the one this adoption was offered on, so nothing was written.",
-    );
+    return refuse("That directory's git link is not the one this adoption was offered on, so nothing was written.");
   }
 
   const created = await createEntry(request, fs);
