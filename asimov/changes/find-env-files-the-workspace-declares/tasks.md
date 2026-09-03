@@ -28,7 +28,7 @@
 
 ## 3. Name every declaration state once
 
-- [ ] 3_1 Own the refusal invariant in one exhaustive classifier
+- [x] 3_1 Own the refusal invariant in one exhaustive classifier — verified: pnpm exec vitest run src/worktree/provisioning/suggestProvisioning.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-workspace-repositorys-package-environment-files-are-found}; design.md D6, D7
   - **Boundary**: No change to which filenames are probed, to the one-level depth, to the scan or row budget, to how a row is displayed, or to the rule that a present provisioning source suppresses fallback

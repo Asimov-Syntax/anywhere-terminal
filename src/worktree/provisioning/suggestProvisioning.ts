@@ -88,6 +88,8 @@ async function ordinaryFile(deps: SuggestDeps, p: string): Promise<boolean> {
 /** The manifests that may declare workspaces, in the order they are consulted. */
 const PACKAGE_MANIFEST = "package.json";
 const PNPM_MANIFEST = "pnpm-workspace.yaml";
+/** POSIX (`/…`), UNC or Windows (`\…`), and drive-qualified (`X:…`) roots. */
+const ABSOLUTE_SPELLING = /^(?:[/\\]|[A-Za-z]:)/;
 
 /** Every declared pattern this reader accepted, repo-relative and POSIX. */
 type Declared = readonly string[];
@@ -100,7 +102,16 @@ type Declared = readonly string[];
  * `pnpm-workspace.yaml` govern probing for a repository whose `package.json`
  * this reader had just declined to trust (round-1 F002).
  */
-type Declaration = { kind: "declared"; patterns: Declared } | { kind: "none" } | { kind: "refused" };
+type Declaration =
+  | { kind: "declared"; patterns: Declared }
+  /** A valid declaration that names no package. */
+  | { kind: "empty" }
+  /** No manifest, or a manifest not carrying the key at all. */
+  | { kind: "absent" }
+  /** Present, in a shape this reader does not implement. */
+  | { kind: "unsupported" }
+  /** Present, but this reader would not read it: refused, over-size, or unparsable. */
+  | { kind: "refused" };
 
 /** A parsed manifest, or nothing — `null` is not a record, and `"null"` parses to it. */
 function recordOf(parsed: unknown): Record<string, unknown> | undefined {
@@ -110,29 +121,33 @@ function recordOf(parsed: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * The patterns a declaration holds, or `undefined` where its SHAPE is one this
- * reader does not implement.
+ * How a present declaration value classifies: the patterns it holds, the fact
+ * that it validly holds none, or the fact that this reader cannot use it.
  *
- * Absent and wrong-shaped are different answers. Collapsing them to "declared
- * nothing" let a `workspaces: 42` fall through to `pnpm-workspace.yaml` and be
- * governed by it, which is the fail-closed boundary round 1 accepted and round 3
- * found still open (F002).
+ * Absent, empty, and wrong-shaped are three answers, not two. Collapsing them
+ * let `workspaces: 42` and `workspaces: [1, null, {}]` fall through to
+ * `pnpm-workspace.yaml` and be governed by it — the fail-closed boundary
+ * round 1 accepted and rounds 3 and 4 each found still open (design.md D6).
  */
-function patternsOf(value: unknown): Declared | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
+function patternsOf(value: unknown): Declaration {
   const list = Array.isArray(value)
     ? value
     : Array.isArray(recordOf(value)?.packages)
       ? (recordOf(value)?.packages as unknown[])
       : undefined;
   if (list === undefined) {
-    return undefined;
+    return { kind: "unsupported" };
   }
   // A non-string member is dropped rather than coerced: `String(null)` is a
-  // path this reader would then try to resolve.
-  return list.filter((p): p is string => typeof p === "string" && p.length > 0);
+  // path this reader would then try to resolve. What distinguishes a valid
+  // empty declaration from one this reader could not use is what was DISCARDED,
+  // not what survived — `[1, null, {}]` filters to the same `[]` as `[]` does,
+  // and only the second may govern nothing and let pnpm answer (round-4 F002).
+  const patterns = list.filter((p): p is string => typeof p === "string" && p.length > 0);
+  if (patterns.length > 0) {
+    return { kind: "declared", patterns };
+  }
+  return list.length > 0 ? { kind: "unsupported" } : { kind: "empty" };
 }
 
 /**
@@ -143,23 +158,30 @@ function patternsOf(value: unknown): Declared | undefined {
  * with a bare `deps.readFile` followed a symlink out of the checkout and let an
  * arbitrary external file declare this repository's workspaces (round-1 F001).
  */
-async function manifestText(
+async function manifestBytes(
   deps: SuggestDeps,
   repoRoot: string,
   root: PreparedRoot,
   file: string,
-): Promise<string | undefined> {
+): Promise<{ kind: "text"; text: string } | { kind: "absent" } | { kind: "refused" }> {
   const opened = await openProviderFile(deps, repoRoot, { id: "native", file }, root);
-  return opened.kind === "text" ? opened.text : undefined;
+  if (opened.kind === "text") {
+    return { kind: "text", text: opened.text };
+  }
+  // A containment or size refusal is NOT absence. Collapsing both to
+  // `undefined` gave a `package.json` symlinked out of the checkout the same
+  // answer as one that is not there, and `pnpm-workspace.yaml` was then read
+  // and obeyed (round-4 F002).
+  return opened.kind === "absent" ? { kind: "absent" } : { kind: "refused" };
 }
 
 async function packageDeclaration(deps: SuggestDeps, repoRoot: string, root: PreparedRoot): Promise<Declaration> {
-  const text = await manifestText(deps, repoRoot, root, PACKAGE_MANIFEST);
-  if (text === undefined) {
-    return { kind: "none" };
+  const bytes = await manifestBytes(deps, repoRoot, root, PACKAGE_MANIFEST);
+  if (bytes.kind !== "text") {
+    return bytes;
   }
   const errors: ParseError[] = [];
-  const parsed = readJsonc(text, errors);
+  const parsed = readJsonc(bytes.text, errors);
   // `readJsonc` RECOVERS — it returns the tree it could build and reports the
   // syntax errors out of band — so any reported error is a refusal, not a
   // reason to read the keys that survived (design.md D1).
@@ -168,65 +190,66 @@ async function packageDeclaration(deps: SuggestDeps, repoRoot: string, root: Pre
   }
   // A top-level `null` parses cleanly and is not a record; reading `.workspaces`
   // off it THREW, and the thrown rejection took the whole offer down — root
-  // environment and setup rows included (F006).
+  // environment and setup rows included (round-3 F006).
   const manifest = recordOf(parsed);
   if (manifest === undefined) {
     return { kind: "refused" };
   }
-  if (manifest.workspaces === undefined) {
-    return { kind: "none" };
-  }
-  const patterns = patternsOf(manifest.workspaces);
-  if (patterns === undefined) {
-    return { kind: "refused" };
-  }
-  return patterns.length > 0 ? { kind: "declared", patterns } : { kind: "none" };
+  return manifest.workspaces === undefined ? { kind: "absent" } : patternsOf(manifest.workspaces);
 }
 
 async function pnpmDeclaration(deps: SuggestDeps, repoRoot: string, root: PreparedRoot): Promise<Declaration> {
-  const text = await manifestText(deps, repoRoot, root, PNPM_MANIFEST);
-  if (text === undefined) {
-    return { kind: "none" };
+  const bytes = await manifestBytes(deps, repoRoot, root, PNPM_MANIFEST);
+  if (bytes.kind !== "text") {
+    return bytes;
   }
   let parsed: unknown;
   try {
-    parsed = parseYaml(text);
+    parsed = parseYaml(bytes.text);
   } catch {
     return { kind: "refused" };
   }
   // An empty file parses to `null` and declares nothing; any other non-record —
-  // a bare scalar, a top-level list — is a shape this reader does not implement
-  // and is refused rather than read past.
+  // a bare scalar, a top-level list — is a shape this reader does not implement.
   if (parsed === null || parsed === undefined) {
-    return { kind: "none" };
+    return { kind: "absent" };
   }
   const manifest = recordOf(parsed);
   if (manifest === undefined) {
-    return { kind: "refused" };
+    return { kind: "unsupported" };
   }
-  if (manifest.packages === undefined) {
-    return { kind: "none" };
-  }
-  const patterns = patternsOf(manifest.packages);
-  if (patterns === undefined) {
-    return { kind: "refused" };
-  }
-  return patterns.length > 0 ? { kind: "declared", patterns } : { kind: "none" };
+  return manifest.packages === undefined ? { kind: "absent" } : patternsOf(manifest.packages);
 }
 
 /**
  * What the repository says about itself, or nothing.
  *
- * `package.json` first. Only its `none` — no manifest, or one declaring no
- * packages — falls through to pnpm; a refusal ends the walk.
+ * `package.json` answers first, and only two of the five states let
+ * `pnpm-workspace.yaml` answer at all: a manifest that is not there or carries
+ * no key (`absent`), and one that validly declares no package (`empty`). A
+ * `declared`, `unsupported`, or `refused` higher-priority manifest terminates
+ * discovery, because a manifest this reader will not act on must not hand
+ * authority to a lower-priority one (design.md D6).
+ *
+ * The switch is exhaustive on purpose: a sixth state cannot be added without
+ * the compiler naming this site as one that has to decide what it means.
  */
+function endsDiscovery(d: Declaration): boolean {
+  switch (d.kind) {
+    case "declared":
+    case "unsupported":
+    case "refused":
+      return true;
+    case "absent":
+    case "empty":
+      return false;
+  }
+}
+
 async function declaredWorkspaces(deps: SuggestDeps, repoRoot: string, root: PreparedRoot): Promise<Declared> {
   const first = await packageDeclaration(deps, repoRoot, root);
-  if (first.kind === "declared") {
-    return first.patterns;
-  }
-  if (first.kind === "refused") {
-    return [];
+  if (endsDiscovery(first)) {
+    return first.kind === "declared" ? first.patterns : [];
   }
   const second = await pnpmDeclaration(deps, repoRoot, root);
   return second.kind === "declared" ? second.patterns : [];
@@ -274,14 +297,18 @@ async function workspaceDirs(deps: SuggestDeps, repoRoot: string, budget: Provid
     if (scanExhausted(budget)) {
       break;
     }
-    const pattern = raw.replace(/\\/g, "/").replace(/\/+$/, "");
-    // Rejected BEFORE `splitGlob`, which reports an empty parent for `/*` — and
-    // an empty parent is exactly what the root-glob exemption below trusts. So
-    // an absolute pattern was silently reinterpreted as a repository-root one
-    // and offered the root's own packages (F007).
-    if (pattern.startsWith("/") || path.isAbsolute(raw)) {
+    // Judged from the RAW spelling, before normalisation and before
+    // `splitGlob` — which reports an empty parent for `/*`, and an empty parent
+    // is exactly what the root-glob exemption below trusts, so an absolute
+    // pattern was silently reinterpreted as a repository-root one (round-3
+    // F007). `path.isAbsolute` answers for the host OS only, so on POSIX it
+    // called `C:/apps/*` relative and the pattern ran as `<repo>/C:/apps`
+    // (round-4 F007). POSIX, UNC, and drive-qualified are all absolute here
+    // whatever the host (design.md D7).
+    if (ABSOLUTE_SPELLING.test(raw)) {
       continue;
     }
+    const pattern = raw.replace(/\\/g, "/").replace(/\/+$/, "");
     if (!pattern.includes("*")) {
       await charge(pattern);
       continue;

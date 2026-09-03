@@ -433,3 +433,153 @@ describe("suggestProvisioning — what round-3 found", () => {
     expect(listed).toEqual([]);
   });
 });
+
+// design.md D6/D7 — the state matrix that replaces three rounds of point fixes.
+// Rounds 1, 3, and 4 each closed the boundary the previous round named and left
+// the invariant unowned; this enumerates the states instead of the spellings.
+describe("suggestProvisioning — every declaration state, named once", () => {
+  const PKG = (workspaces: unknown): string =>
+    workspaces === undefined ? JSON.stringify({ name: "r" }) : JSON.stringify({ name: "r", workspaces });
+  const PNPM = "packages:\n  - 'apps/*'\n";
+  const NESTED = { "apps/web/.env": "file" } as const;
+
+  /** Both manifests present. Only a package state that may fall through lets pnpm answer. */
+  const both = (packageText: string) => root(NESTED, { "package.json": packageText, "pnpm-workspace.yaml": PNPM });
+
+  describe("package.json falls through only where it declares nothing it could declare", () => {
+    it("absent file — pnpm answers", async () => {
+      const { deps, read } = root(NESTED, { "pnpm-workspace.yaml": PNPM });
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries.map((e) => e.path)).toEqual(["apps/web/.env"]);
+      expect(read).toContain("pnpm-workspace.yaml");
+    });
+
+    it("absent key — pnpm answers", async () => {
+      const { deps, read } = both(PKG(undefined));
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries.map((e) => e.path)).toEqual(["apps/web/.env"]);
+      expect(read).toContain("pnpm-workspace.yaml");
+    });
+
+    it("empty declaration — pnpm answers", async () => {
+      const { deps, read } = both(PKG([]));
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries.map((e) => e.path)).toEqual(["apps/web/.env"]);
+      expect(read).toContain("pnpm-workspace.yaml");
+    });
+
+    it("declared — pnpm is never read", async () => {
+      const { deps, read } = both(PKG(["apps/*"]));
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries.map((e) => e.path)).toEqual(["apps/web/.env"]);
+      expect(read).not.toContain("pnpm-workspace.yaml");
+    });
+
+    // The round-4 boundary: a list that HAD members and kept none filters to
+    // the same `[]` as `[]` does, and only the second may fall through.
+    it.each([
+      ["a number", PKG(42)],
+      ["a string", PKG("apps/*")],
+      ["an unrecognised object", PKG({ nope: ["apps/*"] })],
+      ["a list nothing survives", PKG([1, null, {}])],
+      ["a list of empty strings", PKG(["", ""])],
+    ])("unsupported (%s) — nothing offered, pnpm never read", async (_label, text) => {
+      const { deps, read } = both(text);
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries).toEqual([]);
+      expect(read).not.toContain("pnpm-workspace.yaml");
+    });
+
+    it.each([
+      ["a syntax error", '{"workspaces":["apps/*"],"broken":'],
+      ["a top-level null", "null"],
+      ["a top-level number", "42"],
+      ["a top-level list", "[1,2]"],
+    ])("refused (%s) — nothing offered, pnpm never read", async (_label, text) => {
+      const { deps, read } = both(text);
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries).toEqual([]);
+      expect(read).not.toContain("pnpm-workspace.yaml");
+    });
+
+    // A `package.json` that resolves outside the checkout is a REFUSAL, not an
+    // absence. Collapsing the two let pnpm govern a repository whose
+    // higher-priority manifest this reader had just declined to open (F002).
+    it("refused by containment — nothing offered, pnpm never read", async () => {
+      const { deps, read } = both(PKG(["apps/*"]));
+      const escaping: SuggestDeps = {
+        ...deps,
+        realpath: async (p) => (p === `${ROOT}/package.json` ? "/elsewhere/package.json" : p),
+      };
+
+      const model = await suggestProvisioning(escaping, ROOT, seq());
+
+      expect(model.entries).toEqual([]);
+      expect(read).not.toContain("pnpm-workspace.yaml");
+    });
+  });
+
+  describe("pnpm-workspace.yaml classifies by the same five states", () => {
+    it.each([
+      ["a bare scalar", "just a string\n"],
+      ["a top-level list", "- apps/*\n"],
+      ["packages of the wrong shape", "packages: 42\n"],
+      ["a packages list nothing survives", "packages:\n  - 42\n  - null\n"],
+    ])("unsupported (%s) — nothing offered", async (_label, yaml) => {
+      const { deps } = root(NESTED, { "pnpm-workspace.yaml": yaml });
+
+      expect((await suggestProvisioning(deps, ROOT, seq())).entries).toEqual([]);
+    });
+
+    it("empty file declares nothing rather than refusing", async () => {
+      const { deps } = root({ ".env": "file", ...NESTED }, { "pnpm-workspace.yaml": "" });
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      // Root suggestions are unaffected; only workspace discovery found nothing.
+      expect(model.entries.map((e) => e.path)).toEqual([".env"]);
+    });
+  });
+
+  // design.md D7 — `path.isAbsolute` answers for the HOST, so on POSIX it called
+  // `C:/apps/*` relative and the pattern ran as `<repo>/C:/apps` (round-4 F007).
+  describe("an absolute spelling is refused on every host", () => {
+    it.each([
+      "/*",
+      "/etc/*",
+      "//*",
+      "C:/apps/*",
+      "C:\\apps\\*",
+      "\\\\server\\share\\*",
+      "\\apps\\*",
+    ])("%s offers nothing and lists no directory", async (pattern) => {
+      const { deps, listed } = root(
+        { "web/.env": "file", "apps/web/.env": "file", "C:/apps/web/.env": "file" },
+        { "package.json": PKG([pattern]) },
+      );
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(model.entries).toEqual([]);
+      expect(listed).toEqual([]);
+    });
+
+    it("does not invalidate the other patterns a manifest declares", async () => {
+      const { deps } = root(NESTED, { "package.json": PKG(["/etc/*", "apps/*"]) });
+
+      expect((await suggestProvisioning(deps, ROOT, seq())).entries.map((e) => e.path)).toEqual(["apps/web/.env"]);
+    });
+  });
+});
