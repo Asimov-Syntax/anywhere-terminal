@@ -2848,6 +2848,80 @@ describe("the invariants that span the host and the webview", () => {
     expect(added).toContain(mine);
   });
 
+  it("[2_3] creates the worktree inside the folder chosen in the system dialog", async () => {
+    // Declared is not live: every hop of this — the button, the host request,
+    // the folder dialog, the reply, the router, the controller's token, the
+    // form's one destination transition, the host's own record of the folder it
+    // resolved — is only proven by walking it in the shipped wiring.
+    await assemble();
+    const vscode = await import("./test/__mocks__/vscode");
+    // A real directory, because the host resolves the dialog's answer against
+    // the real filesystem before it records it. A folder that does not resolve
+    // is recorded as nothing, and this test would then be asserting on the
+    // configured root while believing it had chosen.
+    const chosen = path.join(TMP, "picked-elsewhere");
+    fs.mkdirSync(chosen, { recursive: true });
+    const asked: unknown[] = [];
+    (vscode.window as Record<string, unknown>).showOpenDialog = (options: unknown) => {
+      asked.push(options);
+      return Promise.resolve([{ fsPath: chosen }]);
+    };
+
+    clickItem(openMenu("feature"), /new worktree/i);
+    await settle();
+    await settleBranch("picked-branch");
+    const advanced = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      b.classList.contains("wt-advanced-toggle"),
+    );
+    advanced?.click();
+    const pick = document.querySelector<HTMLButtonElement>(".wt-path-pick");
+    expect(pick, "the create form offered no way to choose a folder").not.toBeNull();
+
+    pick?.click();
+    // The form states a FLAG, never the folder — so what proves the choice
+    // arrived is the question the form asks next, not any value it holds.
+    await settleUntil(
+      () => outbound.some((m) => m.type === "worktreeCreateProbe" && m.useChosenFolder === true),
+      "the form to ask about the folder it chose",
+    );
+
+    // It asked for a folder, not a file — the same question the file tree asks.
+    expect(asked[0]).toMatchObject({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false });
+    // Nothing the webview sends names the folder: the host holds the only copy.
+    expect(outbound.find((m) => m.type === "worktreeCreateProbe" && m.useChosenFolder === true)).not.toHaveProperty(
+      "candidatePath",
+    );
+
+    // The destination is the branch's own derived name INSIDE the chosen
+    // folder, resolved and suffixed by the host exactly as under the configured
+    // root — the form never composes it.
+    await settleUntil(() => {
+      const shown = document.querySelector<HTMLInputElement>("#wt-path")?.value ?? "";
+      return shown.startsWith(`${chosen}${path.sep}`) && clickCreate.button().disabled === false;
+    }, "the host's destination inside the chosen folder, with Create armed");
+    const destination = document.querySelector<HTMLInputElement>("#wt-path")?.value ?? "";
+    expect(path.dirname(destination)).toBe(chosen);
+    expect(path.basename(destination)).toContain("picked-branch");
+
+    clickCreate();
+    // The call the assertions below read. `settle()` returns on DOM and argv
+    // quiescence, and the create crosses an await in which the host paints
+    // nothing — so quiescence lands before `worktree add` reaches argv at all.
+    await settleUntil(
+      () => argv.some((c) => c.args[0] === "worktree" && c.args[1] === "add"),
+      "the create command to reach git",
+    );
+
+    expect(outbound.find((m) => m.type === "worktreeCreate")).toMatchObject({ path: destination });
+    const added = argv.map((c) => c.args).find((a) => a[0] === "worktree" && a[1] === "add");
+    expect(added, "no `worktree add` was issued").toBeDefined();
+    expect(added).toContain(destination);
+    // The argv is where this stops, as it does for every sibling here: this
+    // harness records the git call rather than letting it build a checkout, so
+    // asserting the directory exists would be asserting on the harness.
+    expect(path.dirname(added?.at(-1) ?? "")).toBe(chosen);
+  });
+
   it("[7_3] submits the path the host answered when the override is occupied", async () => {
     // Every override walk written so far used a FREE candidate, where the
     // supplied path and the resolved target cannot differ — so two green gates

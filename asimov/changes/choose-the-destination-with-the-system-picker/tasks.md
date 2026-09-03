@@ -55,7 +55,7 @@
     3. `src/webview/worktree/worktreePanel.css` — lay the action out beside the destination, whose wrapper is a column today.
     4. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — witness each edge of D6's transition table including the switch, that the pending state between a pick and its answer submits nothing, that a foreign or superseded opening is ignored, that cancelling changes nothing, and that the action follows the override's disabled modes.
 
-- [ ] 2_3 Prove a chosen folder reaches git through the shipped wiring
+- [x] 2_3 Prove a chosen folder reaches git through the shipped wiring — verified: pnpm exec vitest run src/extension.worktreeAssembly.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker}; design.md D1
   - **Boundary**: No production change here — a witness only; if it fails, the defect belongs to 2_1 or 2_2
