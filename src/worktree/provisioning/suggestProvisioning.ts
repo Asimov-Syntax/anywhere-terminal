@@ -102,12 +102,34 @@ type Declared = readonly string[];
  */
 type Declaration = { kind: "declared"; patterns: Declared } | { kind: "none" } | { kind: "refused" };
 
-function patternsOf(value: unknown): Declared {
+/** A parsed manifest, or nothing — `null` is not a record, and `"null"` parses to it. */
+function recordOf(parsed: unknown): Record<string, unknown> | undefined {
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * The patterns a declaration holds, or `undefined` where its SHAPE is one this
+ * reader does not implement.
+ *
+ * Absent and wrong-shaped are different answers. Collapsing them to "declared
+ * nothing" let a `workspaces: 42` fall through to `pnpm-workspace.yaml` and be
+ * governed by it, which is the fail-closed boundary round 1 accepted and round 3
+ * found still open (F002).
+ */
+function patternsOf(value: unknown): Declared | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
   const list = Array.isArray(value)
     ? value
-    : typeof value === "object" && value !== null && Array.isArray((value as { packages?: unknown }).packages)
-      ? ((value as { packages: unknown[] }).packages as unknown[])
-      : [];
+    : Array.isArray(recordOf(value)?.packages)
+      ? (recordOf(value)?.packages as unknown[])
+      : undefined;
+  if (list === undefined) {
+    return undefined;
+  }
   // A non-string member is dropped rather than coerced: `String(null)` is a
   // path this reader would then try to resolve.
   return list.filter((p): p is string => typeof p === "string" && p.length > 0);
@@ -144,7 +166,20 @@ async function packageDeclaration(deps: SuggestDeps, repoRoot: string, root: Pre
   if (errors.length > 0 || parsed === undefined) {
     return { kind: "refused" };
   }
-  const patterns = patternsOf((parsed as { workspaces?: unknown }).workspaces);
+  // A top-level `null` parses cleanly and is not a record; reading `.workspaces`
+  // off it THREW, and the thrown rejection took the whole offer down — root
+  // environment and setup rows included (F006).
+  const manifest = recordOf(parsed);
+  if (manifest === undefined) {
+    return { kind: "refused" };
+  }
+  if (manifest.workspaces === undefined) {
+    return { kind: "none" };
+  }
+  const patterns = patternsOf(manifest.workspaces);
+  if (patterns === undefined) {
+    return { kind: "refused" };
+  }
   return patterns.length > 0 ? { kind: "declared", patterns } : { kind: "none" };
 }
 
@@ -159,7 +194,23 @@ async function pnpmDeclaration(deps: SuggestDeps, repoRoot: string, root: Prepar
   } catch {
     return { kind: "refused" };
   }
-  const patterns = patternsOf((parsed as { packages?: unknown } | null)?.packages);
+  // An empty file parses to `null` and declares nothing; any other non-record —
+  // a bare scalar, a top-level list — is a shape this reader does not implement
+  // and is refused rather than read past.
+  if (parsed === null || parsed === undefined) {
+    return { kind: "none" };
+  }
+  const manifest = recordOf(parsed);
+  if (manifest === undefined) {
+    return { kind: "refused" };
+  }
+  if (manifest.packages === undefined) {
+    return { kind: "none" };
+  }
+  const patterns = patternsOf(manifest.packages);
+  if (patterns === undefined) {
+    return { kind: "refused" };
+  }
   return patterns.length > 0 ? { kind: "declared", patterns } : { kind: "none" };
 }
 
@@ -224,6 +275,13 @@ async function workspaceDirs(deps: SuggestDeps, repoRoot: string, budget: Provid
       break;
     }
     const pattern = raw.replace(/\\/g, "/").replace(/\/+$/, "");
+    // Rejected BEFORE `splitGlob`, which reports an empty parent for `/*` — and
+    // an empty parent is exactly what the root-glob exemption below trusts. So
+    // an absolute pattern was silently reinterpreted as a repository-root one
+    // and offered the root's own packages (F007).
+    if (pattern.startsWith("/") || path.isAbsolute(raw)) {
+      continue;
+    }
     if (!pattern.includes("*")) {
       await charge(pattern);
       continue;
@@ -244,6 +302,13 @@ async function workspaceDirs(deps: SuggestDeps, repoRoot: string, budget: Provid
       if ((await contained(glob.dir, repoRoot, prepared, deps)) !== "inside") {
         continue;
       }
+    }
+    // Re-checked AFTER the parent charge, which can itself spend the last unit.
+    // `scanNames` bounds what it KEEPS, but a Promise-backed `readdir` has
+    // already materialized the directory by the time it looks — so the syscall
+    // is what has to be gated, exactly as `entriesFor` gates it (F008).
+    if (scanExhausted(budget)) {
+      continue;
     }
     let names: string[];
     try {

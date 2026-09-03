@@ -363,3 +363,73 @@ describe("suggestProvisioning — what round-1 found", () => {
     expect(model.entries.map((e) => e.path).sort()).toEqual(["server/.env", "web/.env"]);
   });
 });
+
+describe("suggestProvisioning — what round-3 found", () => {
+  const PKG = (workspaces: unknown): string => JSON.stringify({ name: "r", workspaces });
+  const PNPM = "packages:\n  - 'apps/*'\n";
+
+  it("[F002] a wrong-shaped workspaces value is refused, not read past", async () => {
+    // Present-but-unsupported is not the same answer as absent. Treating it as
+    // "declared nothing" let the lower-priority manifest govern probing.
+    for (const shape of [42, "apps/*", { nope: ["apps/*"] }, true]) {
+      const { deps } = root({ "apps/web/.env": "file" }, { "package.json": PKG(shape), "pnpm-workspace.yaml": PNPM });
+      expect((await suggestProvisioning(deps, ROOT, seq())).entries, JSON.stringify(shape)).toEqual([]);
+    }
+  });
+
+  it("[F002] an absent workspaces key still falls through to pnpm", async () => {
+    // The other half of the same rule: refusal is terminal, absence is not.
+    const { deps } = root({ "apps/web/.env": "file" }, { "package.json": PKG(undefined), "pnpm-workspace.yaml": PNPM });
+
+    expect((await suggestProvisioning(deps, ROOT, seq())).entries.map((e) => e.path)).toEqual(["apps/web/.env"]);
+  });
+
+  it("[F006] a manifest that is not a record does not take the whole offer down", async () => {
+    // `readJsonc("null")` returns null with no errors, and reading `.workspaces`
+    // off it threw — a rejection the host swallows by dropping every row.
+    for (const text of ["null", "42", '"a string"', "[1,2]"]) {
+      const { deps } = root({ ".env": "file", "pnpm-lock.yaml": "file" }, { "package.json": text });
+
+      const model = await suggestProvisioning(deps, ROOT, seq());
+
+      expect(
+        model.entries.map((e) => e.path),
+        text,
+      ).toEqual([".env"]);
+      expect(
+        model.setup.map((st) => st.script),
+        text,
+      ).toEqual(["pnpm install"]);
+    }
+  });
+
+  it("[F007] an absolute glob is refused rather than read as a root glob", async () => {
+    // `splitGlob("/*")` reports an empty parent, which is exactly what the
+    // root-glob exemption trusts — so `/*` was silently reinterpreted as `*`.
+    for (const pattern of ["/*", "/etc/*", "//*"]) {
+      const { deps } = root({ "web/.env": "file" }, { "package.json": PKG([pattern]) });
+      expect((await suggestProvisioning(deps, ROOT, seq())).entries, pattern).toEqual([]);
+    }
+  });
+
+  it("[F008] a directory is not read once the account is spent", async () => {
+    // The parent charge can spend the last unit itself. `scanNames` bounds what
+    // it KEEPS, but a Promise-backed readdir has already materialized the
+    // directory by the time it looks, so the syscall is what must be gated.
+    const { deps } = root({ "apps/web/.env": "file" }, { "package.json": PKG(["apps/*"]) });
+    const listed: string[] = [];
+    const counting: SuggestDeps = {
+      ...deps,
+      readdir: (p) => {
+        listed.push(p);
+        return deps.readdir(p);
+      },
+    };
+    const budget = seq();
+    budget.scanned = MAX_SCAN - 1;
+
+    await suggestProvisioning(counting, ROOT, budget);
+
+    expect(listed).toEqual([]);
+  });
+});
