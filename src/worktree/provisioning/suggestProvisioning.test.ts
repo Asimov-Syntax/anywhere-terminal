@@ -2,6 +2,7 @@
 // detector: fixed repository-root names, metadata only, opt-in rows
 // (suggest-worktree-initialization design.md D1, D2).
 
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MAX_SCAN, newBudget, type ProviderBudget } from "./providerKit";
 import { SUGGESTED_ENV_FILES, SUGGESTED_MANAGERS, type SuggestDeps, suggestProvisioning } from "./suggestProvisioning";
@@ -35,7 +36,8 @@ function root(
     },
     readdir: async (p) => {
       listed.push(rel(p));
-      const prefix = `${rel(p)}/`;
+      const at = rel(p);
+      const prefix = at === ROOT || at === "" ? "" : `${at}/`;
       const names = new Set<string>();
       for (const key of [...Object.keys(entries), ...Object.keys(files)]) {
         if (key.startsWith(prefix)) {
@@ -282,5 +284,82 @@ describe("suggestProvisioning — the workspaces a repository declares", () => {
 
     expect(model.entries.map((e) => e.path)).toEqual([".env"]);
     expect(listed).toEqual([]);
+  });
+});
+
+describe("suggestProvisioning — what round-1 found", () => {
+  const PKG = (workspaces: unknown): string => JSON.stringify({ name: "r", workspaces });
+
+  it("[F001] does not read a manifest that resolves outside the checkout", async () => {
+    const { deps, read } = root({ "apps/web/.env": "file" }, { "package.json": PKG(["apps/*"]) });
+    // A `package.json` symlinked out of the repository. `openProviderFile`
+    // resolves before it reads, so the bytes are never taken — a bare
+    // `deps.readFile` followed the link and let an external file declare this
+    // repository's workspaces.
+    const outside: SuggestDeps = {
+      ...deps,
+      realpath: async (p) => (/package\.json$|pnpm-workspace\.yaml$/.test(p) ? `/elsewhere/${path.basename(p)}` : p),
+    };
+
+    const model = await suggestProvisioning(outside, ROOT, seq());
+
+    expect(read).toEqual([]);
+    expect(model.entries).toEqual([]);
+  });
+
+  it("[F002] a refused package manifest does not fall through to pnpm", async () => {
+    const { deps } = root(
+      { "apps/web/.env": "file" },
+      { "package.json": '{"workspaces":["apps/*"],"broken":', "pnpm-workspace.yaml": "packages:\n  - 'apps/*'\n" },
+    );
+
+    const model = await suggestProvisioning(deps, ROOT, seq());
+
+    // Refusal ends the walk. Treating it as "declared nothing" let the
+    // lower-priority manifest govern probing for a repository whose own
+    // manifest this reader had just declined to trust.
+    expect(model.entries).toEqual([]);
+  });
+
+  it("[F003] one unreadable workspace directory does not discard every other suggestion", async () => {
+    const { deps } = root({ ".env": "file", "pnpm-lock.yaml": "file" }, { "package.json": PKG(["apps/*"]) });
+    const missing: SuggestDeps = {
+      ...deps,
+      readdir: () => {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+    };
+
+    const model = await suggestProvisioning(missing, ROOT, seq());
+
+    // The rejection used to escape the whole detector, so a sparse checkout
+    // lost its root `.env` and its install step to an absent `apps/`.
+    expect(model.entries.map((e) => e.path)).toEqual([".env"]);
+    expect(model.setup.map((st) => st.script)).toEqual(["pnpm install"]);
+  });
+
+  it("[F004] a manifest of escaping declarations spends the budget it costs", async () => {
+    const escaping = Array.from({ length: 40 }, (_, i) => `../outside${i}`);
+    const { deps } = root({}, { "package.json": PKG(escaping) });
+    const budget = seq();
+    budget.scanned = MAX_SCAN - 5;
+
+    const model = await suggestProvisioning(deps, ROOT, budget);
+
+    // A refusal still costs a resolution, so it is charged. Charging only
+    // ACCEPTED directories left this path free to run past the cap.
+    expect(budget.scanned).toBe(MAX_SCAN);
+    expect(model.entries).toEqual([]);
+  });
+
+  it("[F005] a root-level star finds the top-level packages it names", async () => {
+    const { deps } = root({ "web/.env": "file", "server/.env": "file" }, { "package.json": PKG(["*"]) });
+
+    const model = await suggestProvisioning(deps, ROOT, seq());
+
+    // `splitGlob("*")` names the repository root, and resolved containment
+    // refuses a candidate equal to the root on purpose — so asking it here
+    // reported `*` as escaping and dropped every package.
+    expect(model.entries.map((e) => e.path).sort()).toEqual(["server/.env", "web/.env"]);
   });
 });

@@ -12,16 +12,17 @@ import * as path from "node:path";
 import type { ParseError } from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 import type { ProvisionModel } from "../../types/messages";
-import { prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
+import { type PreparedRoot, prepareResolvedRoot } from "../../utils/resolvedPathBoundary";
 import {
   addEntry,
   addSetup,
   contained,
-  MAX_SCAN,
   modelFromDraft,
   newDraft,
+  openProviderFile,
   type ProviderBudget,
   readJsonc,
+  scanExhausted,
   scanNames,
   splitGlob,
 } from "./providerKit";
@@ -46,53 +47,6 @@ export interface SuggestDeps {
   readFile(p: string): Promise<string>;
   readdir(p: string): Promise<readonly string[]> | AsyncIterable<string>;
   realpath(p: string): Promise<string>;
-}
-
-/** The manifests that may declare workspaces, in the order they are consulted. */
-const PACKAGE_MANIFEST = "package.json";
-const PNPM_MANIFEST = "pnpm-workspace.yaml";
-
-/** Every declared pattern this reader accepted, repo-relative and POSIX. */
-type Declared = readonly string[];
-
-function patternsOf(value: unknown): Declared {
-  const list = Array.isArray(value)
-    ? value
-    : typeof value === "object" && value !== null && Array.isArray((value as { packages?: unknown }).packages)
-      ? ((value as { packages: unknown[] }).packages as unknown[])
-      : [];
-  // A non-string member is dropped rather than coerced: `String(null)` is a
-  // path this reader would then try to resolve.
-  return list.filter((p): p is string => typeof p === "string" && p.length > 0);
-}
-
-/**
- * What the repository says about itself, or nothing.
- *
- * A manifest that cannot be read is absence — the repository may simply not
- * have one. A manifest that parses with ANY reported error is a refusal:
- * `readJsonc` recovers a partial tree and reports syntax errors out of band, so
- * accepting the keys that survived would act on half a file (design.md D1).
- */
-async function declaredWorkspaces(deps: SuggestDeps, repoRoot: string): Promise<Declared> {
-  try {
-    const errors: ParseError[] = [];
-    const parsed = readJsonc(await deps.readFile(path.join(repoRoot, PACKAGE_MANIFEST)), errors);
-    if (errors.length === 0 && parsed !== undefined) {
-      const declared = patternsOf((parsed as { workspaces?: unknown }).workspaces);
-      if (declared.length > 0) {
-        return declared;
-      }
-    }
-  } catch {
-    // No manifest, or an unreadable one. Either way it declares nothing.
-  }
-  try {
-    const parsed: unknown = parseYaml(await deps.readFile(path.join(repoRoot, PNPM_MANIFEST)));
-    return patternsOf((parsed as { packages?: unknown } | null)?.packages);
-  } catch {
-    return [];
-  }
 }
 
 export const SUGGESTED_ENV_FILES: readonly string[] = [
@@ -131,6 +85,102 @@ async function ordinaryFile(deps: SuggestDeps, p: string): Promise<boolean> {
   }
 }
 
+/** The manifests that may declare workspaces, in the order they are consulted. */
+const PACKAGE_MANIFEST = "package.json";
+const PNPM_MANIFEST = "pnpm-workspace.yaml";
+
+/** Every declared pattern this reader accepted, repo-relative and POSIX. */
+type Declared = readonly string[];
+
+/**
+ * What a manifest said, kept apart from what it failed to say.
+ *
+ * `refused` is not `none`. A manifest whose parse reported an error must stop
+ * the walk rather than hand it to the next manifest — collapsing the two let a
+ * `pnpm-workspace.yaml` govern probing for a repository whose `package.json`
+ * this reader had just declined to trust (round-1 F002).
+ */
+type Declaration = { kind: "declared"; patterns: Declared } | { kind: "none" } | { kind: "refused" };
+
+function patternsOf(value: unknown): Declared {
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === "object" && value !== null && Array.isArray((value as { packages?: unknown }).packages)
+      ? ((value as { packages: unknown[] }).packages as unknown[])
+      : [];
+  // A non-string member is dropped rather than coerced: `String(null)` is a
+  // path this reader would then try to resolve.
+  return list.filter((p): p is string => typeof p === "string" && p.length > 0);
+}
+
+/**
+ * A manifest's bytes, through the same seam every provider file uses.
+ *
+ * `openProviderFile` prepares the resolved root and checks containment BEFORE
+ * it reads, which is the whole reason to go through it: reading `package.json`
+ * with a bare `deps.readFile` followed a symlink out of the checkout and let an
+ * arbitrary external file declare this repository's workspaces (round-1 F001).
+ */
+async function manifestText(
+  deps: SuggestDeps,
+  repoRoot: string,
+  root: PreparedRoot,
+  file: string,
+): Promise<string | undefined> {
+  const opened = await openProviderFile(deps, repoRoot, { id: "native", file }, root);
+  return opened.kind === "text" ? opened.text : undefined;
+}
+
+async function packageDeclaration(deps: SuggestDeps, repoRoot: string, root: PreparedRoot): Promise<Declaration> {
+  const text = await manifestText(deps, repoRoot, root, PACKAGE_MANIFEST);
+  if (text === undefined) {
+    return { kind: "none" };
+  }
+  const errors: ParseError[] = [];
+  const parsed = readJsonc(text, errors);
+  // `readJsonc` RECOVERS — it returns the tree it could build and reports the
+  // syntax errors out of band — so any reported error is a refusal, not a
+  // reason to read the keys that survived (design.md D1).
+  if (errors.length > 0 || parsed === undefined) {
+    return { kind: "refused" };
+  }
+  const patterns = patternsOf((parsed as { workspaces?: unknown }).workspaces);
+  return patterns.length > 0 ? { kind: "declared", patterns } : { kind: "none" };
+}
+
+async function pnpmDeclaration(deps: SuggestDeps, repoRoot: string, root: PreparedRoot): Promise<Declaration> {
+  const text = await manifestText(deps, repoRoot, root, PNPM_MANIFEST);
+  if (text === undefined) {
+    return { kind: "none" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(text);
+  } catch {
+    return { kind: "refused" };
+  }
+  const patterns = patternsOf((parsed as { packages?: unknown } | null)?.packages);
+  return patterns.length > 0 ? { kind: "declared", patterns } : { kind: "none" };
+}
+
+/**
+ * What the repository says about itself, or nothing.
+ *
+ * `package.json` first. Only its `none` — no manifest, or one declaring no
+ * packages — falls through to pnpm; a refusal ends the walk.
+ */
+async function declaredWorkspaces(deps: SuggestDeps, repoRoot: string, root: PreparedRoot): Promise<Declared> {
+  const first = await packageDeclaration(deps, repoRoot, root);
+  if (first.kind === "declared") {
+    return first.patterns;
+  }
+  if (first.kind === "refused") {
+    return [];
+  }
+  const second = await pnpmDeclaration(deps, repoRoot, root);
+  return second.kind === "declared" ? second.patterns : [];
+}
+
 /**
  * Every declared pattern resolved to a repo-relative directory, charged to the
  * shared budget one directory at a time.
@@ -142,26 +192,37 @@ async function ordinaryFile(deps: SuggestDeps, p: string): Promise<boolean> {
  * stops when the budget does (design.md D2).
  */
 async function workspaceDirs(deps: SuggestDeps, repoRoot: string, budget: ProviderBudget): Promise<string[]> {
-  const declared = await declaredWorkspaces(deps, repoRoot);
-  if (declared.length === 0) {
-    return [];
-  }
   const prepared = await prepareResolvedRoot(repoRoot, { realpath: deps.realpath, lstat: deps.lstat });
   if (prepared === null) {
     return [];
   }
+  const declared = await declaredWorkspaces(deps, repoRoot, prepared);
   const out: string[] = [];
-  const charge = async (rel: string): Promise<void> => {
-    if (budget.scanned >= MAX_SCAN || out.includes(rel)) {
-      return;
-    }
-    if ((await contained(rel, repoRoot, prepared, deps)) !== "inside") {
-      return;
+  /**
+   * One unit of the shared budget per declaration examined, spent BEFORE the
+   * containment resolution rather than after it.
+   *
+   * Charging only accepted directories left the refusal path free, and a
+   * refusal still costs one or two `realpath` calls: three thousand escaping
+   * literals bought six thousand resolutions while `scanned` stayed at zero
+   * (round-1 F004). What a declaration costs is what it is charged, whether or
+   * not it turns out to name somewhere we will look.
+   */
+  const charge = async (rel: string): Promise<boolean> => {
+    if (scanExhausted(budget) || out.includes(rel)) {
+      return false;
     }
     budget.scanned += 1;
+    if ((await contained(rel, repoRoot, prepared, deps)) !== "inside") {
+      return false;
+    }
     out.push(rel);
+    return true;
   };
   for (const raw of declared) {
+    if (scanExhausted(budget)) {
+      break;
+    }
     const pattern = raw.replace(/\\/g, "/").replace(/\/+$/, "");
     if (!pattern.includes("*")) {
       await charge(pattern);
@@ -170,15 +231,35 @@ async function workspaceDirs(deps: SuggestDeps, repoRoot: string, budget: Provid
     const glob = splitGlob(pattern);
     // More than one `*`, or a `*` outside the last segment: not implemented, so
     // skipped rather than interpreted generously, exactly as `entriesFor` does.
-    if (glob === null || (await contained(glob.dir === "" ? "." : glob.dir, repoRoot, prepared, deps)) !== "inside") {
+    if (glob === null) {
       continue;
     }
-    const { names } = await scanNames(deps.readdir(path.join(repoRoot, glob.dir)), budget);
+    // A root-level glob is exempt from the parent check for the same reason
+    // `entriesFor` exempts it: the directory it names IS the repository root,
+    // and resolved containment refuses a candidate equal to the root on
+    // purpose. Asking anyway reported `*` as escaping and silently dropped
+    // every top-level package (round-1 F005).
+    if (glob.dir !== "") {
+      budget.scanned += 1;
+      if ((await contained(glob.dir, repoRoot, prepared, deps)) !== "inside") {
+        continue;
+      }
+    }
+    let names: string[];
+    try {
+      names = (await scanNames(deps.readdir(path.resolve(repoRoot, glob.dir)), budget)).names;
+    } catch {
+      // Absent, unreadable, or denied — this pattern contributes nothing and
+      // every OTHER row survives. Letting the rejection escape discarded the
+      // whole fallback, so one missing workspace directory took the root
+      // `.env` and the lockfile setup down with it (round-1 F003).
+      continue;
+    }
     for (const name of names) {
       if (
+        name.length >= glob.prefix.length + glob.suffix.length &&
         name.startsWith(glob.prefix) &&
-        name.endsWith(glob.suffix) &&
-        name.length >= glob.prefix.length + glob.suffix.length
+        name.endsWith(glob.suffix)
       ) {
         await charge(glob.dir === "" ? name : `${glob.dir}/${name}`);
       }
