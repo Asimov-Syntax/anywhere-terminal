@@ -251,3 +251,17 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     4. `src/extension.ts` and `src/worktree/adoptWorktree.integration.test.ts` — the real adapter reports `nlink` from the `fstat` it already takes, and a real hard link to `<wt>/.git` is refused with the alias's bytes intact.
     5. `src/worktree/adoptWorktree.test.ts` — the opening-read case drives the HANDLE's `readAt`, not the retired `readFile`, and asserts nothing was created, spawned or written (F014); plus the replacement-between-the-restore's-samples case and a multiply-linked inode. Each guard arm-checked.
     6. `src/worktree/adoptWorktree.ts` — the duplicated undo comment left by 4_1 goes.
+
+## 8. Close review round 5 — one rule for the withdrawal, one home for the link count
+
+- [ ] 6_1 Remove the entry only when nothing points at it, and count names inside the write
+  - **Deps**: 5_1
+  - **Refs**: design.md D4, D9; specs/worktree-panel/spec.md#{an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it, an-undo-restores-only-the-git-entry-the-adoption-itself-replaced}; `.reviews/round-5.md` F005, F013
+  - **Acceptance**:
+    - Outcome: A withdrawal never removes an administrative entry the visible `.git` still names
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts
+  - **Plan**:
+    1. `src/worktree/adoptWorktree.ts` — the undo settles the link, then reads `<wt>/.git` by pathname and removes the entry only where what it names does not resolve to it; the retained entry is reported (F005).
+    2. `src/worktree/adoptWorktree.ts` — the `nlink` refusal moves inside the write, so the claim, the failed-claim recovery and the undo's restore all inherit it (F013).
+    3. `src/worktree/adoptWorktree.test.ts` — a replacement whose link names THIS adoption's entry, asserting the entry survives and is named; an alias appearing after a successful claim, asserting neither the recovery nor the undo rewrites it. Each guard arm-checked.
+    4. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository, a hard link created during a failing adoption keeps its bytes through the undo.
