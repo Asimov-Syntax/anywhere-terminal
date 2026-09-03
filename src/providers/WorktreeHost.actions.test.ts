@@ -62,6 +62,8 @@ const RAW_DISPLAY = "/repo-wt/raw/";
 const REPO = "/repo/.git";
 /** The administrative directory a surviving checkout still names, proven absent. */
 const STALE_GITDIR = `${REPO}/worktrees/gone`;
+/** The bytes that checkout's `.git` still holds. */
+const STALE_LINK = `gitdir: ${STALE_GITDIR}\n`;
 
 /** `gone` is a function where a test needs the worktree to vanish mid-flight. */
 function runner(
@@ -4315,7 +4317,12 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       ...adoptable,
       adoptSubjects: subjects,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
 
@@ -4343,7 +4350,12 @@ describe("the host resolves a selection before the create runs", () => {
       ...adoptable,
       adoptSupported: false,
       adoptSubjects: subjects,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
 
@@ -4361,7 +4373,12 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       ...adoptable,
       adoptSupported: true,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
 
@@ -4378,7 +4395,7 @@ describe("the host resolves a selection before the create runs", () => {
       ...adoptable,
       probeAdopt: async (input) => {
         asked.push(input);
-        return { kind: "adopt", adoptPath: input.candidatePath, staleGitdir: STALE_GITDIR };
+        return { kind: "adopt", adoptPath: input.candidatePath, staleGitdir: STALE_GITDIR, staleLink: STALE_LINK };
       },
     });
     await probeFor(view, host);
@@ -4394,7 +4411,12 @@ describe("the host resolves a selection before the create runs", () => {
   ): Promise<{ calls: [string, ...unknown[]][]; view: ReturnType<typeof surface>; dispose: () => void }> {
     const { host, view, calls, dispose } = await builtHost([windowRow()], false, {
       ...adoptable,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
       ...over,
     });
     await probeFor(view, host);
@@ -4476,7 +4498,12 @@ describe("the host resolves a selection before the create runs", () => {
     // answer lands: the window between the two is the whole point.
     const { host, view, calls, dispose } = await builtHost([windowRow()], false, {
       ...adoptable,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
     const published = resolutionIn(view)?.mode as unknown as { adoptPath: string; expectedBranchOid: string };
@@ -4542,7 +4569,12 @@ describe("the host resolves a selection before the create runs", () => {
       exists: (p: string) => p === "/trees/repo-feat",
       readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
       adoptSubjects: subjects,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host, "feat");
 
@@ -4562,7 +4594,12 @@ describe("the host resolves a selection before the create runs", () => {
       exists: (p: string) => p === "/trees/repo-idle",
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       adoptSubjects: subjects,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
 
@@ -4579,7 +4616,12 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "oid-idle" }], truncated: false }),
       adoptSubjects: subjects,
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
 
@@ -4596,7 +4638,12 @@ describe("the host resolves a selection before the create runs", () => {
       createRoot: "/trees",
       exists: (p: string) => p === "/trees/repo-idle",
       readRefs: async () => ({ ok: true, refs: [{ name: "idle", oid: "" }], truncated: false }),
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
     });
     await probeFor(view, host);
 
@@ -4612,7 +4659,12 @@ describe("the host resolves a selection before the create runs", () => {
     const { host, view, dispose } = await builtHost([windowRow()], false, {
       ...adoptable,
       probeGitEntry: () => "absent",
-      probeAdopt: async ({ candidatePath }) => ({ kind: "adopt", adoptPath: candidatePath, staleGitdir: STALE_GITDIR }),
+      probeAdopt: async ({ candidatePath }) => ({
+        kind: "adopt",
+        adoptPath: candidatePath,
+        staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
+      }),
       issueDebrisAuthorization: async (p: string) => {
         asked.push(p);
         return { ok: true as const, fingerprint: "fp", entries: [] };

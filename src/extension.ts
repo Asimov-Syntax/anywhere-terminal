@@ -864,7 +864,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   /** Shared by both probes, so neither can read a failed check as a gone directory. */
   const adminDirIsThere = async (gitdir: string): Promise<boolean> => {
     try {
-      return (await fsp.stat(gitdir)).isDirectory();
+      const at = await fsp.stat(gitdir);
+      if (!at.isDirectory()) {
+        // Something is THERE and it is not git's administrative directory.
+        // That is corrupt state, not an absent registration, and answering
+        // `false` made it authorize an adoption (round-2 F003).
+        throw Object.assign(new Error(`${gitdir} is not a directory`), { code: "ENOTDIR_STATE" });
+      }
+      return true;
     } catch (error) {
       if (readsAsAbsent(error)) {
         return false;

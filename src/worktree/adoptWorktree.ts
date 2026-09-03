@@ -32,6 +32,15 @@ export interface AdoptRequest {
    */
   staleGitdir: string;
   /**
+   * The exact bytes that link held when the corroboration read it.
+   *
+   * Both of this function's reads of `<wt>/.git` are compared against THIS
+   * rather than against each other. A live registration restored before the
+   * first read makes its own link the baseline, and every self-comparison
+   * afterwards passes while the link being replaced is a live one (round-2 F006).
+   */
+  staleLink: string;
+  /**
    * The tip the user was promised for `branch`.
    *
    * Read back from inside the worktree after `repair` and BEFORE the index is
@@ -134,16 +143,36 @@ export async function adoptWorktree(
   }
 
   const linkPath = `${request.worktreePath}/.git`;
-  // Read BEFORE the mkdir: this is the only copy of what the undo restores, and
-  // a read taken after the entry exists would be a read of a state this
-  // function had already started changing.
-  const originalLink = await fs.readFile(linkPath).catch(() => null);
+  // Read BEFORE the mkdir, and PROVED before anything is created. A read that
+  // failed used to answer `null`, which the undo then read as "there was no
+  // link", and it removed one it had never seen (round-2 F003). Bytes that
+  // differ from the corroborated ones are a link somebody rewrote between the
+  // offer and here — including a restored live registration (round-2 F006).
+  let opening: string | null;
+  try {
+    opening = await fs.readFile(linkPath);
+  } catch (error) {
+    return {
+      ok: false,
+      message: `That directory's git link could not be read, so nothing was written: ${reasonOf(error)}`,
+    };
+  }
+  if (opening !== request.staleLink) {
+    return {
+      ok: false,
+      message: "That directory's git link is not the one this adoption was offered on, so nothing was written.",
+    };
+  }
 
   const created = await createEntry(request, fs);
   if (!created.ok) {
     return { ok: false, message: created.message };
   }
   const { entryPath, id, identity } = created;
+  /** The link this adoption will install, and the only bytes it may overwrite. */
+  const ourLink = `gitdir: ${entryPath}\n`;
+  /** Has the final write landed? Until it has, the link is nobody's to restore. */
+  let installed = false;
 
   const undo = async (): Promise<AdoptResidue | undefined> => {
     // Identity first, and it is the whole point: `prune` can remove an entry
@@ -168,7 +197,20 @@ export async function adoptWorktree(
         .then(() => true)
         .catch(() => false);
     }
-    const restored = await restoreLink(fs, linkPath, originalLink);
+    // The link is left ALONE until this adoption installed its own — before
+    // that write there is nothing of ours there to undo, and writing the old
+    // bytes back over whatever is there now is how a refused adoption used to
+    // destroy another process's newly installed registration (round-2 F005).
+    let restored = true;
+    if (installed) {
+      const now = await fs.readFile(linkPath).catch(() => null);
+      restored =
+        now === ourLink &&
+        (await fs
+          .writeFile(linkPath, request.staleLink)
+          .then(() => true)
+          .catch(() => false));
+    }
     return removed && restored ? undefined : { entryPath, worktreeLinkRestored: restored };
   };
 
@@ -212,7 +254,7 @@ export async function adoptWorktree(
   // window from the caller's probe to here, leaving only the instant between
   // these reads and the write itself.
   try {
-    if ((await fs.readFile(linkPath)) !== originalLink) {
+    if ((await fs.readFile(linkPath)) !== request.staleLink) {
       return failed("That directory's git link changed while it was being re-registered.");
     }
     // A registration for THIS checkout, back at the path the stale link named.
@@ -227,7 +269,8 @@ export async function adoptWorktree(
         return failed("That directory is registered with git again, so it was not re-registered.");
       }
     }
-    await fs.writeFile(linkPath, `gitdir: ${entryPath}\n`);
+    await fs.writeFile(linkPath, ourLink);
+    installed = true;
   } catch (error) {
     return failed(reasonOf(error));
   }
@@ -310,23 +353,6 @@ async function createEntry(request: AdoptRequest, fs: AdoptFs): Promise<CreatedE
 type CreatedEntry =
   | { ok: true; entryPath: string; id: string; identity: FileIdentity }
   | { ok: false; message: string; leftBehind?: AdoptResidue };
-
-/** Put the worktree's link back, including putting an absent one back as absent. */
-async function restoreLink(fs: AdoptFs, linkPath: string, original: string | null): Promise<boolean> {
-  if (original === null) {
-    // Nothing was there, so the link this adoption wrote has to GO. Leaving it
-    // would point the directory at an entry the undo just removed — precisely
-    // the broken state adoption exists to repair, manufactured by the repair.
-    return fs
-      .removeFile(linkPath)
-      .then(() => true)
-      .catch(() => false);
-  }
-  return fs
-    .writeFile(linkPath, original)
-    .then(() => true)
-    .catch(() => false);
-}
 
 /** The one errno that MEANS the path is not there. Everything else is an unread answer. */
 function readsAsAbsent(error: unknown): boolean {

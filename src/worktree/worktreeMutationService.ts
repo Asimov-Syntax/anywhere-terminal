@@ -892,6 +892,9 @@ export function createWorktreeMutationService(deps: MutationServiceDeps): Worktr
                 // than re-derived: the reconstruction re-reads it at its own
                 // write boundary, and two readings of one link could disagree.
                 staleGitdir: verdict.staleGitdir,
+                // And the bytes, so the reconstruction compares against what
+                // the corroboration read rather than against a value it built.
+                staleLink: verdict.staleLink,
                 // The tip guard belongs to the reconstruction, which is the only
                 // place that can run it between `repair` and the index rebuild —
                 // the order D4 states. One owner, so the two cannot disagree

@@ -94,6 +94,7 @@ const request = {
   worktreePath: WT,
   branch: "feat/x",
   staleGitdir: STALE,
+  staleLink: ORIGINAL_LINK,
   expectedBranchOid: TIP,
 };
 
@@ -418,21 +419,26 @@ describe("adoptWorktree writes the link only while it is still the one it was of
   // write is what makes the adoption real. A registration restored inside that
   // window would otherwise have its live link replaced (F006).
   it("refuses when the worktree's link changed while the entry was being written", async () => {
+    // Through the STORE, not through a reader that lies about it: a fake that
+    // returns different bytes without changing what it holds cannot show
+    // whether the undo then overwrote them (round-2 F005).
     const { runner } = runnerOf();
     const store = fsOf();
-    let reads = 0;
+    const replacement = "gitdir: /repo/.git/worktrees/restored\n";
     const fs: AdoptFs = {
       ...store.fs,
-      readFile: async (_p) => {
-        reads += 1;
-        return reads === 1 ? ORIGINAL_LINK : "gitdir: /repo/.git/worktrees/restored\n";
+      createFile: async (p, data) => {
+        await store.fs.createFile(p, data);
+        // Somebody else installs a registration while the entry is being built.
+        store.files.set(`${WT}/.git`, replacement);
       },
     };
 
     const result = await adoptWorktree(runner, request, fs);
 
     expect(result.ok).toBe(false);
-    expect(store.files.get(`${WT}/.git`), "a link nobody proved was ours was overwritten").toBe(ORIGINAL_LINK);
+    expect(store.files.get(`${WT}/.git`), "a link nobody proved was ours was overwritten").toBe(replacement);
+    expect(store.dirs.has(ENTRY)).toBe(false);
   });
 
   it("refuses when the registration it was offered against came back", async () => {
@@ -555,6 +561,106 @@ describe("adoptWorktree checks the tip before it rebuilds the index", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(calls.some((c) => c.args[0] === "reset")).toBe(false);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+});
+
+describe("adoptWorktree leaves a link it did not install alone", () => {
+  const REPLACEMENT = "gitdir: /repo/.git/worktrees/restored\n";
+
+  function failingRepair() {
+    return runnerOf((args) =>
+      args[1] === "repair"
+        ? { code: 1, stdout: Buffer.alloc(0), stderr: "fatal: nope", timedOut: false, failedToSpawn: false }
+        : ok(`${TIP}\n`),
+    );
+  }
+
+  // Every failure runs the undo, and the undo used to write the old bytes back
+  // unconditionally. A process that installed its own registration in the
+  // meantime had it destroyed, and the result said the withdrawal was clean
+  // (round-2 F005).
+  it("does not restore over a registration installed after its own write", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      writeFile: async (p, data) => {
+        await store.fs.writeFile(p, data);
+        if (p === `${WT}/.git`) {
+          store.files.set(p, REPLACEMENT);
+        }
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(store.files.get(`${WT}/.git`), "another process's registration was overwritten").toBe(REPLACEMENT);
+    expect(result).toMatchObject({ ok: false, leftBehind: { worktreeLinkRestored: false } });
+  });
+
+  it("does not touch the link at all when it fails before installing its own", async () => {
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      createFile: async (p: string) => {
+        throw new Error(`ENOSPC ${p}`);
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result.ok).toBe(false);
+    // Not "restored to the same bytes" — never written. Before the final write
+    // there is nothing of this adoption's there to undo.
+    expect(store.writes.filter((w) => w.endsWith(`${WT}/.git`))).toEqual([]);
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+  });
+
+  it("restores its own link when the failure is after it installed one", async () => {
+    const { runner } = failingRepair();
+    const store = fsOf();
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { leftBehind?: unknown }).leftBehind).toBeUndefined();
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+
+  it("refuses before creating anything when the link cannot be read", async () => {
+    // A read that FAILED is not an absent link. Answering `null` let the undo
+    // remove a `.git` this adoption had never seen (round-2 F003).
+    const { runner } = runnerOf();
+    const store = fsOf();
+    const fs: AdoptFs = {
+      ...store.fs,
+      readFile: async () => {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      },
+    };
+
+    const result = await adoptWorktree(runner, request, fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(store.files.get(`${WT}/.git`)).toBe(ORIGINAL_LINK);
+    expect(store.dirs.has(ENTRY)).toBe(false);
+  });
+
+  it("refuses before creating anything when a live registration was restored first", async () => {
+    // The bytes are the claim. Comparing the reconstruction's own two reads
+    // against each other passed happily while the link being replaced was a
+    // live one somebody had just installed (round-2 F006).
+    const { runner } = runnerOf();
+    const store = fsOf();
+    store.files.set(`${WT}/.git`, REPLACEMENT);
+
+    const result = await adoptWorktree(runner, request, store.fs);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(store.files.get(`${WT}/.git`)).toBe(REPLACEMENT);
     expect(store.dirs.has(ENTRY)).toBe(false);
   });
 });

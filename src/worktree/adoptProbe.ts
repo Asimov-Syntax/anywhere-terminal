@@ -42,6 +42,15 @@ export type AdoptVerdict =
        * risking a different answer about one file (round-1 F006).
        */
       staleGitdir: string;
+      /**
+       * The exact bytes that link held when this verdict was reached.
+       *
+       * The directory alone is not the claim. A live registration restored
+       * before the reconstruction reads the link makes ITS link the one the
+       * reconstruction compares against, and every later self-comparison then
+       * passes (round-2 F006).
+       */
+      staleLink: string;
     }
   | { kind: "declined"; because: "notAPrunedCheckout" | "unreadable" | "anotherRepository" };
 
@@ -112,5 +121,5 @@ export async function probeAdopt(subject: AdoptSubject, deps: AdoptProbeDeps): P
   }
   return exists
     ? { kind: "declined", because: "notAPrunedCheckout" }
-    : { kind: "adopt", adoptPath: candidatePath, staleGitdir: link.gitdir };
+    : { kind: "adopt", adoptPath: candidatePath, staleGitdir: link.gitdir, staleLink: link.raw };
 }

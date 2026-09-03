@@ -60,6 +60,7 @@ let survivor: string;
 let commonDir: string;
 /** The administrative directory the survivor's link still names — deleted in setup. */
 let staleGitdir: string;
+let staleLink: string;
 
 /** A branch's current tip, as the adoption promises it. */
 function tipOf(branch: string): string {
@@ -68,8 +69,12 @@ function tipOf(branch: string): string {
 
 /** The `gitdir:` a surviving checkout still points at, read from git's own link file. */
 function staleOf(worktreePath: string): string {
-  const link = fs.readFileSync(path.join(worktreePath, ".git"), "utf8");
-  return link.slice("gitdir: ".length).trim();
+  return linkOf(worktreePath).slice("gitdir: ".length).trim();
+}
+
+/** The exact bytes a surviving checkout's `.git` holds. */
+function linkOf(worktreePath: string): string {
+  return fs.readFileSync(path.join(worktreePath, ".git"), "utf8");
 }
 
 function git(args: string[], cwd = repo): string {
@@ -125,6 +130,7 @@ beforeEach(() => {
   survivor = path.join(tmp, "survivor");
   git(["worktree", "add", "-q", "-b", "survivor", survivor]);
   staleGitdir = staleOf(survivor);
+  staleLink = linkOf(survivor);
   // What the panel is actually looking at: a directory git has FORGOTTEN. The
   // entry is deleted and pruned, so no registration is left to repair — which
   // is exactly why `git worktree repair` cannot recover this on its own.
@@ -148,6 +154,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: survivor,
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -172,6 +179,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: survivor,
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -200,6 +208,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: survivor,
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -228,6 +237,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: survivor,
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -260,6 +270,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: survivor,
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -342,6 +353,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: "--force",
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -376,6 +388,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: survivor,
         branch: "survivor",
         staleGitdir,
+        staleLink,
         expectedBranchOid: tipOf("survivor"),
       },
       realFs,
@@ -388,6 +401,7 @@ describe("what git does with a reconstructed entry", () => {
         worktreePath: other,
         branch: "second",
         staleGitdir: staleOther,
+        staleLink: linkOf(other),
         expectedBranchOid: tipOf("second"),
       },
       realFs,
@@ -408,5 +422,42 @@ describe("the git this was verified against", () => {
     // check, and this only makes the version legible when one of them fails.
     const version = execFileSync("git", ["--version"], { encoding: "utf8" }).trim();
     expect(version).toMatch(/^git version \d+\.\d+/);
+  });
+});
+
+describe("what a failing adoption does to a link somebody else replaced", () => {
+  it("keeps the replacement rather than restoring the bytes it was offered on", () => {
+    // The undo used to write the corroborated bytes back unconditionally, so a
+    // registration installed while the adoption was failing was destroyed and
+    // the result called the withdrawal clean (round-2 F005). Here `repair` is
+    // made to fail by pointing it at a branch that does not exist, and the link
+    // is replaced through the real filesystem in between.
+    const replacement = `gitdir: ${commonDir}/worktrees/somebody-else\n`;
+    const watched: AdoptFs = {
+      ...realFs,
+      writeFile: async (p, data) => {
+        await realFs.writeFile(p, data);
+        if (p === path.join(survivor, ".git")) {
+          fs.writeFileSync(p, replacement, "utf8");
+        }
+      },
+    };
+
+    return adoptWorktree(
+      runner,
+      {
+        repoPath: repo,
+        commonDir,
+        worktreePath: survivor,
+        branch: "no-such-branch",
+        staleGitdir,
+        staleLink,
+        expectedBranchOid: tipOf("survivor"),
+      },
+      watched,
+    ).then((result) => {
+      expect(result).toMatchObject({ ok: false });
+      expect(fs.readFileSync(path.join(survivor, ".git"), "utf8")).toBe(replacement);
+    });
   });
 });

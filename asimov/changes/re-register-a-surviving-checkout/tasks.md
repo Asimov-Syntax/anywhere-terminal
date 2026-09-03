@@ -183,3 +183,21 @@ thing here. Then a second detector, an executor, the form's action, and the guar
     1. `src/extension.ts` — the reattach corroboration's `adminDirExists` uses the same errno rule the adopt one does; the two readers of one directory cannot disagree about what a failed read means. Found by the fix-delta audit: F003 named the adopt adapter, and the reattach adapter beside it reports the same false absence — which now reaches adopt, because a reattach that finds the directory gone REPORTS adopt.
     2. `src/worktree/reattachProbe.ts` — `probeReattach` answers rather than throws when that read fails, on the rule the rest of the module already follows.
     3. `src/worktree/reattachProbe.test.ts` — an unreadable administrative directory declines rather than being reported as a forgotten checkout.
+
+## 5. Close review round 2
+
+- [x] 3_1 Touch the worktree's link only while it is the one this adoption proved, or wrote — verified: pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/adoptProbe.test.ts src/worktree/reattachProbe.test.ts src/worktree/worktreeMutationService.test.ts && pnpm run check-types && UV_THREADPOOL_SIZE=16 pnpm exec vitest run --maxWorkers=6 --reporter=default --reporter=./src/test/invariants/coverageReporter.ts exit 0
+  - **Deps**: 2_6
+  - **Refs**: specs/worktree-panel/spec.md#{an-adoption-re-establishes-what-it-was-offered-on, an-adoption-that-does-not-complete-leaves-the-destination-as-it-found-it}; design.md D4, D5; `.reviews/round-2.md` F003, F005, F006
+  - **Acceptance**:
+    - Outcome: A refused adoption never writes over a link it did not install, and reports what it left
+    - Verify: command pnpm exec vitest run src/worktree/adoptWorktree.test.ts src/worktree/adoptWorktree.integration.test.ts src/worktree/adoptProbe.test.ts src/worktree/reattachProbe.test.ts src/worktree/worktreeMutationService.test.ts
+  - **Plan**:
+    1. `src/worktree/reattachProbe.ts` and `src/worktree/adoptProbe.ts` — a classified `.git` file carries the exact text it held beside the gitdir it resolves to, and the adopt verdict carries those bytes: proving which administrative directory was corroborated does not prove the link that names it is still the same link (F006).
+    2. `src/worktree/worktreeMutationService.ts` — the reconstruction is given the corroborated bytes.
+    3. `src/worktree/adoptWorktree.ts` — the link is read before the `mkdir` and must equal those bytes; a read that fails, or bytes that differ, refuses before anything is created (F003, F006).
+    4. `src/worktree/adoptWorktree.ts` — undo leaves the link alone until this adoption has installed its own, and afterwards restores only while the bytes on disk are still the ones it wrote; anything else is reported as residue (F005).
+    5. `src/extension.ts` — a gitdir path that exists but is not a directory is unreadable rather than absent (F003).
+    6. `src/worktree/adoptWorktree.test.ts` — the fake's own store is what the assertions read, so a link the undo overwrites is visible; a substituted link, an unreadable link and a failure before the final write each leave the destination as found.
+    7. `src/worktree/adoptWorktree.integration.test.ts` — against a real repository, a link replaced during a failing adoption keeps the replacement.
+    8. `src/worktree/reattachProbe.test.ts`, `src/worktree/adoptProbe.test.ts`, `src/worktree/worktreeMutationService.test.ts` and `src/providers/WorktreeHost.actions.test.ts` — the bytes travel unchanged from the read to the request.

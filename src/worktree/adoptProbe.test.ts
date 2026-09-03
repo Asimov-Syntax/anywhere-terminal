@@ -10,10 +10,12 @@ import { type GitLink, readGitLink } from "./reattachProbe";
 
 /** This repository's common directory — every default `gitdir` below is an entry under it. */
 const COMMON = "/repo/.git";
+/** The bytes the candidate's `.git` actually holds. */
+const LINK = "gitdir: /repo/.git/worktrees/gone\n";
 
 function deps(over: Partial<AdoptProbeDeps> = {}): AdoptProbeDeps {
   return {
-    readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/gone" }) as GitLink,
+    readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/gone", raw: LINK }) as GitLink,
     adminDirExists: async () => false,
     ...over,
   };
@@ -27,6 +29,10 @@ describe("probeAdopt", () => {
       // Carried, because the reconstruction re-reads THIS path at its own write
       // boundary rather than parsing the link a second time (F006).
       staleGitdir: `${COMMON}/worktrees/gone`,
+      // And the bytes themselves: proving WHICH administrative directory was
+      // corroborated does not prove the link that names it is still the same
+      // link (round-2 F006).
+      staleLink: LINK,
     });
   });
 
@@ -150,7 +156,7 @@ describe("probeAdopt binds the surviving checkout to this repository", () => {
   it("declines a checkout whose stale entry belongs to another repository", async () => {
     const verdict = await probeAdopt(
       { candidatePath: "/wt/survivor", commonDir: COMMON },
-      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/other/.git/worktrees/gone" }) }),
+      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/other/.git/worktrees/gone", raw: LINK }) }),
     );
 
     expect(verdict).toEqual({ kind: "declined", because: "anotherRepository" });
@@ -159,7 +165,7 @@ describe("probeAdopt binds the surviving checkout to this repository", () => {
   it("declines a stale gitdir that is not an entry at all", async () => {
     const verdict = await probeAdopt(
       { candidatePath: "/wt/survivor", commonDir: COMMON },
-      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/objects" }) }),
+      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/objects", raw: LINK }) }),
     );
 
     expect(verdict).toEqual({ kind: "declined", because: "anotherRepository" });
@@ -168,7 +174,7 @@ describe("probeAdopt binds the surviving checkout to this repository", () => {
   it("declines a sibling directory whose name merely starts with this common directory", async () => {
     const verdict = await probeAdopt(
       { candidatePath: "/wt/survivor", commonDir: COMMON },
-      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git-other/worktrees/gone" }) }),
+      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git-other/worktrees/gone", raw: LINK }) }),
     );
 
     expect(verdict).toEqual({ kind: "declined", because: "anotherRepository" });
@@ -177,7 +183,9 @@ describe("probeAdopt binds the surviving checkout to this repository", () => {
   it("adopts an entry of this repository written with a redundant spelling", async () => {
     const verdict = await probeAdopt(
       { candidatePath: "/wt/survivor", commonDir: "/repo/.git/" },
-      deps({ readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/../worktrees/gone" }) }),
+      deps({
+        readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/../worktrees/gone", raw: LINK }),
+      }),
     );
 
     expect(verdict).toMatchObject({ kind: "adopt", adoptPath: "/wt/survivor" });
@@ -190,7 +198,7 @@ describe("probeAdopt binds the surviving checkout to this repository", () => {
     await probeAdopt(
       { candidatePath: "/wt/survivor", commonDir: COMMON },
       deps({
-        readGitLink: async () => ({ kind: "file", gitdir: "/other/.git/worktrees/gone" }),
+        readGitLink: async () => ({ kind: "file", gitdir: "/other/.git/worktrees/gone", raw: LINK }),
         adminDirExists: async (p) => {
           asked.push(p);
           return false;

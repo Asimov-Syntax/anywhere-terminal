@@ -12,7 +12,19 @@ import { isAbsolute, join, resolve } from "node:path";
  * that file is the link `git worktree repair` rewrites.
  */
 export type GitLink =
-  | { kind: "file"; gitdir: string }
+  | {
+      kind: "file";
+      gitdir: string;
+      /**
+       * The exact bytes the file held.
+       *
+       * Beside the resolved path, from ONE read. An adoption is offered on a
+       * link and must compare against what was actually read rather than
+       * against a value it reconstructs: the same administrative directory can
+       * be named by a link that has since been rewritten (round-2 F006).
+       */
+      raw: string;
+    }
   | { kind: "directory" }
   /** Present, but neither a directory nor a regular file — a symlink, a socket. */
   | { kind: "notAFile" }
@@ -160,5 +172,5 @@ export async function readGitLink(worktreePath: string, fs: GitLinkFs): Promise<
   if (gitdir.length === 0) {
     return { kind: "unreadable" };
   }
-  return { kind: "file", gitdir: isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir) };
+  return { kind: "file", gitdir: isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir), raw: text };
 }

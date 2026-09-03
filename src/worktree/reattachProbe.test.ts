@@ -5,7 +5,11 @@ const SUBJECT = { repairPath: "/wt/stale", branchOid: "abc123" };
 
 function deps(over: Partial<ReattachProbeDeps> = {}): ReattachProbeDeps & { asked: string[] } {
   const asked: string[] = [];
-  const link: GitLink = { kind: "file", gitdir: "/repo/.git/worktrees/stale" };
+  const link: GitLink = {
+    kind: "file",
+    gitdir: "/repo/.git/worktrees/stale",
+    raw: "gitdir: /repo/.git/worktrees/stale\n",
+  };
   return {
     asked,
     readGitLink: (p) => {
@@ -100,7 +104,14 @@ describe("readGitLink", () => {
       ),
       // Against the WORKTREE. Resolved against the process cwd this would name
       // a directory under wherever the extension host happens to be running.
-    ).toEqual({ kind: "file", gitdir: "/repo/.git/worktrees/stale" });
+    ).toEqual({
+      kind: "file",
+      gitdir: "/repo/.git/worktrees/stale",
+      // The BYTES, beside the path they resolve to. An adoption proves it was
+      // offered on this link and must compare against what it actually read,
+      // not against a value it reconstructed (round-2 F006).
+      raw: "gitdir: ../../.git/worktrees/stale\n",
+    });
   });
 
   it("keeps an absolute `gitdir:` as written", async () => {
@@ -112,7 +123,7 @@ describe("readGitLink", () => {
           readFile: async () => "gitdir: /repo/.git/worktrees/stale",
         }),
       ),
-    ).toEqual({ kind: "file", gitdir: "/repo/.git/worktrees/stale" });
+    ).toMatchObject({ kind: "file", gitdir: "/repo/.git/worktrees/stale" });
   });
 
   it("calls a `.git` DIRECTORY a directory — a repository is not a linked worktree", async () => {
@@ -222,6 +233,7 @@ describe("readGitLink follows git's own gitfile grammar", () => {
     expect(await readGitLink("/wt/stale", linkFs("gitdir: /repo/.git/worktrees/stale  \n"))).toEqual({
       kind: "file",
       gitdir: "/repo/.git/worktrees/stale",
+      raw: "gitdir: /repo/.git/worktrees/stale  \n",
     });
   });
 
@@ -245,7 +257,11 @@ describe("probeReattach does not read a failed check as a gone directory", () =>
   // (round-1 F003, at the boundary beside the one the finding named).
   it("declines when the administrative directory cannot be read", async () => {
     const verdict = await probeReattach(SUBJECT, {
-      readGitLink: async () => ({ kind: "file", gitdir: "/repo/.git/worktrees/stale" }),
+      readGitLink: async () => ({
+        kind: "file",
+        gitdir: "/repo/.git/worktrees/stale",
+        raw: "gitdir: /repo/.git/worktrees/stale\n",
+      }),
       adminDirExists: async () => {
         throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
       },

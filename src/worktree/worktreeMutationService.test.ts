@@ -22,6 +22,8 @@ import {
 const REPO = "/repo/.git";
 /** The administrative directory a surviving checkout still names, proven absent. */
 const STALE_GITDIR = `${REPO}/worktrees/gone`;
+/** The bytes that checkout's `.git` still holds. */
+const STALE_LINK = `gitdir: ${STALE_GITDIR}\n`;
 /** Git reports this one with a trailing slash, so id and path differ. */
 const RAW_ID = "/repo-wt/raw";
 const RAW_PATH = "/repo-wt/raw/";
@@ -113,6 +115,7 @@ function harness(over: Partial<MutationServiceDeps> = {}) {
       kind: "adopt" as const,
       adoptPath: candidatePath,
       staleGitdir: STALE_GITDIR,
+      staleLink: STALE_LINK,
     }),
     reconstructEntry: async () => ({ ok: true as const, id: "survivor", undo: async () => undefined }),
     pathDeps: {
@@ -1732,7 +1735,14 @@ describe("re-registering a surviving checkout", () => {
       // reaches this service as a reconstruction that refused.
       corroborateAdopt: async (input) => {
         over.asked?.push(input);
-        return over.verdict ?? { kind: "adopt", adoptPath: input.candidatePath, staleGitdir: STALE_GITDIR };
+        return (
+          over.verdict ?? {
+            kind: "adopt",
+            adoptPath: input.candidatePath,
+            staleGitdir: STALE_GITDIR,
+            staleLink: STALE_LINK,
+          }
+        );
       },
       reconstructEntry: async () =>
         over.reconstruct ?? {
@@ -1904,6 +1914,7 @@ describe("re-registering a surviving checkout", () => {
         kind: "adopt",
         adoptPath: candidatePath,
         staleGitdir: STALE_GITDIR,
+        staleLink: STALE_LINK,
       }),
       reconstructEntry: async () => {
         throw new Error("the reconstruction ran against a directory that is gone");
