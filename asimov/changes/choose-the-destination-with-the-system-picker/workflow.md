@@ -73,3 +73,30 @@ Verify gate: 7690/7690, type check clean, bundle and I10 gates green. Biome repo
 identical file-for-file to the change's base 7abcebf7 measured in a detached worktree; two format
 findings this change did introduce were fixed with `biome format --write` scoped to the two files,
 never the `--write --unsafe` form the lint script runs.
+
+Review round 1 (cycle 1, discovery, `7abcebf7..dc96853c`): REJECT — 3 BLOCK, 1 WARN, all four
+accepted, none rebutted. F001 and F003 fixed as task 3_1, F002 and F004 as task 3_2.
+F002 was already written down: the plan attack above says "the opening must be snapshotted at
+construction, because a predecessor dialog reading the controller's token at reply time would read
+its successor's", and 2_2 built the callback reading `this.refsToken` anyway. The design was right and
+the build did not carry it; the panel had already retired the same hazard once for `onCreateClosed`
+(round-1 B3).
+F001 is unreachable from the shipped panel — `openCreateForRepo` advances `refsToken` before the only
+`requestWorktreeRefs` post, `onCreateClosed` only advances it, and openings are keyed per surface, so
+no same-token replacement can arise. Fixed anyway rather than rebutted: this change carries the
+`security-privacy` flag on a consent record, and 2_1's own witness already states the posture that
+"the webview is untrusted and a replay must be assumed".
+Impact manifest for the re-review: F002's fix moves the picker answer's identity source from the
+controller's live opening to the opening snapshotted in `createDialogDeps()`. Reachable call sites
+are `onPickDestination`, `bindDestinationPicked` and `handleDestinationPicked` (routed only from
+`worktreeMessageHandlers`); entry modes are a fresh dialog, a superseded dialog still on screen, and
+no dialog at all, which now falls to the `bound === null` arm. The token check is KEPT beside the new
+one — a pick for a retired opening is still dropped on the token — so `[2_2] drops a folder picked
+for a PREVIOUS opening` keeps its first claim and only its second half was rewritten, to bind the
+successor its own deps the way the panel does. F001/F003's fix narrows only: a pick or probe whose
+opening object was replaced now drops instead of writing, and an older pick's resolution loses to a
+newer confirmation.
+Verify gate (re-run after 3_1 and 3_2): 7696/7696, type check clean, bundle and I10 gates green,
+`verify-status` exits 0 with all seven tasks stamped. Biome reports 17 diagnostics (1 error), and the
+set is identical file-for-file to base 7abcebf7 linted with this tree's own Biome binary — none is in
+a file this change touches; `worktreePanel.css:635` is `.wt-hist-label`, from `add-worktree-panel-shell`.
