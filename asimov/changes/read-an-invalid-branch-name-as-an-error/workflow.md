@@ -6,9 +6,9 @@
 
 ## Plan
 
-- [ ] Gate 1: direction approved _(only if a real fork; else `[-]`)_
-- [ ] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [-] Gate 1: direction approved — no fork; the repository has already recorded the only admissible direction
+- [x] `asm change validate` passes
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -31,4 +31,22 @@
 
 Blueprint: none
 Lane: light
-Planned at: 1e6faf3c
+Planned at: ec0ea842
+Source: the user's screenshot feedback, verbatim — "branch name ko được có dấu cách hay lỗi thì dùng
+ux lỗi đi, ai lại đi hiện 'wait to check this session' thật ư?".
+The seam is already there and dead: `deps.validateBranch` (WorktreeCreateDialog.ts:212) is declared,
+called at :2893, and supplied by NOTHING in production — only by tests. `draft.branchError`
+(worktreeViewTypes.ts:322) is written at :2894 and read by nobody. So today an unacceptable name is
+refused by git only after Create is pressed, and until the probe answers the form says "Waiting to
+check this selection." — which is what the user saw.
+Not a fork: `branchNameIsValid` (worktreeMutations.ts:252) already carries the repository's recorded
+decision — "Asked of git rather than reimplemented: check-ref-format's rules are long,
+version-dependent and easy to get subtly wrong, and a validator that is merely close is worse than
+none". A webview-local validator is refused by that decision, not chosen against here.
+Must not: decide acceptability anywhere but git; turn an unaskable git into a refusal (`null` is "not
+told", and the create still proceeds for git to refuse directly); add prose to the disabled action;
+or weaken the checked-out-elsewhere refusal that owns the same field.
+`baseValid` is the precedent the whole change rides: same message, same shape, same "absent means
+nobody was asked", same asked-only-where-it-applies rule.
+No design.md: no fork, and no obligation ledger — nothing here touches a mutable resource whose
+failure outlives the request. Both constraints live as task Boundaries.
