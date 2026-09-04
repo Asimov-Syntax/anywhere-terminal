@@ -2698,10 +2698,12 @@ export interface WorktreeCreateResolutionMessage {
 /**
  * Extension → WebView: the folder the user chose in the system picker.
  *
- * Posted ONLY for a confirmed choice whose opening is still the live one after
- * the dialog returns. A cancelled picker, a failed one, and one whose form has
- * been dismissed all post nothing at all — there is no "chose nothing" answer,
- * because there is no state waiting to be released (design.md D3).
+ * Posted for EVERY pick a live form opened, because the form holds itself
+ * pending on the ask it minted and only an answer can release it. A confirmed
+ * choice carries `path`; a cancel, a failure, an unresolvable root, an unwired
+ * capability and a superseded pick each carry none. Silence is reserved for a
+ * form that is gone — disposed, detached, or its opening replaced — which is
+ * the only case with no state left to release (design.md D3).
  *
  * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
  */
