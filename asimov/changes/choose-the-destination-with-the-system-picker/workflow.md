@@ -149,3 +149,33 @@ much and the reason it gives is the same kind of reason as any other unresolved 
 The "a pick that never settles" row stays `unresolved` on the oracle's advice: the premise that
 `showOpenDialog` always settles was an assertion, not evidence, and a timeout is the wrong remedy —
 the host cannot tell a hung picker from a dialog the user still has open.
+
+Round 4 (cycle 2, verification, explicit 3-commit list): BLOCK, 1 blocker. F001 confirmed fixed at
+the invariant level. F005 persisted through a NARROWER boundary — pick A confirmed and suspended in
+`prepareResolvedRoot`, pick B opened over it, B cancelled: B's answer matched the form's only ask,
+released it, and re-armed Create at the pre-A destination, after which A's own answer was discarded.
+Accepted, not rebutted, and fixed as 5_1 by the chair's own first suggestion: Choose is refused while
+a pick is outstanding, so B never opens and the composition is unreachable from the panel. No `D#`
+moves and no mechanism is added — `pickAsked` is the gate the form already holds for Create, read on
+one more control — so this is remediation, not a handback. It is safe only BECAUSE of the amended D3:
+a refused Choose is given back by an answer that always comes.
+The host's `pickGeneration` ordering is deliberately untouched, so the overlap round-1 F003 supports
+stays defended even though the panel no longer produces it.
+Spec extended at build under the user's standing replan grant: `An opened picker holds the form until
+it is answered` now says the form offers no second picker either, with its own scenario. The
+requirement described only Create, and shipping a refused control the spec does not name would leave
+the contract behind the code.
+F006 (WARN) fixed in the same task — the pick-then-switch-repository late answer D7 names as a
+defeater and 4_3 never wrote.
+F007 (WARN) SPLIT. The stale comment equating a missing `Opening` with nobody waiting is corrected.
+The liveness half is a residual: a predecessor dialog can still be on screen after its opening was
+retired, and its click gates the form on a pick the host will not answer under that token. Bounded by
+the successor opening it is already waiting for; unbounded only if that answer never arrives. Telling
+a retired opening apart from a gone form is a change to what D3 means by "gone", and D3 is the
+decision this cycle already moved once — so it is not landed as a fix commit here.
+
+Verify gate (after 5_1): 7715/7715, type check clean, I10 and bundle gates green, `verify-status`
+exits 0 with all eleven tasks stamped. Biome reports 1 error / 14 warnings / 1 info, unchanged from
+before this change and none of it in a file this change touches.
+Round 5 is refused by the thrash stop — the one `--extend` this change gets was spent on round 4, so
+any further round needs the user's own words. Presented to the user rather than taken.
