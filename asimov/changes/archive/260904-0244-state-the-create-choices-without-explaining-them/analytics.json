@@ -14,7 +14,7 @@
       "windows": [
         {
           "from": 1788489121650,
-          "to": null
+          "to": 1788489858563
         }
       ],
       "phases": [
@@ -179,6 +179,28 @@
           }
         }
       ]
+    },
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788489671629,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788489671629,
+          "to": 1788489858563
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788489671629
+        }
+      ],
+      "firstAt": 1788489671629,
+      "lastAt": 1788489671629,
+      "buckets": []
     }
   ]
 }

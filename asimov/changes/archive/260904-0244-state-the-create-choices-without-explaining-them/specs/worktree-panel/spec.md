@@ -3,7 +3,7 @@
 ### Requirement: Every initialization suggestion is explicit and explained
 
 An environment-file suggestion and a package-manager setup suggestion SHALL start unchecked. Each
-SHALL name the root file that caused it to be offered. An environment-file suggestion SHALL warn that
+suggested ROW SHALL name the root file that caused it to be offered. An environment-file suggestion SHALL warn that
 the file may contain secrets. A suggestion SHALL NOT restate its own label, its own path, or what its
 mode does.
 

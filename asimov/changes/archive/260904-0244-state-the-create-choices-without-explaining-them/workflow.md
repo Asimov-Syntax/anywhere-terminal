@@ -12,16 +12,16 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [-] Review done — skipped: no escalation flag, and the diff is three host strings plus two CSS rules and one `title`/`aria-label` pair. Both proposal Must-nots carry their own witness: the save button's `aria-describedby` association (the F014 witness, untouched) and the secrets warning surviving truncation as title and aria-label.
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -53,3 +53,14 @@ Follow-up already scaffolded: `read-an-invalid-branch-name-as-an-error` owns the
 Its target requirement is `A disabled create action states what it is waiting for`, which likewise
 mandates today's behaviour — "Waiting to check this selection." is the spec's "pending clearance
 assessment" reason, not an accident.
+
+Verify gate: 7706/7706, type check clean, I10 and bundle gates green, `verify-status` exits 0 with
+all four tasks stamped. Biome reports the same 1 error / 14 warnings / 1 info as before the change,
+none of it in a file this change touches.
+1_1 grew a third Plan path mid-task: `src/extension.worktreeAssembly.test.ts` pinned the secrets
+warning by its casing rather than its presence, so shortening the host text broke an assembly witness
+outside the original lease.
+Spec wording tightened before apply, no scope change: "Each SHALL name the root file" became "Each
+suggested ROW SHALL name the root file". The sentence was inherited from the shipped requirement,
+where the suggestion TEXT carried the path; it is the row's `source` that carries it now, which is
+what both of the requirement's own scenarios already said.
