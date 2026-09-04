@@ -89,3 +89,41 @@
     1. `src/webview/worktree/WorktreeController.ts` — snapshot the opening once in `createDialogDeps()` and let the picker request and the bound answer both name it, so a predecessor form still on screen cannot post or receive the successor's token.
     2. `src/webview/worktree/WorktreeCreateDialog.ts` — clear the chosen-folder flag in the same withdrawal that marks the destination derived, so both kinds of override retire together.
     3. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` — a predecessor clicked while a successor opening is outstanding, and a disabled-destination mode read through the emitted selection and back out again.
+
+## 4. Review round 3 — a pick is an ask, and every ask is answered
+
+- [ ] 4_1 Anchor the opening the dispatch admitted, before the probe's first await
+  - **Deps**: 3_1
+  - **Refs**: design.md D4; .reviews/round-3.md F001
+  - **Boundary**: No change to what the probe derives, publishes or classifies; no new message or field
+  - **Acceptance**:
+    - Outcome: A probe resumes only on the opening that admitted it
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts` — `answerCreateProbe` takes the `Opening` the dispatch already looked up to set `latestSeq`, and anchors it before any await instead of on `stillOurs()`'s first call.
+    2. `src/providers/WorktreeHost.actions.test.ts` — the witness round 3 named as missing: a flagged probe carrying a `candidatePath`, suspended in the vetting's `realpath`, with a same-token refs replay landing before it resumes.
+
+- [ ] 4_2 Answer every picker this host opened, and say which pick is being answered
+  - **Deps**: 4_1
+  - **Refs**: specs/worktree-panel/spec.md#{an-opened-picker-holds-the-form-until-it-is-answered}; design.md D3, D7
+  - **Boundary**: The host mints no identity and resolves no path a message named; a gone form is still answered with nothing; no change to what a confirmed pick records
+  - **Acceptance**:
+    - Outcome: A pick that yields no folder is answered, carrying no path
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts
+  - **Plan**:
+    1. `src/types/messages.ts` — `ask` on the request and echoed on the answer, `path` becoming optional there, and the stale note on `path` that still calls it "re-resolved like a typed one" corrected to what D5 made true.
+    2. `src/providers/WorktreeHost.ts` — `pickDestination` posts on every arm except a form that is gone, echoing `repoId`, `token` and `ask` unchanged.
+    3. `src/providers/WorktreeHost.actions.test.ts` — one witness per D3 arm: confirmed, cancelled, thrown, unresolvable root, and each gone form still silent.
+    4. `src/types/messages.contract.test.ts` and `src/providers/TerminalViewProvider.worktree.test.ts` — the wire's own witnesses for the added field and the exhaustive inbound sample.
+
+- [ ] 4_3 Hold the form on its own pick, and let a stale answer change nothing
+  - **Deps**: 4_2
+  - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker,an-opened-picker-holds-the-form-until-it-is-answered}; design.md D6, D7
+  - **Boundary**: The form never reads the answer's path value; no new blocked-reason prose beyond the one string the existing gate already shows; no persistence
+  - **Acceptance**:
+    - Outcome: Create is withheld from the click until that same pick is answered
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts` — `pickAsked` beside `recoverAsked` and minted like it; the click arms the existing destination gate; `stateDestination` withdraws the ask in every branch; the answer applies only where its `ask` is still outstanding, and clears the gate either way.
+    2. `src/webview/worktree/WorktreeController.ts` — carry `ask` out on the request and hand the answer through unchanged.
+    3. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — Create withheld between click and answer and offered again after a cancel; a typed path and a repository switch each surviving a late answer.

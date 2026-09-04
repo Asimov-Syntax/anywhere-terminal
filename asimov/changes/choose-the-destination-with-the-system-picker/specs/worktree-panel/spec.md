@@ -7,6 +7,11 @@ that opens the system folder picker. The chosen folder SHALL become the folder t
 IN, keeping the name the form derives from its branch and resolving a collision inside that folder the
 way one is resolved inside the configured create root.
 
+### Requirement: An opened picker holds the form until it is answered
+
+From the moment the picker is opened until that request is answered, the create form SHALL NOT offer
+to create. Every opened picker SHALL be answered unless the form that opened it is gone.
+
 #### Scenario: A folder is chosen
 
 - **WHEN** the user opens the picker from the create form and confirms a folder
@@ -19,10 +24,21 @@ way one is resolved inside the configured create root.
 - **THEN** the form states the free name the host chose inside that same folder
 - **AND** the form names the directory that was skipped, as it does for the configured root
 
+#### Scenario: A create is not offered while the folder is still being resolved
+
+- **WHEN** the user has opened the picker and the request has not been answered
+- **THEN** the form does not offer to create, and states that it is waiting on the folder
+
 #### Scenario: The picker is dismissed
 
 - **WHEN** the user opens the picker and cancels it, or the picker fails
 - **THEN** the form's destination and its ability to create are what they were before
+
+#### Scenario: An answer arrives after the user has moved on
+
+- **WHEN** the user opens the picker and then types a destination, clears it, or switches repository
+  before the answer arrives
+- **THEN** the answer does not change the destination the user moved to
 
 #### Scenario: A typed destination replaces a chosen folder
 

@@ -8,12 +8,12 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [x] Gate 2: plan approved
+- [ ] Gate 2: plan approved
 
 ## Implement
 
-- [x] All tasks done (`tasks.md`)
-- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [ ] All tasks done (`tasks.md`)
+- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
@@ -120,3 +120,17 @@ fix D3 forbids is the fix this needs, so D3 has to move: only a form that is GON
 with nothing. F001's remaining window is mechanical (the probe anchors after `vettedOverride`'s await
 instead of taking the opening the dispatch already admitted) and rides along rather than landing
 alone, which would have closed the cycle as superseded and burnt a round for a three-line change.
+
+Replan (round-3 handback, 2026-09-04): D3 amended and D7 added; Gate 2 and the Implement gates the
+redesign invalidates unticked. Three ledger rows added, one of them `unresolved` by construction and
+named as such — a `showOpenDialog` that never settles has no reply that could release the form, and
+the shipped API always settles.
+Auto-decision (fastlane): the pick channel mirrors the debris authorization beside it — `ask` on the
+request, echoed on the answer — rather than inventing an identity, because that channel already
+solved this exact problem for this exact reason and already answers a refusal instead of going quiet.
+Auto-decision (fastlane): the form arms the destination gate it already has (`outstanding`) rather
+than adding a fourth destination state, so the pending state costs no new blocked-reason prose. The
+user has separately said the create form explains too much, so 4_3's Boundary forbids adding any.
+Auto-decision (fastlane): the sibling create callbacks still reading `this.refsToken` at event time
+(`onSelectionChange`, `onProvisionSwitch`, `onProvisionSave`, `onAuthorizeDebris`) stay out of scope —
+the round-3 chair explicitly accepted leaving them, and successor openings start with `chosenRoot: null`.
