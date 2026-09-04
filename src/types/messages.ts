@@ -1430,9 +1430,12 @@ export type BranchNameVerdict = { ok: true } | { ok: false; reason: string };
 /**
  * WebView → Extension: open the system folder picker for this create form.
  *
- * Carries no path of its own. The ANSWER is a suggestion into the same
- * untrusted override the user could have typed, so this request authorizes
- * nothing beyond showing a dialog (design.md D1).
+ * Carries no path of its own, and neither does what the form does with the
+ * reply. The chosen folder becomes the host's OWN record, resolved once by the
+ * host and read from there; the answer's path is presence-only and the form
+ * never reads its value, so nothing here becomes a webview-composed
+ * destination. This request authorizes nothing beyond showing a dialog
+ * (design.md D1, D5).
  */
 export interface WorktreePickDestinationMessage {
   type: "worktreePickDestination";
@@ -2714,9 +2717,12 @@ export interface WorktreeCreateResolutionMessage {
  * Posted for EVERY pick a live form opened, because the form holds itself
  * pending on the ask it minted and only an answer can release it. A confirmed
  * choice carries `path`; a cancel, a failure, an unresolvable root, an unwired
- * capability and a superseded pick each carry none. Silence is reserved for a
- * form that is gone — disposed, detached, or its opening replaced — which is
- * the only case with no state left to release (design.md D3).
+ * capability and a superseded pick each carry none. A same-token `Opening`
+ * REPLACEMENT is answered too — the surface and the token are still live, so
+ * there is still a form holding a gate. Silence is reserved for a form that is
+ * gone: disposed, its surface detached, or its opening retired so far that the
+ * token no longer resolves at all — the only case with no state left to
+ * release (design.md D3).
  *
  * Not in `WORKTREE_MESSAGE_TYPES` — that list enumerates what the WEBVIEW sends.
  */

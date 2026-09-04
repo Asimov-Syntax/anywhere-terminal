@@ -14,7 +14,7 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Review done — round 6 (cycle 3, discovery): WARN, 0 gating blockers, 0 feature / 0 machinery
 - [ ] Gate: implementation approved
 - [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
 
@@ -207,3 +207,25 @@ warnings / 1 info, none in a file this change touches.
 Validator warning rejected, not fixed: it reads 5_1's Outcome as a clause chain. "Choose is refused
 while a pick is outstanding" is eight words naming one observable state, and rewriting it to satisfy
 the heuristic would say less.
+
+Round 6 (cycle 3, discovery, explicit 13-commit list, opened on the user's own words): WARN, 0
+gating blockers. F005 verified fixed INDEPENDENTLY at last — the first click sets `pickAsked`
+synchronously, refuses both Choose and Create, every admitted live-form arm returns the exact ask,
+and the submit keyboard path reads the same gate. F006's pick → repository switch → late answer
+witness confirmed present and valid. A proposed picked-root debris-authority BLOCK was raised by the
+data-security lens and WITHDRAWN by the chair against the accepted contract: chosen-root collision
+and recover parity is deliberate, and every documented destructive bound is intact.
+F007 persists under its own ID as the accepted non-gating residual; round 6 found no new
+reachability or impact that would promote it, and classified it as a pre-admission silence rather
+than a second admitted picker releasing a live transaction.
+F008 (WARN, new): three changed contract comments still stated superseded semantics while the
+runtime was correct — the answer described as a suggestion into the typed override, cancel and
+failure described as silent, and a replaced opening listed under silence without separating a
+same-token replacement from a gone form. Accepted and fixed as 6_1, in code rather than through
+plan: the correction makes the comments say what the already-approved D3 and D5 say, so no `D#`
+moves and no contract is redefined. The cycle exits at Re-Verify with 0 gating blockers, so this was
+a trivial WARN auto-fix and not the fix loop the cycle cap forbids.
+Residual carried out of the change, owned by nobody yet: F007's liveness half. A rendered form can
+outlive its host `Opening` — including one whose repository departed — set its picker gate, and
+receive no answer because no picker is admitted for a token the host has moved past. Bounded by the
+successor opening the form is already waiting for; unbounded only if that answer never arrives.

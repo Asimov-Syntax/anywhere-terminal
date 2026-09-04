@@ -149,3 +149,19 @@
        repository switch that D7 names and 4_3 did not write (round-4 F006).
     3. `src/providers/WorktreeHost.ts` — comment only: the line equating a missing `Opening` with
        nobody waiting is wrong, and round-4 F007 is the case it misses.
+
+- [x] 6_1 Make the picker's contract comments say what the accepted design says — verified: pnpm run check-types && pnpm run check-types && VITEST_MAX_THREADS=3 pnpm run test:unit exit 0
+  - **Deps**: 5_1
+  - **Refs**: specs/worktree-panel/spec.md#{an-opened-picker-holds-the-form-until-it-is-answered}
+  - **Boundary**: Comments only. No runtime line changes, no contract is redefined, no `D#` moves —
+    the correction makes three statements match the D3 and D5 this cycle already approved.
+  - **Acceptance**:
+    - Outcome: No picker contract comment states a superseded rule
+    - Verify: command pnpm run check-types
+  - **Plan**:
+    1. `src/types/messages.ts` — `WorktreePickDestinationMessage`'s header, which still calls the
+       answer a suggestion into the typed override, and `WorktreeDestinationPickedMessage`'s, which
+       lists a replaced opening under silence without separating a same-token replacement (answered)
+       from a form that is gone (silent).
+    2. `src/providers/WorktreeHost.ts` — `pickDestination`'s function comment, whose last paragraph
+       still says cancel and failure post nothing and that the form is never disabled.

@@ -2111,10 +2111,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
    * continuation here re-reads its own ownership — a captured reference would
    * still be reachable and would answer a form that no longer exists.
    *
-   * Cancel, failure, and a form that has gone all produce no post at all. There
-   * is nothing to release: the form is never disabled while the dialog is up,
-   * because a form locked behind an OS dialog that never returns is a form the
-   * user cannot escape (design.md D3).
+   * Every pick a live form opened is answered — a confirmed choice with its
+   * path, and cancel, failure, an unresolvable root, an unwired capability and
+   * a superseded pick with none. The form DOES gate itself while the dialog is
+   * up, on both Create and the picker action, so it needs a terminal answer to
+   * be released: a form locked behind an OS dialog that never returns is a form
+   * the user cannot escape, which is why silence is reserved for a form that is
+   * already gone (design.md D3, amended after review round 3).
    */
   async function pickDestination(
     surface: WorktreeSurface,
