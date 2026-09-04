@@ -3148,9 +3148,9 @@ available.
 
 ### Requirement: A repository without provisioning configuration gets bounded initialization suggestions
 
-WHERE no provisioning source is present, the create form SHALL inspect only a fixed set of supported
-repository-root environment filenames and package-manager lockfiles. It SHALL NOT recursively scan,
-expand a wildcard, or read an environment file's contents to decide whether to suggest it. A present
+WHERE no provisioning source is present, the create form SHALL inspect a fixed set of supported
+environment filenames at the repository root and one level inside each workspace directory the
+repository itself declares, together with the repository-root package-manager lockfiles. A present
 source that is empty or unreadable SHALL remain the source's answer and SHALL suppress fallback
 suggestions.
 
@@ -3277,4 +3277,29 @@ explanation SHALL be available without changing any choice.
 
 - **WHEN** the detached-checkout choice is shown
 - **THEN** it carries an explanation of what detaching at a ref produces
+
+### Requirement: A workspace repository's package environment files are found
+
+WHERE the repository declares workspace packages, each declared directory SHALL be examined one level
+deep for the same supported environment filenames, and each found file SHALL be offered by its
+repo-relative path. The extension SHALL NOT scan a directory the repository did not declare, expand a
+pattern it does not implement, read an environment file's contents, offer anything that resolves
+outside the repository, or exceed the existing scan and row budgets however many patterns are
+declared.
+
+#### Scenario: A monorepo keeps its environment files in its packages
+
+- **WHEN** the repository declares `apps/*` as workspaces, has no root environment file, and
+  `apps/web/.env` and `apps/server/.env` are ordinary files
+- **THEN** both are offered as unchecked copy suggestions named `apps/web/.env` and `apps/server/.env`
+
+#### Scenario: A declared pattern points outside the repository
+
+- **WHEN** the repository declares a workspace pattern that resolves outside the checkout
+- **THEN** no suggestion from outside the repository is offered
+
+#### Scenario: The repository declares no workspaces
+
+- **WHEN** the repository has no workspace declaration
+- **THEN** only repository-root suggestions are offered
 

@@ -22,7 +22,7 @@
         },
         {
           "from": 1788483577389,
-          "to": null
+          "to": 1788483918553
         }
       ],
       "phases": [
@@ -48,7 +48,7 @@
         }
       ],
       "firstAt": 1788457254173,
-      "lastAt": 1788483724334,
+      "lastAt": 1788483765589,
       "buckets": [
         {
           "runtime": "claude",
@@ -127,12 +127,12 @@
           "phase": "plan",
           "agent": "asm-review-master",
           "model": "gpt-5.6-sol",
-          "messages": 1,
-          "inputTokens": 794,
-          "outputTokens": 1415,
+          "messages": 2,
+          "inputTokens": 1059,
+          "outputTokens": 2846,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 130560,
+          "cacheReadTokens": 275200,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
