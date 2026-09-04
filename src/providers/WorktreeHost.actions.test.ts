@@ -7749,4 +7749,38 @@ describe("deriving a destination inside a folder this host offered", () => {
     expect(latest(h.view)?.freePath).toBe("/second/trees/repo-feat");
     h.dispose();
   });
+  it("[4_1] answers nothing for a probe whose opening was replaced during the vetting", async () => {
+    // The probe's own anchor is taken on `stillOurs()`'s FIRST call, and that
+    // call happens after `vettedOverride` has already awaited. A replay landing
+    // inside that await is therefore anchored INTO, not rejected — the window
+    // round 1's fix left open, because the dispatch had already looked the
+    // opening up and did not hand it on (round-3 F001).
+    let release: ((resolved: string) => void) | undefined;
+    const h = await hostOffering("/elsewhere/trees", {
+      realpath: (p: string) =>
+        p === "/trees/typed"
+          ? new Promise<string>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(p),
+    });
+    await formOn(h, REPO, 1, false);
+
+    h.host.handleMessage(h.view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      candidatePath: "/trees/typed",
+    });
+    await settle();
+    h.host.handleMessage(h.view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+    release?.("/trees/typed");
+    await settle();
+
+    expect(latest(h.view), "published from an opening the replay had already retired").toBeUndefined();
+    h.dispose();
+  });
 });

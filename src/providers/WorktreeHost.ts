@@ -2164,13 +2164,27 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     surface: WorktreeSurface,
     msg: Extract<WorktreeActionMessage, { type: "worktreeCreateProbe" }>,
     repo: WorktreeRepo,
+    /**
+     * The opening the dispatch admitted this probe on.
+     *
+     * It INITIALISES the anchor and is never read as a captured reference —
+     * `stillOurs()` keeps its own map lookup, its sequence test and its
+     * equality check, so this can only reject a replacement the first call used
+     * to admit, never admit anything the first call would have refused.
+     */
+    admitted: Opening,
   ): Promise<void> {
     // Identity, never a captured reference (D9). The map entry can be released
     // while this continuation is suspended — the repository leaves the
     // workspace, a newer opening replaces it — and an object taken before the
     // await cannot be reached by that release, so the probe resumed and posted
     // from facts about a repository nobody has any more (round-5 B7).
-    let anchored: Opening | undefined;
+    // Anchored at ENTRY, not on first use. `vettedOverride` awaits before the
+    // first `stillOurs()` call, so a same-token replay landing inside THAT await
+    // was anchored into rather than rejected — the window round 1's fix left
+    // open, because the dispatch had already looked this object up to set
+    // `latestSeq` and simply did not hand it on (round-3 F001).
+    let anchored: Opening | undefined = admitted;
     const stillOurs = (): Opening | undefined => {
       const held = openingFor(surface, msg.repoId, msg.token);
       if (held === undefined || held.latestSeq > msg.seq) {
@@ -2888,7 +2902,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
         // WITHDRAWN with it, and for the same reason: between admitting a newer
         // probe and posting its answer, the previous repair stayed submittable.
         opening.publishedRepair = null;
-        void answerCreateProbe(surface, msg, repo);
+        void answerCreateProbe(surface, msg, repo, opening);
         return;
       }
       case "worktreeAuthorizeDebris": {

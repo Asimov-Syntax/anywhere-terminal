@@ -92,7 +92,7 @@
 
 ## 4. Review round 3 — a pick is an ask, and every ask is answered
 
-- [ ] 4_1 Anchor the opening the dispatch admitted, before the probe's first await
+- [x] 4_1 Anchor the opening the dispatch admitted, before the probe's first await — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 3_1
   - **Refs**: design.md D4; .reviews/round-3.md F001
   - **Boundary**: No change to what the probe derives, publishes or classifies; no new message or field
