@@ -38,3 +38,13 @@
   - **Plan**:
     1. `src/worktree/provisioning/suggestProvisioning.ts` — replace the `Declaration` union and the guard chain that produced it with the five-state classifier of D6, switched over exhaustively at its one consumer. `manifestText` carries the opened result's kind instead of collapsing every non-`text` outcome to `undefined`, so a containment or size refusal is `refused` and only a genuinely absent file is `absent`. `patternsOf` reports what it discarded, so a list that had members and kept none is `unsupported` rather than empty. Absoluteness is judged from the raw spelling per D7 — POSIX, UNC, and drive-qualified — before normalisation and before `splitGlob`.
     2. `src/worktree/provisioning/suggestProvisioning.test.ts` — the state matrix D6's ledger row names: one witness per state per manifest, each asserting both what is offered AND that the lower-priority manifest was never read; plus forward-slash, backslash, and UNC drive-path witnesses asserting no `readdir` and no candidate `lstat`. The round-1 and round-3 witnesses stay as they are — this task must not weaken one.
+
+- [x] 3_2 Prove a refused spelling probes nothing, not merely that it offers nothing — verified: pnpm exec vitest run src/worktree/provisioning/suggestProvisioning.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
+  - **Deps**: 3_1
+  - **Refs**: specs/worktree-panel/spec.md#{a-workspace-repositorys-package-environment-files-are-found}; design.md D7
+  - **Boundary**: Test-only — no production change, and no witness this change inherited may be weakened
+  - **Acceptance**:
+    - Outcome: A refused absolute spelling produces no candidate probe inside a workspace directory
+    - Verify: command pnpm exec vitest run src/worktree/provisioning/suggestProvisioning.test.ts
+  - **Plan**:
+    1. `src/worktree/provisioning/suggestProvisioning.test.ts` — the absolute-spelling witnesses capture `listed` but not `statted`, so a regression could `lstat` candidates derived from a refused spelling, offer nothing, and stay green (round-5 F009). Assert the candidate probes too, excluding the root environment and lockfile reads the detector makes either way.

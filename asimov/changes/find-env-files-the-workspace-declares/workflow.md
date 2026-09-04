@@ -14,9 +14,9 @@
 
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Review done _(user-initiated; `[-]` + reason if skipped)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
@@ -52,3 +52,10 @@ Outstanding: review round 5. Round 4 closed BLOCK, and its two sustained finding
 D6/D7 classifier landed as 73da233a under option 1 of the thrash stop. Round 4 consumed the
 once-per-change `--extend`, so round 5 must be relayed with `--user-approved '<the user's verbatim
 words>'`.
+
+Review closed at round 5 (cycle 3, verification): verdict WARN, 0 gating blockers. F002 and F007 —
+the two BLOCK findings that survived rounds 1, 3 and 4 and forced the option-1 handback — are
+confirmed fixed by the D6/D7 classifier at 73da233a, and the chair independently reproduced the
+pre-fix matrix result from d85a156b (exactly five failures). The single WARN, F009, is fixed as task
+3_2: the absolute-spelling witnesses asserted no offer and no readdir but never read `statted`, so a
+regression probing candidates under a refused spelling would have stayed green.

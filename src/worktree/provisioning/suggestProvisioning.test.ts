@@ -565,7 +565,7 @@ describe("suggestProvisioning — every declaration state, named once", () => {
       "\\\\server\\share\\*",
       "\\apps\\*",
     ])("%s offers nothing and lists no directory", async (pattern) => {
-      const { deps, listed } = root(
+      const { deps, listed, statted } = root(
         { "web/.env": "file", "apps/web/.env": "file", "C:/apps/web/.env": "file" },
         { "package.json": PKG([pattern]) },
       );
@@ -574,6 +574,14 @@ describe("suggestProvisioning — every declaration state, named once", () => {
 
       expect(model.entries).toEqual([]);
       expect(listed).toEqual([]);
+      // Offering nothing is not the claim. A refused spelling must not be
+      // PROBED either, and a regression that stats candidates under it would
+      // still offer nothing once containment refused them — green on the two
+      // assertions above while reading paths the manifest never declared
+      // (round-5 F009). The root's own fixed names are statted either way, and
+      // they are the only paths directly under it.
+      const nested = statted.filter((p) => p.startsWith(`${ROOT}/`) && p.slice(ROOT.length + 1).includes("/"));
+      expect(nested).toEqual([]);
     });
 
     it("does not invalidate the other patterns a manifest declares", async () => {
