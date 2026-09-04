@@ -401,6 +401,7 @@ async function builtHost(
     adoptSupported?: boolean;
     /** D7's base resolution: the commit a ref names, or undefined for none. */
     resolveBase?: (input: { repoPath: string; ref: string }) => Promise<string | undefined>;
+    acceptsBranchName?: (input: { repoPath: string; branch: string }) => Promise<boolean | null>;
     /**
      * What `realpath` answers, for the containment check that gates the
      * candidate path. Absent entries resolve to themselves, so the default
@@ -527,6 +528,7 @@ async function builtHost(
         }),
     ...(over.readPullRequests === undefined ? {} : { readPullRequests: over.readPullRequests }),
     ...(over.resolveBase === undefined ? {} : { resolveBase: over.resolveBase }),
+    ...(over.acceptsBranchName === undefined ? {} : { acceptsBranchName: over.acceptsBranchName }),
     // The host resolves the candidate against the filesystem before it lets the
     // candidate reach `exists`. These tests name paths that are not on disk, so
     // the resolver is the fake one and `symlinks` is what makes it lie.
@@ -4820,6 +4822,7 @@ describe("the host resolves a selection before the create runs", () => {
     occupiedCandidate?: { path: string; disposition: { kind: string } };
     blockedBy?: { ownerPath: string };
     baseValid?: { ok: boolean; oid?: string; reason?: string };
+    branchValid?: { ok: boolean; reason?: string };
   };
 
   function resolutionIn(view: { posts: ExtensionToWebViewMessage[] }): Resolution | undefined {
@@ -5056,6 +5059,114 @@ describe("the host resolves a selection before the create runs", () => {
     await settle();
 
     expect(resolutionIn(view)).toMatchObject({ baseValid: { ok: true, oid: "deadbeef" } });
+    dispose();
+  });
+
+  it("[1_1] carries git's refusal of a name it will not take as a branch", async () => {
+    const acceptsBranchName = vi.fn(async () => false);
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => "deadbeef",
+      acceptsBranchName,
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 0,
+      query: "brand new",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+
+    // The name git was asked about is the one the form typed, not a repaired
+    // spelling: a validator answering about something else is not a validator.
+    expect(acceptsBranchName).toHaveBeenCalledWith({ repoPath: expect.any(String), branch: "brand new" });
+    const answer = resolutionIn(view);
+    expect(answer?.branchValid?.ok).toBe(false);
+    expect(answer?.branchValid?.reason).toContain("brand new");
+    dispose();
+  });
+
+  it("[1_1] carries acceptance for a name git takes", async () => {
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => "deadbeef",
+      acceptsBranchName: async () => true,
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 0,
+      query: "brand-new",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+
+    expect(resolutionIn(view)?.branchValid).toEqual({ ok: true });
+    dispose();
+  });
+
+  it("[1_1] says nothing about a name git could not be asked about", async () => {
+    // `null` is not a refusal. The create then proceeds and git refuses it
+    // directly, exactly as it did before anyone asked (worktreeMutations.ts).
+    const { host, view, dispose } = await builtHost([windowRow()], false, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [], truncated: false }),
+      resolveBase: async () => "deadbeef",
+      acceptsBranchName: async () => null,
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 2 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 2 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 2,
+      seq: 0,
+      query: "brand new",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+
+    const answer = resolutionIn(view);
+    expect(answer?.mode.kind, "the setup did not produce a fresh resolution").toBe("fresh");
+    expect(answer?.branchValid).toBeUndefined();
+    dispose();
+  });
+
+  it("[1_1] asks nothing about a name for a mode that creates no branch", async () => {
+    // Same rule the base verdict follows: a verdict on a control the form has
+    // disabled would imply it is still live.
+    const acceptsBranchName = vi.fn(async () => false);
+    const { host, view, dispose } = await builtHost([windowRow()], true, {
+      createRoot: "/trees",
+      readRefs: async () => ({ ok: true, refs: [{ name: "feat", oid: "oid-feat", heldBy: "feat" }], truncated: false }),
+      probeReattach: async ({ repairPath }) => ({ kind: "adopt", adoptPath: repairPath }),
+      acceptsBranchName,
+    });
+    host.handleMessage(view, { type: "requestWorktreeCreateDefaults", repoId: REPO, opening: 1 });
+    host.handleMessage(view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    host.handleMessage(view, {
+      type: "worktreeCreateProbe",
+      repoId: REPO,
+      token: 1,
+      seq: 0,
+      query: "feat",
+      base: { kind: "ref", ref: "main" },
+    });
+    await settle();
+
+    const answer = resolutionIn(view);
+    expect(answer?.mode.kind, "the setup did not produce an adopt resolution").toBe("adopt");
+    expect(answer?.branchValid).toBeUndefined();
+    expect(acceptsBranchName).not.toHaveBeenCalled();
     dispose();
   });
 

@@ -1417,6 +1417,17 @@ export type ProbeBase = { kind: "ref"; ref: string } | { kind: "detached" };
 export type BaseVerdict = { ok: true; oid: string } | { ok: false; reason: string };
 
 /**
+ * Does git accept the typed name as a branch?
+ *
+ * `ok: false` carries the message the branch FIELD states — this is a field
+ * error, not a reason for the disabled action. ABSENT, like `BaseVerdict`'s,
+ * means nobody could be asked: git unavailable is not a refusal, and the create
+ * then proceeds for git to accept or refuse directly, exactly as it did before
+ * anything asked (`branchNameIsValid`, src/worktree/worktreeMutations.ts).
+ */
+export type BranchNameVerdict = { ok: true } | { ok: false; reason: string };
+
+/**
  * WebView → Extension: open the system folder picker for this create form.
  *
  * Carries no path of its own. The ANSWER is a suggestion into the same
@@ -2693,6 +2704,8 @@ export interface WorktreeCreateResolutionMessage {
   /** A branch checked out elsewhere: offered disabled, never submittable. */
   blockedBy?: { ownerPath: string };
   baseValid?: BaseVerdict;
+  /** Asked only where the mode CREATES a branch, on the rule `baseValid` follows. */
+  branchValid?: BranchNameVerdict;
 }
 
 /**

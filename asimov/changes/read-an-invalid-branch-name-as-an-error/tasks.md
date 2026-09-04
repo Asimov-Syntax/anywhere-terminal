@@ -1,6 +1,6 @@
 ## 1. Ask git, and say what it said
 
-- [ ] 1_1 Answer whether git takes the branch name, beside the base verdict
+- [x] 1_1 Answer whether git takes the branch name, beside the base verdict — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{a-branch-name-git-will-not-take-is-refused-on-the-field}
   - **Boundary**: The acceptability rules are NOT reimplemented — `branchNameIsValid`

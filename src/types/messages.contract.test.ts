@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import type {
   BranchDeleteOffer,
   BranchDeleteRequest,
+  BranchNameVerdict,
   DestinationDisposition,
   ExtensionToWebViewMessage,
   ProvisionEntry,
@@ -77,6 +78,16 @@ const probeDecliningTheChosenFolder: WorktreeCreateProbeMessage = {
 // must admit its absence — a required `path` would force the host to invent an
 // empty string for a cancel, which is a spelling of "chose nothing" the form
 // would have to know to decode (design.md D3).
+
+const refusedBranch: BranchNameVerdict = { ok: false, reason: 'git will not take "brand new" as a branch name.' };
+
+const acceptedBranch: BranchNameVerdict = { ok: true };
+
+// @ts-expect-error acceptance carries no reason — a message beside `ok: true` is a refusal nobody made
+const acceptedBranchWithAReason: BranchNameVerdict = { ok: true, reason: "fine" };
+
+// @ts-expect-error a refusal without its message leaves the field marked invalid and silent
+const refusedBranchWithNoReason: BranchNameVerdict = { ok: false };
 
 const pickEndingInAFolder: WorktreeDestinationPickedMessage = {
   type: "worktreeDestinationPicked",
@@ -622,5 +633,8 @@ describe("the wire contract", () => {
     expect(pickEndingInNothing.path).toBeUndefined();
     expect(pickEndingInNothing.ask).toBe(1);
     expect([pickWithoutItsAsk]).toHaveLength(1);
+    expect(refusedBranch.ok).toBe(false);
+    expect(acceptedBranch.ok).toBe(true);
+    expect([acceptedBranchWithAReason, refusedBranchWithNoReason]).toHaveLength(2);
   });
 });

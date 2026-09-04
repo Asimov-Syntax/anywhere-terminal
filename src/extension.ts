@@ -101,7 +101,7 @@ import {
   existenceFromStatError,
   type MutationOutcome,
 } from "./worktree/worktreeMutationService";
-import { worktreeHeadOid } from "./worktree/worktreeMutations";
+import { branchNameIsValid, worktreeHeadOid } from "./worktree/worktreeMutations";
 import { allocateWorktreePorts, previewWorktreePorts } from "./worktree/worktreePorts";
 
 /**
@@ -1252,6 +1252,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const oid = result.stdout.toString("utf8").trim();
       return oid.length === 0 ? undefined : oid;
     },
+    // Delegated to the same asker the create itself uses, never to a second
+    // reading of git's rules: `null` there means git could not be asked, and
+    // the host turns that into "not told" rather than a refusal.
+    acceptsBranchName: ({ repoPath, branch }) => branchNameIsValid(worktreeTreeDeps.runner, repoPath, branch),
     // The two evidence sources a removal blocker set needs and the tree does
     // not carry, from the same store and registry the projector reads.
     removalFacts: {

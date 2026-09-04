@@ -12,6 +12,7 @@ import type * as vscode from "vscode";
 import type {
   BaseVerdict,
   BranchDeleteRequest,
+  BranchNameVerdict,
   DebrisAuthorization,
   DestinationDisposition,
   ExtensionToWebViewMessage,
@@ -439,6 +440,11 @@ export interface WorktreeHostOptions {
    * resolution because the resolver is already holding this repository's refs.
    */
   resolveBase?(input: { repoPath: string; ref: string }): Promise<string | undefined>;
+  /**
+   * Does git accept this as a branch name? `null` means git could not be asked,
+   * which is not a refusal — the rules are never decided here.
+   */
+  acceptsBranchName?(input: { repoPath: string; branch: string }): Promise<boolean | null>;
 }
 
 /**
@@ -2333,6 +2339,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // (design.md D6).
     const takesBase = mode.kind === "fresh";
     const baseValid = takesBase ? await resolveBaseVerdict(repo, msg.base) : undefined;
+    // The same rule, for the same reason: only `fresh` creates a branch, and a
+    // verdict on a name no create would take is a verdict on nothing.
+    const branchValid = takesBase ? await resolveBranchVerdict(repo, msg.query) : undefined;
     const publishing = stillOurs();
     if (disposed || !surfaces.has(surface) || publishing === undefined) {
       return;
@@ -2378,7 +2387,31 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       ...(occupiedCandidate === undefined ? {} : { occupiedCandidate }),
       ...(selection.blockedBy === undefined ? {} : { blockedBy: selection.blockedBy }),
       ...(baseValid === undefined ? {} : { baseValid }),
+      ...(branchValid === undefined ? {} : { branchValid }),
     });
+  }
+
+  /**
+   * Does git take the typed name as a branch?
+   *
+   * ASKED, never decided here. `check-ref-format`'s rules are long,
+   * version-dependent and easy to get subtly wrong, and a validator that is
+   * merely close rejects names git would take — which is why
+   * `branchNameIsValid` asks in the first place. `undefined` when nobody could
+   * be asked, the same shape the base verdict uses, so an unassembled reader
+   * reports "not told" rather than "invalid".
+   */
+  async function resolveBranchVerdict(repo: WorktreeRepo, branch: string): Promise<BranchNameVerdict | undefined> {
+    const ask = options.acceptsBranchName;
+    if (ask === undefined) {
+      return undefined;
+    }
+    const accepted = await ask({ repoPath: repo.mainPath, branch }).catch(() => null);
+    return accepted === null
+      ? undefined
+      : accepted
+        ? { ok: true }
+        : { ok: false, reason: `git will not take "${branch}" as a branch name.` };
   }
 
   /**
