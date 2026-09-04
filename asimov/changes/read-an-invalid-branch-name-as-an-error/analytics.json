@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "target": {
+    "kind": "change",
+    "id": "read-an-invalid-branch-name-as-an-error"
+  },
+  "sessions": [
+    {
+      "sessionId": "649500f6-d2af-47ae-ba3d-6351c690ebca",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788486294044,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788486294044,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788486294044
+        }
+      ],
+      "firstAt": 1788486294044,
+      "lastAt": 1788486294044,
+      "buckets": []
+    }
+  ]
+}
