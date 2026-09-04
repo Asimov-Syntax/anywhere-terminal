@@ -2126,7 +2126,15 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // across the longest await in the host. Matching on the token alone would
     // let the answer to a question asked of one record become consent held by
     // its replacement (round-1 F001). A pick naming an opening this host does
-    // not hold opens no dialog at all — and is the one arm with nobody waiting.
+    // not hold opens no dialog at all.
+    //
+    // Not the same as nobody waiting, which is what this used to claim. A
+    // predecessor dialog can still be on screen after its opening was retired,
+    // and its click sets the form's gate and posts a token this host has moved
+    // past; it is then released only by the successor opening it is already
+    // waiting for. Bounded in practice, unbounded if that successor never
+    // arrives — round-4 F007, carried as a residual because telling a retired
+    // opening apart from a gone form is a change to what D3 means by "gone".
     const held = openingFor(surface, msg.repoId, msg.token);
     if (held === undefined) {
       return;

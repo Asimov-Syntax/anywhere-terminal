@@ -2705,7 +2705,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     // target, and an action that stayed live there would offer a destination
     // the form has withdrawn (design.md D1).
     if (pickDestination !== undefined) {
-      pickDestination.disabled = destRefused !== undefined;
+      // And refused while one pick is still unanswered. The form holds ONE
+      // outstanding ask, so a second click overwrites it — and the second
+      // pick's cancel then released a wait the first still owned, discarding a
+      // folder the user had confirmed (round-4 F005). Closed where it starts:
+      // there is never a second pick to lose the first to.
+      //
+      // Safe only under the amended D3. With every opened picker answered, this
+      // control is given back by an answer that always comes; under the rule
+      // that let a cancel go quiet it would have been unrecoverable.
+      pickDestination.disabled = destRefused !== undefined || pickAsked !== null;
     }
     pathNote.hidden = destRefused === undefined;
     pathNote.textContent = destRefused ?? "";

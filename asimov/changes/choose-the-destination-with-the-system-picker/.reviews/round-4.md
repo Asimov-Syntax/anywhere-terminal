@@ -55,6 +55,15 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - Class: feature
 - File: `src/webview/worktree/WorktreeCreateDialog.ts:1465-1471,3014-3028`; `src/providers/WorktreeHost.ts:2166-2193`
 - Status: accepted
+- Triage (author): ACCEPTED, not rebutted, and fixed at the source rather than at the composition.
+  Of the chair's three suggested fixes the first is taken: Choose is refused while this form has a
+  pick outstanding, so pick B can never open while A is unanswered and the composition is
+  unreachable from the panel. It needs no new mechanism — `pickAsked` is the gate the form already
+  holds for Create, read on one more control — and no `D#` moves, so this is remediation rather than
+  a handback. It is only SAFE because of the amended D3: with every opened picker answered, a
+  refused Choose is released by an answer that always comes, which is exactly what the pre-amendment
+  D3 could not promise. The host's `pickGeneration` ordering stays untouched as the defence for an
+  overlap the panel no longer produces (round-1 F003).
 - Triage: persists from round 3 through a narrower overlapping-pick boundary. The new ask and gate close the original single-pick submit/overwrite witnesses, but the form holds only one outstanding ask while the host keeps an older confirmed pick live when a newer picker cancels.
 
 **Invariant.** A terminal answer may release only the picker transaction it answers, and ending a newer picker without a folder must leave the destination and create ability as they were immediately before that picker opened.
@@ -78,6 +87,7 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - Class: feature
 - File: `src/webview/worktree/WorktreeCreateDialog.test.ts:5637-5722`
 - Status: accepted
+- Triage (author): ACCEPTED. Test-only; the missing witness is written.
 - Triage: the production branch is correct by inspection, but design.md's ledger and task 4_3 name three late-answer witnesses and only typed and cleared were added.
 - Evidence: the existing repository-switch test applies the picker answer before switching, so it exercises withdrawal of an already-applied `usingChosen`, not `pickAsked` being cleared before a late answer. No `[4_3]` test performs pick → switch repository → old answer.
 - Impact: the exact cross-repository silent-fallback defeater recorded in D7 has no regression tripwire.
@@ -94,6 +104,12 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - Class: feature
 - File: `src/providers/WorktreeHost.ts:2124-2127,2139-2141`; `src/webview/worktree/WorktreeController.ts:1427-1436`
 - Status: accepted
+- Triage (author): ACCEPTED, and SPLIT. The stale comment is corrected now. The liveness half is not
+  remediation: telling a form whose `Opening` is gone apart from one that is truly gone is a change
+  to what D3 means by "gone", and D3 is the decision this cycle already moved once — so it is
+  carried as a residual for the user rather than landed as a fix commit that would close the cycle
+  as superseded. Bounded in practice: the predecessor form is released by the successor opening it
+  is already waiting for.
 - Triage: new within F005's liveness cone. D3 distinguishes a gone form from a moved host record, but `pickDestination` treats missing Opening state as proof that nobody is waiting.
 - Evidence: during the already-established pending-successor window, `refsToken` and host Openings have advanced while the predecessor dialog can remain visible until all successor defaults arrive. Its captured picker callback sets `pickAsked` and posts the retired token; the host returns before defining `release`, and any response carrying that token would be dropped by the controller's current-token gate. A departed repository can similarly lose its Opening while its form remains visible.
 - Impact: Create remains withheld on that form until another destination transition or form replacement. Usually bounded by the successor opening, but unbounded if an expected defaults answer never arrives.

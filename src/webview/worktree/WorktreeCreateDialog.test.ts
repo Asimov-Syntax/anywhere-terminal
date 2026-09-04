@@ -5762,6 +5762,55 @@ describe("create worktree — choosing the folder the worktree is created in", (
     h.dispose();
   });
 
+  it("[5_1] refuses a second picker while the first is unanswered", () => {
+    // Round-4 F005. The form holds ONE outstanding ask, so a second click
+    // overwrites it — and the second pick's cancel then released a wait the
+    // first pick still owned, discarding a folder the user had confirmed. The
+    // composition is closed at its source: B never opens.
+    //
+    // Safe only because every opened picker is answered now (design.md D3). A
+    // refused Choose is released by an answer that always comes; under the
+    // pre-amendment rule it would have been a control the user could not
+    // recover.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.resolveAs({ kind: "fresh" });
+    h.resolveAs({ kind: "fresh" });
+    expect(h.pick()?.disabled, "Choose was not offered before any pick").toBe(false);
+
+    h.pick()?.click();
+    expect(h.pick()?.disabled, "a second picker could open over an unanswered one").toBe(true);
+    expect(h.asked, "the refused control still posted").toHaveLength(1);
+
+    h.answerNothing();
+    expect(h.pick()?.disabled, "the answer did not give the control back").toBe(false);
+    h.dispose();
+  });
+
+  it("[5_1] drops a pick answered after the form switched repository", () => {
+    // Round-4 F006. D7 names three late-answer defeaters — typed, cleared and
+    // switched — and only the first two had witnesses. The flag is form-wide
+    // while the host's record is per repository, so a folder carried across a
+    // switch would ask the new repository to use one only its predecessor was
+    // given, and it would fall back to its configured root in silence.
+    const h = withPicker({
+      repos: [createDefaults(), createDefaults({ repoId: "/other/.git", repoLabel: "other" })],
+    });
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.resolveAs({ kind: "fresh" });
+    h.resolveAs({ kind: "fresh" });
+    h.pick()?.click();
+
+    const repo = h.q<HTMLSelectElement>("#wt-repo-select");
+    repo.value = "/other/.git";
+    repo.dispatchEvent(new Event("change", { bubbles: true }));
+    h.answer();
+
+    expect(h.latest()?.repoId, "the switch did not take").toBe("/other/.git");
+    expect(h.latest()?.useChosenFolder, "a folder followed the form into another repository").toBeUndefined();
+    h.dispose();
+  });
+
   it("[4_3] offers Create again when the pick ends without a folder", () => {
     // Cancel is why D3 had to change: a wait with no terminal answer is a form
     // the user cannot escape, which is the trap the old rule existed to prevent.

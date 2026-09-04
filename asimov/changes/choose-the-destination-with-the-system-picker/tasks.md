@@ -128,3 +128,24 @@
     1. `src/webview/worktree/WorktreeCreateDialog.ts` — `pickAsked` beside `recoverAsked` and minted like it; `blockedBy` gains its own branch reading it; `stateDestination` withdraws the ask in every branch; the answer applies only where its `ask` is still outstanding, and clears the gate either way.
     2. `src/webview/worktree/WorktreeController.ts` — carry `ask` out on the request and hand the answer through unchanged.
     3. `src/webview/worktree/WorktreeCreateDialog.test.ts` and `src/webview/worktree/WorktreeController.test.ts` — Create withheld between click and answer and offered again after a cancel; a probe already in flight when the picker opened, whose answer must NOT release the pick's gate; and a typed path, a CLEARED field and a repository switch each surviving a late answer.
+
+## 5. Round-4 fixes
+
+- [x] 5_1 Refuse a second picker while the first is unanswered — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && VITEST_MAX_THREADS=3 pnpm run test:unit exit 0
+  - **Deps**: 4_3
+  - **Refs**: specs/worktree-panel/spec.md#{an-opened-picker-holds-the-form-until-it-is-answered}
+  - **Boundary**: The host's `pickGeneration` ordering is NOT touched — it stays the defence for an
+    overlap the panel no longer produces (round-1 F003), and removing it would trade one race for
+    another. No change to what a terminal answer means, to which arms are answered, or to the ask
+    the answer echoes. Only a form that is GONE still gets silence.
+  - **Acceptance**:
+    - Outcome: Choose is refused while a pick is outstanding
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeCreateDialog.ts` — the Choose control, disabled from the same
+       `pickAsked` gate `blockedBy` already reads, so the two controls are refused by one fact.
+    2. `src/webview/worktree/WorktreeCreateDialog.test.ts` — Choose refused while a pick is
+       outstanding and offered again once it is answered (round-4 F005), and the late answer after a
+       repository switch that D7 names and 4_3 did not write (round-4 F006).
+    3. `src/providers/WorktreeHost.ts` — comment only: the line equating a missing `Opening` with
+       nobody waiting is wrong, and round-4 F007 is the case it misses.
