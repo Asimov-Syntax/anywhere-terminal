@@ -31,6 +31,10 @@
         {
           "from": 1788487060553,
           "to": 1788489121650
+        },
+        {
+          "from": 1788497662943,
+          "to": null
         }
       ],
       "phases": [
@@ -57,10 +61,14 @@
         {
           "phase": "build",
           "from": 1788488814714
+        },
+        {
+          "phase": "plan",
+          "from": 1788498420607
         }
       ],
       "firstAt": 1788459075577,
-      "lastAt": 1788488679555,
+      "lastAt": 1788498389430,
       "buckets": [
         {
           "runtime": "claude",
@@ -533,15 +541,15 @@
           "phase": "build",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 155,
-          "inputTokens": 310,
-          "outputTokens": 105739,
-          "reasoningTokens": 27496,
-          "cacheWriteTokens": 353479,
-          "cacheReadTokens": 35075565,
+          "messages": 205,
+          "inputTokens": 410,
+          "outputTokens": 133825,
+          "reasoningTokens": 36103,
+          "cacheWriteTokens": 452678,
+          "cacheReadTokens": 44146190,
           "extra": {
-            "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 353479,
+            "cacheWrite5mTokens": 20359,
+            "cacheWrite1hTokens": 432319,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -693,6 +701,47 @@
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
           "cacheReadTokens": 1021440,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "5cc435ff-5db2-41fd-a510-c580c51f11bf",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788497662943,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788497662943,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788497662943
+        }
+      ],
+      "firstAt": 1788497662943,
+      "lastAt": 1788498555344,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "gpt-5.6-sol",
+          "messages": 11,
+          "inputTokens": 116397,
+          "outputTokens": 5903,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 631680,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

@@ -179,3 +179,31 @@ exits 0 with all eleven tasks stamped. Biome reports 1 error / 14 warnings / 1 i
 before this change and none of it in a file this change touches.
 Round 5 is refused by the thrash stop — the one `--extend` this change gets was spent on round 4, so
 any further round needs the user's own words. Presented to the user rather than taken.
+
+Round 5 superseded (mode `superseded`, BLOCK, F005 and F006 carried forward unverified): my fault
+again, and a different fault from round 2's. Round 2 was a scoping error; this is a process one. I
+amended an ACCEPTED spec requirement during build — `An opened picker holds the form until it is
+answered` gained "or to open another picker" plus a normative scenario — and added task 5_1, then
+asked a verification round to judge the implementation against an obligation that did not exist when
+cycle 2's gate set froze. `asimov-build` is explicit that an accepted spec change parks the lease and
+returns to plan; the user's standing grant covers replanning, not skipping Gate 2 on the way. The
+chair refused to move a frozen gate set silently, which is right.
+Gate 2, All tasks done and Verify gate are untickd here rather than left standing: the plan they
+recorded approval for is not the plan the tree now implements.
+The code is not in question and nothing is reverted — 5_1's expression and its two witnesses stand.
+What has to happen is the order: the contract delta re-enters Gate 2, and cycle 3 opens at global
+round 6 in DISCOVERY mode with a fresh explicit user approval. Per the cycle cap a third cycle never
+opens another fix loop, so whatever round 6 finds is a designed handback, not a patch.
+
+Replan (round-5 supersession, 2026-09-04): Gate 2 re-earned on the delta as it now stands. Nothing
+was rewritten — the amendment and task 5_1 are re-read as one set and approved in the right order
+this time. The pair of picker requirements is coherent: `A destination can be chosen with the system
+folder picker` owns the mode-based unavailability, `An opened picker holds the form until it is
+answered` owns the outstanding-pick one, and neither claims the action is available otherwise.
+Planned at: 0a4ff6fa
+Verify gate re-observed on the re-approved plan: 7715/7715, type check clean, I10 and bundle gates
+green, `verify-status` exits 0 with all eleven tasks stamped. Biome unchanged at 1 error / 14
+warnings / 1 info, none in a file this change touches.
+Validator warning rejected, not fixed: it reads 5_1's Outcome as a clause chain. "Choose is refused
+while a pick is outstanding" is eight words naming one observable state, and rewriting it to satisfy
+the heuristic would say less.
