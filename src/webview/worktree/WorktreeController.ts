@@ -625,8 +625,10 @@ export class WorktreeController {
           },
           // The opening rides here the way every other create request's does, so
           // the form states no identity of its own (design.md D2).
-          onPickDestination: ({ repoId }) => {
-            deps.postMessage({ type: "worktreePickDestination", repoId, token: opening });
+          onPickDestination: ({ repoId, ask }) => {
+            // The form's own ask, forwarded the way `probeSeq` is: which pick
+            // this is belongs to the form that opened it, not to this controller.
+            deps.postMessage({ type: "worktreePickDestination", repoId, token: opening, ask });
           },
           bindDestinationPicked: (apply) => {
             this.applyDestinationPicked = { opening, apply };

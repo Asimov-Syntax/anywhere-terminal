@@ -103,7 +103,7 @@
     1. `src/providers/WorktreeHost.ts` — `answerCreateProbe` takes the `Opening` the dispatch already looked up to set `latestSeq`, and anchors it before any await instead of on `stillOurs()`'s first call. The argument INITIALISES the anchor and is never read as a captured reference: `stillOurs()` keeps its map lookup, its sequence test and its exact-object equality, so the change can only reject the same-token replacement the first call currently admits, never admit anything new.
     2. `src/providers/WorktreeHost.actions.test.ts` — the witness round 3 named as missing: a flagged probe carrying a `candidatePath`, suspended in the vetting's `realpath`, with a same-token refs replay landing before it resumes.
 
-- [ ] 4_2 Answer every picker this host opened, and say which pick is being answered
+- [x] 4_2 Answer every picker this host opened, and say which pick is being answered — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts src/types/messages.contract.test.ts src/providers/TerminalViewProvider.worktree.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 4_1
   - **Refs**: specs/worktree-panel/spec.md#{an-opened-picker-holds-the-form-until-it-is-answered}; design.md D3, D7
   - **Boundary**: The host mints no identity and resolves no path a message named; a form that is GONE — disposal, detach, close, or a new opening retiring this one — still posts nothing; no change to what a confirmed pick records
@@ -115,6 +115,7 @@
     2. `src/providers/WorktreeHost.ts` — `pickDestination` posts on every arm except a form that is gone, echoing `repoId`, `token` and `ask` unchanged.
     3. `src/providers/WorktreeHost.actions.test.ts` — one witness per D3 arm. Answered: confirmed, cancelled, thrown, unresolvable root, a same-token refs replay that replaced the `Opening` mid-pick, and a pick superseded by a newer one — the last two are the arms the plan attack found dropping an answer while the form was still alive. Silent: disposal, detach, close, and a new opening.
     4. `src/types/messages.contract.test.ts` and `src/providers/TerminalViewProvider.worktree.test.ts` — the wire's own witnesses for the added field and the exhaustive inbound sample.
+    5. The callers a required field obliges, carrying it and nothing more — the form MINTS the ask the way it already mints `recoverAsks` and passes it in the callback payload like `onAuthorizeDebris` does, and the controller forwards it like `probeSeq`: `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeController.ts`, and the fixtures in `src/webview/messaging/MessageRouter.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`. What the form DOES with the ask is 4_3's.
 
 - [ ] 4_3 Hold the form on its own pick, and let a stale answer change nothing
   - **Deps**: 4_2

@@ -2147,6 +2147,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeDestinationPicked",
       repoId: REPO_A,
       token: 1,
+      ask: 1,
       path: "/stale/choice",
     });
     expect(answers, "a superseded pick reached the form").toEqual([]);
@@ -2166,6 +2167,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeDestinationPicked",
       repoId: REPO_A,
       token: 2,
+      ask: 1,
       path: "/live/choice",
     });
     expect(answers, "the retired form was handed the successor's answer").toEqual([]);
@@ -2215,6 +2217,7 @@ describe("the create a toolbar with no repository opens", () => {
       type: "worktreeDestinationPicked",
       repoId: REPO_A,
       token: 2,
+      ask: 1,
       path: "/successor/choice",
     });
 

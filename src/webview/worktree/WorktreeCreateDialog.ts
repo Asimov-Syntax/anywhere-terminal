@@ -302,7 +302,7 @@ export interface WorktreeCreateDialogDeps {
    * its own and no second place decides whether an answer belongs here
    * (design.md D2).
    */
-  onPickDestination?: (request: { repoId: string }) => void;
+  onPickDestination?: (request: { repoId: string; ask: number }) => void;
   /**
    * Receive the function that applies a picked folder.
    *
@@ -1011,6 +1011,8 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
    * resolve (design.md D5). Withdrawn by typing and by switching repository.
    */
   let usingChosen = false;
+  /** How many picks this form has opened. Minted like `recoverAsks` (D7). */
+  let pickAsks = 0;
   /**
    * The destination the user typed — the QUESTION, never the answer (D8).
    *
@@ -1434,7 +1436,11 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     pickDestination.textContent = "Choose…";
     pickDestination.title = "Pick the folder this worktree is created in.";
     pickDestination.addEventListener("click", () => {
-      deps.onPickDestination?.({ repoId: currentRepo().repoId });
+      // Minted here, like `recoverAsks` above: `token` separates two openings
+      // and this separates two picks inside one, so an answer to an earlier
+      // pick cannot be mistaken for an answer to this one (design.md D7).
+      pickAsks += 1;
+      deps.onPickDestination?.({ repoId: currentRepo().repoId, ask: pickAsks });
     });
     pathRow.appendChild(pickDestination);
   }

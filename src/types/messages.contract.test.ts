@@ -28,6 +28,7 @@ import type {
   WorktreeAfterCreate,
   WorktreeCreateMode,
   WorktreeCreateProbeMessage,
+  WorktreeDestinationPickedMessage,
   WorktreeProvisionResultMessage,
   WorktreeProvisionSaveMessage,
   WorktreeRemoveAssessmentPayload,
@@ -70,6 +71,34 @@ const probeDecliningTheChosenFolder: WorktreeCreateProbeMessage = {
   query: "feat",
   // @ts-expect-error the flag has no false; absence is how a form says the configured root
   useChosenFolder: false,
+};
+
+// The picked answer's `path` is what tells a folder from no folder, so the wire
+// must admit its absence — a required `path` would force the host to invent an
+// empty string for a cancel, which is a spelling of "chose nothing" the form
+// would have to know to decode (design.md D3).
+
+const pickEndingInAFolder: WorktreeDestinationPickedMessage = {
+  type: "worktreeDestinationPicked",
+  repoId: "/repo/.git",
+  token: 1,
+  ask: 1,
+  path: "/elsewhere/trees",
+};
+
+const pickEndingInNothing: WorktreeDestinationPickedMessage = {
+  type: "worktreeDestinationPicked",
+  repoId: "/repo/.git",
+  token: 1,
+  ask: 1,
+};
+
+// @ts-expect-error every answer names the pick it answers, or it can release the wrong wait
+const pickWithoutItsAsk: WorktreeDestinationPickedMessage = {
+  type: "worktreeDestinationPicked",
+  repoId: "/repo/.git",
+  token: 1,
+  path: "/elsewhere/trees",
 };
 
 const probeNamingAFolder: WorktreeCreateProbeMessage = {
@@ -589,5 +618,9 @@ describe("the wire contract", () => {
     expect(probeUsingTheChosenFolder.useChosenFolder).toBe(true);
     expect(probeUsingTheConfiguredRoot.useChosenFolder).toBeUndefined();
     expect([probeDecliningTheChosenFolder, probeNamingAFolder]).toHaveLength(2);
+    expect(pickEndingInAFolder.path).toBe("/elsewhere/trees");
+    expect(pickEndingInNothing.path).toBeUndefined();
+    expect(pickEndingInNothing.ask).toBe(1);
+    expect([pickWithoutItsAsk]).toHaveLength(1);
   });
 });

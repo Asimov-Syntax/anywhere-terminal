@@ -1428,6 +1428,15 @@ export interface WorktreePickDestinationMessage {
   repoId: string;
   /** Echoed back, so an answer cannot reach a form that did not ask (D2). */
   token: number;
+  /**
+   * WHICH pick this is, within one opening.
+   *
+   * `token` separates two openings; this separates two picks inside one. The
+   * form holds itself pending on the ask it minted, so an answer to an earlier
+   * pick must not release the wait for a later one — the same thing `ask` does
+   * for the debris authorization above, and `seq` for the probe (design.md D7).
+   */
+  ask: number;
 }
 
 export interface WorktreeCreateProbeMessage {
@@ -2701,8 +2710,22 @@ export interface WorktreeDestinationPickedMessage {
   repoId: string;
   /** Echoed from the request. An answer naming another opening is dropped. */
   token: number;
-  /** The chosen folder, absolute. Untrusted, and re-resolved like a typed one. */
-  path: string;
+  /** Echoed from the request. An answer to a pick the form has moved past is dropped. */
+  ask: number;
+  /**
+   * The chosen folder, absolute — ABSENT where the pick ended without one.
+   *
+   * Absent is the terminal answer for a cancel, a picker that threw, a root
+   * that would not resolve, an unwired capability, and a pick a newer one
+   * superseded. It exists so the form can tell "no folder" from "still waiting"
+   * and stop waiting either way; silence is reserved for a form that is gone
+   * (design.md D3).
+   *
+   * The form never reads this value. The host derives inside its own record,
+   * and a path the webview echoed back would be a webview-composed destination
+   * (design.md D5) — presence, not content, is what this field is for.
+   */
+  path?: string;
 }
 
 /**

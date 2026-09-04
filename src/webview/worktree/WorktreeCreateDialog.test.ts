@@ -5444,7 +5444,7 @@ describe("create worktree — choosing the folder the worktree is created in", (
       latest: () => selections.at(-1),
       pick: () => h.host.querySelector<HTMLButtonElement>(".wt-path-pick"),
       answer: (path = CHOSEN) => {
-        apply?.({ type: "worktreeDestinationPicked", repoId: createDefaults().repoId, token: 1, path });
+        apply?.({ type: "worktreeDestinationPicked", repoId: createDefaults().repoId, token: 1, ask: 1, path });
       },
       path: () => h.q<HTMLInputElement>("#wt-path"),
       /**

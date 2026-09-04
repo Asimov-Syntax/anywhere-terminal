@@ -275,6 +275,7 @@ describe("the worktree create dialog's answers reach the controller", () => {
       type: "worktreeDestinationPicked",
       repoId: "/repo/.git",
       token: 3,
+      ask: 1,
       path: "/elsewhere/trees",
     } as const;
 
@@ -287,7 +288,7 @@ describe("the worktree create dialog's answers reach the controller", () => {
     const dispatch = createMessageRouter(createMockHandlers());
 
     expect(() =>
-      dispatch({ type: "worktreeDestinationPicked", repoId: "/repo/.git", token: 1, path: "/elsewhere" }),
+      dispatch({ type: "worktreeDestinationPicked", repoId: "/repo/.git", token: 1, ask: 1, path: "/elsewhere" }),
     ).not.toThrow();
   });
 

@@ -2114,28 +2114,57 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     surface: WorktreeSurface,
     msg: Extract<WorktreeActionMessage, { type: "worktreePickDestination" }>,
   ): Promise<void> {
-    const pick = options.actions?.pickFolder;
-    if (pick === undefined) {
-      return;
-    }
     // The opening as an OBJECT, taken before the dialog opens, because the token
     // it rides is not identity: `requestWorktreeRefs` REPLACES the whole record
     // even for a token it already holds, and this continuation is suspended
     // across the longest await in the host. Matching on the token alone would
     // let the answer to a question asked of one record become consent held by
     // its replacement (round-1 F001). A pick naming an opening this host does
-    // not hold opens no dialog at all.
+    // not hold opens no dialog at all — and is the one arm with nobody waiting.
     const held = openingFor(surface, msg.repoId, msg.token);
     if (held === undefined) {
+      return;
+    }
+    /**
+     * End this pick, one way or the other.
+     *
+     * Silence is for a form that is GONE, and nothing else (design.md D3). Every
+     * other arm answers, carrying no path — the form cannot tell "no folder"
+     * from "still waiting" without being told, and the plan attack found two
+     * arms below dropping an answer while the surface and its token were still
+     * live, either of which would have left the form waiting forever.
+     *
+     * `ask` is echoed, so releasing an older pick cannot release a newer one.
+     */
+    const release = (path?: string): void => {
+      if (disposed || !surfaces.has(surface) || openingFor(surface, msg.repoId, msg.token) === undefined) {
+        return;
+      }
+      surface.post({
+        type: "worktreeDestinationPicked",
+        repoId: msg.repoId,
+        token: msg.token,
+        ask: msg.ask,
+        ...(path === undefined ? {} : { path }),
+      });
+    };
+    const pick = options.actions?.pickFolder;
+    if (pick === undefined) {
+      // A capability nobody wired is still an answer. The form renders its
+      // action on its own dependencies, not on this one, so leaving it silent
+      // would hang a form the host can simply tell.
+      release();
       return;
     }
     let chosen: string | undefined;
     try {
       chosen = await pick();
     } catch {
+      release();
       return;
     }
     if (chosen === undefined || chosen === "") {
+      release();
       return;
     }
     // Ordered by CONFIRMATION, not by resolution: the two picks race only behind
@@ -2154,10 +2183,14 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // form that is gone.
     const opening = disposed || !surfaces.has(surface) ? undefined : openingFor(surface, msg.repoId, msg.token);
     if (opening === undefined || opening !== held || opening.pickGeneration !== generation || resolved === null) {
+      // Not recorded — and, where a form is still there to hear it, still
+      // answered. A replaced `Opening` and a superseded pick both leave the
+      // surface and the token alive, so `release` finds a form and tells it.
+      release();
       return;
     }
     opening.chosenRoot = resolved;
-    surface.post({ type: "worktreeDestinationPicked", repoId: msg.repoId, token: msg.token, path: chosen });
+    release(chosen);
   }
 
   async function answerCreateProbe(
@@ -2867,7 +2900,13 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
       case "worktreePickDestination": {
         // Type-checked before it enters async logic, like every other inbound
         // payload: the discriminant alone is not the payload (round-3 W1).
-        if (typeof msg.repoId !== "string" || !Number.isSafeInteger(msg.token) || msg.token < 0) {
+        if (
+          typeof msg.repoId !== "string" ||
+          !Number.isSafeInteger(msg.token) ||
+          msg.token < 0 ||
+          !Number.isSafeInteger(msg.ask) ||
+          msg.ask < 0
+        ) {
           return;
         }
         void pickDestination(surface, msg);

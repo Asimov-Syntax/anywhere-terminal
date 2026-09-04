@@ -7327,10 +7327,15 @@ describe("choosing a destination with the system picker", () => {
    * into. `requestWorktreeRefs` is what mints one — the defaults request does
    * not, and a picker sent without one is correctly unowned and silent.
    */
-  async function withOpening(pickFolder?: WorktreeActions["pickFolder"], token = 1) {
+  async function withOpening(
+    pickFolder?: WorktreeActions["pickFolder"],
+    over: Record<string, unknown> = {},
+    token = 1,
+  ) {
     const built = await builtHost([windowRow()], false, {
       readRefs: async () => ({ ok: true, refs: [], truncated: false }),
       ...(pickFolder === undefined ? {} : { pickFolder }),
+      ...over,
     });
     // Both doors, in this order: the defaults ask is what establishes an
     // opening at all, and refs is what records the token the picker answers to.
@@ -7344,46 +7349,93 @@ describe("choosing a destination with the system picker", () => {
   it("[1_1] answers a confirmed choice, echoing the opening that asked", async () => {
     const { host, view, dispose } = await withOpening(async () => "/elsewhere/trees");
 
-    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
 
     expect(opened(view)).toEqual([
-      { type: "worktreeDestinationPicked", repoId: REPO, token: 1, path: "/elsewhere/trees" },
+      { type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1, path: "/elsewhere/trees" },
     ]);
     dispose();
   });
 
-  it("[1_1] posts nothing when the picker is cancelled", async () => {
-    // Cancel has no "chose nothing" answer, because nothing was taken: the form
-    // is never disabled while the dialog is up, so there is no state to release.
+  it("[4_2] answers a cancelled picker, carrying no path", async () => {
+    // Cancel used to be silence, on the reasoning that nothing had been taken.
+    // The form now holds itself pending on the ask, so silence is what strands
+    // it — the answer says "no folder" rather than leaving "still waiting" (D3).
     const { host, view, dispose } = await withOpening(async () => undefined);
 
-    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
 
-    expect(opened(view)).toEqual([]);
+    expect(opened(view)).toEqual([{ type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1 }]);
     dispose();
   });
 
-  it("[1_1] posts nothing when the picker fails", async () => {
+  it("[4_2] answers a picker that threw, carrying no path", async () => {
     const { host, view, dispose } = await withOpening(async () => {
       throw new Error("no dialog here");
     });
 
-    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
 
-    expect(opened(view)).toEqual([]);
+    expect(opened(view)).toEqual([{ type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1 }]);
     dispose();
   });
 
-  it("[1_1] offers nothing at all where the capability is not wired", async () => {
+  it("[4_2] answers where the capability is not wired at all", async () => {
+    // The form renders its action on its OWN dependencies, not on this host's
+    // capability, so an unwired host still owes the ask an answer or the form
+    // waits on a dialog that was never going to open.
     const { host, view, dispose } = await withOpening();
 
-    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
 
-    expect(opened(view)).toEqual([]);
+    expect(opened(view)).toEqual([{ type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1 }]);
+    dispose();
+  });
+
+  it("[4_2] answers a pick whose root will not resolve, carrying no path", async () => {
+    const { host, view, dispose } = await withOpening(async () => "/elsewhere/trees", {
+      realpath: async () => {
+        throw new Error("gone");
+      },
+    });
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
+    await settle();
+
+    expect(opened(view)).toEqual([{ type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1 }]);
+    dispose();
+  });
+
+  it("[4_2] answers a pick a newer one superseded, carrying no path", async () => {
+    // Superseded is not gone. The form opened two pickers and is waiting on
+    // both asks; releasing the older one is safe precisely because the answer
+    // echoes its own `ask`, so it cannot release the newer (D3, D7).
+    const offered = ["/first/trees", "/second/trees"];
+    let release: ((resolved: string) => void) | undefined;
+    const { host, view, dispose } = await withOpening(async () => offered.shift() ?? "", {
+      realpath: (p: string) =>
+        p === "/first/trees"
+          ? new Promise<string>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(p),
+    });
+
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
+    await settle();
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 2 });
+    await settle();
+    release?.("/first/trees");
+    await settle();
+
+    expect(opened(view)).toEqual([
+      { type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 2, path: "/second/trees" },
+      { type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1 },
+    ]);
     dispose();
   });
 
@@ -7399,7 +7451,7 @@ describe("choosing a destination with the system picker", () => {
         }),
     );
 
-    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
     host.handleMessage(view, { type: "worktreeCreateClosed", opening: 1 });
     await settle();
@@ -7419,7 +7471,7 @@ describe("choosing a destination with the system picker", () => {
         }),
     );
 
-    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    host.handleMessage(view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
     // A second form opens while the first picker is still up, replacing the
     // opening the answer names.
@@ -7458,7 +7510,7 @@ describe("deriving a destination inside a folder this host offered", () => {
     built.host.handleMessage(built.view, { type: "requestWorktreeRefs", repoId, token });
     await settle();
     if (pick) {
-      built.host.handleMessage(built.view, { type: "worktreePickDestination", repoId, token });
+      built.host.handleMessage(built.view, { type: "worktreePickDestination", repoId, token, ask: 1 });
       await settle();
     }
     built.view.posts.length = 0;
@@ -7671,7 +7723,7 @@ describe("deriving a destination inside a folder this host offered", () => {
         }),
     });
     await formOn(h, REPO, 1, false);
-    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
 
     h.host.handleMessage(h.view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
@@ -7679,10 +7731,12 @@ describe("deriving a destination inside a folder this host offered", () => {
     release?.("/elsewhere/trees");
     await settle();
 
-    expect(
-      h.view.posts.filter((m) => m.type === "worktreeDestinationPicked"),
-      "answered a form whose opening the replay had already replaced",
-    ).toEqual([]);
+    // The RECORD is dropped — that is the invariant round 1 bought — but the
+    // form is still there and still waiting, so it is told. Silence here is what
+    // the plan attack found stranding a live form (round-3 F005, D3).
+    expect(h.view.posts.filter((m) => m.type === "worktreeDestinationPicked")).toEqual([
+      { type: "worktreeDestinationPicked", repoId: REPO, token: 1, ask: 1 },
+    ]);
     h.view.posts.length = 0;
     probe(h, REPO, 1, 0);
     await settle();
@@ -7735,9 +7789,9 @@ describe("deriving a destination inside a folder this host offered", () => {
     });
     await formOn(h, REPO, 1, false);
 
-    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
-    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1, ask: 1 });
     await settle();
     release?.("/first/trees");
     await settle();
