@@ -12,7 +12,7 @@
     2. `src/worktree/provisioning/suggestProvisioning.test.ts` — the witnesses that assert the current sentences, and one that fails if `suggestion` becomes absent rather than short.
     3. `src/extension.worktreeAssembly.test.ts` — the assembly witness reading the secrets warning off the rendered row, which pinned the sentence's casing rather than its presence.
 
-- [ ] 1_2 Render a suggestion as a hint beside the row, not a paragraph under it
+- [x] 1_2 Render a suggestion as a hint beside the row, not a paragraph under it — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{every-initialization-suggestion-is-explicit-and-explained}
   - **Boundary**: No change to the live notes — `wt-brow-yield`, `wt-brow-contested`, and the contender note each describe a relationship between rows that a row cannot show on its own; no change to selection, grouping or exclusion

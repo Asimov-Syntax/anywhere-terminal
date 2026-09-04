@@ -943,6 +943,12 @@ function bringRow(row: BringRow, index: number): HTMLElement {
     const why = document.createElement("span");
     why.className = "wt-brow-note wt-brow-suggested";
     why.textContent = row.suggestion;
+    // On the row's line rather than under it, so a narrow panel clips it. The
+    // secrets warning is the only on-screen marker that a row is a secret file,
+    // so it stays reachable when clipped instead of disappearing with the
+    // measure.
+    why.title = row.suggestion;
+    why.setAttribute("aria-label", row.suggestion);
     meta.appendChild(why);
   }
   if (row.contested === true && row.group !== undefined) {

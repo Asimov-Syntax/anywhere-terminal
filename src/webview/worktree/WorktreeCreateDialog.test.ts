@@ -1610,10 +1610,10 @@ describe("Move uncommitted work", () => {
 });
 
 describe("Bring over — fallback suggestions are explicit, explained, and current-create-only", () => {
-  const ENV_WHY =
-    "`.env.local` is at the repository root and may contain secrets. Copy creates an independent file in the new worktree.";
-  const SETUP_WHY =
-    "`pnpm-lock.yaml` is at the repository root. Run setup executes `pnpm install` in the worktree after file provisioning.";
+  // The host's own short text, verbatim (suggestProvisioning.ts). The row
+  // already renders the path and the mode, so the hint carries neither.
+  const ENV_WHY = "May contain secrets.";
+  const SETUP_WHY = "Runs after files are copied.";
 
   function suggested() {
     return provisionModel({
@@ -1642,11 +1642,23 @@ describe("Bring over — fallback suggestions are explicit, explained, and curre
     expect(boxFor(host, "s2").checked).toBe(false);
   });
 
-  it("explains every suggestion beside its own row", () => {
+  it("hints every suggestion beside its own row", () => {
     const { host } = withSuggestions();
     const said = Array.from(host.querySelectorAll<HTMLElement>(".wt-brow")).map((r) => r.textContent ?? "");
     expect(said.some((t) => t.includes(ENV_WHY))).toBe(true);
     expect(said.some((t) => t.includes(SETUP_WHY))).toBe(true);
+  });
+
+  it("[1_2] keeps the secrets warning readable when the hint is truncated", () => {
+    // The hint sits on the row's line now, so a narrow panel can clip it. The
+    // warning is the only on-screen marker that a row is a secret file, so it
+    // stays reachable on hover and to assistive technology rather than being
+    // visible only when the panel happens to be wide enough.
+    const { host } = withSuggestions();
+    const hint = host.querySelector<HTMLElement>(".wt-brow-suggested");
+
+    expect(hint?.title).toBe(ENV_WHY);
+    expect(hint?.getAttribute("aria-label")).toBe(ENV_WHY);
   });
 
   it("summarizes an untouched suggestion set as unselected, not as configured", () => {

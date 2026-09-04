@@ -1266,6 +1266,18 @@
 .wt-brow--excluded .wt-brow-meta {
   grid-column: 1;
 }
+/* The host's short reason a row nobody configured is here. One line beside the
+   subject, never a paragraph under it: the row already shows the path and the
+   mode, so this carries only what it cannot — and it yields the measure to the
+   subject rather than pushing it. */
+.wt-brow-suggested {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Provider-file text. Truncated rather than wrapped: a long script must not push
    the form's own controls off the measure. */
 .wt-brow-code {
