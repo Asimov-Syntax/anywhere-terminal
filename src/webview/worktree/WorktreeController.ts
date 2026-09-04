@@ -391,7 +391,19 @@ export class WorktreeController {
   private applyPullRequests: ((repoId: string, offer: WorktreePullRequestOffer) => void) | null = null;
   private applyResolution: ((resolution: WorktreeCreateResolutionMessage) => void) | null = null;
   private applyDebrisAuthorization: ((answer: WorktreeDebrisAuthorizedMessage) => void) | null = null;
-  private applyDestinationPicked: ((answer: WorktreeDestinationPickedMessage) => void) | null = null;
+  /**
+   * The live form's picker binding, WITH the opening that composed it.
+   *
+   * The opening travels beside the callback rather than being read when an
+   * answer lands: a form stays interactive until its successor's defaults
+   * arrive, so between `openCreate` and that render the controller's current
+   * opening is the SUCCESSOR's while the bound form is the predecessor
+   * (round-1 F002).
+   */
+  private applyDestinationPicked: {
+    opening: number;
+    apply: (answer: WorktreeDestinationPickedMessage) => void;
+  } | null = null;
   /** Notices the panel is showing, newest last, one per scope+verb. */
   private actionResults: WorktreeActionResult[] = [];
   /**
@@ -504,114 +516,123 @@ export class WorktreeController {
       // The form's seed is the HOST's answer, never a path derived here: the
       // spec says a create names the destination it will actually use, and only
       // the host knows the configured root and which candidates are free.
-      createDialogDeps: () => ({
-        repos: this.createRepos(),
-        // The destination depends on the branch, so every settled branch edit
-        // re-asks and the answer replaces the seed in place (round-3 B12).
-        onSelectionChange: (selection) => {
-          const source = this.createSource;
-          deps.postMessage({
-            type: "requestWorktreeCreateDefaults",
-            repoId: selection.repoId,
-            opening: this.refsToken,
-            branch: selection.branch,
-            ...(source?.repoId === selection.repoId
-              ? {
-                  sourceWorktreeId: source.worktreeId,
-                  ...(source.generation === undefined ? {} : { sourceGeneration: source.generation }),
-                }
-              : {}),
-          });
-          // The same settled edit, asked as the other question: the defaults
-          // answer where a create would GO, and this one answers what it would
-          // DO. Both ride the opening's token, because `repoId` names a
-          // repository and not an opening (design.md D1).
-          //
-          // The WHOLE selection, forwarded field for field. A base or a
-          // destination the form holds but never posts is a field the host's
-          // answer cannot be about, and `baseValid` would then only ever exist
-          // in tests that inject it (round-3 B4).
-          this.probeSeq += 1;
-          deps.postMessage({
-            type: "worktreeCreateProbe",
-            repoId: selection.repoId,
-            token: this.refsToken,
-            seq: this.probeSeq,
-            query: selection.branch,
-            ...(selection.base === undefined ? {} : { base: selection.base }),
-            ...(selection.candidatePath === undefined ? {} : { candidatePath: selection.candidatePath }),
-            ...(selection.useChosenFolder === undefined ? {} : { useChosenFolder: selection.useChosenFolder }),
-          });
-        },
-        bindDefaults: (apply) => {
-          this.applyCreateDefaults = apply;
-        },
-        bindProvisioning: (apply) => {
-          this.applyProvisionOffer = apply;
-        },
-        bindMigration: (apply) => {
-          this.applyMigrationOffer = apply;
-        },
-        // A source the HOST detected, named by id. The message carries no file,
-        // no path and no model — the host re-resolves that provider itself, and
-        // the fresh offer comes back through `bindProvisioning` (design.md D5).
-        onProvisionSwitch: (request) => {
-          deps.postMessage({
-            type: "worktreeProvisionSwitch",
-            repoId: request.repoId,
-            // The opening this form was composed in, the same one every other
-            // request from it rides. A switch naming a retired opening is not
-            // honoured, which is what stops a dismissed form redrawing.
-            opening: this.refsToken,
-            switch: request.switch,
-            provider: request.provider as WorktreeProvisionOffer["model"]["providers"][number]["id"],
-          });
-        },
-        // The user's selection, named by the host's own ids against the offer
-        // that issued them. No path and no key: the host derives the file it
-        // writes and the root it writes under from its own cache, and the
-        // message's `repoId` selects a record rather than becoming a
-        // destination (design.md D1).
-        onProvisionSave: (request) => {
-          deps.postMessage({
-            type: "worktreeProvisionSave",
-            repoId: request.repoId,
-            // The opening this form was composed in, like every other request
-            // from it. A save naming a retired opening is not honoured, which
-            // is what stops a dismissed form writing.
-            opening: this.refsToken,
-            switch: request.switch,
-            offerId: request.offerId,
-            kept: request.kept,
-          });
-        },
-        bindPullRequests: (apply) => {
-          this.applyPullRequests = apply;
-        },
-        bindRefs: (apply) => {
-          this.applyRefs = apply;
-        },
-        bindResolution: (apply) => {
-          this.applyResolution = apply;
-        },
-        // Its own request, sent only when the user accepts the recover offer —
-        // the probe is answered per settled edit, so a token riding it would be
-        // one nobody asked for (design.md D6).
-        onAuthorizeDebris: ({ repoId, ask, path }) => {
-          deps.postMessage({ type: "worktreeAuthorizeDebris", repoId, token: this.refsToken, ask, path });
-        },
-        bindDebrisAuthorization: (apply) => {
-          this.applyDebrisAuthorization = apply;
-        },
-        // The opening rides here the way every other create request's does, so
-        // the form states no identity of its own (design.md D2).
-        onPickDestination: ({ repoId }) => {
-          deps.postMessage({ type: "worktreePickDestination", repoId, token: this.refsToken });
-        },
-        bindDestinationPicked: (apply) => {
-          this.applyDestinationPicked = apply;
-        },
-      }),
+      createDialogDeps: () => {
+        const opening = this.refsToken;
+        return {
+          // Snapshotted where the form is COMPOSED, not read where a callback
+          // fires. `openCreate` advances the opening before the successor dialog
+          // exists and the predecessor stays live until its defaults land, so a
+          // callback reading the current opening at click time names the
+          // successor — the same trap `onCreateClosed` already avoids by taking
+          // the opening from the view (round-1 B3, round-1 F002).
+          repos: this.createRepos(),
+          // The destination depends on the branch, so every settled branch edit
+          // re-asks and the answer replaces the seed in place (round-3 B12).
+          onSelectionChange: (selection) => {
+            const source = this.createSource;
+            deps.postMessage({
+              type: "requestWorktreeCreateDefaults",
+              repoId: selection.repoId,
+              opening: this.refsToken,
+              branch: selection.branch,
+              ...(source?.repoId === selection.repoId
+                ? {
+                    sourceWorktreeId: source.worktreeId,
+                    ...(source.generation === undefined ? {} : { sourceGeneration: source.generation }),
+                  }
+                : {}),
+            });
+            // The same settled edit, asked as the other question: the defaults
+            // answer where a create would GO, and this one answers what it would
+            // DO. Both ride the opening's token, because `repoId` names a
+            // repository and not an opening (design.md D1).
+            //
+            // The WHOLE selection, forwarded field for field. A base or a
+            // destination the form holds but never posts is a field the host's
+            // answer cannot be about, and `baseValid` would then only ever exist
+            // in tests that inject it (round-3 B4).
+            this.probeSeq += 1;
+            deps.postMessage({
+              type: "worktreeCreateProbe",
+              repoId: selection.repoId,
+              token: this.refsToken,
+              seq: this.probeSeq,
+              query: selection.branch,
+              ...(selection.base === undefined ? {} : { base: selection.base }),
+              ...(selection.candidatePath === undefined ? {} : { candidatePath: selection.candidatePath }),
+              ...(selection.useChosenFolder === undefined ? {} : { useChosenFolder: selection.useChosenFolder }),
+            });
+          },
+          bindDefaults: (apply) => {
+            this.applyCreateDefaults = apply;
+          },
+          bindProvisioning: (apply) => {
+            this.applyProvisionOffer = apply;
+          },
+          bindMigration: (apply) => {
+            this.applyMigrationOffer = apply;
+          },
+          // A source the HOST detected, named by id. The message carries no file,
+          // no path and no model — the host re-resolves that provider itself, and
+          // the fresh offer comes back through `bindProvisioning` (design.md D5).
+          onProvisionSwitch: (request) => {
+            deps.postMessage({
+              type: "worktreeProvisionSwitch",
+              repoId: request.repoId,
+              // The opening this form was composed in, the same one every other
+              // request from it rides. A switch naming a retired opening is not
+              // honoured, which is what stops a dismissed form redrawing.
+              opening: this.refsToken,
+              switch: request.switch,
+              provider: request.provider as WorktreeProvisionOffer["model"]["providers"][number]["id"],
+            });
+          },
+          // The user's selection, named by the host's own ids against the offer
+          // that issued them. No path and no key: the host derives the file it
+          // writes and the root it writes under from its own cache, and the
+          // message's `repoId` selects a record rather than becoming a
+          // destination (design.md D1).
+          onProvisionSave: (request) => {
+            deps.postMessage({
+              type: "worktreeProvisionSave",
+              repoId: request.repoId,
+              // The opening this form was composed in, like every other request
+              // from it. A save naming a retired opening is not honoured, which
+              // is what stops a dismissed form writing.
+              opening: this.refsToken,
+              switch: request.switch,
+              offerId: request.offerId,
+              kept: request.kept,
+            });
+          },
+          bindPullRequests: (apply) => {
+            this.applyPullRequests = apply;
+          },
+          bindRefs: (apply) => {
+            this.applyRefs = apply;
+          },
+          bindResolution: (apply) => {
+            this.applyResolution = apply;
+          },
+          // Its own request, sent only when the user accepts the recover offer —
+          // the probe is answered per settled edit, so a token riding it would be
+          // one nobody asked for (design.md D6).
+          onAuthorizeDebris: ({ repoId, ask, path }) => {
+            deps.postMessage({ type: "worktreeAuthorizeDebris", repoId, token: this.refsToken, ask, path });
+          },
+          bindDebrisAuthorization: (apply) => {
+            this.applyDebrisAuthorization = apply;
+          },
+          // The opening rides here the way every other create request's does, so
+          // the form states no identity of its own (design.md D2).
+          onPickDestination: ({ repoId }) => {
+            deps.postMessage({ type: "worktreePickDestination", repoId, token: opening });
+          },
+          bindDestinationPicked: (apply) => {
+            this.applyDestinationPicked = { opening, apply };
+          },
+        };
+      },
       onLaunchSubmit: (request) => {
         const frozen = this.frozenLaunch;
         if (frozen === null) {
@@ -1404,10 +1425,15 @@ export class WorktreeController {
    * applies whatever reaches it.
    */
   handleDestinationPicked(msg: WorktreeDestinationPickedMessage): void {
-    if (msg.token !== this.refsToken) {
+    const bound = this.applyDestinationPicked;
+    // Both, and they are different questions: the token says the answer is not
+    // for a retired opening, and the binding says the form on screen is the one
+    // that asked. A successor's token passes the first on its own, which is how
+    // a form that never opened the picker was told a folder (round-1 F002).
+    if (bound === null || msg.token !== this.refsToken || msg.token !== bound.opening) {
       return;
     }
-    this.applyDestinationPicked?.(msg);
+    bound.apply(msg);
   }
 
   /**

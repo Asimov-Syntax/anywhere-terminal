@@ -2674,6 +2674,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // target. The derivation below then refills the field with that target,
       // so the disabled control shows the directory actually being used.
       pathIsDerived = true;
+      // The folder goes with it. A typed override is withdrawn for good by the
+      // line above — `selection()` reads `pathIsDerived`, so it never returns —
+      // and a chosen folder that merely went quiet and came back would give the
+      // form two meanings of "withdrawn" and make the destination depend on
+      // history the user cannot see (round-1 F004).
+      usingChosen = false;
     }
     // The host's verdict on the base, which only applies where a base applies.
     // Reported BEFORE submit rather than as a git failure after it (D7).

@@ -78,7 +78,7 @@
     1. `src/providers/WorktreeHost.ts` — `Opening` gains the pick generation F003 names, initialised beside `chosenRoot`; `pickDestination` captures the `Opening` before it opens the dialog, advances the generation on a confirmed answer, and writes only where `openingFor(...)` returns that same object with that generation still current; `answerCreateProbe`'s `stillOurs()` captures on its first call and requires object identity on every later one, which is the one predicate covering derivation, publication, and the candidate and repair state written there.
     2. `src/providers/WorktreeHost.actions.test.ts` — the overlaps the round names: a same-token refs replay landing while a pick is suspended and again while a probe is suspended between derivation and publication, and two confirmed picks whose root resolutions finish out of order.
 
-- [ ] 3_2 Bind the picker to the form that opened it, and withdraw a chosen folder like a typed one
+- [x] 3_2 Bind the picker to the form that opened it, and withdraw a chosen folder like a typed one — verified: pnpm exec vitest run src/webview/worktree/WorktreeController.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 2_2
   - **Refs**: design.md D2, D6; .reviews/round-1.md F002, F004
   - **Boundary**: No change to the other create callbacks' opening handling, to how a destination is displayed, or to which modes withdraw the destination

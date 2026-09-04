@@ -2151,13 +2151,74 @@ describe("the create a toolbar with no repository opens", () => {
     });
     expect(answers, "a superseded pick reached the form").toEqual([]);
 
+    // The successor's answer reaches the successor's OWN binding — the form the
+    // user is looking at rebinds when it opens, and that is the binding a live
+    // pick belongs to.
+    const live: unknown[] = [];
+    (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { bindDestinationPicked(fn: (a: unknown) => void): void } } };
+      }
+    ).view.deps
+      .createDialogDeps()
+      .bindDestinationPicked((a) => live.push(a));
     h.controller.handleDestinationPicked({
       type: "worktreeDestinationPicked",
       repoId: REPO_A,
       token: 2,
       path: "/live/choice",
     });
-    expect(answers).toHaveLength(1);
+    expect(answers, "the retired form was handed the successor's answer").toEqual([]);
+    expect(live).toHaveLength(1);
+  });
+
+  it("[3_2] asks with the opening that composed the form, not the newest one", () => {
+    // `openCreate` advances the opening BEFORE the successor dialog exists, and
+    // the predecessor stays on screen until the defaults land. A callback that
+    // reads the controller's current opening when it fires therefore names the
+    // successor, and the folder chosen from one form becomes authority for a
+    // form that never opened the picker (round-1 F002).
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const deps = (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { onPickDestination(r: { repoId: string }): void } } };
+      }
+    ).view.deps.createDialogDeps();
+
+    h.controller.openCreate();
+    h.posts.length = 0;
+    deps.onPickDestination({ repoId: REPO_A });
+
+    expect(h.posts.find((m) => m.type === "worktreePickDestination")).toMatchObject({
+      repoId: REPO_A,
+      token: 1,
+    });
+  });
+
+  it("[3_2] does not hand a successor's answer to the form still on screen", () => {
+    // The other half of the same window: the predecessor is what is bound when
+    // the successor's answer arrives, and a token-only guard admits it.
+    const h = ready(twoRepoResponse());
+    h.controller.openCreate();
+    const answers: unknown[] = [];
+    (
+      h.controller as unknown as {
+        view: { deps: { createDialogDeps(): { bindDestinationPicked(fn: (a: unknown) => void): void } } };
+      }
+    ).view.deps
+      .createDialogDeps()
+      .bindDestinationPicked((a) => answers.push(a));
+
+    h.controller.openCreate();
+    h.controller.handleDestinationPicked({
+      type: "worktreeDestinationPicked",
+      repoId: REPO_A,
+      token: 2,
+      path: "/successor/choice",
+    });
+
+    expect(answers, "a form that never opened the picker was told a folder").toEqual([]);
   });
 
   it("[2_2] forwards the chosen-folder flag onto the probe, and nothing else", () => {

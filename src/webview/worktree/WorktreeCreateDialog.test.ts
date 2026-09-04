@@ -5598,6 +5598,23 @@ describe("create worktree — choosing the folder the worktree is created in", (
     h.dispose();
   });
 
+  it("[3_2] withdraws a chosen folder where the mode withdraws the destination", () => {
+    // Two kinds of override, one withdrawal. A typed path is retired for good
+    // by the same transition, so a chosen folder that merely goes quiet and
+    // returns makes the destination depend on hidden history (round-1 F004).
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.answer();
+    expect(h.latest()?.useChosenFolder, "the setup never reached the chosen state").toBe(true);
+
+    h.resolveAs({ kind: "adopt", adoptPath: "/trees/repo-feature", expectedBranchOid: "oid-feature" });
+    type(h.q<HTMLInputElement>("#wt-branch"), "other");
+
+    expect(h.latest()?.useChosenFolder, "a folder the withdrawal hid came back").toBeUndefined();
+    h.dispose();
+  });
+
   it("[2_2] renders no action where an answer could never arrive", () => {
     // `onPickDestination` without `bindDestinationPicked` is a button whose
     // reply reaches nobody, which is a control that does nothing.
