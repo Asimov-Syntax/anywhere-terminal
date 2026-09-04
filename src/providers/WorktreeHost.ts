@@ -1241,6 +1241,18 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
      * covers what one form can actually be using (design.md D4).
      */
     chosenRoot: PreparedRoot | null;
+    /**
+     * How many picks this opening has CONFIRMED, counting from zero.
+     *
+     * Nothing disables the action while the OS dialog is up — D3 refuses to lock
+     * a form behind a dialog that may never return — so two picks can be in
+     * flight at once, and their root resolutions can finish in either order.
+     * Without this the older answer's continuation overwrites the newer one and
+     * the create lands in a folder the user has already moved off (round-1
+     * F003). Advanced the moment a dialog CONFIRMS, so what the counter orders
+     * is the user's choices rather than the resolutions racing behind them.
+     */
+    pickGeneration: number;
   }
 
   /** The two resolved modes, as they were PUBLISHED, with the branch they were for. */
@@ -2106,6 +2118,17 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (pick === undefined) {
       return;
     }
+    // The opening as an OBJECT, taken before the dialog opens, because the token
+    // it rides is not identity: `requestWorktreeRefs` REPLACES the whole record
+    // even for a token it already holds, and this continuation is suspended
+    // across the longest await in the host. Matching on the token alone would
+    // let the answer to a question asked of one record become consent held by
+    // its replacement (round-1 F001). A pick naming an opening this host does
+    // not hold opens no dialog at all.
+    const held = openingFor(surface, msg.repoId, msg.token);
+    if (held === undefined) {
+      return;
+    }
     let chosen: string | undefined;
     try {
       chosen = await pick();
@@ -2115,6 +2138,11 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     if (chosen === undefined || chosen === "") {
       return;
     }
+    // Ordered by CONFIRMATION, not by resolution: the two picks race only behind
+    // the dialog, and the user's second answer is the one they meant even when
+    // its root resolves first (round-1 F003).
+    held.pickGeneration += 1;
+    const generation = held.pickGeneration;
     // Resolved HERE, once, on the answer the dialog returned. Recording the
     // spelling instead would leave it to be re-resolved when the probe uses it,
     // and a link retargeted in between would move the honoured area onto a
@@ -2125,7 +2153,7 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // object the retirement already dropped is the same mistake as posting to a
     // form that is gone.
     const opening = disposed || !surfaces.has(surface) ? undefined : openingFor(surface, msg.repoId, msg.token);
-    if (opening === undefined || resolved === null) {
+    if (opening === undefined || opening !== held || opening.pickGeneration !== generation || resolved === null) {
       return;
     }
     opening.chosenRoot = resolved;
@@ -2142,9 +2170,19 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
     // workspace, a newer opening replaces it — and an object taken before the
     // await cannot be reached by that release, so the probe resumed and posted
     // from facts about a repository nobody has any more (round-5 B7).
+    let anchored: Opening | undefined;
     const stillOurs = (): Opening | undefined => {
       const held = openingFor(surface, msg.repoId, msg.token);
-      return held !== undefined && held.latestSeq <= msg.seq ? held : undefined;
+      if (held === undefined || held.latestSeq > msg.seq) {
+        return undefined;
+      }
+      // The FIRST call anchors; every later one must find the same object. The
+      // token survives a same-token refs replay and the replacement's reset
+      // `latestSeq` passes the seq test, so a token-only guard readmitted a
+      // continuation that had derived its destination — and its debris and
+      // repair state — from a record nobody holds any more (round-1 F001).
+      anchored ??= held;
+      return held === anchored ? held : undefined;
     };
 
     const override = await vettedOverride(msg.candidatePath, repo);
@@ -3473,6 +3511,9 @@ export function createWorktreeHost(options: WorktreeHostOptions): WorktreeHost {
           // narrows the honoured area to the configured root and can never widen
           // it (design.md D4).
           chosenRoot: null,
+          // A fresh opening has confirmed nothing, so a pick still suspended on
+          // the opening this one replaced can never match it.
+          pickGeneration: 0,
         });
         void inFlight
           .then((answer) => {

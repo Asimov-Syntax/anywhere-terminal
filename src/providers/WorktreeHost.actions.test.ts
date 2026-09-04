@@ -7657,4 +7657,96 @@ describe("deriving a destination inside a folder this host offered", () => {
     expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
     h.dispose();
   });
+  it("[3_1] drops a pick whose opening was replaced while the dialog was up", async () => {
+    // The dialog is the longest await in this file, and `requestWorktreeRefs`
+    // replaces the whole opening even for a token it already holds. Token
+    // equality alone therefore proves nothing about the object the pick STARTED
+    // on: the resumed continuation would write consent into a record that was
+    // built after the user was asked (round-1 F001).
+    let release: ((folder: string) => void) | undefined;
+    const h = await hostOffering("/elsewhere/trees", {
+      pickFolder: () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    });
+    await formOn(h, REPO, 1, false);
+    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+
+    h.host.handleMessage(h.view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+    release?.("/elsewhere/trees");
+    await settle();
+
+    expect(
+      h.view.posts.filter((m) => m.type === "worktreeDestinationPicked"),
+      "answered a form whose opening the replay had already replaced",
+    ).toEqual([]);
+    h.view.posts.length = 0;
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/trees/repo-feat");
+    h.dispose();
+  });
+
+  it("[3_1] answers nothing for a probe whose opening was replaced mid-read", async () => {
+    // The probe derives BEFORE it awaits the enumeration and publishes after.
+    // A replay landing in that window leaves the token intact and resets
+    // `latestSeq`, so a token-only guard readmits the continuation and lets it
+    // publish a destination computed from a record nobody holds (round-1 F001).
+    const reads: Array<(read: RepoRefsRead) => void> = [];
+    const h = await hostOffering("/elsewhere/trees", {
+      readRefs: () =>
+        new Promise<RepoRefsRead>((resolve) => {
+          reads.push(resolve);
+        }),
+    });
+    await formOn(h, REPO, 1);
+
+    probe(h, REPO, 1, 0);
+    await settle();
+    h.host.handleMessage(h.view, { type: "requestWorktreeRefs", repoId: REPO, token: 1 });
+    await settle();
+    reads[0]?.({ ok: true, refs: [], truncated: false });
+    await settle();
+
+    expect(latest(h.view), "published a destination derived from a retired opening").toBeUndefined();
+    h.dispose();
+  });
+
+  it("[3_1] keeps the newer folder when an older pick resolves last", async () => {
+    // Nothing disables the action while the OS dialog is up — D3 refuses to
+    // lock a form behind a dialog that may never return — so two picks can be
+    // in flight. If the older one's resolution finishes last it overwrites the
+    // newer, and the create lands in a folder the user has already moved off
+    // (round-1 F003).
+    const offered = ["/first/trees", "/second/trees"];
+    let release: ((resolved: string) => void) | undefined;
+    const h = await hostOffering("", {
+      pickFolder: async () => offered.shift() ?? "",
+      realpath: (p: string) =>
+        p === "/first/trees"
+          ? new Promise<string>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(p),
+    });
+    await formOn(h, REPO, 1, false);
+
+    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+    h.host.handleMessage(h.view, { type: "worktreePickDestination", repoId: REPO, token: 1 });
+    await settle();
+    release?.("/first/trees");
+    await settle();
+    h.view.posts.length = 0;
+
+    probe(h, REPO, 1, 0);
+    await settle();
+
+    expect(latest(h.view)?.freePath).toBe("/second/trees/repo-feat");
+    h.dispose();
+  });
 });

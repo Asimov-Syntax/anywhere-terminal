@@ -43,6 +43,8 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - File: `src/providers/WorktreeHost.ts:2101-2132,2145-2182,2251-2296,3463-3475`
 - Status: accepted
 - Triage: `requestWorktreeRefs` replaces the `Opening` object even when the token is unchanged. Both new picker continuations rely on token lookup rather than exact object identity across awaits, so the sequential replay witness at `WorktreeHost.actions.test.ts:7620-7635` does not exercise the defeating overlap.
+- Author status: accepted
+- Author triage: Accepted, with the reachability recorded rather than used as a rebuttal. The shipped producer never re-issues a held token — `openCreateForRepo` does `refsToken += 1` (`WorktreeController.ts:984`) before the only `requestWorktreeRefs` post (`:1007`), `onCreateClosed` only advances the counter, and openings are keyed per surface, so a same-token replacement cannot arise from the panel. That makes the finding unreachable today but leaves the host's own predicate wrong, and this change carries the `security-privacy` flag on a consent record. Fixed at every boundary the inventory lists: `pickDestination` captures the `Opening` before opening the dialog and requires `openingFor(...) === captured` after both awaits, and `answerCreateProbe`'s `stillOurs()` captures on its first call and requires object identity on every later one, which covers chosen-root derivation, publication, and the `debrisCandidate`/`publishedRepair` writes in one predicate.
 
 **Invariant.** Any asynchronous continuation that reads or writes one `Opening`'s authority must prove that the exact `Opening` object survived; `(surface, repoId, token)` is insufficient because a same-token refs replay replaces that object by design.
 
@@ -66,6 +68,8 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - File: `src/webview/worktree/WorktreeController.ts:507-543,608-610,943-1007`
 - Status: accepted
 - Triage: The plan attack explicitly required the opening to be snapshotted when the dialog dependencies are constructed. The added controller test invokes the callback only while `refsToken` is unchanged, so it cannot fail when the callback reads a successor token.
+- Author status: accepted
+- Author triage: Accepted. Reproduced: `createDialogDeps()` is a per-dialog factory, but every callback in it reads the mutable `this.refsToken` at event time, and `openCreateForRepo` advances that counter before the successor dialog renders while the predecessor stays interactive. The codebase already fixed this exact class once — `onCreateClosed` takes the opening from the view because reading `refsToken` there 'named the SUCCESSOR' (round-1 B3, `WorktreeController.ts:670-676`) — so the picker reintroduced a hazard the panel had already retired. Fixed by snapshotting the opening at factory time for the picker request and binding the answer to that same snapshot, so a superseded form's answer cannot reach the successor's `applyDestinationPicked` either. The pre-existing callbacks that read `this.refsToken` are left alone: they are outside this change's diff and its lease.
 
 **Invariant.** A form-originated authority request must carry the immutable opening that composed that form, never the controller's mutable current opening at event time.
 
@@ -89,6 +93,8 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - File: `src/providers/WorktreeHost.ts:2101-2132,2815-2823`
 - Status: accepted
 - Triage: Every picker request starts an independent detached continuation, while `Opening.chosenRoot` has no picker generation. No witness overlaps two confirmed picks whose root resolutions complete out of order.
+- Author status: accepted
+- Author triage: Accepted. Reachable: D3 deliberately leaves the form live while the OS dialog is up, so the Choose control is not disabled during a pick and two `worktreePickDestination` messages can each start an independent continuation. Fixed with the per-opening confirmation generation the finding names, advanced the moment a pick returns a non-empty answer and re-checked beside the captured `Opening` identity after `prepareResolvedRoot`.
 
 **Evidence.** Pick A can return first and suspend in `prepareResolvedRoot(A)`. The form is no longer behind the OS dialog and the Choose control remains enabled, so pick B can return and resolve first, writing/posting B. When A's slower root resolution finishes, it unconditionally writes/posts A. The final record and final UI answer are therefore the older confirmed choice even though B was confirmed later.
 
@@ -108,6 +114,8 @@ Verify-gate evidence is the recorded `bun run asm change verify-status choose-th
 - File: `src/webview/worktree/WorktreeCreateDialog.ts:1357-1389,2241-2250,2659-2677,3119-3140`
 - Status: accepted
 - Triage: The changed test checks only that the input and Choose button become disabled; it never inspects the selection after an adopt/reattach answer.
+- Author status: accepted
+- Author triage: Accepted. Confirmed asymmetric: the `destRefused` block sets `pathIsDerived = true`, which withdraws a typed override from `selection()` for good, but never clears `usingChosen`, so the flag survives the round trip out of adopt/reattach. Fixed by clearing it in the same withdrawal, and the witness now reads the emitted selection rather than only the disabled controls.
 
 **Evidence.** `usingChosen` is cleared only by the `typed` and `repoChanged` branches of `stateDestination`. When a host resolution changes `draft.branchMode` to `adopt` or `reattach`, `syncDerived` marks only `pathIsDerived = true`; `selection()` still emits `useChosenFolder: true`. The old chosen state can therefore remain in the ask key and silently reappear when the form later returns to a destination-bearing mode, unlike a typed override, which the same transition permanently withdraws.
 

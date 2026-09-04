@@ -64,3 +64,28 @@
     - Verify: command pnpm exec vitest run src/extension.worktreeAssembly.test.ts
   - **Plan**:
     1. `src/extension.worktreeAssembly.test.ts` — drive the real wiring: choose a folder, submit, and read the `worktree add` argv. Wait on the argv the assertion reads, never a bare `settle()` — a wait that does not name the thing being asserted is the defect this suite already carries.
+
+## 3. Review round 1 — hold the opening across every await
+
+- [x] 3_1 Prove a chosen folder is recorded only by the opening that asked, and only by its newest pick — verified: pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
+  - **Deps**: 2_1
+  - **Refs**: specs/worktree-panel/spec.md#{only-a-folder-this-extension-offered-is-derived-under}; design.md D4, D5; .reviews/round-1.md F001, F003
+  - **Boundary**: No change to what a chosen folder means once recorded, to the typed-override precedence, or to the create path's handling of `path`; no new message, field, or configuration
+  - **Acceptance**:
+    - Outcome: A suspended continuation writes only to the exact opening it started on
+    - Verify: command pnpm exec vitest run src/providers/WorktreeHost.actions.test.ts
+  - **Plan**:
+    1. `src/providers/WorktreeHost.ts` — `Opening` gains the pick generation F003 names, initialised beside `chosenRoot`; `pickDestination` captures the `Opening` before it opens the dialog, advances the generation on a confirmed answer, and writes only where `openingFor(...)` returns that same object with that generation still current; `answerCreateProbe`'s `stillOurs()` captures on its first call and requires object identity on every later one, which is the one predicate covering derivation, publication, and the candidate and repair state written there.
+    2. `src/providers/WorktreeHost.actions.test.ts` — the overlaps the round names: a same-token refs replay landing while a pick is suspended and again while a probe is suspended between derivation and publication, and two confirmed picks whose root resolutions finish out of order.
+
+- [ ] 3_2 Bind the picker to the form that opened it, and withdraw a chosen folder like a typed one
+  - **Deps**: 2_2
+  - **Refs**: design.md D2, D6; .reviews/round-1.md F002, F004
+  - **Boundary**: No change to the other create callbacks' opening handling, to how a destination is displayed, or to which modes withdraw the destination
+  - **Acceptance**:
+    - Outcome: The picker names the opening that composed the form, and a withdrawn destination retires the folder
+    - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeController.test.ts src/webview/worktree/WorktreeCreateDialog.test.ts
+  - **Plan**:
+    1. `src/webview/worktree/WorktreeController.ts` — snapshot the opening once in `createDialogDeps()` and let the picker request and the bound answer both name it, so a predecessor form still on screen cannot post or receive the successor's token.
+    2. `src/webview/worktree/WorktreeCreateDialog.ts` — clear the chosen-folder flag in the same withdrawal that marks the destination derived, so both kinds of override retire together.
+    3. `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts` — a predecessor clicked while a successor opening is outstanding, and a disabled-destination mode read through the emitted selection and back out again.
