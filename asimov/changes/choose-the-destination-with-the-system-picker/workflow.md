@@ -100,3 +100,12 @@ Verify gate (re-run after 3_1 and 3_2): 7696/7696, type check clean, bundle and 
 `verify-status` exits 0 with all seven tasks stamped. Biome reports 17 diagnostics (1 error), and the
 set is identical file-for-file to base 7abcebf7 linted with this tree's own Biome binary — none is in
 a file this change touches; `worktreePanel.css:635` is `.wt-hist-label`, from `add-worktree-panel-shell`.
+
+Round 2 superseded (mode `superseded`, REJECT, 3 accepted blockers left unverified): my fault, not a
+finding. I scoped the verification round `dc96853c..HEAD`, and that range carries `d3c50c64` and
+`7f684acd` — the F009 fix and the archive commit of the independent, already-archived
+`find-env-files-the-workspace-declares`, including its semantic edit to `asimov/specs/worktree-panel/spec.md`.
+The chair refused to silently filter a range the caller stated, which is right. The change's own
+commits are not contiguous — four other changes landed between `71b53ca1` and HEAD — so round 3 is
+dispatched with the explicit picker-commit list rather than a range. F001–F004 stay accepted and
+unverified.

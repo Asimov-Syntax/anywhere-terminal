@@ -23,6 +23,10 @@
         {
           "from": 1788464389818,
           "to": 1788483577389
+        },
+        {
+          "from": 1788484392592,
+          "to": null
         }
       ],
       "phases": [
@@ -48,7 +52,7 @@
         }
       ],
       "firstAt": 1788459075577,
-      "lastAt": 1788483551901,
+      "lastAt": 1788484690953,
       "buckets": [
         {
           "runtime": "claude",
@@ -127,12 +131,12 @@
           "phase": "plan",
           "agent": "asm-review-master",
           "model": "gpt-5.6-sol",
-          "messages": 62,
-          "inputTokens": 298187,
-          "outputTokens": 51915,
+          "messages": 63,
+          "inputTokens": 299723,
+          "outputTokens": 51989,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 5387008,
+          "cacheReadTokens": 5516160,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,
@@ -503,15 +507,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 187,
-          "inputTokens": 374,
-          "outputTokens": 132388,
-          "reasoningTokens": 29204,
-          "cacheWriteTokens": 1028738,
-          "cacheReadTokens": 51520710,
+          "messages": 214,
+          "inputTokens": 428,
+          "outputTokens": 150855,
+          "reasoningTokens": 34319,
+          "cacheWriteTokens": 1058823,
+          "cacheReadTokens": 56305162,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 1028738,
+            "cacheWrite1hTokens": 1058823,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -530,6 +534,47 @@
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 353479,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "d7f28d57-11c3-4625-8008-6bc65067390e",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788484392592,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788484392592,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788484392592
+        }
+      ],
+      "firstAt": 1788484392592,
+      "lastAt": 1788484918268,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "gpt-5.6-sol",
+          "messages": 21,
+          "inputTokens": 147252,
+          "outputTokens": 6589,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1672576,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
