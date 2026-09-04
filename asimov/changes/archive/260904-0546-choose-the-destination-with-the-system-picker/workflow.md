@@ -15,13 +15,13 @@
 - [x] All tasks done (`tasks.md`)
 - [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
 - [x] Review done — round 6 (cycle 3, discovery): WARN, 0 gating blockers, 0 feature / 0 machinery
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -229,3 +229,6 @@ Residual carried out of the change, owned by nobody yet: F007's liveness half. A
 outlive its host `Opening` — including one whose repository departed — set its picker gate, and
 receive no answer because no picker is admitted for a token the host has moved past. Bounded by the
 successor opening the form is already waiting for; unbounded only if that answer never arrives.
+Verify gate (final, after 6_1): 7715/7715, type check clean, I10 and bundle gates green,
+`verify-status` exits 0 with all twelve tasks stamped. Biome unchanged at 1 error / 14 warnings /
+1 info, none in a file this change touches. Tree clean.
