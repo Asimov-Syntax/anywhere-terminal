@@ -117,7 +117,7 @@
     4. `src/types/messages.contract.test.ts` and `src/providers/TerminalViewProvider.worktree.test.ts` — the wire's own witnesses for the added field and the exhaustive inbound sample.
     5. The callers a required field obliges, carrying it and nothing more — the form MINTS the ask the way it already mints `recoverAsks` and passes it in the callback payload like `onAuthorizeDebris` does, and the controller forwards it like `probeSeq`: `src/webview/worktree/WorktreeCreateDialog.ts`, `src/webview/worktree/WorktreeController.ts`, and the fixtures in `src/webview/messaging/MessageRouter.test.ts`, `src/webview/worktree/WorktreeController.test.ts` and `src/webview/worktree/WorktreeCreateDialog.test.ts`. What the form DOES with the ask is 4_3's.
 
-- [ ] 4_3 Hold the form on its own pick, and let a stale answer change nothing
+- [x] 4_3 Hold the form on its own pick, and let a stale answer change nothing — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 4_2
   - **Refs**: specs/worktree-panel/spec.md#{a-destination-can-be-chosen-with-the-system-folder-picker,an-opened-picker-holds-the-form-until-it-is-answered}; design.md D6, D7
   - **Boundary**: The form never reads the answer's path value; the pick's gate is its OWN state, never the `outstanding` flag an unrelated probe answer clears; `blockedBy` reuses the string the destination gate already shows rather than adding one; no persistence

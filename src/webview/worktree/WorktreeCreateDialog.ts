@@ -1014,6 +1014,16 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   /** How many picks this form has opened. Minted like `recoverAsks` (D7). */
   let pickAsks = 0;
   /**
+   * Which pick this form is waiting on, or null.
+   *
+   * Its OWN gate, deliberately not the `outstanding` flag the destination probe
+   * uses. Nothing disables Choose while a probe is in flight, so a pick can open
+   * on top of one; that probe's answer is still current and clears `outstanding`,
+   * after which Create would be offered again — at the destination from BEFORE
+   * the pick. One boolean cannot hold two independent waits (design.md D7).
+   */
+  let pickAsked: number | null = null;
+  /**
    * The destination the user typed — the QUESTION, never the answer (D8).
    *
    * `draft.path` is what the form states and submits, and once a resolution has
@@ -1360,6 +1370,19 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     next: { kind: "typed"; path: string } | { kind: "chosen" } | { kind: "repoChanged" },
     fromInput = false,
   ): void => {
+    // The user replacing the destination withdraws any pick they were waiting
+    // on — typed, cleared (the `typed` branch with empty text), or the
+    // repository switched. An answer to a withdrawn ask changes nothing, which
+    // is what stops a late pick wiping a newer typed path or marking a
+    // repository chosen that was never offered a folder (design.md D7).
+    //
+    // Scoped to those three and claimed no wider: `stateDestination` is not the
+    // only writer of destination state — `syncDerived`'s withdrawal arm and the
+    // resolution application both write it — but those are not the user
+    // replacing anything.
+    if (next.kind !== "chosen") {
+      pickAsked = null;
+    }
     if (next.kind === "chosen") {
       // No path is held. The form states that it is using the folder; only the
       // host knows which folder that is, and only the host says what it derives
@@ -1440,7 +1463,12 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
       // and this separates two picks inside one, so an answer to an earlier
       // pick cannot be mistaken for an answer to this one (design.md D7).
       pickAsks += 1;
+      pickAsked = pickAsks;
       deps.onPickDestination?.({ repoId: currentRepo().repoId, ask: pickAsks });
+      // The gate is only read while the form re-renders, and a click is not one
+      // of the events that already does — so Create would stay armed at the
+      // pre-pick destination until something else moved.
+      syncDerived();
     });
     pathRow.appendChild(pickDestination);
   }
@@ -2902,7 +2930,7 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
             ? "Checking whether the branch is new, reusable, or repairable."
             : draft.path.trim().length === 0
               ? "Waiting for a destination."
-              : outstanding
+              : outstanding || pickAsked !== null
                 ? "Checking the destination."
                 : recoverAsked !== null
                   ? "Reading the existing folder before it can be cleared."
@@ -2978,11 +3006,25 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   // One transition, not a second one: the picked folder is stated exactly as a
   // typed one is. The controller has already dropped an answer for any opening
   // but this form's, so there is no second place deciding that here.
-  deps.bindDestinationPicked?.(() => {
-    // The answer's path is not read. It is the host's own folder coming back,
-    // and the host is what derives inside it — taking the path here would put a
-    // webview-composed destination on the wire (design.md D1, D5). The
-    // controller has already dropped an answer for any opening but this form's.
+  deps.bindDestinationPicked?.((answer) => {
+    // Only the pick this form is still waiting on. The controller drops an
+    // answer for another OPENING; this drops one for another PICK, which is the
+    // case a user who picked, then typed, then saw the first answer land would
+    // otherwise lose their typed path to (design.md D7).
+    if (answer.ask !== pickAsked) {
+      return;
+    }
+    pickAsked = null;
+    // PRESENCE, not value. Absent means the pick ended without a folder — a
+    // cancel, a failure, an unwired capability, a pick a newer one superseded —
+    // and the wait above is all that had to end. The path itself is never read:
+    // it is the host's own folder coming back, and the host is what derives
+    // inside it, so taking it here would put a webview-composed destination on
+    // the wire (design.md D1, D5).
+    if (answer.path === undefined) {
+      syncDerived();
+      return;
+    }
     stateDestination({ kind: "chosen" });
   });
 

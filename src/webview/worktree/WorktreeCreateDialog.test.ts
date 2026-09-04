@@ -5443,9 +5443,31 @@ describe("create worktree — choosing the folder the worktree is created in", (
       /** The selection the form most recently asked the host about. */
       latest: () => selections.at(-1),
       pick: () => h.host.querySelector<HTMLButtonElement>(".wt-path-pick"),
-      answer: (path = CHOSEN) => {
-        apply?.({ type: "worktreeDestinationPicked", repoId: createDefaults().repoId, token: 1, ask: 1, path });
+      /** The host's answer naming a folder. */
+      answer: (path: string = CHOSEN, ask = 1) => {
+        apply?.({
+          type: "worktreeDestinationPicked",
+          repoId: createDefaults().repoId,
+          token: 1,
+          ask,
+          path,
+        });
       },
+      /**
+       * The host's answer with no folder — a cancel, a failure, a superseded
+       * pick. Its own method rather than `answer(undefined)`, which a default
+       * parameter would quietly turn back into a folder.
+       */
+      answerNothing: (ask = 1) => {
+        apply?.({
+          type: "worktreeDestinationPicked",
+          repoId: createDefaults().repoId,
+          token: 1,
+          ask,
+        });
+      },
+      /** Create, by its label, so its gate can be read. */
+      createButton: () => create(h.host),
       path: () => h.q<HTMLInputElement>("#wt-path"),
       /**
        * Type INTO the destination and settle it.
@@ -5612,6 +5634,90 @@ describe("create worktree — choosing the folder the worktree is created in", (
     type(h.q<HTMLInputElement>("#wt-branch"), "other");
 
     expect(h.latest()?.useChosenFolder, "a folder the withdrawal hid came back").toBeUndefined();
+    h.dispose();
+  });
+
+  it("[4_3] withholds Create between the click and its answer", () => {
+    // The OS dialog closes before the host has resolved the folder, and
+    // `prepareResolvedRoot` is one realpath — seconds on a network mount. Create
+    // stayed armed at the PRE-PICK destination for that whole window
+    // (round-3 F005).
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    // Twice: applying a resolution settles the destination and re-asks under the
+    // new key, so one answer leaves the form waiting on its own consequence.
+    h.resolveAs({ kind: "fresh" });
+    h.resolveAs({ kind: "fresh" });
+    expect(h.createButton().disabled, "the setup never reached an armed Create").toBe(false);
+
+    h.pick()?.click();
+
+    expect(h.createButton().disabled, "Create was armed at the destination the pick is replacing").toBe(true);
+    h.dispose();
+  });
+
+  it("[4_3] offers Create again when the pick ends without a folder", () => {
+    // Cancel is why D3 had to change: a wait with no terminal answer is a form
+    // the user cannot escape, which is the trap the old rule existed to prevent.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.resolveAs({ kind: "fresh" });
+    h.resolveAs({ kind: "fresh" });
+    expect(h.createButton().disabled, "the setup never reached an armed Create").toBe(false);
+    h.pick()?.click();
+    h.answerNothing();
+
+    expect(h.createButton().disabled, "a cancelled pick left the form waiting forever").toBe(false);
+    expect(h.latest()?.useChosenFolder, "a pick that chose nothing still claimed a folder").toBeUndefined();
+    h.dispose();
+  });
+
+  it("[4_3] is not released by an answer to a question it did not ask", () => {
+    // Nothing disables Choose while a probe is in flight, so a pick can open on
+    // top of one. That probe's answer is still current and clears the
+    // destination gate — if the pick shared it, Create would be offered again at
+    // the pre-pick destination. The plan attack refuted reusing that flag.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.resolveAs({ kind: "fresh" });
+    h.resolveAs({ kind: "fresh" });
+    expect(h.createButton().disabled, "the setup never reached an armed Create").toBe(false);
+    h.pick()?.click();
+
+    // The answer to the question that was already in flight when the picker
+    // opened. It clears the destination gate — and must not clear this one.
+    h.resolveAs({ kind: "fresh" });
+
+    expect(h.createButton().disabled, "an unrelated answer released the pick's wait").toBe(true);
+    h.dispose();
+  });
+
+  it("[4_3] lets a typed destination survive a late answer", () => {
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.pick()?.click();
+    h.typeDestination("/mine/here");
+
+    h.answer();
+
+    expect(h.latest()?.candidatePath, "a late pick wiped the path the user typed").toBe("/mine/here");
+    expect(h.latest()?.useChosenFolder).toBeUndefined();
+    h.dispose();
+  });
+
+  it("[4_3] lets a cleared destination survive a late answer", () => {
+    // Clearing is the `typed` branch with empty text, and the spec names it
+    // beside typing and switching as a replacement the user made.
+    const h = withPicker();
+    type(h.q<HTMLInputElement>("#wt-branch"), "feature");
+    h.typeDestination("/mine/here");
+    h.pick()?.click();
+    h.typeDestination("");
+
+    h.answer();
+
+    expect(h.latest()?.candidatePath).toBeUndefined();
+    expect(h.latest()?.useChosenFolder, "a late pick reclaimed a destination the user cleared").toBeUndefined();
     h.dispose();
   });
 
