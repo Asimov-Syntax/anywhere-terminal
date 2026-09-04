@@ -51,9 +51,15 @@ form DOES need to take state, so silence on cancel is no longer free.
 
 The rule now has two arms, split by whether anyone is still waiting.
 
-**A form that is gone is answered with nothing.** Disposal, detach, supersession, and an opening the
-host no longer holds each produce no post. Nothing is waiting, so nothing needs releasing, and posting
-to a dead surface is at best wasted.
+**Gone means the FORM is gone, not that the host's record moved.** Disposal, detach, a close, and a
+new opening retiring this one each produce no post: nothing is waiting, and posting to a dead surface
+is at best wasted. The plan attack refuted the wider reading this decision first carried. Two of
+`pickDestination`'s arms drop an answer while the surface and its token are still live — a same-token
+refs replay that replaced the `Opening` object (`WorktreeHost.ts:2150-2157`), and a newer pick that
+advanced `pickGeneration` — and under the wider reading both would leave a live form pending forever.
+Both are answered. Answering a superseded pick is safe precisely because the answer carries its own
+`ask` (D7): the form discards an answer it is no longer waiting on, so releasing the older ask cannot
+release the newer one.
 
 **Every other outcome is answered, cancel and failure included.** A cancelled dialog, a `pick()` that
 throws, and a root that will not resolve each produce a terminal answer carrying no path. This is not
@@ -217,14 +223,27 @@ the second request"). `token` separates two openings; `ask` separates two picks 
 - **The request carries `ask`**, minted by the form, and the answer echoes it. The form holds
   `pickAsked: number | null` — the same shape as `recoverAsked` directly above it in the same file,
   and for the same reason.
-- **Opening the picker is a settled edit that arms the form's existing gate.** `outstanding` is
-  already what disables Create with "Checking the destination." (`WorktreeCreateDialog.ts:2881-2899`);
-  a pick sets it, so Create is not armed at the PRIOR destination while a new one is being resolved.
-  The window is not theoretical: `prepareResolvedRoot` is one `realpath`, and on a network mount or a
-  spun-down drive that is seconds, during which the OS dialog has already closed and the user is free
-  to press Create.
-- **Any later destination transition withdraws the ask.** `stateDestination` is D6's single owner of
-  destination state, so it clears `pickAsked` in every branch — typed, cleared, repository switch. An
+- **The pick gets its OWN gate — `pickAsked !== null` — not the existing `outstanding` flag.** The
+  plan attack refuted reusing it. Nothing disables Choose while a probe is in flight (only
+  `destRefused` disables it, `WorktreeCreateDialog.ts:2659-2667`), so a user can pick while a settled
+  edit's probe is still outstanding; that pre-pick probe's answer is still current, and applying it
+  clears `outstanding` (`:3097-3118`), after which `blockedBy` sees no gate at all and offers Create at
+  the pre-pick destination `syncDerived` retained. One boolean cannot hold two independent
+  transactions. `blockedBy` gains a branch reading `pickAsked`, and reuses the string the destination
+  gate already shows — the reason is the same kind of reason, and the user has said this form explains
+  too much.
+  The window being held is not theoretical: `prepareResolvedRoot` is one `realpath`, and on a network
+  mount or a spun-down drive that is seconds, during which the OS dialog has already closed and the
+  user is free to press Create.
+- **Any later destination transition withdraws the ask.** The three replacements the spec names —
+  typing, clearing, and switching repository — all pass through `stateDestination` (clearing is the
+  `typed` branch with empty text, `WorktreeCreateDialog.ts:2961-2962`; the switch calls it at
+  `:1267-1279`), so it clears `pickAsked` in every branch. The claim is scoped to those three and no
+  wider: `stateDestination` is NOT the only writer of destination state, as the plan attack showed —
+  `syncDerived`'s `destRefused` arm writes `pathIsDerived` and `usingChosen` directly (`:2659-2683`,
+  which is where round-1 F004 was fixed), and applying a resolution moves `effective` and the mode
+  without it (`:3097-3146`). Those are not user replacements of the destination and do not withdraw a
+  pick. An
   answer whose `ask` is not the outstanding one is discarded, which is what stops a late answer wiping
   a newer typed path, and stops a pick made in repository A marking repository B chosen and then
   falling back to B's configured root in silence.
@@ -246,9 +265,10 @@ is still no identity the webview did not state and no path the host resolved on 
 | Losing the record can only narrow | Every path that drops or replaces an `Opening` yields the configured root, never a wider one | A dropped record leaves a stale wider root in force, or a replay gains one | A host test replaying `requestWorktreeRefs` with the live token and asserting the next flagged probe answers under the configured root | supported — replacement writes a fresh `Opening` whose `chosenRoot` is null (`:3411`), and the fallback is the configured root by construction (D5) |
 | The typed override's boundary is exactly what it was | `candidatePath` is honoured iff it resolves inside the configured create root, whether or not a folder was chosen | A pick makes an out-of-root TYPED path honourable | A host test picking a folder, then probing with an out-of-root `candidatePath` AND the flag, asserting the configured-root answer — the case that fails if the implementation branches on `vettedOverride`'s result instead of the field's presence | supported — D5 fixes the branch on field presence, and `vettedOverride` and its call are untouched |
 | A create lands where the form said it would | The path in `git worktree add` argv equals the destination the form displayed, for a create composed after a pick | The form shows the chosen folder's path and git receives the configured root's derived path | An assembly test driving the shipped wiring: pick a folder, submit, assert the `worktree add` argv carries the folder-composed path | supported — the form submits `draft.path`, which is the host's own `freePath` (`:2740`, `:1989-2000`, `WorktreeController.ts:729-737`) |
-| Every opened picker releases the form that opened it | For every `worktreePickDestination` the host admits, exactly one answer is posted to a surface that still holds that opening — whatever the dialog did | A cancelled or failed pick posts nothing, leaving `outstanding` true and Create dead until the user edits something else | Host tests over cancel, a thrown `pick()`, and an unresolvable root, each asserting one answer posted carrying no path; plus a dialog test cancelling and asserting Create is offered again | supported — D3's amended rule posts on every arm except a gone form, and the gone-form arm has nothing waiting | 
-| A pick that never settles is not survivable | `showOpenDialog` that neither resolves nor rejects leaves the form pending with no message able to release it | The user is stuck with Create disabled and no way back | None — this is stated, not mitigated | unresolved — n/a as a defect: no reply can be composed for a promise that never settles, and the shipped `vscode.window.showOpenDialog` always settles. Recorded so the residual is named rather than implied by D3's amendment | 
-| A late answer cannot move a destination the user replaced | An answer is applied only where its `ask` is the one the form is still waiting on | A pick in repository A answered after a switch to B marks B chosen, B's probe finds no record and falls back to B's configured root in silence | Dialog tests: pick then type then answer, asserting the typed path stands; pick then switch repository then answer, asserting the selection carries no chosen-folder flag | supported — `stateDestination` is D6's single transition owner and clears `pickAsked` in every branch, so any move the user makes withdraws the ask (D7) | 
+| Every opened picker releases the form that opened it | For every `worktreePickDestination` the host admits, exactly one answer is posted while the surface and its token still live — whatever the dialog did, and whatever moved in the host's own record | A pick dropped on an arm that is not a gone form — a same-token `Opening` replacement, or supersession by a newer pick — posts nothing while the form waits | Host tests over cancel, a thrown `pick()`, an unresolvable root, a same-token refs replay landing mid-pick, and a second pick superseding the first, each asserting an answer posted carrying no path; plus a dialog test cancelling and asserting Create is offered again | supported — after the plan attack refuted the first draft, D3 answers every arm whose form is alive, and the gone-form arms have nothing waiting | 
+| A picker gate cannot be released by an unrelated answer | The form's pending state for a pick is cleared only by an answer to that `ask` or by the user replacing the destination — never by a probe or resolution answer to a different question | The pick reuses `outstanding`, and a probe that was already in flight when the picker opened answers, clearing the gate and re-arming Create at the pre-pick destination | A dialog test arming a probe with a settled edit, opening the picker before its answer, applying that answer, and asserting Create is still withheld | supported — the pick holds its own `pickAsked` gate; `outstanding` is left to the question it was already answering (D7) | 
+| A pick that never settles is not survivable | `showOpenDialog` that neither resolves nor rejects leaves the form pending with no message able to release it | The user is stuck with Create withheld and no way back | None — stated, not mitigated | unresolved, and deliberately left so. The conditional holds: `pickDestination` waits directly on `pick()` and D7 adds no other release. What is NOT established is the premise that the shipped `showOpenDialog` always settles — that was an assertion, and the plan attack declined to accept it. This is an environmental liveness unknown, not a proved reachable defect. A timeout is the wrong remedy and is not being added: the host cannot tell a hung picker from a native dialog the user simply still has open, and a timeout would create a late-result race where there is none today | 
+| A late answer cannot move a destination the user replaced | For the three replacements the spec names — typed, cleared, repository switched — an answer is applied only where its `ask` is the one the form is still waiting on | A pick in repository A answered after a switch to B marks B chosen, B's probe finds no record and falls back to B's configured root in silence | Dialog tests, one per replacement: pick then type then answer, asserting the typed path stands; pick then CLEAR then answer; pick then switch repository then answer, asserting the selection carries no chosen-folder flag | supported for those three, and claimed no wider — all three pass through `stateDestination`, which clears `pickAsked`. The stronger "single writer of destination state" reading is false and was withdrawn: `syncDerived`'s `destRefused` arm and the resolution application both write destination state directly (D7) | 
 | A chosen folder is not persisted anywhere | No configuration, workspace state or storage write happens on a pick; the record is in-memory on one `Opening` | A picked folder written to settings, making one create's choice the default for every later one | Inspection of the pick path plus the Boundary on task 2_1; the assembly test would show a settings write as a spy call it does not make | supported — `pickDestination` posts and records only, and no settings writer is reachable from it (`WorktreeHost.ts:2074-2095`, `extension.ts:548-562`) |
 
 ## Stated non-goal, so it is not mistaken for a gap
@@ -270,6 +290,7 @@ chosen one, and it is recorded as a knowledge candidate in workflow.md.
 | Typed override | A pick widens what a typed path may name | The branch is on field presence, not on the vetting's result (D5) |
 | Form state | A flag survives a repository switch and silently does nothing | The switch calls the same transition that clears it (D6) |
 | Probe caching | A pick is never asked about | The flag enters `askKey` (D6) |
-| Pending state | A cancelled pick leaves Create dead | Cancel and failure are answered; only a gone form is not (D3) |
+| Pending state | A pick is dropped on an arm that is not a gone form, and the wait never ends | Every arm whose surface and token still live is answered (D3) |
+| Gate collision | An unrelated probe answer releases the picker's wait | The pick holds its own gate rather than borrowing `outstanding` (D7) |
 | Late answer | An answer overwrites intent the user has already stated | The ask is withdrawn by any destination transition, and a stale `ask` is discarded (D7) |
 | Probe identity | A same-token replay re-anchors a suspended probe | The opening the dispatch admitted is anchored at entry, before any await (D4) |

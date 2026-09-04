@@ -8,7 +8,7 @@
 
 - [-] Gate 1: direction approved _(only if a real fork; else `[-]`)_
 - [x] `asm change validate` passes
-- [ ] Gate 2: plan approved
+- [x] Gate 2: plan approved
 
 ## Implement
 
@@ -134,3 +134,18 @@ user has separately said the create form explains too much, so 4_3's Boundary fo
 Auto-decision (fastlane): the sibling create callbacks still reading `this.refsToken` at event time
 (`onSelectionChange`, `onProvisionSwitch`, `onProvisionSave`, `onAuthorizeDebris`) stay out of scope —
 the round-3 chair explicitly accepted leaving them, and successor openings start with `chosenRoot: null`.
+
+Plan attack (replan): the oracle refuted two of the three new ledger rows and the reasoning under a
+third; all six findings accepted, none rejected, and the design got smaller in one place and stricter
+in two. Reusing the form's existing `outstanding` flag was unsafe — nothing disables Choose while a
+probe is in flight, and that probe's answer clears the flag and re-arms Create at the pre-pick
+destination — so the pick holds its own gate. D3's "gone" was too wide: two arms of `pickDestination`
+drop an answer while the surface and token still live, and both are now answered. D7's claim that
+`stateDestination` is the only writer of destination state was simply false — `syncDerived`'s
+`destRefused` arm writes it directly, which is where round-1 F004 was fixed — so the claim is narrowed
+to the three replacements the spec names. The spec demanded the form say it is "waiting on the folder"
+while task 4_3 forbids new prose; the spec yielded, because the user has said this form explains too
+much and the reason it gives is the same kind of reason as any other unresolved destination.
+The "a pick that never settles" row stays `unresolved` on the oracle's advice: the premise that
+`showOpenDialog` always settles was an assertion, not evidence, and a timeout is the wrong remedy —
+the host cannot tell a hung picker from a dialog the user still has open.

@@ -10,7 +10,8 @@ way one is resolved inside the configured create root.
 ### Requirement: An opened picker holds the form until it is answered
 
 From the moment the picker is opened until that request is answered, the create form SHALL NOT offer
-to create. Every opened picker SHALL be answered unless the form that opened it is gone.
+to create, and SHALL give the same kind of reason it gives for any other unresolved destination.
+Every opened picker SHALL be answered unless the form that opened it is gone.
 
 #### Scenario: A folder is chosen
 
@@ -27,7 +28,7 @@ to create. Every opened picker SHALL be answered unless the form that opened it 
 #### Scenario: A create is not offered while the folder is still being resolved
 
 - **WHEN** the user has opened the picker and the request has not been answered
-- **THEN** the form does not offer to create, and states that it is waiting on the folder
+- **THEN** the form does not offer to create, and says what it is waiting for
 
 #### Scenario: The picker is dismissed
 

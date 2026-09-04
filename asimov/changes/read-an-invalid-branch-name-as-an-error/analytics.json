@@ -26,6 +26,47 @@
       "firstAt": 1788486294044,
       "lastAt": 1788486294044,
       "buckets": []
+    },
+    {
+      "sessionId": "cfc7b485-708a-4a05-9290-1a17a4d31925",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788486294044,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788486294044,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788486294044
+        }
+      ],
+      "firstAt": 1788486294044,
+      "lastAt": 1788486552467,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "gpt-5.6-sol",
+          "messages": 13,
+          "inputTokens": 82188,
+          "outputTokens": 11615,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1054464,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
     }
   ]
 }
