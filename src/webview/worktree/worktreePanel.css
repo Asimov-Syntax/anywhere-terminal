@@ -994,6 +994,18 @@
   font-size: 12px;
   outline: none;
 }
+/* The gate and the order it produces are two facts, so the note is its own line
+   rather than a span running straight on from the checkbox's label. */
+.wt-wait-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.wt-wait-note {
+  display: block;
+}
+
 .wt-fhint {
   font-size: 10px;
   line-height: 1.4;

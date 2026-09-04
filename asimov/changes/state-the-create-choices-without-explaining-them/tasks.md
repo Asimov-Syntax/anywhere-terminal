@@ -38,7 +38,7 @@
     2. `src/webview/worktree/worktreePanel.css` — `wt-bring-save-note`.
     3. `src/webview/worktree/WorktreeCreateDialog.test.ts` — the existing F014 witness, read as "the description is announced" rather than "this sentence is on screen".
 
-- [ ] 2_2 Give the setup gate's order its own line
+- [x] 2_2 Give the setup gate's order its own line — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 2_1, 1_2
   - **Refs**: specs/worktree-panel/spec.md#{a-setup-gate-states-the-resulting-order-as-its-own-line}
   - **Boundary**: No change to which step gates the agent, to the recommendation's default, or to the three states the note distinguishes

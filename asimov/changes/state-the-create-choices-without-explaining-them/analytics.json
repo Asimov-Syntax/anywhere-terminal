@@ -32,19 +32,19 @@
         }
       ],
       "firstAt": 1788489121650,
-      "lastAt": 1788489521315,
+      "lastAt": 1788489656420,
       "buckets": [
         {
           "runtime": "claude",
           "phase": "build",
           "agent": "main",
           "model": "gpt-5.6-sol",
-          "messages": 11,
-          "inputTokens": 29222,
-          "outputTokens": 13816,
+          "messages": 15,
+          "inputTokens": 39449,
+          "outputTokens": 18515,
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
-          "cacheReadTokens": 3148416,
+          "cacheReadTokens": 4358528,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

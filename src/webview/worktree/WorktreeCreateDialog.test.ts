@@ -5321,6 +5321,16 @@ describe("provisioning save action weight", () => {
     expect(rule).toMatch(/font-size:/);
   });
 
+  it("[2_2] gives the setup gate's order its own line", () => {
+    // The note was a bare span appended after the label, so it ran straight on
+    // from "…before starting the agent" with no break at all. The choice and
+    // the order it produces are two facts and read as two lines.
+    const field = ruleOf(css(), ".wt-wait-setup");
+    expect(field, "no wait field rule").toBeTruthy();
+    expect(field).toContain("flex-direction: column");
+    expect(ruleOf(css(), ".wt-wait-note"), "no wait note rule").toContain("display: block");
+  });
+
   it("[2_1] sets the note beside the save, wrapping only when it will not fit", () => {
     // It stacked when the note was a two-sentence paragraph. The note now
     // carries only the half the button's label does not, so the pair reads as
