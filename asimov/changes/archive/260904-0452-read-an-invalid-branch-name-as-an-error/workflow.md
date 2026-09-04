@@ -12,16 +12,16 @@
 
 ## Implement
 
-- [ ] All tasks done (`tasks.md`)
-- [ ] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
-- [ ] Review done _(user-initiated; `[-]` + reason if skipped)_
-- [ ] Gate: implementation approved
-- [ ] Blueprint sync complete _(`[-]` + reason only when `Blueprint: none`)_
+- [x] All tasks done (`tasks.md`)
+- [x] Verify gate: type check / lint / test observed passing _(`[-]` per command not in project.md)_
+- [-] Review done — skipped: no escalation flag. The change adds one optional wire field beside `baseValid`, asks git through the create's own `branchNameIsValid`, and reads the answer into a field error the form already renders. Both Boundaries carry witnesses: an unaskable git answers nothing, and a verdict for a name the user has typed past is dropped.
+- [x] Gate: implementation approved
+- [-] Blueprint sync complete — no blueprint for this change
 
 ## Archive
 
-- [ ] Apply deltas: `bun run asm change apply`
-- [ ] Archive change: `bun run asm change archive`
+- [x] Apply deltas: `bun run asm change apply`
+- [x] Archive change: `bun run asm change archive`
 
 > Commit everything after archive. No box: `archive` ticks its own before the commit exists, and a tick is evidence — git history is the record here.
 
@@ -50,3 +50,10 @@ or weaken the checked-out-elsewhere refusal that owns the same field.
 nobody was asked", same asked-only-where-it-applies rule.
 No design.md: no fork, and no obligation ledger — nothing here touches a mutable resource whose
 failure outlives the request. Both constraints live as task Boundaries.
+
+Verify gate: 7713/7713, type check clean, I10 and bundle gates green, `verify-status` exits 0 with
+both tasks stamped. Biome reports the same 1 error / 14 warnings / 1 info as before the change; the
+one format finding this change introduced was fixed with `biome format --write` scoped to the single
+file, never the `--write --unsafe` form the lint script runs.
+1_2 needed no controller edit after all: `handleCreateResolution` forwards the whole message, so the
+new field rides it. Recorded on the task's own Plan.
