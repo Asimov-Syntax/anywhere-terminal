@@ -26,7 +26,7 @@
 
 ## 2. Two controls that explain themselves
 
-- [ ] 2_1 Keep what the save action does not cover, without a paragraph carrying it
+- [x] 2_1 Keep what the save action does not cover, without a paragraph carrying it — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{the-provisioning-save-action-names-what-it-persists}
   - **Boundary**: What the save persists does not change; the accessible description survives — round-1 F014 required it because a screen reader announcing the button alone hears the half of the sentence that sounds complete

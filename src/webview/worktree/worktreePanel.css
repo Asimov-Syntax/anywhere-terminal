@@ -1533,11 +1533,15 @@
    one: a quiet button with its caveat stacked beneath, never a second call to
    action competing with the primary. Without these rules the button fell back to
    the browser default, which is the heaviest control on the form. */
+/* One line: the note is now the short half the button's label does not carry,
+   so it sits beside the button rather than stacking a paragraph under it. It
+   wraps to its own line only when the panel is too narrow to hold both. */
 .wt-bring-save-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
   margin-top: 6px;
 }
 

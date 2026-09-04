@@ -197,9 +197,12 @@ describe("create worktree — the default and every consequential action explain
     const save = host.querySelector<HTMLButtonElement>(".wt-bring-save");
     expect(save?.textContent).toBe("Save current choices as defaults");
     expect(save?.textContent).not.toContain("Configure");
-    expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("active source");
-    expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("future creates");
-    expect(host.querySelector(".wt-bring-save-note")?.textContent).toContain("this create only");
+    // The note carries only what the label does not: the label already says it
+    // saves the current choices as defaults, so the note says what that leaves
+    // behind and nothing else.
+    const note = host.querySelector(".wt-bring-save-note")?.textContent ?? "";
+    expect(note).toContain("this create only");
+    expect(note).not.toMatch(/active source|future creates|current choices/i);
   });
 
   type ReasonHarness = ReturnType<typeof open>;
@@ -5306,10 +5309,14 @@ describe("provisioning save action weight", () => {
     expect(rule).toMatch(/font-size:/);
   });
 
-  it("[1_1] stacks the note below the save rather than beside it", () => {
+  it("[2_1] sets the note beside the save, wrapping only when it will not fit", () => {
+    // It stacked when the note was a two-sentence paragraph. The note now
+    // carries only the half the button's label does not, so the pair reads as
+    // one line and wraps only on a panel too narrow to hold both.
     const rule = ruleOf(css(), ".wt-bring-save-row");
     expect(rule, "no save row rule").toBeTruthy();
-    expect(rule).toContain("flex-direction: column");
+    expect(rule).toContain("flex-direction: row");
+    expect(rule).toContain("flex-wrap: wrap");
     expect(ruleOf(css(), ".wt-bring-save-note"), "no save note rule").toBeTruthy();
   });
 });

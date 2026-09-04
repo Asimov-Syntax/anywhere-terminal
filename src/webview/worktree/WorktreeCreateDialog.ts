@@ -1545,8 +1545,10 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
   const saveNote = document.createElement("span");
   saveNote.className = "wt-bring-save-note";
   saveNote.id = "wt-bring-save-note";
-  saveNote.textContent =
-    "Saves the active source and selected copy/link choices for future creates. Setup steps and ports apply to this create only.";
+  // Only the half the label does not already carry. "Save current choices as
+  // defaults" says what the press records; what it cannot say is what it leaves
+  // out, and that is the whole note now.
+  saveNote.textContent = "Setup steps and ports apply to this create only.";
   // The note states what pressing this does NOT record. A sighted user reads it
   // beside the button; without the association a screen reader announces the
   // button alone, which is the half of the sentence that sounds complete
