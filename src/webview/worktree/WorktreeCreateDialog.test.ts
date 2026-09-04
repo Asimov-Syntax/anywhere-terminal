@@ -584,6 +584,83 @@ describe("create worktree — invalid and collided (§ 10)", () => {
     expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
   });
 
+  it("[1_2] states git's refusal on the field, not as a pending check", () => {
+    // The seam above has been supplied by tests alone since it was written, so
+    // until the host answered, a name git will not take read as a selection
+    // still being checked.
+    let apply: ((r: WorktreeCreateResolutionMessage) => void) | undefined;
+    const { q, host } = open({ bindResolution: (fn) => (apply = fn), onSelectionChange: () => {} });
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "brand new");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    apply?.({
+      type: "worktreeCreateResolution",
+      repoId: createDefaults().repoId,
+      token: 1,
+      seq: 0,
+      query: "brand new",
+      freePath: "/trees/repo-brand-new",
+      mode: { kind: "fresh" },
+      branchValid: { ok: false, reason: 'git will not take "brand new" as a branch name.' },
+    });
+
+    expect(input.classList.contains("is-invalid")).toBe(true);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(q<HTMLElement>(".wt-ferror").textContent).toBe('git will not take "brand new" as a branch name.');
+    expect(q<HTMLButtonElement>(".wt-btn--primary").disabled).toBe(true);
+    // The refusal itself, never "Waiting to check this selection." — that is
+    // the whole point of ranking it ahead of the pending assessment.
+    expect(host.querySelector("#wt-create-disabled-reason")?.textContent).toBe(
+      'git will not take "brand new" as a branch name.',
+    );
+  });
+
+  it("[1_2] says nothing when git accepts the name", () => {
+    let apply: ((r: WorktreeCreateResolutionMessage) => void) | undefined;
+    const { q } = open({ bindResolution: (fn) => (apply = fn), onSelectionChange: () => {} });
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "brand-new");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    apply?.({
+      type: "worktreeCreateResolution",
+      repoId: createDefaults().repoId,
+      token: 1,
+      seq: 0,
+      query: "brand-new",
+      freePath: "/trees/repo-brand-new",
+      mode: { kind: "fresh" },
+      branchValid: { ok: true },
+    });
+
+    expect(input.classList.contains("is-invalid")).toBe(false);
+    expect(q<HTMLElement>(".wt-ferror").hidden).toBe(true);
+  });
+
+  it("[1_2] drops a refusal for a name the user has typed past", () => {
+    // `effective` is nulled on every new ask, so the refusal cannot outlive the
+    // name it was about — the same rule every other field of the answer follows.
+    let apply: ((r: WorktreeCreateResolutionMessage) => void) | undefined;
+    const { q } = open({ bindResolution: (fn) => (apply = fn), onSelectionChange: () => {} });
+    const input = q<HTMLInputElement>("#wt-branch");
+    type(input, "brand new");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    type(input, "brand-new");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    apply?.({
+      type: "worktreeCreateResolution",
+      repoId: createDefaults().repoId,
+      token: 1,
+      seq: 0,
+      query: "brand new",
+      freePath: "/trees/repo-brand-new",
+      mode: { kind: "fresh" },
+      branchValid: { ok: false, reason: 'git will not take "brand new" as a branch name.' },
+    });
+
+    expect(input.classList.contains("is-invalid")).toBe(false);
+    expect(q<HTMLElement>(".wt-ferror").hidden).toBe(true);
+  });
+
   it("reports the collision without naming a destination the host has not resolved", () => {
     // The derived path IS the occupied one, so claiming it as the destination
     // would tell the user the create lands where it cannot.

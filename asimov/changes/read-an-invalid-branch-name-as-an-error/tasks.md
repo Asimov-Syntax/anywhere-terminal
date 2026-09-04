@@ -25,7 +25,7 @@
        asked for a mode that creates no branch, and unaskable answering nothing.
     5. `src/types/messages.contract.test.ts` — the wire witnesses, positive and `@ts-expect-error`.
 
-- [ ] 1_2 State git's refusal on the branch field, ahead of any pending check
+- [x] 1_2 State git's refusal on the branch field, ahead of any pending check — verified: pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: 1_1
   - **Refs**: specs/worktree-panel/spec.md#{a-branch-name-git-will-not-take-is-refused-on-the-field}, specs/worktree-panel/spec.md#{a-disabled-create-action-states-what-it-is-waiting-for}
   - **Boundary**: No new prose on the disabled action — the refusal is a FIELD error, which the form
@@ -37,8 +37,9 @@
     - Outcome: A refused branch name marks the field invalid and states the refusal, and Create is not offered
     - Verify: command pnpm exec vitest run src/webview/worktree/WorktreeCreateDialog.test.ts src/webview/worktree/WorktreeController.test.ts
   - **Plan**:
-    1. `src/webview/worktree/WorktreeController.ts` — the resolution forwarded to the dialog already
-       carries the answer; the new field rides it, no second channel.
+    1. `src/webview/worktree/WorktreeController.ts` — no edit needed, confirmed at build:
+       `handleCreateResolution` (`:1387`) forwards the whole message, so the new field rides it with
+       no second channel and no controller witness of its own.
     2. `src/webview/worktree/WorktreeCreateDialog.ts` — `deps.validateBranch` (`:212`) is the seam
        the form already computes `error` through (`:2888-2893`) and nothing has ever supplied. It is
        answered from the held resolution for the name on screen, so a verdict for a name the user has
@@ -46,4 +47,4 @@
     3. `src/webview/worktree/WorktreeCreateDialog.test.ts` — the field states the refusal, Create is
        not offered, the refusal clears when the name is edited into an accepted one, a stale verdict
        does not speak, and a checked-out-elsewhere refusal still wins.
-    4. `src/webview/worktree/WorktreeController.test.ts` — the verdict reaches the form it answers.
+    4. `src/webview/worktree/WorktreeController.test.ts` — untouched, for the reason in step 1.

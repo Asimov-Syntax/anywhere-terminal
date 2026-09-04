@@ -2885,12 +2885,21 @@ export function openWorktreeCreateDialog(root: HTMLElement, deps: WorktreeCreate
     renderRecover();
 
     const heldBy = heldBranch();
+    // git's own answer about the name on screen. `effective` is nulled on every
+    // new ask and only set for an answer whose `query` matches the field, so a
+    // verdict for a name the user has typed past cannot speak here.
+    //
+    // Read as an ERROR rather than as a reason for the disabled action: the
+    // field already has the vocabulary for a refusal, and `blockedBy` reads
+    // `error` first, so a refused name never reads as one still being checked.
+    const branchRefused =
+      !detached && effective?.branchValid?.ok === false ? effective.branchValid.reason : undefined;
     const error =
       heldBy !== undefined
         ? `${draft.branchName.trim()} is checked out in ${heldBy}`
         : detached
           ? undefined
-          : deps.validateBranch?.(draft.branchName);
+          : (branchRefused ?? deps.validateBranch?.(draft.branchName));
     draft.branchError = error;
     nameError.textContent = error ?? "";
     nameError.hidden = !error;
