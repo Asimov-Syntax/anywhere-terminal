@@ -52,7 +52,7 @@
         }
       ],
       "firstAt": 1788459075577,
-      "lastAt": 1788484690953,
+      "lastAt": 1788484990812,
       "buckets": [
         {
           "runtime": "claude",
@@ -507,15 +507,15 @@
           "phase": "plan",
           "agent": "main",
           "model": "claude-opus-5",
-          "messages": 214,
-          "inputTokens": 428,
-          "outputTokens": 150855,
-          "reasoningTokens": 34319,
-          "cacheWriteTokens": 1058823,
-          "cacheReadTokens": 56305162,
+          "messages": 221,
+          "inputTokens": 442,
+          "outputTokens": 156357,
+          "reasoningTokens": 35458,
+          "cacheWriteTokens": 1069515,
+          "cacheReadTokens": 57591759,
           "extra": {
             "cacheWrite5mTokens": 0,
-            "cacheWrite1hTokens": 1058823,
+            "cacheWrite1hTokens": 1069515,
             "webSearchRequests": 0,
             "webFetchRequests": 0
           }
@@ -572,6 +572,119 @@
           "reasoningTokens": 0,
           "cacheWriteTokens": 0,
           "cacheReadTokens": 1672576,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "77eb619e-3029-47aa-be30-4aa7e2b91ee3",
+      "runtime": "claude",
+      "author": "huybuidac@gmail.com",
+      "attachedAt": 1788484392592,
+      "accounting": 2,
+      "windows": [
+        {
+          "from": 1788484392592,
+          "to": null
+        }
+      ],
+      "phases": [
+        {
+          "phase": "plan",
+          "from": 1788484392592
+        }
+      ],
+      "firstAt": 1788484392592,
+      "lastAt": 1788485788658,
+      "buckets": [
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "main",
+          "model": "gpt-5.6-sol",
+          "messages": 38,
+          "inputTokens": 268536,
+          "outputTokens": 33537,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 6263424,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-logic",
+          "model": "gpt-5.6-terra",
+          "messages": 7,
+          "inputTokens": 80893,
+          "outputTokens": 6397,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 726016,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-data-security",
+          "model": "claude-opus-5",
+          "messages": 43,
+          "inputTokens": 86,
+          "outputTokens": 7709,
+          "reasoningTokens": 4700,
+          "cacheWriteTokens": 123375,
+          "cacheReadTokens": 3763447,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 123375,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-frontend",
+          "model": "claude-sonnet-5",
+          "messages": 25,
+          "inputTokens": 50,
+          "outputTokens": 19812,
+          "reasoningTokens": 15734,
+          "cacheWriteTokens": 114099,
+          "cacheReadTokens": 2035880,
+          "extra": {
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 114099,
+            "webSearchRequests": 0,
+            "webFetchRequests": 0
+          }
+        },
+        {
+          "runtime": "claude",
+          "phase": "plan",
+          "agent": "asm-review-contracts",
+          "model": "gpt-5.6-terra",
+          "messages": 22,
+          "inputTokens": 91151,
+          "outputTokens": 5106,
+          "reasoningTokens": 0,
+          "cacheWriteTokens": 0,
+          "cacheReadTokens": 1021440,
           "extra": {
             "cacheWrite5mTokens": 0,
             "cacheWrite1hTokens": 0,

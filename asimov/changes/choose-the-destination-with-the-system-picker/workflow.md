@@ -109,3 +109,14 @@ The chair refused to silently filter a range the caller stated, which is right. 
 commits are not contiguous — four other changes landed between `71b53ca1` and HEAD — so round 3 is
 dispatched with the explicit picker-commit list rather than a range. F001–F004 stay accepted and
 unverified.
+
+Round 3 (cycle 2, discovery, explicit picker-commit list): BLOCK, 2 blockers. F002, F003 and F004
+confirmed fixed; F001 survives in a narrower window and F005 is new. Both accepted, neither rebutted.
+Taken as option 1 of the remediation boundary — a designed fix, handed back to plan — because F005's
+second half cannot be built inside the accepted design. "Mark pending at click" needs a terminal
+outcome for the pick, and D3 says cancel, failure and a dismissed form all produce no post at all, so
+a cancelled dialog would leave the form pending forever — the exact trap D3 exists to prevent. The
+fix D3 forbids is the fix this needs, so D3 has to move: only a form that is GONE may be answered
+with nothing. F001's remaining window is mechanical (the probe anchors after `vettedOverride`'s await
+instead of taking the opening the dispatch already admitted) and rides along rather than landing
+alone, which would have closed the cycle as superseded and burnt a round for a three-line change.
