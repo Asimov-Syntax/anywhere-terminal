@@ -82,11 +82,16 @@ describe("suggestProvisioning", () => {
     expect(model.entries).toHaveLength(1);
     const entry = model.entries[0];
     expect(entry).toMatchObject({ path: ".env.local", mode: "copy", source: ".env.local" });
-    // The explanation is what makes the row opt-in, says why it appeared, and
-    // warns about what the file may hold. Static host text — no file content.
-    expect(entry?.suggestion).toContain(".env.local");
+    // PRESENCE is what makes the row opt-in, so the field survives however short
+    // its text becomes. Static host text — no file content.
+    expect(entry?.suggestion).toBeDefined();
+    // The one thing the row cannot show: this file may hold secrets.
     expect(entry?.suggestion).toMatch(/secret/i);
-    expect(entry?.suggestion).toMatch(/independent/i);
+    // And nothing the row already shows. The path is on the row twice over, as
+    // its label and as its source, before the sentence would say it a third
+    // time; `Copy` is the mode the row is labelled with.
+    expect(entry?.suggestion).not.toContain(".env.local");
+    expect(entry?.suggestion).not.toMatch(/copy|independent/i);
   });
 
   it("suggests one static install command per detected manager, without precedence", async () => {
@@ -102,8 +107,11 @@ describe("suggestProvisioning", () => {
     ]);
     for (const step of model.setup) {
       expect(step.kind).toBe("shell");
-      expect(step.suggestion).toContain(step.source);
-      expect(step.suggestion).toMatch(/after file/i);
+      // Present, so the row stays opt-in; the lockfile and the command are both
+      // already on the row, so neither is restated here.
+      expect(step.suggestion).toBeDefined();
+      expect(step.suggestion).not.toContain(step.source);
+      expect(step.suggestion).not.toContain(step.script);
     }
   });
 
@@ -179,8 +187,13 @@ describe("suggestProvisioning — the workspaces a repository declares", () => {
     expect(model.entries.map((e) => e.path).sort()).toEqual(["apps/server/.env", "apps/web/.env"]);
     // Path AND source, so a copy reads the file whose presence was the evidence.
     expect(model.entries.every((e) => e.path === e.source && e.mode === "copy")).toBe(true);
-    // Two rows a user must tell apart name the directory that distinguishes them.
-    expect(model.entries.find((e) => e.path === "apps/web/.env")?.suggestion).toContain("apps/web/.env");
+    // Two rows a user must tell apart name the directory that distinguishes
+    // them — on the row itself, which is where the path was always shown. The
+    // suggestion carries the secrets warning and repeats none of it.
+    const web = model.entries.find((e) => e.path === "apps/web/.env");
+    expect(web?.source).toBe("apps/web/.env");
+    expect(web?.suggestion).toMatch(/secret/i);
+    expect(web?.suggestion).not.toContain("apps/web");
     // Only manifests are ever opened.
     expect(read).toEqual(["package.json"]);
   });

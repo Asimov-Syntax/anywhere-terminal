@@ -378,7 +378,7 @@ export async function suggestProvisioning(
         path: name,
         mode: "copy",
         source: name,
-        suggestion: `\`${name}\` is at the repository root and may contain secrets. Copy creates an independent file in the new worktree.`,
+        suggestion: "May contain secrets.",
       });
     }
   }
@@ -392,7 +392,7 @@ export async function suggestProvisioning(
           path: rel,
           mode: "copy",
           source: rel,
-          suggestion: `\`${rel}\` is inside a workspace package this repository declares and may contain secrets. Copy creates an independent file at the same place in the new worktree.`,
+          suggestion: "May contain secrets.",
         });
       }
     }
@@ -406,7 +406,7 @@ export async function suggestProvisioning(
           kind: "shell",
           script: manager.command,
           source: lockfile,
-          suggestion: `\`${lockfile}\` is at the repository root. Run setup executes \`${manager.command}\` in the worktree after file provisioning.`,
+          suggestion: "Runs after files are copied.",
         });
         break;
       }

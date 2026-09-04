@@ -1,6 +1,6 @@
 ## 1. Say it once
 
-- [ ] 1_1 Shorten the host's suggestion text to the part the row cannot show itself
+- [x] 1_1 Shorten the host's suggestion text to the part the row cannot show itself — verified: pnpm exec vitest run src/worktree/provisioning/suggestProvisioning.test.ts && pnpm run check-types && VITEST_MAX_THREADS=6 pnpm run test:unit exit 0
   - **Deps**: none
   - **Refs**: specs/worktree-panel/spec.md#{every-initialization-suggestion-is-explicit-and-explained}
   - **Boundary**: The `suggestion` field stays PRESENT on every row it is present on today — its presence is what keeps a suggested row unchecked (`src/types/messages.ts:857-863`); no change to which rows are suggested, to the workspace scan that finds them, or to any provisioning behaviour
@@ -10,6 +10,7 @@
   - **Plan**:
     1. `src/worktree/provisioning/suggestProvisioning.ts` — the three templates at the root-env, workspace-env and lockfile sites. The row already renders `source` and the subject, so the path is on screen twice before the sentence repeats it a third time; what survives is the secrets warning, and for setup nothing beyond what the row already names.
     2. `src/worktree/provisioning/suggestProvisioning.test.ts` — the witnesses that assert the current sentences, and one that fails if `suggestion` becomes absent rather than short.
+    3. `src/extension.worktreeAssembly.test.ts` — the assembly witness reading the secrets warning off the rendered row, which pinned the sentence's casing rather than its presence.
 
 - [ ] 1_2 Render a suggestion as a hint beside the row, not a paragraph under it
   - **Deps**: 1_1

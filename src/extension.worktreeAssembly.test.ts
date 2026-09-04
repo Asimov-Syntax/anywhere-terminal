@@ -2092,7 +2092,9 @@ describe("the invariants that span the host and the webview", () => {
       if (envRow === undefined || setupRow === undefined) {
         throw new Error("the form did not offer both suggestions");
       }
-      expect(envRow.textContent).toContain("may contain secrets");
+      // The warning, not its casing: it is the only on-screen marker that a
+      // row is a secret file, and it must survive however short the text gets.
+      expect(envRow.textContent).toMatch(/may contain secrets/i);
       expect(setupRow.textContent).toContain("pnpm-lock.yaml");
       expect(setupRow.textContent).toContain("pnpm install");
       const envBox = envRow.querySelector<HTMLInputElement>(".wt-brow-cb");
